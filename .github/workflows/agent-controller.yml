@@ -9,8 +9,16 @@ on:
       - modules/service-authentication/**
       - modules/secret-encryption/**
       - tests/integration/go/agent-controller/**
-      - tests/support/**
-      - contracts/**
+      - tests/support/go*.mjs
+      - tests/support/service-authentication*
+      - tests/support/ci-ownership.json
+      - contracts/agent-acp/**
+      - contracts/agent-controller/**
+      - contracts/egress/**
+      - contracts/identity/**
+      - contracts/platform/**
+      - contracts/skill-learning/**
+      - contracts/skill-registry/**
       - go.work
       - go.work.sum
       - .golangci.yml
@@ -24,8 +32,16 @@ on:
       - modules/service-authentication/**
       - modules/secret-encryption/**
       - tests/integration/go/agent-controller/**
-      - tests/support/**
-      - contracts/**
+      - tests/support/go*.mjs
+      - tests/support/service-authentication*
+      - tests/support/ci-ownership.json
+      - contracts/agent-acp/**
+      - contracts/agent-controller/**
+      - contracts/egress/**
+      - contracts/identity/**
+      - contracts/platform/**
+      - contracts/skill-learning/**
+      - contracts/skill-registry/**
       - go.work
       - go.work.sum
       - .golangci.yml
@@ -34,21 +50,24 @@ on:
       - .github/workflows/_go-service.yml
       - .github/workflows/_image.yml
   workflow_dispatch:
+  workflow_call:
 
 permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.ref }}-agent-controller
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   check:
+    if: github.event_name != 'pull_request' || github.workflow == 'integration'
     uses: ./.github/workflows/_go-service.yml
     with:
       service: agent-controller
 
   image:
+    if: github.event_name != 'pull_request'
     needs: check
     permissions:
       contents: read

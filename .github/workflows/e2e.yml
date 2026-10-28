@@ -1,0 +1,306 @@
+name: system-e2e
+
+# main integrates a version set; it is not a release branch. This workflow's
+# result is deliberately independent of the required component CI checks.
+on:
+  push:
+    branches: [main]
+  pull_request:
+    types: [labeled, opened, reopened, synchronize]
+  schedule:
+    - cron: "17 2 * * *"
+  workflow_dispatch:
+    inputs:
+      manifest:
+        description: Published main version manifest JSON; empty builds this main revision.
+        default: ""
+        type: string
+      suites:
+        description: Optional E2E suite ids; a partial run is never release evidence.
+        default: ""
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: system-e2e-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: >-
+    ${{ github.event_name == 'pull_request' &&
+        contains(github.event.pull_request.labels.*.name, 'e2e') &&
+        (github.event.action != 'labeled' || github.event.label.name == 'e2e') }}
+
+jobs:
+  plan:
+    name: Plan system integration
+    if: >-
+      (github.event_name != 'pull_request' && github.ref == 'refs/heads/main') ||
+      (github.event_name == 'pull_request' &&
+       contains(github.event.pull_request.labels.*.name, 'e2e') &&
+       (github.event.action != 'labeled' || github.event.label.name == 'e2e'))
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      packages: read
+    outputs:
+      revision: ${{ steps.plan.outputs.revision }}
+      images: ${{ steps.plan.outputs.images }}
+      builds: ${{ steps.plan.outputs.builds }}
+      building: ${{ steps.plan.outputs.building }}
+      suites: ${{ steps.plan.outputs.system_suites }}
+      count: ${{ steps.plan.outputs.system_count }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Plan images and suites
+        id: plan
+        env:
+          MANIFEST_JSON: ${{ inputs.manifest }}
+          ONLY: ${{ inputs.suites }}
+          EVENT: ${{ github.event_name }}
+        run: |
+          set -- --scope e2e --all
+          [ -n "$ONLY" ] && set -- "$@" --only "$ONLY"
+          if [ -n "$MANIFEST_JSON" ]; then
+            node tests/support/ci-manifest.mjs validate "$RUNNER_TEMP/manifest.json"
+            revision="$(jq -er .revision "$RUNNER_TEMP/manifest.json")"
+            git merge-base --is-ancestor "$revision" origin/main
+            git -c advice.detachedHead=false checkout --detach "$revision"
+            echo 'builds={"include":[]}' >> "$GITHUB_OUTPUT"
+            echo 'building=0' >> "$GITHUB_OUTPUT"
+          else
+            set -- "$@" --resolve-images
+            [ "$EVENT" != pull_request ] && set -- "$@" --all-images --registry-images
+            echo "revision=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          fi
+          node tests/support/ci-changes.mjs "$@"
+
+  images:
+    name: System image / ${{ matrix.name }}
+    needs: plan
+    if: needs.plan.outputs.building != '0'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.plan.outputs.builds) }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.plan.outputs.revision }}
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+      - uses: docker/setup-buildx-action@v4
+      - name: Write image definition
+        env:
+          NAME: ${{ matrix.name }}
+        run: node tests/support/ci-changes.mjs --bake "$NAME" > "$RUNNER_TEMP/image.docker-bake.json"
+      - name: Build image
+        uses: docker/bake-action@v7
+        with:
+          source: .
+          files: ${{ runner.temp }}/image.docker-bake.json
+          load: true
+      # Never publish PR images into the trusted input-hash namespace.
+      - name: Save PR image
+        if: github.event_name == 'pull_request'
+        env:
+          NAME: ${{ matrix.name }}
+        run: |
+          set -o pipefail
+          docker save "antnest/$NAME:local" | zstd -T0 -3 -o "$RUNNER_TEMP/$NAME.tar.zst"
+      - uses: actions/upload-artifact@v7
+        if: github.event_name == 'pull_request'
+        with:
+          name: image-${{ matrix.name }}
+          path: ${{ runner.temp }}/${{ matrix.name }}.tar.zst
+          compression-level: 0
+          retention-days: 1
+      - uses: docker/login-action@v4
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Publish system image
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        env:
+          NAME: ${{ matrix.name }}
+          REF: ${{ matrix.ref }}
+        run: |
+          docker tag "antnest/$NAME:local" "$REF"
+          docker push "$REF"
+
+  manifest:
+    name: Freeze version manifest
+    needs: [plan, images]
+    if: >-
+      !cancelled() && needs.plan.result == 'success' &&
+      (needs.images.result == 'success' || needs.images.result == 'skipped')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      packages: read
+    outputs:
+      images: ${{ steps.freeze.outputs.images }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.plan.outputs.revision }}
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+      - uses: docker/setup-buildx-action@v4
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Freeze image digests
+        id: freeze
+        env:
+          MANIFEST_JSON: ${{ inputs.manifest }}
+          REVISION: ${{ needs.plan.outputs.revision }}
+          RESOLVED: ${{ needs.plan.outputs.images }}
+          ORIGIN: ${{ github.event_name == 'pull_request' && 'pr' || 'main' }}
+        run: |
+          if [ -n "$MANIFEST_JSON" ]; then
+            node tests/support/ci-manifest.mjs validate "$RUNNER_TEMP/manifest.json"
+          else
+            node tests/support/ci-manifest.mjs freeze "$RUNNER_TEMP/manifest.json"
+          fi
+      - uses: actions/upload-artifact@v7
+        with:
+          name: version-manifest
+          path: ${{ runner.temp }}/manifest.json
+          if-no-files-found: error
+          retention-days: 90
+
+  suite:
+    name: System E2E / ${{ matrix.name }}
+    needs: [plan, manifest]
+    if: needs.plan.outputs.count != '0'
+    permissions:
+      contents: read
+      actions: read
+      packages: read
+    strategy:
+      fail-fast: false
+      max-parallel: 6
+      matrix: ${{ fromJSON(needs.plan.outputs.suites) }}
+    uses: ./.github/workflows/_suite.yml
+    with:
+      suite: ${{ toJSON(matrix) }}
+      images: ${{ needs.manifest.outputs.images }}
+      revision: ${{ needs.plan.outputs.revision }}
+      readiness-rounds: ${{ github.event_name == 'schedule' && '100' || '3' }}
+
+  result:
+    name: System E2E result
+    needs: [plan, images, manifest, suite]
+    if: always() && needs.plan.result != 'skipped'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      actions: read
+      issues: write
+    steps:
+      - name: Record integration result
+        id: result
+        env:
+          RESULTS: ${{ toJSON(needs) }}
+          EVENT: ${{ github.event_name }}
+          REF: ${{ github.ref }}
+          ONLY: ${{ inputs.suites }}
+        run: |
+          node --input-type=module <<'JS'
+          import { appendFileSync, writeFileSync } from "node:fs";
+          const jobs = JSON.parse(process.env.RESULTS);
+          const count = jobs.plan.outputs.count;
+          const building = jobs.plan.outputs.building;
+          const validCount = value => /^(0|[1-9][0-9]*)$/.test(value ?? "");
+          const passed = jobs.plan.result === "success" &&
+            validCount(count) && Number(count) > 0 && validCount(building) &&
+            jobs.images.result === (building === "0" ? "skipped" : "success") &&
+            jobs.manifest.result === "success" && jobs.suite.result === "success";
+          const result = {
+            version: 1,
+            revision: jobs.plan.outputs.revision || null,
+            run: `${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID}`,
+            scope: process.env.ONLY ? "partial" : "full",
+            readiness_rounds: process.env.EVENT === "schedule" ? 100 : 3,
+            conclusion: passed ? "passed" : "failed",
+            e2e_passed: passed && !process.env.ONLY &&
+              process.env.EVENT !== "pull_request" && process.env.REF === "refs/heads/main",
+            image_mode: "manifest-plus-legacy-source-builds",
+            release_eligible: false,
+            jobs: Object.fromEntries(Object.entries(jobs).map(([key, value]) => [key, value.result])),
+          };
+          writeFileSync("result.json", JSON.stringify(result, null, 2) + "\n");
+          appendFileSync(process.env.GITHUB_OUTPUT, `passed=${passed}\n`);
+          appendFileSync(process.env.GITHUB_STEP_SUMMARY,
+            `System integration: **${result.conclusion}** (${result.scope})\n\n` +
+            `Revision: \`${result.revision}\`\n\n` +
+            `System evidence: ${result.e2e_passed ? "e2e-passed" : "not eligible"}\n\n` +
+            "Release certification: pending legacy runner image migration (#361).\n");
+          JS
+      - uses: actions/download-artifact@v8
+        if: needs.manifest.result == 'success'
+        with:
+          name: version-manifest
+          path: version-set
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: system-integration-result
+          path: |
+            result.json
+            version-set/manifest.json
+          retention-days: 90
+          if-no-files-found: error
+      - name: Track main integration failure
+        if: >-
+          !cancelled() && steps.result.outputs.passed == 'false' &&
+          github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        uses: actions/github-script@v8
+        env:
+          REVISION: ${{ needs.plan.outputs.revision }}
+        with:
+          script: |
+            const marker = "<!-- antnest-system-e2e-failure -->";
+            const url = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            const body = `${marker}\nSystem integration failed for ${process.env.REVISION || context.sha}.\n\nRun and version-set evidence: ${url}\n\nFix forward on main. This is post-merge system feedback, not a PR merge gate. See #361.`;
+            const issues = await github.paginate(github.rest.issues.listForRepo, {
+              ...context.repo, state: "open", creator: "github-actions[bot]", per_page: 100
+            });
+            const existing = issues.find(issue => !issue.pull_request && issue.body?.includes(marker));
+            if (existing) {
+              await github.rest.issues.createComment({ ...context.repo, issue_number: existing.number, body });
+            } else {
+              await github.rest.issues.create({
+                ...context.repo, title: "System integration E2E failures on main", body
+              });
+            }
+      - name: Report failed system integration
+        if: steps.result.outputs.passed != 'true'
+        run: exit 1

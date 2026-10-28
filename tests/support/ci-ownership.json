@@ -1,0 +1,65 @@
+{
+  "admin-console": ["admin-console", "edge-gateway"],
+  "agent-acp": [
+    "agent-acp-service",
+    "admin-console",
+    "agent-controller",
+    "agent-ui",
+    "runtime-controller",
+    "skill-registry"
+  ],
+  "agent-controller": [
+    "agent-controller",
+    "admin-console",
+    "agent-acp-service",
+    "agent-ui",
+    "runtime-controller"
+  ],
+  "agent-ui": ["agent-ui", "edge-gateway"],
+  "edge-gateway": ["edge-gateway", "admin-console", "agent-ui"],
+  "egress": ["runtime-egress", "agent-controller", "runtime-controller"],
+  "identity": [
+    "identity-service",
+    "admin-console",
+    "agent-acp-service",
+    "agent-controller",
+    "agent-ui",
+    "edge-gateway",
+    "skill-registry"
+  ],
+  "platform": [
+    "admin-console",
+    "agent-acp-service",
+    "agent-controller",
+    "agent-ui",
+    "antnest-runtime",
+    "edge-gateway",
+    "identity-service",
+    "runtime-controller",
+    "runtime-egress",
+    "skill-registry"
+  ],
+  "runtime": [
+    "antnest-runtime",
+    "agent-acp-service",
+    "runtime-controller",
+    "runtime-egress"
+  ],
+  "skill-learning": [
+    "agent-acp-service",
+    "agent-controller",
+    "admin-console",
+    "agent-ui",
+    "runtime-controller",
+    "skill-registry",
+    "antnest-runtime"
+  ],
+  "skill-registry": [
+    "skill-registry",
+    "admin-console",
+    "agent-acp-service",
+    "agent-controller",
+    "runtime-controller",
+    "antnest-runtime"
+  ]
+}
