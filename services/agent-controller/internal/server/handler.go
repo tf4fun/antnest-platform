@@ -217,30 +217,36 @@ type reviseModelProfileRequest struct {
 }
 
 type createTemplateRequest struct {
-	RequestID               string                  `json:"request_id"`
-	OrganizationID          string                  `json:"organization_id"`
-	TemplateKey             string                  `json:"template_key"`
-	Name                    string                  `json:"name"`
-	ModelProfileID          string                  `json:"model_profile_id"`
-	FallbackModelProfileIDs []string                `json:"fallback_model_profile_ids,omitempty"`
-	SystemPrompt            string                  `json:"system_prompt"`
-	MaxModelRequests        int                     `json:"max_model_requests"`
-	ContextPolicyVersion    string                  `json:"context_policy_version"`
-	Runtime                 domain.RuntimeSpecInput `json:"runtime"`
-	SkillRefs               []domain.SkillReference `json:"skill_refs,omitempty"`
+	RequestID               string                   `json:"request_id"`
+	OrganizationID          string                   `json:"organization_id"`
+	TemplateKey             string                   `json:"template_key"`
+	Name                    string                   `json:"name"`
+	ModelProfileID          string                   `json:"model_profile_id"`
+	FallbackModelProfileIDs []string                 `json:"fallback_model_profile_ids,omitempty"`
+	SystemPrompt            string                   `json:"system_prompt"`
+	MaxModelRequests        int                      `json:"max_model_requests"`
+	ModelRetry              *domain.ModelRetryPolicy `json:"model_retry,omitempty"`
+	Failover                string                   `json:"failover,omitempty"`
+	RunBudget               *domain.RunBudget        `json:"run_budget,omitempty"`
+	ContextPolicyVersion    string                   `json:"context_policy_version"`
+	Runtime                 domain.RuntimeSpecInput  `json:"runtime"`
+	SkillRefs               []domain.SkillReference  `json:"skill_refs,omitempty"`
 }
 
 type reviseTemplateRequest struct {
-	RequestID               string                  `json:"request_id"`
-	OrganizationID          string                  `json:"organization_id"`
-	Name                    string                  `json:"name"`
-	ModelProfileID          string                  `json:"model_profile_id"`
-	FallbackModelProfileIDs []string                `json:"fallback_model_profile_ids,omitempty"`
-	SystemPrompt            string                  `json:"system_prompt"`
-	MaxModelRequests        int                     `json:"max_model_requests"`
-	ContextPolicyVersion    string                  `json:"context_policy_version"`
-	Runtime                 domain.RuntimeSpecInput `json:"runtime"`
-	SkillRefs               []domain.SkillReference `json:"skill_refs,omitempty"`
+	RequestID               string                   `json:"request_id"`
+	OrganizationID          string                   `json:"organization_id"`
+	Name                    string                   `json:"name"`
+	ModelProfileID          string                   `json:"model_profile_id"`
+	FallbackModelProfileIDs []string                 `json:"fallback_model_profile_ids,omitempty"`
+	SystemPrompt            string                   `json:"system_prompt"`
+	MaxModelRequests        int                      `json:"max_model_requests"`
+	ModelRetry              *domain.ModelRetryPolicy `json:"model_retry,omitempty"`
+	Failover                string                   `json:"failover,omitempty"`
+	RunBudget               *domain.RunBudget        `json:"run_budget,omitempty"`
+	ContextPolicyVersion    string                   `json:"context_policy_version"`
+	Runtime                 domain.RuntimeSpecInput  `json:"runtime"`
+	SkillRefs               []domain.SkillReference  `json:"skill_refs,omitempty"`
 }
 
 type createAgentRequest struct {
@@ -291,22 +297,25 @@ type modelProfileResponse struct {
 }
 
 type templateResponse struct {
-	TemplateID              string                  `json:"template_id"`
-	OrganizationID          string                  `json:"organization_id"`
-	TemplateKey             string                  `json:"template_key"`
-	Name                    string                  `json:"name"`
-	Revision                int64                   `json:"revision"`
-	ModelProfileID          string                  `json:"model_profile_id"`
-	FallbackModelProfileIDs []string                `json:"fallback_model_profile_ids,omitempty"`
-	SystemPrompt            string                  `json:"system_prompt"`
-	MaxModelRequests        int                     `json:"max_model_requests"`
-	ContextPolicyVersion    string                  `json:"context_policy_version"`
-	Runtime                 domain.RuntimeSpecInput `json:"runtime"`
-	SkillRefs               []domain.FrozenSkill    `json:"skill_refs"`
-	SkillSetDigest          string                  `json:"skill_set_digest,omitempty"`
-	Enabled                 bool                    `json:"enabled"`
-	CreatedAt               time.Time               `json:"created_at"`
-	UpdatedAt               time.Time               `json:"updated_at"`
+	TemplateID              string                   `json:"template_id"`
+	OrganizationID          string                   `json:"organization_id"`
+	TemplateKey             string                   `json:"template_key"`
+	Name                    string                   `json:"name"`
+	Revision                int64                    `json:"revision"`
+	ModelProfileID          string                   `json:"model_profile_id"`
+	FallbackModelProfileIDs []string                 `json:"fallback_model_profile_ids,omitempty"`
+	SystemPrompt            string                   `json:"system_prompt"`
+	MaxModelRequests        int                      `json:"max_model_requests"`
+	ModelRetry              *domain.ModelRetryPolicy `json:"model_retry,omitempty"`
+	Failover                string                   `json:"failover,omitempty"`
+	RunBudget               *domain.RunBudget        `json:"run_budget,omitempty"`
+	ContextPolicyVersion    string                   `json:"context_policy_version"`
+	Runtime                 domain.RuntimeSpecInput  `json:"runtime"`
+	SkillRefs               []domain.FrozenSkill     `json:"skill_refs"`
+	SkillSetDigest          string                   `json:"skill_set_digest,omitempty"`
+	Enabled                 bool                     `json:"enabled"`
+	CreatedAt               time.Time                `json:"created_at"`
+	UpdatedAt               time.Time                `json:"updated_at"`
 }
 
 type modelProfileListResponse struct {
@@ -343,6 +352,9 @@ type agentConfigurationResponse struct {
 	Template             agentTemplateLineageResponse     `json:"template"`
 	ModelProfile         agentModelProfileLineageResponse `json:"model_profile"`
 	MaxModelRequests     int                              `json:"max_model_requests"`
+	ModelRetry           *domain.ModelRetryPolicy         `json:"model_retry,omitempty"`
+	Failover             string                           `json:"failover,omitempty"`
+	RunBudget            *domain.RunBudget                `json:"run_budget,omitempty"`
 	ContextPolicyVersion string                           `json:"context_policy_version"`
 	Runtime              domain.RuntimeSpecInput          `json:"runtime"`
 	SystemSkills         []domain.FrozenSkill             `json:"system_skills"`
@@ -555,6 +567,7 @@ func (h *handler) createTemplate(response http.ResponseWriter, request *http.Req
 		ModelProfileID:          payload.ModelProfileID,
 		FallbackModelProfileIDs: payload.FallbackModelProfileIDs,
 		SystemPrompt:            payload.SystemPrompt, MaxModelRequests: payload.MaxModelRequests,
+		ModelRetry: payload.ModelRetry.Clone(), Failover: payload.Failover, RunBudget: payload.RunBudget.Clone(),
 		ContextPolicyVersion: payload.ContextPolicyVersion, Runtime: payload.Runtime,
 		SkillRefs: payload.SkillRefs,
 	})
@@ -576,6 +589,7 @@ func (h *handler) reviseTemplate(response http.ResponseWriter, request *http.Req
 		ModelProfileID:          payload.ModelProfileID,
 		FallbackModelProfileIDs: payload.FallbackModelProfileIDs,
 		SystemPrompt:            payload.SystemPrompt, MaxModelRequests: payload.MaxModelRequests,
+		ModelRetry: payload.ModelRetry.Clone(), Failover: payload.Failover, RunBudget: payload.RunBudget.Clone(),
 		ContextPolicyVersion: payload.ContextPolicyVersion, Runtime: payload.Runtime,
 		SkillRefs: payload.SkillRefs,
 	})
@@ -1169,6 +1183,7 @@ func templatePayload(view application.TemplateView) templateResponse {
 		ModelProfileID: view.ModelProfileID, SystemPrompt: view.SystemPrompt,
 		FallbackModelProfileIDs: view.FallbackModelProfileIDs,
 		MaxModelRequests:        view.MaxModelRequests, ContextPolicyVersion: view.ContextPolicyVersion,
+		ModelRetry: view.ModelRetry.Clone(), Failover: view.Failover, RunBudget: view.RunBudget.Clone(),
 		Runtime: view.Runtime, SkillRefs: append([]domain.FrozenSkill{}, view.SkillRefs...), SkillSetDigest: view.SkillSetDigest, Enabled: view.Enabled,
 		CreatedAt: view.CreatedAt, UpdatedAt: view.UpdatedAt,
 	}
@@ -1224,7 +1239,8 @@ func agentPayload(agent application.AgentView) agentResponse {
 				Revision:       configuration.ModelProfileRevision, Name: configuration.ModelProfileName,
 				Model: configuration.Model,
 			},
-			MaxModelRequests:     configuration.MaxModelRequests,
+			MaxModelRequests: configuration.MaxModelRequests,
+			ModelRetry:       configuration.ModelRetry.Clone(), Failover: configuration.Failover, RunBudget: configuration.RunBudget.Clone(),
 			ContextPolicyVersion: configuration.ContextPolicyVersion,
 			Runtime:              configuration.Runtime,
 			SystemSkills:         append([]domain.FrozenSkill{}, configuration.SystemSkills...),

@@ -45,9 +45,17 @@
         "updated_at"
       ],
       "properties": {
-        "request_id": { "type": "string", "minLength": 1 },
-        "agent_id": { "type": "string", "minLength": 1 },
-        "kind": { "enum": ["create", "rebuild", "enable"] },
+        "request_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "agent_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "kind": {
+          "enum": ["create", "rebuild", "enable"]
+        },
         "state": {
           "enum": [
             "preparing",
@@ -72,15 +80,35 @@
             "total_bytes"
           ],
           "properties": {
-            "verified_packages": { "type": "integer", "minimum": 0 },
-            "verified_bytes": { "type": "integer", "minimum": 0 },
-            "total_packages": { "type": "integer", "minimum": 0 },
-            "total_bytes": { "type": "integer", "minimum": 0 }
+            "verified_packages": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "verified_bytes": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "total_packages": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "total_bytes": {
+              "type": "integer",
+              "minimum": 0
+            }
           }
         },
-        "retry_after": { "type": "string", "format": "date-time" },
-        "error_code": { "type": "string" },
-        "updated_at": { "type": "string", "format": "date-time" }
+        "retry_after": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "error_code": {
+          "type": "string"
+        },
+        "updated_at": {
+          "type": "string",
+          "format": "date-time"
+        }
       }
     },
     "skill_reference": {
@@ -88,8 +116,14 @@
       "additionalProperties": false,
       "required": ["skill_id", "version"],
       "properties": {
-        "skill_id": { "type": "string", "pattern": "^skill_[0-9a-f]{32}$" },
-        "version": { "type": "integer", "minimum": 1 }
+        "skill_id": {
+          "type": "string",
+          "pattern": "^skill_[0-9a-f]{32}$"
+        },
+        "version": {
+          "type": "integer",
+          "minimum": 1
+        }
       }
     },
     "frozen_skill_reference": {
@@ -107,10 +141,24 @@
         "package_rules_version"
       ],
       "properties": {
-        "skill_id": { "type": "string", "pattern": "^skill_[0-9a-f]{32}$" },
-        "version": { "type": "integer", "minimum": 1 },
-        "name": { "type": "string", "minLength": 1, "maxLength": 64 },
-        "description": { "type": "string", "minLength": 1, "maxLength": 512 },
+        "skill_id": {
+          "type": "string",
+          "pattern": "^skill_[0-9a-f]{32}$"
+        },
+        "version": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "description": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
         "artifact_digest": {
           "type": "string",
           "pattern": "^sha256:[0-9a-f]{64}$"
@@ -129,7 +177,9 @@
           "minimum": 1,
           "maximum": 33554432
         },
-        "package_rules_version": { "const": 1 }
+        "package_rules_version": {
+          "const": 1
+        }
       }
     },
     "discover_provider_models_request": {
@@ -1002,7 +1052,9 @@
         "skill_refs": {
           "type": "array",
           "maxItems": 32,
-          "items": { "$ref": "#/$defs/skill_reference" }
+          "items": {
+            "$ref": "#/$defs/skill_reference"
+          }
         },
         "model_profile_id": {
           "$ref": "#/$defs/id"
@@ -1014,6 +1066,15 @@
           "items": {
             "$ref": "#/$defs/id"
           }
+        },
+        "model_retry": {
+          "$ref": "#/$defs/model_retry"
+        },
+        "failover": {
+          "enum": ["never", "before_output"]
+        },
+        "run_budget": {
+          "$ref": "#/$defs/run_budget"
         }
       }
     },
@@ -1060,7 +1121,9 @@
         "skill_refs": {
           "type": "array",
           "maxItems": 32,
-          "items": { "$ref": "#/$defs/skill_reference" }
+          "items": {
+            "$ref": "#/$defs/skill_reference"
+          }
         },
         "model_profile_id": {
           "$ref": "#/$defs/id"
@@ -1072,6 +1135,15 @@
           "items": {
             "$ref": "#/$defs/id"
           }
+        },
+        "model_retry": {
+          "$ref": "#/$defs/model_retry"
+        },
+        "failover": {
+          "enum": ["never", "before_output"]
+        },
+        "run_budget": {
+          "$ref": "#/$defs/run_budget"
         }
       }
     },
@@ -1125,7 +1197,9 @@
         "skill_refs": {
           "type": "array",
           "maxItems": 32,
-          "items": { "$ref": "#/$defs/frozen_skill_reference" }
+          "items": {
+            "$ref": "#/$defs/frozen_skill_reference"
+          }
         },
         "skill_set_digest": {
           "type": "string",
@@ -1150,6 +1224,15 @@
           "items": {
             "$ref": "#/$defs/id"
           }
+        },
+        "model_retry": {
+          "$ref": "#/$defs/model_retry"
+        },
+        "failover": {
+          "enum": ["never", "before_output"]
+        },
+        "run_budget": {
+          "$ref": "#/$defs/run_budget"
         }
       }
     },
@@ -1356,11 +1439,22 @@
         "system_skills": {
           "type": "array",
           "maxItems": 32,
-          "items": { "$ref": "#/$defs/frozen_skill_reference" }
+          "items": {
+            "$ref": "#/$defs/frozen_skill_reference"
+          }
         },
         "skill_set_digest": {
           "type": "string",
           "pattern": "^sha256:[0-9a-f]{64}$"
+        },
+        "model_retry": {
+          "$ref": "#/$defs/model_retry"
+        },
+        "failover": {
+          "enum": ["never", "before_output"]
+        },
+        "run_budget": {
+          "$ref": "#/$defs/run_budget"
         }
       }
     },
@@ -1671,33 +1765,53 @@
       "oneOf": [
         {
           "properties": {
-            "schema_version": { "const": 1 },
+            "schema_version": {
+              "const": 1
+            },
             "event_type": {
-              "not": { "enum": ["runtime_bound", "agent_runtime_barrier_required"] }
+              "not": {
+                "enum": ["runtime_bound", "agent_runtime_barrier_required"]
+              }
             }
           }
         },
         {
           "properties": {
-            "schema_version": { "const": 1 },
-            "event_type": { "const": "agent_runtime_barrier_required" },
-            "data": { "$ref": "#/$defs/notification_data" }
+            "schema_version": {
+              "const": 1
+            },
+            "event_type": {
+              "const": "agent_runtime_barrier_required"
+            },
+            "data": {
+              "$ref": "#/$defs/notification_data"
+            }
           }
         },
         {
           "properties": {
-            "schema_version": { "const": 2 },
-            "event_type": { "const": "runtime_bound" },
+            "schema_version": {
+              "const": 2
+            },
+            "event_type": {
+              "const": "runtime_bound"
+            },
             "data": {
               "$ref": "#/$defs/readiness_event_data",
-              "not": { "required": ["applied_revision"] }
+              "not": {
+                "required": ["applied_revision"]
+              }
             }
           }
         },
         {
           "properties": {
-            "schema_version": { "const": 2 },
-            "event_type": { "const": "agent_ready" },
+            "schema_version": {
+              "const": 2
+            },
+            "event_type": {
+              "const": "agent_ready"
+            },
             "data": {
               "$ref": "#/$defs/readiness_event_data",
               "required": ["applied_revision"]
@@ -2019,6 +2133,49 @@
         }
       },
       "additionalProperties": false
+    },
+    "model_retry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["max", "base_ms", "cap_ms"],
+      "properties": {
+        "max": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 8
+        },
+        "base_ms": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 30000
+        },
+        "cap_ms": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 30000
+        }
+      }
+    },
+    "run_budget": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "max_input_tokens": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "max_output_tokens": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "max_cost_usd_micros": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        }
+      }
     }
   }
 }
