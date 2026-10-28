@@ -73,7 +73,7 @@ their full ACP component dependency even when selected explicitly.
 
 The issue's historical baseline is one
 [integration run](https://github.com/tf4fun/antnest-platform/actions/runs/40618894967)
-at `a656ec8cca0181f7d1ff20123898dde1ad122cd`: 44m09s wall time, with readiness,
+at `a656ec8cca0181f7d1ff20123898dde1ad122cd4`: 44m09s wall time, with readiness,
 PostgreSQL and lifecycle competing for the final completion time. The reported
 793.51s nested ACP run is overlapping runner work, **not** a promised 793.51s
 workflow saving. Cache/queue conditions were not controlled for this single sample.
