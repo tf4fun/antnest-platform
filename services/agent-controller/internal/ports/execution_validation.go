@@ -91,7 +91,7 @@ func (model ExecutionModel) validProviderObservations(organizationID string, pro
 	if strings.TrimSpace(limits.Binding.Model) == "" || len(limits.Binding.Model) > 200 {
 		return false
 	}
-	return limits.Binding.ProviderObservationBinding.Valid() &&
+	return limits.Binding.Valid() &&
 		limits.Binding.Matches(organizationID, provider.ConnectionID, provider.ProviderKey,
 			provider.RequestProtocol, provider.BaseURL, provider.CredentialRevision)
 }
