@@ -42,7 +42,7 @@ describe.skipIf(databaseUrl === undefined)(
         },
       ]);
       await migrate(pool);
-      const tables = await pool.query(
+      const tables = await pool.query<{ tableowner: string }>(
         "SELECT tableowner FROM pg_tables WHERE schemaname = 'public'",
       );
       expect(tables.rows.length).toBeGreaterThan(0);
