@@ -62,6 +62,12 @@ func TestRuntimeBarrierRecoveryManualMigrationPreservesExistingAutomaticReceipt(
 	require.Zero(t, v2Events)
 	require.NoError(t, tx.QueryRow(ctx, `SELECT count(*) FROM agent_controller.agent_events WHERE schema_version=1 AND event_type='agent_ready'`).Scan(&legacyReadyEvents))
 	require.EqualValues(t, 1, legacyReadyEvents)
+	var templateRevisions, legacyPolicyNulls int64
+	require.NoError(t, tx.QueryRow(ctx, `SELECT count(*),count(*) FILTER (
+WHERE model_retry IS NULL AND failover IS NULL AND run_budget IS NULL)
+FROM agent_controller.agent_template_revisions`).Scan(&templateRevisions, &legacyPolicyNulls))
+	require.Greater(t, templateRevisions, int64(0))
+	require.Equal(t, templateRevisions, legacyPolicyNulls, "only SQL NULL policy columns may be removed from the predecessor")
 	// Restore the exact schema/version and event-type constraints from 0001/0011.
 	_, err = tx.Exec(ctx, `DROP TABLE agent_controller.agent_runtime_readiness;
 DROP TABLE agent_controller.runtime_barrier_recovery_notifications;
@@ -79,9 +85,12 @@ ALTER TABLE agent_controller.agent_events ADD CONSTRAINT agent_events_type_known
 	require.NoError(t, err)
 	_, err = tx.Exec(ctx, `ALTER TABLE agent_controller.runtime_barrier_recovery_receipts DROP COLUMN manual`)
 	require.NoError(t, err)
-	removed, err := tx.Exec(ctx, `DELETE FROM agent_controller.schema_migrations WHERE version IN (29,30,31)`)
+	_, err = tx.Exec(ctx, `ALTER TABLE agent_controller.agent_template_revisions
+DROP COLUMN model_retry, DROP COLUMN failover, DROP COLUMN run_budget`)
 	require.NoError(t, err)
-	require.EqualValues(t, 3, removed.RowsAffected())
+	removed, err := tx.Exec(ctx, `DELETE FROM agent_controller.schema_migrations WHERE version IN (29,30,31,32)`)
+	require.NoError(t, err)
+	require.EqualValues(t, 4, removed.RowsAffected())
 	require.NoError(t, tx.Commit(ctx))
 
 	var version int64
@@ -104,23 +113,33 @@ FROM agent_controller.runtime_barrier_recovery_receipts WHERE request_id=$1`, or
 	require.NoError(t, fixture.store.Migrate(ctx))
 	require.NoError(t, fixture.store.pool.QueryRow(ctx, `SELECT max(version)
 FROM agent_controller.schema_migrations`).Scan(&version))
-	require.EqualValues(t, 31, version)
+	require.EqualValues(t, 32, version)
+	assertModelPolicyLegacyColumnsNull(t, ctx, fixture.store)
 	assertRuntimeBarrierManualTestRow(t, ctx, fixture.store, original.Command.RequestID, false)
 	require.Equal(t, original, runtimeBarrierAdmissionReceipt(t, ctx, fixture.store, fixture.begin))
 	upgradedState, found, err := fixture.store.ReplayAgentRebuild(ctx, original.Command.RequestID, original.RequestFingerprint)
 	require.NoError(t, err)
 	require.True(t, found)
-	require.Equal(t, persistedState, upgradedState)
+	// Readiness projects the new desired publication revision; its original ACK
+	// and every persisted rebuild fact must remain unchanged.
+	expectedState := persistedState
+	require.NotNil(t, persistedState.Agent.Readiness)
+	expectedReadiness := *persistedState.Agent.Readiness
+	expectedReadiness.CommittedRevision++
+	expectedState.Agent.Readiness = &expectedReadiness
+	require.Equal(t, expectedState, upgradedState)
 	upgradedPending, err := fixture.store.ListPendingRuntimeBarrierRecoveryStarts(ctx, "", 10)
 	require.NoError(t, err)
 	require.Equal(t, pending, upgradedPending)
-	require.Equal(t, before, runtimeBarrierAdmissionSnapshot(t, ctx, fixture.store), "upgrade must preserve the receipt, operation, target, cooldown, pending start and all other business rows")
+	expected := runtimeBarrierAdmissionAfterModelPolicyMigration(t, ctx, fixture.store, before)
+	require.Equal(t, expected, runtimeBarrierAdmissionSnapshot(t, ctx, fixture.store), "upgrade must preserve the receipt, operation, target, cooldown, pending start and all other business rows except the exact policy publication advance")
 	require.Equal(t, historicalJournal, runtimeBarrierPolicyMigrationSnapshot(t, ctx, fixture.store, 28))
 
-	upgradedJournal := runtimeBarrierPolicyMigrationSnapshot(t, ctx, fixture.store, 31)
+	upgradedJournal := runtimeBarrierPolicyMigrationSnapshot(t, ctx, fixture.store, 32)
 	require.NoError(t, fixture.store.Migrate(ctx))
-	require.Equal(t, upgradedJournal, runtimeBarrierPolicyMigrationSnapshot(t, ctx, fixture.store, 31))
+	require.Equal(t, upgradedJournal, runtimeBarrierPolicyMigrationSnapshot(t, ctx, fixture.store, 32))
 	require.Equal(t, historicalJournal, runtimeBarrierPolicyMigrationSnapshot(t, ctx, fixture.store, 28))
-	require.Equal(t, before, runtimeBarrierAdmissionSnapshot(t, ctx, fixture.store), "repeated migration must be a complete business no-op")
+	require.Equal(t, expected, runtimeBarrierAdmissionSnapshot(t, ctx, fixture.store), "repeated migration must be a complete business no-op")
+	assertModelPolicyLegacyColumnsNull(t, ctx, fixture.store)
 	require.Equal(t, original, runtimeBarrierAdmissionReceipt(t, ctx, fixture.store, fixture.begin))
 }

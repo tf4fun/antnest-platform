@@ -139,6 +139,9 @@ type AgentConfigurationView struct {
 	ModelProfileName       string
 	Model                  domain.ModelSpec
 	MaxModelRequests       int
+	ModelRetry             *domain.ModelRetryPolicy `json:"model_retry,omitempty"`
+	Failover               string                   `json:"failover,omitempty"`
+	RunBudget              *domain.RunBudget        `json:"run_budget,omitempty"`
 	ContextPolicyVersion   string
 	Runtime                domain.RuntimeSpecInput
 	SystemSkills           []domain.FrozenSkill

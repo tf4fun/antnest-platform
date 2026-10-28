@@ -6,7 +6,11 @@
   "fixtures": "model-call-policy-fixtures.json",
   "policy_path": "/internal/model-call-policy",
   "operations": {
-    "get": { "method": "GET", "request": "policy_query", "response": "policy" },
+    "get": {
+      "method": "GET",
+      "request": "policy_query",
+      "response": "policy"
+    },
     "replace": {
       "method": "PUT",
       "request": "policy_update_request",
@@ -21,7 +25,11 @@
     "maximum": 9007199254740991
   },
   "compatibility": {
-    "default_retry": { "max": 0, "base_ms": 200, "cap_ms": 30000 },
+    "default_retry": {
+      "max": 0,
+      "base_ms": 200,
+      "cap_ms": 30000
+    },
     "default_failover": "never",
     "default_unknown_cost": "allow",
     "absent_limits": "unlimited",
@@ -29,7 +37,11 @@
     "existing_max_model_requests": "still counts every actual model attempt"
   },
   "delivery_defaults": {
-    "model_retry": { "max": 2, "base_ms": 200, "cap_ms": 30000 },
+    "model_retry": {
+      "max": 2,
+      "base_ms": 200,
+      "cap_ms": 30000
+    },
     "failover": "before_output",
     "rollout": "Controller explicitly publishes effective defaults for existing Agents after ACP consumers support this contract; explicit zero/never settings remain opt-outs"
   },
@@ -61,8 +73,7 @@
     "retryable": false
   },
   "pending_batches": [
-    "ACP policy parsing, attempt lifecycle, usage ledger and enforcement",
-    "Controller immutable Template policy and organization publication",
+    "Controller trusted Provider observations and organization policy publication",
     "Console Template and organization policy controls",
     "Real retry, fallback, budget and cross-replica integration"
   ]

@@ -2,6 +2,7 @@ package domain
 
 import (
 	"encoding/json"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -241,5 +242,185 @@ func validRuntime() RuntimeSpecInput {
 		Resources: RuntimeResources{
 			MemoryBytes: 512 * 1024 * 1024, PIDsLimit: 256, TmpfsBytes: 64 * 1024 * 1024,
 		},
+	}
+}
+
+func TestTemplateModelPolicyRoundTripsWithoutMaterializingDefaults(t *testing.T) {
+	t.Parallel()
+	for _, policy := range []struct {
+		name string
+		body string
+	}{
+		{"legacy omitted", `{}`},
+		{"explicit opt out and zero caps", `{"model_retry":{"max":0,"base_ms":1,"cap_ms":1},"failover":"never","run_budget":{"max_input_tokens":0,"max_output_tokens":0,"max_cost_usd_micros":0}}`},
+		{"explicit empty budget", `{"run_budget":{}}`},
+		{"maximum policy bounds", `{"model_retry":{"max":8,"base_ms":30000,"cap_ms":30000},"failover":"before_output","run_budget":{"max_input_tokens":9007199254740991,"max_output_tokens":1,"max_cost_usd_micros":9007199254740991}}`},
+	} {
+		t.Run(policy.name, func(t *testing.T) {
+			input := modelPolicyTemplateInput()
+			if err := json.Unmarshal([]byte(policy.body), &input); err != nil {
+				t.Fatal(err)
+			}
+			template, err := NewTemplateRevision(input)
+			if err != nil {
+				t.Fatalf("create Template with valid policy: %v", err)
+			}
+			assertDomainModelPolicyJSON(t, template.Snapshot(), policy.body)
+			model, err := NewModelProfileRevision(ModelProfileRevisionInput{
+				ID: "model-revision-1", ModelProfileID: "model-1", OrganizationID: "org-1",
+				Revision: 1, Model: validModel(),
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			spec, err := MaterializeAgentSpec(template, model)
+			if err != nil {
+				t.Fatal(err)
+			}
+			assertDomainModelPolicyJSON(t, spec.Snapshot(), policy.body)
+			original, err := json.Marshal(spec.Snapshot())
+			if err != nil {
+				t.Fatal(err)
+			}
+			digest, err := spec.Digest()
+			if err != nil {
+				t.Fatal(err)
+			}
+			var stored AgentSpecSnapshot
+			if err := json.Unmarshal(original, &stored); err != nil {
+				t.Fatal(err)
+			}
+			restored := AgentSpec{snapshot: stored}
+			roundTrip, err := json.Marshal(restored.Snapshot())
+			if err != nil || string(roundTrip) != string(original) {
+				t.Fatalf("stored AgentSpec shape changed: %s -> %s, error=%v", original, roundTrip, err)
+			}
+			restoredDigest, err := restored.Digest()
+			if err != nil || restoredDigest != digest {
+				t.Fatalf("stored AgentSpec digest changed: %q -> %q, error=%v", digest, restoredDigest, err)
+			}
+			assertDomainModelPolicyJSON(t, restored.Snapshot(), policy.body)
+		})
+	}
+}
+
+func TestTemplateModelPolicyRejectsInvalidBoundsBeforeMaterialization(t *testing.T) {
+	t.Parallel()
+	for _, policy := range []struct {
+		name string
+		body string
+	}{
+		{"negative retries", `{"model_retry":{"max":-1,"base_ms":1,"cap_ms":1}}`},
+		{"too many retries", `{"model_retry":{"max":9,"base_ms":1,"cap_ms":1}}`},
+		{"zero base", `{"model_retry":{"max":1,"base_ms":0,"cap_ms":1}}`},
+		{"zero cap", `{"model_retry":{"max":1,"base_ms":1,"cap_ms":0}}`},
+		{"base exceeds cap", `{"model_retry":{"max":1,"base_ms":2,"cap_ms":1}}`},
+		{"base exceeds maximum", `{"model_retry":{"max":1,"base_ms":30001,"cap_ms":30001}}`},
+		{"cap exceeds maximum", `{"model_retry":{"max":1,"base_ms":1,"cap_ms":30001}}`},
+		{"unknown failover", `{"failover":"always"}`},
+		{"negative input cap", `{"run_budget":{"max_input_tokens":-1}}`},
+		{"negative output cap", `{"run_budget":{"max_output_tokens":-1}}`},
+		{"negative cost cap", `{"run_budget":{"max_cost_usd_micros":-1}}`},
+		{"fractional tokens", `{"run_budget":{"max_input_tokens":1.5}}`},
+		{"unsafe integer cost", `{"run_budget":{"max_cost_usd_micros":9007199254740992}}`},
+	} {
+		t.Run(policy.name, func(t *testing.T) {
+			input := modelPolicyTemplateInput()
+			if err := json.Unmarshal([]byte(policy.body), &input); err != nil {
+				return
+			}
+			if _, err := NewTemplateRevision(input); err == nil {
+				t.Fatalf("accepted invalid Template model policy: %s", policy.body)
+			}
+		})
+	}
+}
+
+func TestTemplateModelPolicyCopiesInputsSnapshotsAndDigestFacts(t *testing.T) {
+	t.Parallel()
+	const originalPolicy = `{"model_retry":{"max":2,"base_ms":200,"cap_ms":30000},"failover":"before_output","run_budget":{"max_input_tokens":12,"max_output_tokens":4,"max_cost_usd_micros":99}}`
+	const changedPolicy = `{"model_retry":{"max":0,"base_ms":1,"cap_ms":1},"failover":"never","run_budget":{"max_input_tokens":0,"max_output_tokens":0,"max_cost_usd_micros":0}}`
+	input := modelPolicyTemplateInput()
+	if err := json.Unmarshal([]byte(originalPolicy), &input); err != nil {
+		t.Fatal(err)
+	}
+	template, err := NewTemplateRevision(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	model, err := NewModelProfileRevision(ModelProfileRevisionInput{
+		ID: "model-revision-1", ModelProfileID: "model-1", OrganizationID: "org-1", Revision: 1, Model: validModel(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	spec, err := MaterializeAgentSpec(template, model)
+	if err != nil {
+		t.Fatal(err)
+	}
+	originalDigest, err := spec.Digest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Decoding into existing optional objects mutates their original backing
+	// storage, so this catches shallow copies without naming the new Go types.
+	if err := json.Unmarshal([]byte(changedPolicy), &input); err != nil {
+		t.Fatal(err)
+	}
+	templateSnapshot := template.Snapshot()
+	if err := json.Unmarshal([]byte(changedPolicy), &templateSnapshot); err != nil {
+		t.Fatal(err)
+	}
+	specSnapshot := spec.Snapshot()
+	if err := json.Unmarshal([]byte(changedPolicy), &specSnapshot); err != nil {
+		t.Fatal(err)
+	}
+	assertDomainModelPolicyJSON(t, template.Snapshot(), originalPolicy)
+	assertDomainModelPolicyJSON(t, spec.Snapshot(), originalPolicy)
+	digest, err := spec.Digest()
+	if err != nil || digest != originalDigest {
+		t.Fatalf("frozen policy digest changed through an alias: %q -> %q, error=%v", originalDigest, digest, err)
+	}
+	changedTemplate, err := NewTemplateRevision(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	changedSpec, err := MaterializeAgentSpec(changedTemplate, model)
+	if err != nil {
+		t.Fatal(err)
+	}
+	changedDigest, err := changedSpec.Digest()
+	if err != nil || changedDigest == originalDigest {
+		t.Fatalf("changed policy did not change the AgentSpec digest: %q, error=%v", changedDigest, err)
+	}
+}
+
+func modelPolicyTemplateInput() TemplateRevisionInput {
+	return TemplateRevisionInput{
+		TemplateID: "template-1", OrganizationID: "org-1", Revision: 1,
+		ModelProfileID: "model-1", SystemPrompt: "prompt", MaxModelRequests: 8,
+		Runtime: validRuntime(), ContextPolicyVersion: ContextPolicyV1,
+	}
+}
+
+func assertDomainModelPolicyJSON(t *testing.T, value any, policy string) {
+	t.Helper()
+	payload, err := json.Marshal(value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got, want map[string]any
+	if err := json.Unmarshal(payload, &got); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal([]byte(policy), &want); err != nil {
+		t.Fatal(err)
+	}
+	for _, field := range []string{"model_retry", "failover", "run_budget"} {
+		actual, actualPresent := got[field]
+		expected, expectedPresent := want[field]
+		if actualPresent != expectedPresent || !reflect.DeepEqual(actual, expected) {
+			t.Fatalf("policy field %s = %#v (present=%t), want %#v (present=%t); JSON=%s", field, actual, actualPresent, expected, expectedPresent, payload)
+		}
 	}
 }
