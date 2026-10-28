@@ -37,11 +37,15 @@ export class PostgresKernel {
   public agentTransaction<T>(
     input: AgentOwnershipFence,
     operation: (client: PoolClient) => Promise<T>,
-    options: TransactionOptions & { organizationBarrier?: true } = {},
+    options: TransactionOptions & {
+      organizationBarrier?: true;
+      requireLiveFenceAtCommit?: true;
+    } = {},
   ): Promise<T> {
     const fence = ownershipFence(input);
     const timeoutMs = transactionBudget(options.timeoutMs ?? 10_000);
     const organizationBarrier = options.organizationBarrier === true;
+    const requireLiveFenceAtCommit = options.requireLiveFenceAtCommit === true;
     return this.transaction(
       async (client) => {
         if (organizationBarrier) await lockRuntimeBarrierOrganization(client, fence.organizationId);
@@ -58,6 +62,7 @@ export class PostgresKernel {
           values,
         );
         if (current.rows[0]?.owned !== true) throw new AgentOwnershipLostError();
+        if (!requireLiveFenceAtCommit) return operation(client);
         const result = await operation(client);
         // Holding the lease row prevents a competing owner from replacing it,
         // but cannot stop its clock from expiring while business rows are locked.

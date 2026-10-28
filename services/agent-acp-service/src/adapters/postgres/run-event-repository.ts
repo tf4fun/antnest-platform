@@ -418,6 +418,7 @@ export class PostgresRunEventRepository implements RunEventRepository {
           throw new Error("Run organization changed");
         return operation(client);
       },
+      { requireLiveFenceAtCommit: true },
     );
   }
 

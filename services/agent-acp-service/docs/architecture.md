@@ -46,6 +46,10 @@ requires an existing matching live lease, holds a shared row lock through commit
 and uses PostgreSQL 17's transaction timeout for a bounded database-only callback.
 A missed locking lookup cannot be authorized by a later inserted row, and a
 COMMIT response reporting ROLLBACK cannot return a successful business result.
+Budget admission and model-attempt accounting additionally require the original
+lease to remain live at the final pre-commit check, rolling back all their facts
+if a Session, Run or budget lock wait outlives it. Other guarded transactions
+retain their admitted-under-fence commit ordering while takeover waits.
 
 When owner settings are enabled and registration completes, production
 `AgentGenerations` prepares a fixed authority and component graph per Agent.
