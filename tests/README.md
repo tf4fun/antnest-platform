@@ -91,6 +91,9 @@ The post-gate `Report workflow timing` job records the exact candidate and attem
 per-job setup/build/test/finalization, start/finish offsets, integration-gate wall
 time and accumulated parallel runner time. This initial measurement covers only
 the integration workflow, not the full cross-workflow required-check envelope.
+The first attempt starts at workflow creation; reruns start at the API's
+attempt start timestamp so inter-attempt idle time is not counted. Pre-start
+queue time for reruns is unavailable rather than inferred.
 GitHub's jobs API cannot separate matrix-slot wait from runner queue time: both
 remain null, and created-to-start delay must not be attributed to runner shortage.
 First actionable feedback is measured from suite start to observation at the shard;

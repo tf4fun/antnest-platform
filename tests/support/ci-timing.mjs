@@ -36,28 +36,30 @@ export function workflowTiming(run, jobs) {
   assert(Number.isSafeInteger(run.id) && run.id > 0);
   assert(Number.isSafeInteger(run.run_attempt) && run.run_attempt > 0);
   assert(/^[a-f0-9]{40}$/u.test(run.head_sha));
+  const origin = run.run_attempt === 1 ? run.created_at : run.run_started_at;
   const rows = jobs
     .filter((job) => allowedNames.has(job.name))
     .map((job) => {
       const test = job.steps?.find((step) => step.name === "Run suites");
       const build = job.steps?.find((step) => step.name === "Build image");
+      const phase = test ?? build;
       return {
         name: job.name,
         conclusion: conclusions.has(job.conclusion)
           ? job.conclusion
           : "pending",
-        startOffsetMs: elapsed(run.created_at, job.started_at),
-        finishOffsetMs: elapsed(run.created_at, job.completed_at),
+        startOffsetMs: elapsed(origin, job.started_at),
+        finishOffsetMs: elapsed(origin, job.completed_at),
         createdToStartMs: elapsed(job.created_at, job.started_at),
         // The jobs API does not expose the matrix-slot acquisition timestamp.
         matrixSlotWaitMs: null,
         runnerQueueMs: null,
         runnerMs: elapsed(job.started_at, job.completed_at),
-        setupMs: test ? elapsed(job.started_at, test.started_at) : null,
+        setupMs: phase ? elapsed(job.started_at, phase.started_at) : null,
         testMs: test ? elapsed(test.started_at, test.completed_at) : null,
         buildMs: build ? elapsed(build.started_at, build.completed_at) : null,
-        finalizationMs: test
-          ? elapsed(test.completed_at, job.completed_at)
+        finalizationMs: phase
+          ? elapsed(phase.completed_at, job.completed_at)
           : null,
       };
     });
@@ -73,6 +75,8 @@ export function workflowTiming(run, jobs) {
     attempt: run.run_attempt,
     candidate: run.head_sha,
     scope: "integration-workflow-only",
+    clockOrigin:
+      run.run_attempt === 1 ? "workflow_created_at" : "attempt_run_started_at",
     complete: Boolean(
       gate &&
       gate.finishOffsetMs !== null &&
@@ -93,14 +97,17 @@ export function timingMarkdown(report) {
     "## Integration critical-path timing",
     "",
     `Candidate: ${report.candidate}; attempt: ${report.attempt}; gate: ${report.gateConclusion}.`,
+    `Clock origin: ${report.clockOrigin}. Reruns exclude inter-attempt idle time; their pre-start queue time is unavailable.`,
     `Integration gate wall time: ${seconds(report.integrationGateWallMs)} s. Accumulated runner time: ${seconds(report.totalRunnerMs)} s (parallel, not wall time or savings).`,
     "Other workflows, including Repository checks, are outside this measurement. Matrix-slot waiting and runner queueing cannot be separated by the jobs API; null is not zero. Created-to-start includes scheduling/dependency waiting and must not be attributed to runner shortage.",
+    "",
     "| Job | Start (s) | Finish (s) | Created-to-start (s) | Setup (s) | Build (s) | Test (s) | Finalization (s) |",
     "| --- | --- | --- | --- | --- | --- | --- | --- |",
     ...report.jobs.map(
       (row) =>
         `| ${markdownCell(row.name)} | ${[row.startOffsetMs, row.finishOffsetMs, row.createdToStartMs, row.setupMs, row.buildMs, row.testMs, row.finalizationMs].map(seconds).join(" | ")} |`,
     ),
+    "",
     report.lastSuite
       ? `Last suite completion: ${markdownCell(report.lastSuite.name)}. This is the observed completion barrier, not a prediction of savings after rescheduling.`
       : "No completed suite observed.",

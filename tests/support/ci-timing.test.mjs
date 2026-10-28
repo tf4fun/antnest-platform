@@ -44,6 +44,8 @@ test("critical path uses elapsed wall time, not summed parallel runner time", ()
   assert.equal(result.lastSuite.testMs, 40000);
   assert.equal(result.lastSuite.setupMs, 5000);
   assert.equal(result.jobs[1].buildMs, 30000);
+  assert.equal(result.jobs[1].setupMs, 10000);
+  assert.equal(result.jobs[1].finalizationMs, 10000);
   assert.equal(result.jobs[3].createdToStartMs, 60000);
   assert.equal(result.jobs[3].matrixSlotWaitMs, null);
   assert.equal(result.jobs[3].runnerQueueMs, null);
@@ -82,4 +84,18 @@ test("API metadata cannot copy arbitrary names or credential-shaped fields into 
   assert(!JSON.stringify(result).includes(secret));
   assert.equal(result.jobs.length, 1);
   assert.throws(() => workflowTiming({ ...run, head_sha: secret }, []));
+});
+
+test("reruns exclude time between attempts instead of presenting it as current gate latency", () => {
+  const result = workflowTiming(
+    { ...run, run_attempt: 2, run_started_at: at(1000) },
+    [job("Integration checks", 1010, 1012)],
+  );
+  assert.equal(result.integrationGateWallMs, 12000);
+  assert.equal(result.clockOrigin, "attempt_run_started_at");
+  const missing = workflowTiming({ ...run, run_attempt: 2 }, [
+    job("Integration checks", 1010, 1012),
+  ]);
+  assert.equal(missing.integrationGateWallMs, null);
+  assert.equal(missing.complete, false);
 });
