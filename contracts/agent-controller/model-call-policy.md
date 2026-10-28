@@ -3,8 +3,10 @@
 The shared [schema](model-call-policy.schema.json),
 [manifest](model-call-policy.json) and [golden vectors](model-call-policy-fixtures.json)
 define configuration shapes for owning-service batches. ACP implements retry,
-fallback, circuit breaking and budget accounting/enforcement; Controller policy
-publication and Console controls remain separate deliveries. These artifacts do
+fallback, circuit breaking and budget accounting/enforcement. Controller control
+revision 44 stores immutable Template policy and publishes effective retry/failover
+defaults. Provider observations, organization policy publication and Console controls
+remain separate deliveries. These artifacts do
 not add a live Controller route or establish complete #52 acceptance.
 
 ## Configuration and compatibility

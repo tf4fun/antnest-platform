@@ -795,3 +795,12 @@ consistent changes of owner/access revision invalidate an old request proof.
 The internal Provider section contains current decrypted credentials. It must
 remain internal; Runtime deployment commands, managed-MCP arguments/environment
 and ciphertext storage details are not part of the published Agent payload.
+
+
+## Model-call policy publication upgrade
+
+Migration 0032 advances organization publication revisions for effective Template
+retry/failover defaults while preserving immutable history and existing ACKs.
+Stop old Controller publishers before the migration, and deploy the ACP consumer
+first. The [model-call policy guide](model-call-policy.md) specifies rollout,
+revision exhaustion, explicit opt-outs and remaining consumer work.

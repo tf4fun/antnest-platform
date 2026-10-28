@@ -338,3 +338,103 @@ func TestExecutionProjectionKeepsDeploymentMCPConfigurationOutOfAgentPayload(t *
 	require.Equal(t, "http://antnest-runtime-agent-1:8093/mcp", value.Agents[0].Runtime.MCPEndpoint)
 	require.Empty(t, value.Agents[0].SkillInstructions, "Runtime owns dynamic Skill discovery")
 }
+
+func TestExecutionProjectionPublishesEffectivePolicyForExistingAndNewLegacyAgents(t *testing.T) {
+	const effective = `{"model_retry":{"max":2,"base_ms":200,"cap_ms":30000},"failover":"before_output"}`
+	for _, initial := range []bool{false, true} {
+		t.Run(map[bool]string{false: "existing Agent", true: "new first candidate"}[initial], func(t *testing.T) {
+			source := executionSource(t)
+			if initial {
+				source.Agents[0].Agent.LifecycleState = domain.AgentNotCreated
+				source.Agents[0].Agent.AgentSpecRevisionID = ""
+				source.Agents[0].Agent.ExecutionRevisionID = ""
+			}
+			original, err := json.Marshal(source.Agents[0].Spec.Snapshot)
+			require.NoError(t, err)
+			requireModelPolicyJSON(t, source.Agents[0].Spec.Snapshot, `{}`)
+			published, err := BuildExecutionSnapshot(t.Context(), source, &executionCredentialOpener{})
+			require.NoError(t, err)
+			require.Len(t, published.Agents, 1)
+			requireModelPolicyJSON(t, published.Agents[0], effective)
+			after, err := json.Marshal(source.Agents[0].Spec.Snapshot)
+			require.NoError(t, err)
+			require.Equal(t, string(original), string(after), "effective defaults must not rewrite historical AgentSpec JSON")
+			requireModelPolicyJSON(t, source.Agents[0].Spec.Snapshot, `{}`)
+			require.Equal(t, source.Revision, published.Revision)
+			require.Equal(t, !initial, published.Agents[0].AcceptingRuns)
+			require.NoError(t, json.Unmarshal([]byte(`{"model_retry":{"max":0,"base_ms":1,"cap_ms":1},"failover":"never"}`), &published.Agents[0]))
+			again, err := BuildExecutionSnapshot(t.Context(), source, &executionCredentialOpener{})
+			require.NoError(t, err)
+			requireModelPolicyJSON(t, again.Agents[0], effective)
+		})
+	}
+}
+
+func TestExecutionProjectionPreservesExplicitPolicyAndCopiesOptionalValues(t *testing.T) {
+	for _, policy := range []struct {
+		name string
+		body string
+	}{
+		{"explicit opt out and zero caps", `{"model_retry":{"max":0,"base_ms":200,"cap_ms":30000},"failover":"never","run_budget":{"max_input_tokens":0,"max_output_tokens":0,"max_cost_usd_micros":0}}`},
+		{"explicit maximums", `{"model_retry":{"max":8,"base_ms":30000,"cap_ms":30000},"failover":"before_output","run_budget":{"max_input_tokens":9007199254740991,"max_output_tokens":1,"max_cost_usd_micros":9007199254740991}}`},
+	} {
+		t.Run(policy.name, func(t *testing.T) {
+			source := executionSource(t)
+			require.NoError(t, json.Unmarshal([]byte(policy.body), &source.Agents[0].Spec.Snapshot))
+			original, err := json.Marshal(source.Agents[0].Spec.Snapshot)
+			require.NoError(t, err)
+			published, err := BuildExecutionSnapshot(t.Context(), source, &executionCredentialOpener{})
+			require.NoError(t, err)
+			requireModelPolicyJSON(t, published.Agents[0], policy.body)
+			const changed = `{"model_retry":{"max":1,"base_ms":2,"cap_ms":3},"failover":"before_output","run_budget":{"max_input_tokens":9,"max_output_tokens":9,"max_cost_usd_micros":9}}`
+			require.NoError(t, json.Unmarshal([]byte(changed), &published.Agents[0]))
+			after, err := json.Marshal(source.Agents[0].Spec.Snapshot)
+			require.NoError(t, err)
+			require.Equal(t, string(original), string(after), "published policy must not alias the persisted spec")
+			again, err := BuildExecutionSnapshot(t.Context(), source, &executionCredentialOpener{})
+			require.NoError(t, err)
+			requireModelPolicyJSON(t, again.Agents[0], policy.body)
+			require.NoError(t, json.Unmarshal([]byte(changed), &source.Agents[0].Spec.Snapshot))
+			requireModelPolicyJSON(t, again.Agents[0], policy.body)
+			agentJSON, err := json.Marshal(again.Agents[0])
+			require.NoError(t, err)
+			require.NotContains(t, string(agentJSON), "synthetic-current-secret")
+		})
+	}
+}
+
+func TestExecutionProjectionRejectsInvalidStoredModelPolicyWithoutPartialSnapshot(t *testing.T) {
+	for _, policy := range []string{
+		`{"model_retry":{"max":9,"base_ms":1,"cap_ms":1}}`,
+		`{"model_retry":{"max":1,"base_ms":2,"cap_ms":1}}`,
+		`{"failover":"always"}`,
+		`{"run_budget":{"max_cost_usd_micros":9007199254740992}}`,
+	} {
+		t.Run(policy, func(t *testing.T) {
+			source := executionSource(t)
+			if err := json.Unmarshal([]byte(policy), &source.Agents[0].Spec.Snapshot); err != nil {
+				return
+			}
+			published, err := BuildExecutionSnapshot(t.Context(), source, &executionCredentialOpener{})
+			require.ErrorIs(t, err, ports.ErrInvalidExecutionConfiguration)
+			require.Empty(t, published)
+		})
+	}
+}
+
+func requireModelPolicyJSON(t *testing.T, value any, policy string) {
+	t.Helper()
+	payload, err := json.Marshal(value)
+	require.NoError(t, err)
+	var actual, expected map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(payload, &actual))
+	require.NoError(t, json.Unmarshal([]byte(policy), &expected))
+	for _, field := range []string{"model_retry", "failover", "run_budget"} {
+		got, present := actual[field]
+		want, wanted := expected[field]
+		require.Equal(t, wanted, present, "policy field %s presence in %s", field, payload)
+		if wanted {
+			require.JSONEq(t, string(want), string(got), "policy field %s", field)
+		}
+	}
+}

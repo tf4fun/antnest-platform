@@ -115,6 +115,9 @@ type TemplateRevisionInput struct {
 	ContextPolicyVersion    string
 	SkillRefs               []FrozenSkill
 	SkillSetDigest          string
+	ModelRetry              *ModelRetryPolicy `json:"model_retry,omitempty"`
+	Failover                string            `json:"failover,omitempty"`
+	RunBudget               *RunBudget        `json:"run_budget,omitempty"`
 }
 
 type SkillReference struct {
@@ -181,23 +184,32 @@ type TemplateRevision struct {
 	contextPolicyVersion    string
 	skillRefs               []FrozenSkill
 	skillSetDigest          string
+	modelRetry              *ModelRetryPolicy
+	failover                string
+	runBudget               *RunBudget
 }
 
 type TemplateRevisionSnapshot struct {
-	TemplateID              string           `json:"template_id"`
-	OrganizationID          string           `json:"organization_id"`
-	Revision                int64            `json:"revision"`
-	ModelProfileID          string           `json:"model_profile_id"`
-	FallbackModelProfileIDs []string         `json:"fallback_model_profile_ids,omitempty"`
-	SystemPrompt            string           `json:"system_prompt"`
-	MaxModelRequests        int              `json:"max_model_requests"`
-	Runtime                 RuntimeSpecInput `json:"runtime"`
-	ContextPolicyVersion    string           `json:"context_policy_version"`
-	SkillRefs               []FrozenSkill    `json:"skill_refs,omitempty"`
-	SkillSetDigest          string           `json:"skill_set_digest,omitempty"`
+	TemplateID              string            `json:"template_id"`
+	OrganizationID          string            `json:"organization_id"`
+	Revision                int64             `json:"revision"`
+	ModelProfileID          string            `json:"model_profile_id"`
+	FallbackModelProfileIDs []string          `json:"fallback_model_profile_ids,omitempty"`
+	SystemPrompt            string            `json:"system_prompt"`
+	MaxModelRequests        int               `json:"max_model_requests"`
+	Runtime                 RuntimeSpecInput  `json:"runtime"`
+	ContextPolicyVersion    string            `json:"context_policy_version"`
+	SkillRefs               []FrozenSkill     `json:"skill_refs,omitempty"`
+	SkillSetDigest          string            `json:"skill_set_digest,omitempty"`
+	ModelRetry              *ModelRetryPolicy `json:"model_retry,omitempty"`
+	Failover                string            `json:"failover,omitempty"`
+	RunBudget               *RunBudget        `json:"run_budget,omitempty"`
 }
 
 func NewTemplateRevision(input TemplateRevisionInput) (TemplateRevision, error) {
+	if err := ValidateModelCallPolicy(input.ModelRetry, input.Failover, input.RunBudget); err != nil {
+		return TemplateRevision{}, err
+	}
 	if strings.TrimSpace(input.TemplateID) == "" || strings.TrimSpace(input.OrganizationID) == "" || input.Revision < 1 {
 		return TemplateRevision{}, fmt.Errorf("template revision identity is invalid")
 	}
@@ -238,6 +250,7 @@ func NewTemplateRevision(input TemplateRevisionInput) (TemplateRevision, error) 
 		systemPrompt:            input.SystemPrompt, maxModelRequests: input.MaxModelRequests,
 		runtime: cloneRuntime(input.Runtime), contextPolicyVersion: input.ContextPolicyVersion,
 		skillRefs: orderedSkills, skillSetDigest: skillSetDigest,
+		modelRetry: input.ModelRetry.Clone(), failover: input.Failover, runBudget: input.RunBudget.Clone(),
 	}, nil
 }
 
@@ -259,23 +272,27 @@ func (revision TemplateRevision) Snapshot() TemplateRevisionSnapshot {
 		SystemPrompt:            revision.systemPrompt, MaxModelRequests: revision.maxModelRequests,
 		Runtime: cloneRuntime(revision.runtime), ContextPolicyVersion: revision.contextPolicyVersion,
 		SkillRefs: slices.Clone(revision.skillRefs), SkillSetDigest: revision.skillSetDigest,
+		ModelRetry: revision.modelRetry.Clone(), Failover: revision.failover, RunBudget: revision.runBudget.Clone(),
 	}
 }
 
 type AgentSpecSnapshot struct {
-	ModelProfileID          string           `json:"model_profile_id"`
-	FallbackModelProfileIDs []string         `json:"fallback_model_profile_ids,omitempty"`
-	ModelProfileVersion     int64            `json:"model_profile_version"`
-	TemplateID              string           `json:"template_id"`
-	TemplateRevision        int64            `json:"template_revision"`
-	ModelProfileRevisionID  string           `json:"model_profile_revision_id"`
-	SystemPrompt            string           `json:"system_prompt"`
-	MaxModelRequests        int              `json:"max_model_requests"`
-	ContextPolicyVersion    string           `json:"context_policy_version"`
-	Model                   ModelSpec        `json:"model"`
-	Runtime                 RuntimeSpecInput `json:"runtime"`
-	SystemSkills            []FrozenSkill    `json:"system_skills,omitempty"`
-	SkillSetDigest          string           `json:"skill_set_digest,omitempty"`
+	ModelProfileID          string            `json:"model_profile_id"`
+	FallbackModelProfileIDs []string          `json:"fallback_model_profile_ids,omitempty"`
+	ModelProfileVersion     int64             `json:"model_profile_version"`
+	TemplateID              string            `json:"template_id"`
+	TemplateRevision        int64             `json:"template_revision"`
+	ModelProfileRevisionID  string            `json:"model_profile_revision_id"`
+	SystemPrompt            string            `json:"system_prompt"`
+	MaxModelRequests        int               `json:"max_model_requests"`
+	ContextPolicyVersion    string            `json:"context_policy_version"`
+	Model                   ModelSpec         `json:"model"`
+	Runtime                 RuntimeSpecInput  `json:"runtime"`
+	SystemSkills            []FrozenSkill     `json:"system_skills,omitempty"`
+	SkillSetDigest          string            `json:"skill_set_digest,omitempty"`
+	ModelRetry              *ModelRetryPolicy `json:"model_retry,omitempty"`
+	Failover                string            `json:"failover,omitempty"`
+	RunBudget               *RunBudget        `json:"run_budget,omitempty"`
 }
 
 type AgentSpec struct{ snapshot AgentSpecSnapshot }
@@ -303,6 +320,7 @@ func MaterializeAgentSpec(template TemplateRevision, model ModelProfileRevision)
 		Model: model.model.Clone(), Runtime: cloneRuntime(template.runtime),
 		SystemSkills:   slices.Clone(template.skillRefs),
 		SkillSetDigest: skillSetDigest,
+		ModelRetry:     template.modelRetry.Clone(), Failover: template.failover, RunBudget: template.runBudget.Clone(),
 	}}, nil
 }
 
@@ -312,6 +330,8 @@ func (spec AgentSpec) Snapshot() AgentSpecSnapshot {
 	snapshot.Model = snapshot.Model.Clone()
 	snapshot.Runtime = cloneRuntime(snapshot.Runtime)
 	snapshot.SystemSkills = slices.Clone(snapshot.SystemSkills)
+	snapshot.ModelRetry = snapshot.ModelRetry.Clone()
+	snapshot.RunBudget = snapshot.RunBudget.Clone()
 	return snapshot
 }
 

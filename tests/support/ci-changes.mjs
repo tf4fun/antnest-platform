@@ -666,7 +666,11 @@ function tierC() {
         ],
         ["acp-closeout", "ANTNEST_E2E_ACP_CLOSEOUT=true"],
         ["agent-readiness", "ANTNEST_E2E_AGENT_READINESS=true"],
-        ["acp-session", "ANTNEST_E2E_ACP_SESSION=true"],
+        [
+          "acp-session",
+          "ANTNEST_E2E_ACP_SESSION=true",
+          { setup: ["agent-ui-web"] },
+        ],
         ["slash-commands", "ANTNEST_E2E_SLASH_COMMANDS=true"],
         ["structured-plan", "ANTNEST_E2E_STRUCTURED_PLAN=true"],
         ["multimodal", "ANTNEST_E2E_MULTIMODAL=true"],
@@ -772,7 +776,8 @@ function tierC() {
       id: target.replace(/^e2e-/u, "c-"),
       name: `${family}: ${name}`,
       tier: "c",
-      setup: options.browser ? ["agent-ui-web", "chromium"] : [],
+      setup:
+        options.setup ?? (options.browser ? ["agent-ui-web", "chromium"] : []),
       images: options.images ?? platformImages,
       pull: observed,
       paths: [

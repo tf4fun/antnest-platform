@@ -73,7 +73,8 @@ func (agent ExecutionAgent) valid() bool {
 }
 
 func (agent ExecutionAgent) validConfiguration() bool {
-	if !executionRevision(agent.AuthorizationRevision) || agent.DefaultAuthorization.Validate() != nil ||
+	if domain.ValidateModelCallPolicy(agent.ModelRetry, agent.Failover, agent.RunBudget) != nil ||
+		!executionRevision(agent.AuthorizationRevision) || agent.DefaultAuthorization.Validate() != nil ||
 		len(agent.DefaultAuthorization.ToolRules) > 128 || agent.DefaultAuthorization.ToolRules == nil ||
 		agent.ContextPolicyVersion != domain.ContextPolicyV1 || agent.MaxModelRequests < 1 || agent.MaxModelRequests > 128 ||
 		agent.SkillInstructions == nil || len(agent.SkillInstructions) != 0 {
