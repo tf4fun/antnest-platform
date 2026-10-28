@@ -5,8 +5,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
+import { sourceCatalog } from "./ci-failure.mjs";
 import {
   createResourceCheckedRunner,
+  componentOutcomes,
   runBash,
   runShard,
   summary,
@@ -15,6 +17,25 @@ import {
 
 const clock =
   "clock skew adjustment disabled; not applying calculated delta of -2ms";
+
+test("component outcomes retain independent business and cleanup failures without trusting stdout", () => {
+  const state = { status: "failed", interrupted: false, timedOut: false };
+  const result = componentOutcomes(
+    [{ business: "passed", cleanup: "failed" }],
+    state,
+  );
+  assert.equal(result.business, "reported_components_passed");
+  assert.equal(result.cleanup, "failed");
+  assert.deepEqual(result.components, [
+    { business: "passed", cleanup: "failed" },
+  ]);
+  assert.equal(componentOutcomes([], state).cleanup, "not_reported");
+  assert.equal(
+    componentOutcomes([{ business: "not_run", cleanup: "passed" }], state)
+      .business,
+    "not_run",
+  );
+});
 const report = (warnings) =>
   JSON.stringify({
     status: "business_passed",
@@ -242,6 +263,18 @@ test("the CLI preserves independent logs and results in the uploaded evidence tr
   const dir = mkdtempSync(join(tmpdir(), "ci-shard-evidence-"));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   const stepSummary = join(dir, "summary.md");
+  const identity = sourceCatalog().find(
+    (row) => row.name === "component failure feedback probe",
+  );
+  assert(identity);
+  const feedback = JSON.stringify({
+    ci_failure: {
+      version: 1,
+      ...identity,
+      category: "test_failure",
+      reportedAt: 0,
+    },
+  });
   const result = spawnSync(
     process.execPath,
     [fileURLToPath(new URL("./ci-shard.mjs", import.meta.url))],
@@ -253,14 +286,21 @@ test("the CLI preserves independent logs and results in the uploaded evidence tr
         PATH: process.env.PATH,
         RUNNER_TEMP: dir,
         GITHUB_STEP_SUMMARY: stepSummary,
+        ANTNEST_CI_DIAGNOSTICS: "1",
         SUITES: JSON.stringify([
-          { id: "first", name: "First", run: "echo first-output; exit 1" },
+          {
+            id: "first",
+            name: "First",
+            run: `echo first-output; printf '%s\\n' '${feedback}' '{"ci_component_outcome":{"version":1,"business":"passed","cleanup":"passed"}}'; exit 1`,
+          },
           { id: "second", name: "Second", run: "echo second-output" },
         ]),
       },
     },
   );
   assert.equal(result.status, 1, result.stderr);
+  assert(!result.stdout.includes("first-output"));
+  assert(!result.stdout.includes("second-output"));
   const evidence = join(dir, "artifacts/verification/ci-shards");
   const [run] = readdirSync(evidence);
   assert(run);
@@ -270,6 +310,10 @@ test("the CLI preserves independent logs and results in the uploaded evidence tr
     results.map(({ status }) => status),
     ["failed", "passed"],
   );
+  assert.equal(results[0].cleanup, "not_reported");
+  assert.equal(results[0].failures.length, 1);
+  assert(results[0].failures[0].reportedAt >= Date.parse(results[0].startedAt));
+  assert.match(result.stdout, /component failure feedback probe/u);
   for (const item of results) {
     assert(Number.isFinite(item.durationMs) && item.durationMs >= 0);
     assert.match(item.startedAt, /Z$/u);
@@ -280,6 +324,10 @@ test("the CLI preserves independent logs and results in the uploaded evidence tr
     );
   }
   assert.match(readFileSync(stepSummary, "utf8"), /Duration/u);
+  assert.match(
+    readFileSync(stepSummary, "utf8"),
+    /component failure feedback probe/u,
+  );
 });
 
 test("runs every suite in order and reports each outcome", async () => {

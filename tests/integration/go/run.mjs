@@ -66,7 +66,10 @@ for (const line of readFileSync(resolve(output, `${name}.log`), "utf8").split(
 )) {
   if (!line.startsWith("{")) continue;
   try {
-    results.accept(JSON.parse(line), console.error);
+    results.accept(
+      JSON.parse(line),
+      process.env.ANTNEST_CI_DIAGNOSTICS === "1" ? () => {} : console.error,
+    );
   } catch {
     /* Non-JSON compiler output remains available in the raw log. */
   }
@@ -77,7 +80,9 @@ console.log(
     service,
     profile: values.profile,
     ...results.summary,
-    skipped_tests: results.skipped,
+    ...(process.env.ANTNEST_CI_DIAGNOSTICS === "1"
+      ? {}
+      : { skipped_tests: results.skipped }),
     log: resolve(output, `${name}.log`),
   }),
 );

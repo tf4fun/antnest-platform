@@ -135,7 +135,7 @@ test("only normal full runs use the required name, even when selection fails ear
   }
 });
 
-test("uploaded evidence excludes generated fixture credentials but retains suite logs and timings", () => {
+test("uploaded evidence excludes raw component logs and private inputs but retains outcomes and timings", () => {
   const suite = parse(
     readFileSync(
       new URL("../../.github/workflows/_suite.yml", import.meta.url),
@@ -159,10 +159,14 @@ test("uploaded evidence excludes generated fixture credentials but retains suite
     "artifacts/verification/run/private.key",
     "artifacts/verification/run/private.pem",
     "artifacts/verification/run/failure.private.txt",
+    "artifacts/verification/run/failure.private.json",
+    "artifacts/verification/run/client-private/round-1.json",
+    "artifacts/verification/ci-shards/shard-123/first.log",
+    "artifacts/verification/go-integration/first.log",
+    "artifacts/verification/dependencies/first.log",
   ])
     assert(filtered(path), `${path} contains fixture credentials`);
   for (const path of [
-    "artifacts/verification/ci-shards/shard-123/first.log",
     "artifacts/verification/ci-shards/shard-123/results.json",
     "artifacts/verification/run/result.json",
   ])

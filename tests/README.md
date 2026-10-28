@@ -66,7 +66,52 @@ the deliberate graceful Controller restart against their complete topology and
 exact error classes. Raw warnings and error spans remain in the evidence;
 unrelated errors or missing parents fail admission.
 
-## Layout
+## CI failure feedback and timing
+
+Reusable suite jobs enable `ANTNEST_CI_DIAGNOSTICS=1`. The command runner
+keeps raw component output in private local logs and forwards only failure
+identities resolved against tracked public Go/Vitest test source. Job logs and
+Job Summary show the test, repository-relative declaration location, and fixed
+`test_failure` category; runtime assertion values and dynamic test parameters
+are omitted. Ambiguous names are withheld. A source file without a resolvable
+literal title is reported as `[dynamic test name omitted]` at line 1, not as an
+exact assertion location. Unsupported reporters still retain their exit status.
+
+The shard summary retains business and cleanup outcomes separately. Dependency
+cleanup outcomes travel through a runner-owned sidecar, not parsed workload
+stdout. Missing cleanup evidence is `not_reported`, never passed. When only
+completed components reported success but the overall command failed,
+`reported_components_passed` does not claim the whole suite passed. Diagnostics
+never change the existing exit-code, cancellation, strict-completion or resource
+cleanup admission decisions. Raw shard, Go-component and dependency logs, private
+JSON, and client-private evidence are excluded from the public evidence upload;
+sanitized outcomes and timings remain available.
+
+The post-gate `Report workflow timing` job records the exact candidate and attempt,
+per-job setup/build/test/finalization, start/finish offsets, integration-gate wall
+time and accumulated parallel runner time. This initial measurement covers only
+the integration workflow, not the full cross-workflow required-check envelope.
+GitHub's jobs API cannot separate matrix-slot wait from runner queue time: both
+remain null, and created-to-start delay must not be attributed to runner shortage.
+First actionable feedback is measured from suite start to observation at the shard;
+no failure observed is not zero latency. No wall-clock savings are claimed from
+summed runner time or from an isolated suite improvement.
+
+Focused development checks after installing the ACP package's locked tooling:
+
+```sh
+node --test --test-concurrency=1 tests/support/ci-failure.test.mjs tests/support/ci-timing.test.mjs tests/support/run-command.test.mjs tests/support/ci-shard.test.mjs tests/support/dependencies.test.mjs tests/support/ci-admission.test.mjs
+```
+
+The failure tests include a deliberately failing real Vitest probe under
+`tests/support/fixtures/ci-feedback.test.mjs`, launched only by its dedicated
+config. Its nonzero result and withholding of assertion values are the expected
+success criteria of the enclosing test. Full remote repository/integration CI
+remains the merge gate; changes to shared support/workflows select all suites.
+This batch does not reduce readiness rounds/delays, remove PostgreSQL coverage,
+or change matrix capacity, dependency caches, image reuse or cancellation.
+
+## Test layout
 
 Tests are placed by the boundary they exercise, not by filename suffix.
 

@@ -222,6 +222,33 @@ jobs:
       suite: ${{ toJSON(matrix) }}
       images: ${{ needs.changes.outputs.images }}
 
+  timing:
+    name: Report workflow timing
+    continue-on-error: true
+    needs: [changes, integration]
+    if: always() && needs.changes.outputs.mode == 'full'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+      - name: Measure completed integration jobs
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node tests/support/ci-timing.mjs
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: ci-timing
+          path: artifacts/verification/ci-timing/timing.json
+          if-no-files-found: ignore
+          retention-days: 14
+
   integration:
     # Drafts and partial manual runs report under other names. Event-based
     # naming keeps selection failures on the required check even before the
