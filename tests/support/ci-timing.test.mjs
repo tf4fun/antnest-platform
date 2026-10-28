@@ -86,6 +86,25 @@ test("API metadata cannot copy arbitrary names or credential-shaped fields into 
   assert.throws(() => workflowTiming({ ...run, head_sha: secret }, []));
 });
 
+test("missing runner durations remain unavailable instead of reducing the total", () => {
+  for (const unavailable of [
+    { started_at: null },
+    { completed_at: null },
+    { completed_at: at(0) },
+  ]) {
+    const result = workflowTiming(run, [
+      job("Select suites", 0, 1),
+      {
+        ...job("Tier A / PostgreSQL components / Run", 1, 2),
+        ...unavailable,
+      },
+      job("Integration checks", 3, 4),
+    ]);
+    assert.equal(result.totalRunnerMs, null);
+  }
+  assert.equal(workflowTiming(run, []).totalRunnerMs, null);
+});
+
 test("reruns exclude time between attempts instead of presenting it as current gate latency", () => {
   const result = workflowTiming(
     { ...run, run_attempt: 2, run_started_at: at(1000) },

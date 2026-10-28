@@ -106,7 +106,10 @@ export function workflowTiming(run, jobs) {
     ),
     gateConclusion: gate?.conclusion ?? "not_observed",
     integrationGateWallMs: gate?.finishOffsetMs ?? null,
-    totalRunnerMs: rows.reduce((sum, row) => sum + (row.runnerMs ?? 0), 0),
+    totalRunnerMs:
+      rows.length && rows.every((row) => row.runnerMs !== null)
+        ? rows.reduce((sum, row) => sum + row.runnerMs, 0)
+        : null,
     lastSuite,
     jobs: rows,
   };
