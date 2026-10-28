@@ -261,7 +261,9 @@ async function facts(pool: Pool): Promise<Record<string, string[]>> {
     "agent_leases",
   ]) {
     const expression =
-      table === "runs" ? "to_jsonb(stored) - $1::text[]" : "to_jsonb(stored)";
+      table === "runs"
+        ? "('{\"budget_reason\":null}'::jsonb || to_jsonb(stored)) - $1::text[]"
+        : "to_jsonb(stored)";
     const order = table === "agent_leases" ? "organization_id, agent_id" : "id";
     const rows = await pool.query<{ value: string }>(
       `SELECT (${expression})::text AS value FROM ${table} AS stored ORDER BY ${order}`,
@@ -421,6 +423,7 @@ describe.skipIf(databaseUrl === undefined)(
           "0029_learning_owner_recovery.sql",
           "0030_peer_membership.sql",
           "0031_peer_participation.sql",
+          "0032_model_budget_ledger.sql",
         ]);
         expect(
           migrated.find((entry) => entry.version === migration)?.checksum,

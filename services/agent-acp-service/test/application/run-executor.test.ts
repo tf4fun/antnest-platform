@@ -6,6 +6,7 @@ import type { RunExecutionInput } from "../../src/ports/acp-application.js";
 import type { RunRecovery } from "../../src/application/run-recovery.js";
 import { WorkerOwnershipLostError } from "../../src/adapters/postgres/worker-lock.js";
 import { ContextBuilder } from "../../src/application/context-builder.js";
+import { ModelBudgetExceededError } from "../../src/domain/model-budget.js";
 import { ProviderClients } from "../../src/application/provider-clients.js";
 import { runtimeInformation } from "../fixtures/runtime-information.js";
 import { executionConfiguration } from "../fixtures/execution-configuration.js";
@@ -824,6 +825,146 @@ describe("RunExecutor", () => {
       await result.settled;
     }
   });
+
+  describe("structured model budget terminal facts", () => {
+    const budget = {
+      scope: "organization_daily" as const,
+      limit: "9007199254740993",
+      used: "9007199254740995",
+    };
+    const stopped: RunOutcome = {
+      terminalClass: "failed",
+      executorState: "quiescent",
+      toolEffectState: "none",
+      errorClass: "budget_exceeded",
+      budget,
+    };
+
+    it.each(["admission", "settlement"] as const)(
+      "persists the original %s budget fact before releasing the Runtime pin",
+      async (phase) => {
+        await withExecutorTimers(async (test) => {
+          const attempts = stopAtModelBudget(test, phase, budget);
+          const committed = test.gate<void>(undefined);
+          test.finish.mockReturnValueOnce(committed.promise);
+          const result = observeExecution(test.execute());
+          await vi.advanceTimersByTimeAsync(0);
+
+          expect(test.finish).toHaveBeenCalledExactlyOnceWith({
+            runId: test.input.accepted.runId,
+            ...stopped,
+            finishedAt: test.dependencies.now(),
+          });
+          expect(attempts.start).toHaveBeenCalledOnce();
+          expect(attempts.finish).toHaveBeenCalledTimes(phase === "admission" ? 0 : 1);
+          expect(test.complete).toHaveBeenCalledTimes(phase === "admission" ? 0 : 1);
+          expect(test.tools.call).not.toHaveBeenCalled();
+          expect(attempts.legacyUsage).not.toHaveBeenCalled();
+          expect(test.recoverRun).not.toHaveBeenCalled();
+          expect(result.resolved).not.toHaveBeenCalled();
+          expect(result.rejected).not.toHaveBeenCalled();
+          expect(test.dependencies.runtimeConnections.releaseRun).not.toHaveBeenCalled();
+
+          committed.resolve();
+          await vi.advanceTimersByTimeAsync(0);
+          await result.settled;
+          expect(result.resolved).toHaveBeenCalledExactlyOnceWith(stopped);
+          expect(result.rejected).not.toHaveBeenCalled();
+          expect(test.finish).toHaveBeenCalledOnce();
+          expect(test.recoverRun).not.toHaveBeenCalled();
+          expect(test.dependencies.runtimeConnections.releaseRun).toHaveBeenCalledExactlyOnceWith(
+            test.input.accepted.runId,
+          );
+        });
+      },
+    );
+
+    it.each(["admission", "settlement"] as const)(
+      "retries and recovers the complete %s budget fact after losing the terminal receipt",
+      async (phase) => {
+        await withExecutorTimers(async (test) => {
+          const attempts = stopAtModelBudget(test, phase, budget);
+          const recovered = test.gate(stopped);
+          test.finish.mockRejectedValue(new Error("original budget terminal acknowledgement lost"));
+          test.recoverRun.mockReturnValue(recovered.promise);
+          const result = observeExecution(test.execute());
+          await vi.runAllTimersAsync();
+
+          const terminal = {
+            runId: test.input.accepted.runId,
+            ...stopped,
+            finishedAt: test.dependencies.now(),
+          };
+          expect(test.finish).toHaveBeenCalledTimes(3);
+          for (const [input] of test.finish.mock.calls) expect(input).toEqual(terminal);
+          expect(test.recoverRun).toHaveBeenCalledExactlyOnceWith(
+            { runId: test.input.accepted.runId, kind: "terminal", terminal },
+            test.ownership.signal,
+          );
+          expect(result.resolved).not.toHaveBeenCalled();
+          expect(result.rejected).not.toHaveBeenCalled();
+          expect(test.dependencies.runtimeConnections.releaseRun).not.toHaveBeenCalled();
+          expect(attempts.start).toHaveBeenCalledOnce();
+          expect(attempts.finish).toHaveBeenCalledTimes(phase === "admission" ? 0 : 1);
+          expect(test.complete).toHaveBeenCalledTimes(phase === "admission" ? 0 : 1);
+          expect(test.tools.call).not.toHaveBeenCalled();
+          expect(attempts.legacyUsage).not.toHaveBeenCalled();
+
+          recovered.resolve(stopped);
+          await vi.advanceTimersByTimeAsync(0);
+          await result.settled;
+          expect(result.resolved).toHaveBeenCalledExactlyOnceWith(stopped);
+          expect(result.rejected).not.toHaveBeenCalled();
+          expect(test.complete).toHaveBeenCalledTimes(phase === "admission" ? 0 : 1);
+          expect(test.finish).toHaveBeenCalledTimes(3);
+          expect(test.dependencies.runtimeConnections.releaseRun).toHaveBeenCalledExactlyOnceWith(
+            test.input.accepted.runId,
+          );
+        });
+      },
+    );
+
+    it("retains temporary cleanup failure classification and its Runtime pin without carrying budget facts", async () => {
+      await withExecutorTimers(async (test) => {
+        const attempts = stopAtModelBudget(test, "settlement", budget);
+        const cleanupFailure = new Error("independent budget-stop temporary cleanup failure");
+        const releaseTemporary = vi.fn((_runId: string, signal: AbortSignal) => {
+          expect(signal).toBe(test.ownership.signal);
+          return Promise.reject(cleanupFailure);
+        });
+        test.dependencies.temporarySkills = { releaseRun: releaseTemporary };
+        const unresolved: RunOutcome = {
+          terminalClass: "unresolved",
+          executorState: "quiescent",
+          toolEffectState: "unknown",
+          unknownEffectSource: "runtime_mcp",
+          errorClass: "temporary_skill_cleanup_pending",
+        };
+        const result = observeExecution(test.execute());
+        await vi.runAllTimersAsync();
+        await result.settled;
+
+        expect(result.resolved).toHaveBeenCalledExactlyOnceWith(unresolved);
+        expect(result.rejected).not.toHaveBeenCalled();
+        expect(test.finish).toHaveBeenCalledExactlyOnceWith({
+          runId: test.input.accepted.runId,
+          ...unresolved,
+          finishedAt: test.dependencies.now(),
+        });
+        expect(releaseTemporary).toHaveBeenCalledExactlyOnceWith(
+          test.input.accepted.runId,
+          test.ownership.signal,
+        );
+        expect(attempts.start).toHaveBeenCalledOnce();
+        expect(attempts.finish).toHaveBeenCalledOnce();
+        expect(test.complete).toHaveBeenCalledOnce();
+        expect(test.tools.call).not.toHaveBeenCalled();
+        expect(attempts.legacyUsage).not.toHaveBeenCalled();
+        expect(test.recoverRun).not.toHaveBeenCalled();
+        expect(test.dependencies.runtimeConnections.releaseRun).not.toHaveBeenCalled();
+      });
+    });
+  });
 });
 
 function setup() {
@@ -937,12 +1078,18 @@ function setup() {
 
 function eventRepository(): RunEventRepository {
   return {
-    startModelAttempt: vi.fn<RunEventRepository["startModelAttempt"]>(() => Promise.resolve()),
+    startModelAttempt: vi.fn<RunEventRepository["startModelAttempt"]>(() =>
+      Promise.resolve({ warnings: [] }),
+    ),
     finishModelAttempt: vi.fn<RunEventRepository["finishModelAttempt"]>((input) =>
       Promise.resolve({
-        kind: "usage",
-        used: (input.usage.inputTokens ?? 0) + (input.usage.outputTokens ?? 0),
-        size: input.contextSize,
+        event: {
+          kind: "usage",
+          used: (input.usage.inputTokens ?? 0) + (input.usage.outputTokens ?? 0),
+          size: input.contextSize,
+        },
+        settlement: {},
+        warnings: [],
       }),
     ),
     appendAgentMessage: vi.fn<RunEventRepository["appendAgentMessage"]>((input) =>
@@ -984,6 +1131,34 @@ function eventRepository(): RunEventRepository {
 function sequentialIds(): () => string {
   let next = 0;
   return () => `id-${++next}`;
+}
+
+function stopAtModelBudget(
+  test: ReturnType<typeof setup>,
+  phase: "admission" | "settlement",
+  budget: Pick<ModelBudgetExceededError, "scope" | "limit" | "used">,
+) {
+  const start = vi.spyOn(test.events, "startModelAttempt");
+  const finish = vi.spyOn(test.events, "finishModelAttempt");
+  const legacyUsage = vi.spyOn(test.events, "appendUsage");
+  if (phase === "admission") {
+    start.mockRejectedValueOnce(
+      new ModelBudgetExceededError(budget.scope, budget.limit, budget.used),
+    );
+  } else {
+    finish.mockImplementationOnce((input) =>
+      Promise.resolve({
+        event: {
+          kind: "usage",
+          used: (input.usage.inputTokens ?? 0) + (input.usage.outputTokens ?? 0),
+          size: input.contextSize,
+        },
+        settlement: { exceeded: structuredClone(budget) },
+        warnings: [],
+      }),
+    );
+  }
+  return { start, finish, legacyUsage };
 }
 
 function enableToolRun(test: ReturnType<typeof setup>): void {

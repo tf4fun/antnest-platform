@@ -115,12 +115,16 @@ export class RunWriteAuthority {
     kernel: PostgresKernel,
     organizationId: string,
     operation: (client: PoolClient) => Promise<T>,
+    options: { requireLiveFenceAtCommit?: true } = {},
   ): Promise<T> {
     if (this.mode.kind !== "legacy") {
       const { fence } = this.mode.authority;
       if (organizationId !== fence.organizationId)
         return Promise.reject(new AgentOwnershipLostError());
-      return kernel.agentTransaction(fence, operation, { organizationBarrier: true });
+      return kernel.agentTransaction(fence, operation, {
+        ...options,
+        organizationBarrier: true,
+      });
     }
     return this.transaction(kernel, async (client) => {
       await lockRuntimeBarrierOrganization(client, organizationId);

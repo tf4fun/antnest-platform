@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { budgetFactSchema } from "./model-budget.js";
 import { DomainError } from "./errors.js";
 
 const identifier = z.string().min(1).max(200);
@@ -48,6 +49,7 @@ export const auditDetailSchema = z.strictObject({
   tool_effect_state: z.enum(["none", "settled", "unknown"]).nullable(),
   stop_reason: z.enum(["end_turn", "max_tokens", "max_turn_requests", "refusal"]).nullable(),
   error_class: z.string().nullable(),
+  budget_reason: budgetFactSchema.optional(),
   unknown_effect_source: z
     .enum(["runtime_mcp", "client_mcp", "unclassified"])
     .nullable()

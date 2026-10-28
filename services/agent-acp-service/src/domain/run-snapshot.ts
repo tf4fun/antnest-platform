@@ -32,6 +32,7 @@ export function runSnapshot(input: {
     contextPolicyVersion: selected.contextPolicyVersion,
     skillInstructions: selected.skillInstructions,
     maxModelRequests: selected.maxModelRequests,
+    ...(selected.runBudget === undefined ? {} : { runBudget: { ...selected.runBudget } }),
     ...(selected.modelRetry === undefined ? {} : { modelRetry: { ...selected.modelRetry } }),
     ...(selected.modelFailover === undefined
       ? {}

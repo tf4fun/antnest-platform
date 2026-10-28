@@ -1,4 +1,6 @@
 import type { PoolClient } from "pg";
+import { isDeepStrictEqual } from "node:util";
+import { budgetFactSchema } from "../../domain/model-budget.js";
 import { ownershipScope, type AgentOwnershipScope } from "../../domain/agent-ownership.js";
 import type {
   RunOutcome,
@@ -71,7 +73,7 @@ export class PostgresExecutionRepository
   public async getRecoveryState(runId: string): Promise<RunRecoveryState | null> {
     const result = await this.kernel.query<TerminalOutcomeRow & { state: RunState }>(
       `SELECT state, terminal_class, executor_state, tool_effect_state,
-              unknown_effect_source, stop_reason, error_class
+              unknown_effect_source, stop_reason, error_class, budget_reason
          FROM runs WHERE id = $1`,
       [runId],
     );
@@ -151,11 +153,18 @@ export async function finishLockedRun(
   client: PoolClient,
   input: FinishLocalRunInput,
 ): Promise<void> {
+  const budget = input.budget === undefined ? undefined : budgetFactSchema.parse(input.budget);
+  if (
+    budget !== undefined &&
+    (input.errorClass !== "budget_exceeded" ||
+      !["failed", "unresolved"].includes(input.terminalClass))
+  )
+    throw new Error("Budget facts require a budget terminal outcome");
   const result = await client.query(
     `WITH finished AS (UPDATE runs
           SET state = $2, terminal_class = $2, executor_state = $3,
               tool_effect_state = $4, unknown_effect_source = $5,
-              stop_reason = $6, error_class = $7, updated_at = $8
+              stop_reason = $6, error_class = $7, updated_at = $8, budget_reason = $9::jsonb
         WHERE id = $1 AND state = 'running' RETURNING id, session_id),
        refused_messages AS (
          UPDATE session_messages SET context_excluded = true
@@ -181,6 +190,7 @@ export async function finishLockedRun(
       input.stopReason ?? null,
       input.errorClass ?? null,
       input.finishedAt,
+      budget === undefined ? null : JSON.stringify(budget),
     ],
   );
   if (result.rowCount === 1) {
@@ -196,7 +206,7 @@ export async function finishLockedRun(
 async function loadTerminalOutcome(client: PoolClient, runId: string): Promise<RunOutcome | null> {
   const result = await client.query<TerminalOutcomeRow>(
     `SELECT terminal_class, executor_state, tool_effect_state,
-              unknown_effect_source, stop_reason, error_class
+              unknown_effect_source, stop_reason, error_class, budget_reason
          FROM runs
         WHERE id = $1`,
     [runId],
@@ -215,9 +225,17 @@ type TerminalOutcomeRow = {
   unknown_effect_source: UnknownEffectSource | null;
   stop_reason: RunStopReason | null;
   error_class: string | null;
+  budget_reason: unknown;
 };
 
 function storedOutcome(row: TerminalOutcomeRow): RunOutcome {
+  const budget = row.budget_reason === null ? undefined : budgetFactSchema.parse(row.budget_reason);
+  if (
+    budget !== undefined &&
+    (row.error_class !== "budget_exceeded" ||
+      (row.terminal_class !== "failed" && row.terminal_class !== "unresolved"))
+  )
+    throw new Error("Run has inconsistent budget terminal facts");
   switch (row.terminal_class) {
     case "completed":
       if (
@@ -267,6 +285,7 @@ function storedOutcome(row: TerminalOutcomeRow): RunOutcome {
         executorState: "quiescent",
         toolEffectState: row.tool_effect_state,
         errorClass: row.error_class,
+        ...(budget === undefined ? {} : { budget }),
       };
     case "unresolved":
       if (
@@ -284,6 +303,7 @@ function storedOutcome(row: TerminalOutcomeRow): RunOutcome {
         toolEffectState: "unknown",
         unknownEffectSource: row.unknown_effect_source,
         errorClass: row.error_class,
+        ...(budget === undefined ? {} : { budget }),
       };
     case null:
       throw new Error("Terminal Run has no terminal class");
@@ -296,7 +316,8 @@ function sameOutcome(left: RunOutcome, right: RunOutcome): boolean {
     left.toolEffectState === right.toolEffectState &&
     (left.unknownEffectSource ?? null) === (right.unknownEffectSource ?? null) &&
     (left.stopReason ?? null) === (right.stopReason ?? null) &&
-    (left.errorClass ?? null) === (right.errorClass ?? null)
+    (left.errorClass ?? null) === (right.errorClass ?? null) &&
+    isDeepStrictEqual(left.budget, right.budget)
   );
 }
 

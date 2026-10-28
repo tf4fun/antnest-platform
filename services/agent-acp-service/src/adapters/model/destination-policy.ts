@@ -1,7 +1,7 @@
 import { lookup } from "node:dns/promises";
 import { isIP } from "node:net";
 import ipaddr from "ipaddr.js";
-import { ModelError } from "../../ports/model.js";
+import { ModelError, ModelTransportCleanupError } from "../../ports/model.js";
 
 // These ranges are frozen by the shared platform policy and checked against
 // the same decision vectors as Controller; do not infer policy from a URL alone.
@@ -115,16 +115,15 @@ export class ProviderDestinationPolicy {
       addresses = [hostname];
     } else {
       const bounded = AbortSignal.any([signal, AbortSignal.timeout(this.lookupTimeoutMs)]);
-      const interrupted = Promise.withResolvers<never>();
-      const abort = () => interrupted.reject(unavailable());
       try {
         bounded.throwIfAborted();
-        bounded.addEventListener("abort", abort, { once: true });
-        addresses = await Promise.race([this.resolve(hostname, bounded), interrupted.promise]);
-      } catch {
-        throw unavailable();
-      } finally {
-        bounded.removeEventListener("abort", abort);
+        // Cancellation revokes permission to send, but cannot detach the owned
+        // resolver task. A resolver that ignores abort must still be joined.
+        addresses = await this.resolve(hostname, bounded);
+        bounded.throwIfAborted();
+      } catch (error) {
+        if (error instanceof ModelTransportCleanupError) throw error;
+        throw unavailable(error);
       }
     }
     if (addresses.length === 0) throw unavailable();
@@ -142,6 +141,12 @@ export class ProviderDestinationPolicy {
 function forbidden(): ModelError {
   return new ModelError("provider_endpoint_forbidden", "Provider endpoint is forbidden", false);
 }
-function unavailable(): ModelError {
-  return new ModelError("provider_endpoint_unavailable", "Provider endpoint is unavailable", true);
+function unavailable(cause?: unknown): ModelError {
+  return new ModelError(
+    "provider_endpoint_unavailable",
+    "Provider endpoint is unavailable",
+    true,
+    undefined,
+    cause === undefined ? undefined : { cause },
+  );
 }

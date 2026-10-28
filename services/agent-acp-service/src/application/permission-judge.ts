@@ -1,5 +1,6 @@
 import { z } from "zod";
 import type { ModelMessage } from "../domain/types.js";
+import { ModelBudgetExceededError } from "../domain/model-budget.js";
 import { ModelError, ModelTransportCleanupError } from "../ports/model.js";
 import type { ModelCallPolicy } from "./model-call-policy.js";
 import { RunEventPersistenceError } from "./durable-run-events.js";
@@ -70,6 +71,7 @@ export class PermissionJudge {
       // up or persist its original attempt cannot permit the Tool loop to continue.
       if (
         error instanceof ModelTransportCleanupError ||
+        error instanceof ModelBudgetExceededError ||
         error instanceof RunEventPersistenceError ||
         (error instanceof ModelError && error.code === "provider_unavailable")
       )

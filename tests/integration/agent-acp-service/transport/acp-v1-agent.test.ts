@@ -1,5 +1,6 @@
 import { RunRecoveryRequiredError } from "../../../../services/agent-acp-service/src/ports/acp-application.js";
 import { DomainError } from "../../../../services/agent-acp-service/src/domain/errors.js";
+import { ModelBudgetExceededError } from "../../../../services/agent-acp-service/src/domain/model-budget.js";
 import { sessionConfigurationView } from "../../../../services/agent-acp-service/test/support/fixtures.js";
 import { v1Configuration } from "../../../../services/agent-acp-service/src/transport/acp/configuration.js";
 import * as acp from "@agentclientprotocol/sdk";
@@ -14,6 +15,8 @@ import type {
   AcpApplicationPort,
   AcceptedAcpRun,
   ExecuteRunResult,
+  SessionEvent,
+  DeliveredSessionEvent,
 } from "../../../../services/agent-acp-service/src/ports/acp-application.js";
 import { createAcpV1Agent } from "../../../../services/agent-acp-service/src/transport/acp/v1/agent.js";
 import type { LearningChangeItem } from "../../../../services/agent-acp-service/src/adapters/postgres/learning-change-read.js";
@@ -148,6 +151,74 @@ describe("ACP v1 agent mapping", () => {
         ).resolves.toMatchObject({ sessionId: "session-1" });
         expect(execute).not.toHaveBeenCalled();
       });
+    },
+  );
+
+  it.each(["typed budget", "forged budget"] as const)(
+    "projects only approved budget admission details for %s",
+    async (kind) => {
+      const budget = {
+        scope: "organization_daily" as const,
+        limit: "9007199254740991",
+        used: "9007199254740992",
+      };
+      const failure =
+        kind === "typed budget"
+          ? new ModelBudgetExceededError(
+              budget.scope,
+              budget.limit,
+              budget.used,
+            )
+          : Object.assign(
+              new DomainError("agent_busy", "PRIVATE_BUDGET_DETAIL"),
+              {
+                ...budget,
+                budget,
+              },
+            );
+      const execute = vi.fn<OutputApplication["execute"]>();
+      const acceptPrompt = vi.fn<OutputApplication["acceptPrompt"]>(() =>
+        Promise.reject(failure),
+      );
+      const agent = createAcpV1Agent({
+        binding,
+        application: createApplication({ acceptPrompt, execute }),
+        promptCapabilities: { image: false, embeddedContext: false },
+      });
+      await acp.client().connectWith(agent, async (context) => {
+        await context.request(acp.methods.agent.initialize, {
+          protocolVersion: acp.PROTOCOL_VERSION,
+          clientCapabilities: {},
+        });
+        const result: unknown = await context
+          .request(acp.methods.agent.session.prompt, {
+            sessionId: "session-1",
+            prompt: [
+              { type: "text", text: "refused before budget acceptance" },
+            ],
+          })
+          .then(
+            () => undefined,
+            (error: unknown) => error,
+          );
+        expect(result).toMatchObject({
+          code: kind === "typed budget" ? -32043 : -32030,
+        });
+        expect((result as { data: unknown }).data).toEqual(
+          kind === "typed budget"
+            ? { code: "budget_exceeded", retryable: false, details: { budget } }
+            : { code: "agent_busy", retryable: true, retry_after_ms: 1000 },
+        );
+        expect(JSON.stringify(result)).not.toContain("PRIVATE_BUDGET_DETAIL");
+        await expect(
+          context.request(acp.methods.agent.session.new, {
+            cwd: "/workspace",
+            mcpServers: [],
+          }),
+        ).resolves.toMatchObject({ sessionId: "session-1" });
+      });
+      expect(acceptPrompt).toHaveBeenCalledOnce();
+      expect(execute).not.toHaveBeenCalled();
     },
   );
 
@@ -1892,6 +1963,223 @@ describe("ACP v1 agent mapping", () => {
     );
   });
 
+  it("reads an admission soft notice before completion and replays its original message without executing again", async () => {
+    const text =
+      "Organization daily model budget warning. Limit: 10; used: 10.";
+    const warning: DeliveredSessionEvent = {
+      kind: "agent_message",
+      messageId: "admission-soft-warning-1",
+      content: [{ type: "text", text }],
+      delivery: {
+        sequence: 1,
+        runId: "run-1",
+        messageId: "admission-soft-warning-1",
+      },
+    };
+    const completed: ExecuteRunResult = {
+      terminalClass: "completed",
+      executorState: "quiescent",
+      toolEffectState: "none",
+      stopReason: "end_turn",
+    };
+    const completion = Promise.withResolvers<ExecuteRunResult>();
+    const notifications: acp.SessionNotification[] = [];
+    const replayed: acp.SessionNotification[] = [];
+    const execute = vi.fn<OutputApplication["execute"]>(
+      () => completion.promise,
+    );
+    // The shared hook seeds the original memory store during acceptance. This
+    // checks first-read/replay mapping, not PostgreSQL or Provider behavior.
+    const application = createApplication({ execute }, [warning]);
+    const acceptedCompletions: Promise<ExecuteRunResult>[] = [];
+    const originalAccept = application.acceptPrompt.bind(application);
+    const acceptPrompt = vi.fn<typeof originalAccept>(async (input) => {
+      const accepted = await originalAccept(input);
+      acceptedCompletions.push(accepted.completion);
+      return accepted;
+    });
+    application.acceptPrompt = acceptPrompt;
+    const agent = createAcpV1Agent({
+      binding,
+      application,
+      promptCapabilities: { image: false, embeddedContext: false },
+    });
+    const client = acp
+      .client()
+      .onNotification(acp.methods.client.session.update, ({ params }) => {
+        notifications.push(params);
+      });
+    try {
+      await client.connectWith(agent, async (context) => {
+        let prompt: Promise<acp.PromptResponse> | undefined;
+        let observed: Promise<void> | undefined;
+        const resolved = vi.fn<(value: acp.PromptResponse) => void>();
+        const rejected = vi.fn<(error: unknown) => void>();
+        try {
+          await context.request(acp.methods.agent.initialize, {
+            protocolVersion: acp.PROTOCOL_VERSION,
+            _meta: {
+              "antnest.dev/bridge": {
+                intentReceipt: 1,
+                targetCancel: 1,
+                deliveryMark: 1,
+              },
+            },
+          });
+          prompt = context.request(acp.methods.agent.session.prompt, {
+            sessionId: "session-1",
+            prompt: [
+              { type: "text", text: "held with only an admission notice" },
+            ],
+          });
+          observed = prompt.then(resolved, rejected);
+          await vi.waitFor(() =>
+            expect(
+              notifications.some(
+                ({ update }) => update.sessionUpdate === "agent_message_chunk",
+              ),
+            ).toBe(true),
+          );
+          expect(resolved).not.toHaveBeenCalled();
+          expect(rejected).not.toHaveBeenCalled();
+          const first = await application.readSessionOutput({
+            binding,
+            sessionId: "session-1",
+            afterSequence: 0,
+          });
+          expect(first.events).toEqual([warning]);
+          expect(first.state).toMatchObject({
+            kind: "state",
+            state: "running",
+          });
+          expect(
+            notifications.filter(
+              ({ update }) => update.sessionUpdate === "agent_message_chunk",
+            ),
+          ).toEqual([
+            expect.objectContaining({
+              update: {
+                sessionUpdate: "agent_message_chunk",
+                messageId: "admission-soft-warning-1",
+                content: { type: "text", text },
+              },
+              _meta: {
+                "antnest.dev/delivery": {
+                  kind: "part",
+                  sequence: 1,
+                  runId: "run-1",
+                  messageId: "admission-soft-warning-1",
+                  partIndex: 0,
+                  partCount: 1,
+                },
+              },
+            }),
+          ]);
+          completion.resolve(completed);
+          await expect(prompt).resolves.toEqual({ stopReason: "end_turn" });
+          await observed;
+          expect(resolved).toHaveBeenCalledExactlyOnceWith({
+            stopReason: "end_turn",
+          });
+          expect(rejected).not.toHaveBeenCalled();
+          expect(
+            notifications.filter(
+              ({ update }) => update.sessionUpdate === "agent_message_chunk",
+            ),
+          ).toHaveLength(1);
+        } finally {
+          completion.resolve(completed);
+          await Promise.allSettled([
+            completion.promise,
+            ...acceptedCompletions,
+            ...(prompt === undefined ? [] : [prompt]),
+            ...(observed === undefined ? [] : [observed]),
+          ]);
+        }
+      });
+
+      const resumeSession = vi
+        .spyOn(application, "resumeSession")
+        .mockImplementation(async (input) => {
+          const output = await application.readSessionOutput({
+            binding: input.binding,
+            sessionId: input.sessionId,
+            afterSequence: 0,
+          });
+          return {
+            sequence: output.sequence,
+            appendVersion: 1,
+            replay: output.events,
+          };
+        });
+      const replayAgent = createAcpV1Agent({
+        binding: { ...binding, connectionId: "admission-warning-replay" },
+        application,
+        promptCapabilities: { image: false, embeddedContext: false },
+      });
+      const replayClient = acp
+        .client()
+        .onNotification(acp.methods.client.session.update, ({ params }) => {
+          replayed.push(params);
+        });
+      await replayClient.connectWith(replayAgent, async (context) => {
+        await context.request(acp.methods.agent.initialize, {
+          protocolVersion: acp.PROTOCOL_VERSION,
+          _meta: {
+            "antnest.dev/bridge": {
+              intentReceipt: 1,
+              targetCancel: 1,
+              deliveryMark: 1,
+            },
+          },
+        });
+        await context.request(acp.methods.agent.session.load, {
+          sessionId: "session-1",
+          cwd: "/workspace",
+          mcpServers: [],
+        });
+      });
+      expect(
+        replayed.filter(
+          ({ update }) => update.sessionUpdate === "agent_message_chunk",
+        ),
+      ).toEqual([
+        expect.objectContaining({
+          update: {
+            sessionUpdate: "agent_message_chunk",
+            messageId: "admission-soft-warning-1",
+            content: { type: "text", text },
+          },
+          _meta: {
+            "antnest.dev/delivery": {
+              kind: "part",
+              sequence: 1,
+              runId: "run-1",
+              messageId: "admission-soft-warning-1",
+              partIndex: 0,
+              partCount: 1,
+            },
+          },
+        }),
+      ]);
+      expect(resumeSession).toHaveBeenCalledOnce();
+      expect(acceptPrompt).toHaveBeenCalledOnce();
+      expect(execute).toHaveBeenCalledOnce();
+      expect(
+        (
+          await application.readSessionOutput({
+            binding,
+            sessionId: "session-1",
+            afterSequence: 0,
+          })
+        ).events,
+      ).toEqual([warning]);
+    } finally {
+      completion.resolve(completed);
+      await Promise.allSettled([completion.promise, ...acceptedCompletions]);
+    }
+  });
+
   it.each([
     ["failed", -32022, "model_error"],
     ["unresolved", -32023, "tool_effect_unknown"],
@@ -1939,10 +2227,107 @@ describe("ACP v1 agent mapping", () => {
       });
     },
   );
+
+  it.each([
+    {
+      terminalClass: "failed",
+      code: -32022,
+      errorClass: "budget_exceeded",
+      hasBudget: true,
+    },
+    {
+      terminalClass: "unresolved",
+      code: -32023,
+      errorClass: "budget_exceeded",
+      hasBudget: true,
+    },
+    {
+      terminalClass: "failed",
+      code: -32022,
+      errorClass: "budget_exceeded",
+      hasBudget: false,
+    },
+    {
+      terminalClass: "unresolved",
+      code: -32023,
+      errorClass: "budget_exceeded",
+      hasBudget: false,
+    },
+    {
+      terminalClass: "failed",
+      code: -32022,
+      errorClass: "model_error",
+      hasBudget: true,
+    },
+    {
+      terminalClass: "unresolved",
+      code: -32023,
+      errorClass: "tool_effect_unknown",
+      hasBudget: true,
+    },
+  ] as const)(
+    "keeps accepted $terminalClass/$errorClass classification and approved budget details (budget=$hasBudget)",
+    async ({ terminalClass, code, errorClass, hasBudget }) => {
+      const budget = { scope: "run_cost" as const, limit: "10", used: "11" };
+      const execute = vi.fn<OutputApplication["execute"]>(() =>
+        Promise.resolve(
+          terminalClass === "failed"
+            ? {
+                terminalClass,
+                executorState: "quiescent",
+                toolEffectState: "none",
+                errorClass,
+                ...(hasBudget ? { budget } : {}),
+              }
+            : {
+                terminalClass,
+                executorState: "quiescent",
+                toolEffectState: "unknown",
+                unknownEffectSource: "unclassified",
+                errorClass,
+                ...(hasBudget ? { budget } : {}),
+              },
+        ),
+      );
+      const application = createApplication({ execute });
+      const acceptPrompt = vi.spyOn(application, "acceptPrompt");
+      const agent = createAcpV1Agent({
+        binding,
+        application,
+        promptCapabilities: { image: false, embeddedContext: false },
+      });
+      await acp.client().connectWith(agent, async (context) => {
+        await context.request(acp.methods.agent.initialize, {
+          protocolVersion: acp.PROTOCOL_VERSION,
+          clientCapabilities: {},
+        });
+        const result: unknown = await context
+          .request(acp.methods.agent.session.prompt, {
+            sessionId: "session-1",
+            prompt: [{ type: "text", text: "accepted budget outcome" }],
+          })
+          .then(
+            () => undefined,
+            (error: unknown) => error,
+          );
+        expect(result).toMatchObject({ code });
+        expect((result as { data: unknown }).data).toEqual({
+          code: errorClass,
+          retryable: false,
+          ...(errorClass === "budget_exceeded" && hasBudget
+            ? { details: { budget } }
+            : {}),
+        });
+      });
+      expect(acceptPrompt).toHaveBeenCalledOnce();
+      expect(execute).toHaveBeenCalledOnce();
+    },
+  );
 });
 
 function createApplication(
   overrides: Partial<OutputApplication> = {},
+  admissionEvents: readonly SessionEvent[] = [],
 ): AcpApplicationPort {
   return withOutputHistory(
     {
@@ -1981,6 +2366,7 @@ function createApplication(
       ...overrides,
     },
     { title: "hi", updatedAt: "2026-08-30T00:00:01.000Z" },
+    admissionEvents,
   );
 }
 

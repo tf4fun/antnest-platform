@@ -1,5 +1,7 @@
 import { z } from "zod";
+import { providerTokenLimitsSchema } from "./provider-token-limits.js";
 import { modelFailoverSchema, modelRetryConfigurationSchema } from "./model-call-policy.js";
+import { organizationBudgetSchema, runBudgetSchema } from "./model-budget.js";
 import { isDeepStrictEqual } from "node:util";
 import { DomainError } from "./errors.js";
 import {
@@ -63,6 +65,7 @@ const pricingSchema = z.strictObject({
 });
 
 export const executionModelSchema = z.strictObject({
+  provider_token_limits: providerTokenLimitsSchema.optional(),
   model_profile_id: identifier,
   connection_id: identifier,
   display_name: z.string().min(1).max(200),
@@ -133,6 +136,7 @@ const agentFieldsSchema = z.strictObject({
   max_model_requests: revision,
   model_retry: modelRetryConfigurationSchema.optional(),
   failover: modelFailoverSchema.optional(),
+  run_budget: runBudgetSchema.optional(),
   runtime: publicRuntimeSchema.nullable(),
 });
 
@@ -211,6 +215,7 @@ function validateExecutableRuntime(
 export const executionConfigurationSchema = z.strictObject({
   organization_id: identifier,
   revision,
+  organization_budget: organizationBudgetSchema.optional(),
   providers: z.array(providerConfigurationSchema),
   models: z.array(executionModelSchema),
   agents: z.array(privateAgentConfigurationSchema),
@@ -513,6 +518,7 @@ export function resolveExecutionConfiguration(
       instructions: skill.instructions,
     })),
     maxModelRequests: agent.max_model_requests,
+    ...(agent.run_budget === undefined ? {} : { runBudget: { ...agent.run_budget } }),
     ...(agent.failover === undefined ? {} : { modelFailover: agent.failover, fallbackModels }),
     ...(agent.model_retry === undefined
       ? {}
@@ -654,6 +660,9 @@ function modelSpec(model: ExecutionModel, baseUrl: string): ModelSpec {
   const price = model.pricing;
   return {
     baseUrl,
+    ...(model.provider_token_limits === undefined
+      ? {}
+      : { providerTokenLimits: structuredClone(model.provider_token_limits) }),
     model: model.model,
     contextWindow: model.context_window,
     maxOutputTokens: model.max_output_tokens,

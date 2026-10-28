@@ -390,11 +390,18 @@ describe.skipIf(databaseUrl === undefined)(
 
       // Real repositories wrote the historical protection facts. Reconstruct
       // the pre-0023 schema, including removal of later scope, lease and
-      // Run/Learning owner fields,
+      // Run/Learning owner fields and model budget ledger,
       // before testing the real forward migrations and their journal prefix.
       const client = await pool.connect();
       try {
         await client.query("BEGIN");
+        await client.query("ALTER TABLE runs DROP COLUMN budget_reason");
+        await client.query("DROP TABLE model_budget_reservations");
+        await client.query("DROP TABLE model_budget_baseline_attempts");
+        await client.query("DROP TABLE model_budget_baseline_receipts");
+        await client.query("DROP TABLE organization_spend");
+        await client.query("DROP TABLE run_usage");
+        await client.query("DROP TABLE model_budget_history");
         await client.query("DROP TABLE acp_peer_participants");
         await client.query("DROP TABLE acp_peer_participation");
         await client.query("DROP TABLE acp_peer_membership");
@@ -449,7 +456,7 @@ describe.skipIf(databaseUrl === undefined)(
            DROP COLUMN execution_owner_epoch`,
         );
         const removed = await client.query(
-          "DELETE FROM schema_migrations WHERE version IN ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
+          "DELETE FROM schema_migrations WHERE version IN ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)",
           [
             "0023_runtime_barrier_cycles.sql",
             "0024_agent_run_admission.sql",
@@ -460,9 +467,10 @@ describe.skipIf(databaseUrl === undefined)(
             "0029_learning_owner_recovery.sql",
             "0030_peer_membership.sql",
             "0031_peer_participation.sql",
+            "0032_model_budget_ledger.sql",
           ],
         );
-        expect(removed.rowCount).toBe(9);
+        expect(removed.rowCount).toBe(10);
         await client.query("COMMIT");
       } catch (error) {
         await client.query("ROLLBACK");
