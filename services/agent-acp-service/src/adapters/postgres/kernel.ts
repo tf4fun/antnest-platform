@@ -37,11 +37,15 @@ export class PostgresKernel {
   public agentTransaction<T>(
     input: AgentOwnershipFence,
     operation: (client: PoolClient) => Promise<T>,
-    options: TransactionOptions & { organizationBarrier?: true } = {},
+    options: TransactionOptions & {
+      organizationBarrier?: true;
+      requireLiveFenceAtCommit?: true;
+    } = {},
   ): Promise<T> {
     const fence = ownershipFence(input);
     const timeoutMs = transactionBudget(options.timeoutMs ?? 10_000);
     const organizationBarrier = options.organizationBarrier === true;
+    const requireLiveFenceAtCommit = options.requireLiveFenceAtCommit === true;
     return this.transaction(
       async (client) => {
         if (organizationBarrier) await lockRuntimeBarrierOrganization(client, fence.organizationId);
@@ -58,7 +62,19 @@ export class PostgresKernel {
           values,
         );
         if (current.rows[0]?.owned !== true) throw new AgentOwnershipLostError();
-        return operation(client);
+        if (!requireLiveFenceAtCommit) return operation(client);
+        const result = await operation(client);
+        // Holding the lease row prevents a competing owner from replacing it,
+        // but cannot stop its clock from expiring while business rows are locked.
+        // Recheck the original fence before commit so every mutation rolls back
+        // together if any later Session, Run or budget wait outlives the lease.
+        const after = await client.query<{ owned: boolean }>(
+          `SELECT owner_instance_id=$3 AND epoch=$4::bigint AND expires_at>clock_timestamp() AS owned
+         FROM agent_leases WHERE organization_id=$1 AND agent_id=$2`,
+          values,
+        );
+        if (after.rows[0]?.owned !== true) throw new AgentOwnershipLostError();
+        return result;
       },
       { timeoutMs },
     );

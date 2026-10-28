@@ -64,6 +64,14 @@ The snapshot contains `organization_id`, `revision`, `providers`, `models`, and
 Agent references must resolve within the snapshot. An empty snapshot revokes
 current access and new execution; it does not purge history.
 
+The optional organization-level `organization_budget` contains a policy
+`revision`, `unknown_cost`, `run_caps`, and separate `daily`/`monthly` soft and
+hard microdollar caps. Each Agent may include `run_budget` with input/output
+token and microdollar limits. All limits are nonnegative safe integers; omitted
+limits and explicit zero are distinct. See the
+[shared policy contract](../agent-controller/model-call-policy.md) for field
+shapes, ownership and the remaining enforcement/consumer acceptance.
+
 - Provider: `connection_id`, `provider_key`, `request_protocol`, `base_url`,
   `enabled`, and `credential_revision` plus typed `credential` when enabled.
   Supported provider keys are `deepseek` and `openrouter`; both use

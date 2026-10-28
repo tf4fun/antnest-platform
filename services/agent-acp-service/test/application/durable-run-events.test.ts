@@ -22,12 +22,18 @@ describe("DurableRunEvents", () => {
       }),
     );
     const repository: RunEventRepository = {
-      startModelAttempt: vi.fn<RunEventRepository["startModelAttempt"]>(() => Promise.resolve()),
+      startModelAttempt: vi.fn<RunEventRepository["startModelAttempt"]>(() =>
+        Promise.resolve({ warnings: [] }),
+      ),
       finishModelAttempt: vi.fn<RunEventRepository["finishModelAttempt"]>((input) =>
         Promise.resolve({
-          kind: "usage",
-          used: (input.usage.inputTokens ?? 0) + (input.usage.outputTokens ?? 0),
-          size: input.contextSize,
+          event: {
+            kind: "usage",
+            used: (input.usage.inputTokens ?? 0) + (input.usage.outputTokens ?? 0),
+            size: input.contextSize,
+          },
+          settlement: {},
+          warnings: [],
         }),
       ),
       appendAgentMessage: vi.fn(),
@@ -76,12 +82,18 @@ describe("DurableRunEvents", () => {
 
   it("does not let a half-open live publisher block durable execution", async () => {
     const repository: RunEventRepository = {
-      startModelAttempt: vi.fn<RunEventRepository["startModelAttempt"]>(() => Promise.resolve()),
+      startModelAttempt: vi.fn<RunEventRepository["startModelAttempt"]>(() =>
+        Promise.resolve({ warnings: [] }),
+      ),
       finishModelAttempt: vi.fn<RunEventRepository["finishModelAttempt"]>((input) =>
         Promise.resolve({
-          kind: "usage",
-          used: (input.usage.inputTokens ?? 0) + (input.usage.outputTokens ?? 0),
-          size: input.contextSize,
+          event: {
+            kind: "usage",
+            used: (input.usage.inputTokens ?? 0) + (input.usage.outputTokens ?? 0),
+            size: input.contextSize,
+          },
+          settlement: {},
+          warnings: [],
         }),
       ),
       appendAgentMessage: vi.fn(() =>
@@ -121,12 +133,18 @@ describe("DurableRunEvents", () => {
 
   it("classifies repository failure separately from best-effort publication", async () => {
     const repository: RunEventRepository = {
-      startModelAttempt: vi.fn<RunEventRepository["startModelAttempt"]>(() => Promise.resolve()),
+      startModelAttempt: vi.fn<RunEventRepository["startModelAttempt"]>(() =>
+        Promise.resolve({ warnings: [] }),
+      ),
       finishModelAttempt: vi.fn<RunEventRepository["finishModelAttempt"]>((input) =>
         Promise.resolve({
-          kind: "usage",
-          used: (input.usage.inputTokens ?? 0) + (input.usage.outputTokens ?? 0),
-          size: input.contextSize,
+          event: {
+            kind: "usage",
+            used: (input.usage.inputTokens ?? 0) + (input.usage.outputTokens ?? 0),
+            size: input.contextSize,
+          },
+          settlement: {},
+          warnings: [],
         }),
       ),
       appendAgentMessage: vi.fn(() => Promise.reject(new Error("database unavailable"))),

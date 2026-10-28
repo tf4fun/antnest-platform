@@ -36,6 +36,97 @@ existing exact Provider/model capability table and is never silently dropped.
 Context compatibility uses the existing length/4 estimate and output reserve;
 it is not a proven hard token budget. Improved estimation remains under #51.
 
+Budget denial is non-retryable for foreground and permission-judge calls. A
+`budget_exceeded` decision at attempt admission dispatches no model request and
+writes no finish for that rejected attempt. The judge propagates this decision
+instead of requesting manual Tool approval; outstanding Tool proposals remain
+recorded as not executed. The Run emits one static final notice without calling
+another model. Failure to persist that notice retains the original persistence
+error, and cancellation or lost execution authority keeps its normal precedence.
+The original `{scope, limit, used}` fact travels through foreground and judge
+failures into the durable terminal outcome and one static final notice. Token
+amounts and USD microdollars remain exact integer strings, and unknown amounts
+render as `unknown` in the notice. The notice spends no model call.
+Controller/Console publication remains separate delivery work.
+
+Each physical attempt now prepares its exact serialized Provider request before
+persisting the start and reserving budget. Only observations matching the frozen
+candidate's organization, connection, model, protocol, endpoint and current
+credential revision can supply bounds. Editable context settings do not provide
+a hard input bound. Media and default/enabled reasoning remain unknown unless
+the observation proves their coverage; an explicitly disabled thinking request
+can use its observed output bound. A configured output cap above the observation
+is rejected, never silently reduced. Retry, fallback and judge prepare separately.
+See the [Provider limit contract](../../../contracts/agent-controller/provider-token-limits.md).
+
+Before send, after DNS preparation, the request rechecks current credential
+authority. Its monotonic dispatch observation distinguishes a known unsent call
+from an unknown result after send. A failed/cancelled call proven unsent after its
+original task and cleanup join records an internal `notDispatched` finish and
+zero tokens, releasing monetary and token reservations even without pricing.
+It does not fabricate a Provider cost receipt. Nonzero usage/output is never
+overwritten, and independent cleanup failures remain blocking. Once send is
+invoked, missing usage remains unresolved. Idempotent finish replay includes the
+dispatch proof and cannot release the same reservation twice.
+
+The original finish transaction now persists a budget settlement decision with
+the actual usage. It releases only resolved reservations, checks frozen Run caps
+against current organization caps, and checks the original day/month buckets even
+after midnight. Strictly excessive totals or denied unknown consumption stop the
+Run after commit; equality can complete this response but does not grant another
+call. Exact finish replay returns the original decision without another charge.
+The original request, cleanup and finish receipt must all settle before this
+decision can stop the Run. No retry, fallback, permission approval or Tool dispatch
+follows an exceeded decision. Returned content and Tool proposals remain durable
+history; proposals are individually marked unexecuted. Cleanup/persistence failures
+and cancellation retain their independent outcomes.
+
+Run admission reads the latest durable organization policy under the same
+organization lock used by attempt reservations, settlements and publication.
+It rejects when known UTC daily or monthly spending plus outstanding reservations
+has reached that period's hard threshold, including a zero threshold. This is
+an entry gate, not a reservation for the Run's first call: a zero-price primary
+alone cannot prove every future fallback, judge or returned receipt is free.
+An absent hard cap and a soft-only cap do not close the gate. Unbounded historical
+usage or incomplete period coverage blocks a configured hard cap under `deny`;
+`allow` retains that uncertainty but never waives known exhausted spending.
+Cancellation takes precedence. A rejection commits `budget_exceeded` on the
+original intent without publishing its Prompt or starting a model, then releases
+the original Runtime pin. An unknown commit receipt retains the pin for recovery;
+it is not converted to a confirmed budget rejection. Each actual attempt still
+requires the separate safe-bound reservation before dispatch.
+
+The rejection transaction also stores the original budget fact on the admitting
+Run; accepted failed/unresolved outcomes save it in their terminal transaction.
+Fresh recovery and administrative audit reads return that original fact. Exact
+terminal retries cannot modify or omit it, and invalid facts cannot accompany a
+non-budget outcome. Old records with no structured fact keep their old response
+shape. Public projection uses the [closed error contract](../../../contracts/agent-acp/errors.md#safe-messages-data-and-fallback):
+v1 retains the distinction between admission and accepted terminal numeric codes;
+v2 delivers the final notice through its existing output/replay mechanism.
+
+Soft thresholds warn when known charges plus unreleased monetary reservations
+reach the configured UTC daily/monthly threshold. Only accepted, authorized Runs
+claim warnings, and pending cancellation does not claim one. The original Prompt
+precedes an admission warning; hidden start precedes reservation warnings; hidden
+finish and usage precede settlement warnings. Each notice is visible to the
+original Session but excluded from model context. It neither invokes a model nor
+changes the independent retry, fallback, Tool, hard-limit or cleanup decisions.
+
+Each organization/period bucket retains one warning receipt without Run/Session
+foreign keys. The receipt, static assistant message and original operation commit
+atomically; a failed message insert rolls back all of them. Exact attempt replay
+uses an immutable start/finish warning manifest and its matching period receipt
+and message, without consulting newer policy. Unknown consumption and historical
+coverage remain explicit; pre-call reservations are never described as money
+already spent. Restart, policy changes and Session purge do not reset warnings.
+
+Admission observers retain their pre-admission output cursor and immediately read
+the committed notice. Attempt receipts wake the existing durable output stream
+after commit, before waiting for a Provider response. Stable message IDs preserve
+identity on reconnect/replay; a network notification is not an exactly-once delivery
+promise. See the [shared budget contract](../../../contracts/agent-controller/model-call-policy.md#budget-enforcement-and-recovery).
+
 The main turn and permission judge share one Run counter of physical model
 attempts, including failed and cancelled calls. Every admitted attempt reserves
 one ordinal and consumes one slot. A persisted start that is cancelled before
@@ -159,9 +250,9 @@ revocation signal does not acquire a probe; circuit state never revokes access.
 Replacing a removed Provider creates fresh health state without reviving old
 handles or admitting an old Run to a different endpoint.
 
-Run/organization spending ledgers and
-caps, Controller default publication, Console controls and final Docker business
-acceptance remain pending under the
+ACP now owns the durable Run/organization ledger, hard caps and soft notices
+described above. Controller default and policy publication, Console controls and
+final Docker business acceptance remain pending under the
 [model-call policy contract](../../../contracts/agent-controller/model-call-policy.md).
 The floating-point Session cost projection is not a spending ledger. This ACP
 batch does not complete #52.

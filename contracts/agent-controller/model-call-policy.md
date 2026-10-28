@@ -1,10 +1,11 @@
 # Model retry, failover and budget policy (#52)
 
-This is a planned shared contract. The [schema](model-call-policy.schema.json),
+The shared [schema](model-call-policy.schema.json),
 [manifest](model-call-policy.json) and [golden vectors](model-call-policy-fixtures.json)
-define configuration shapes for later owning-service batches. They do not add a
-live Controller route, change current Template or execution schemas, or enable
-retry, fallback, accounting or enforcement. The original #52 criteria remain open.
+define configuration shapes for owning-service batches. ACP implements retry,
+fallback, circuit breaking and budget accounting/enforcement; Controller policy
+publication and Console controls remain separate deliveries. These artifacts do
+not add a live Controller route or establish complete #52 acceptance.
 
 ## Configuration and compatibility
 
@@ -124,14 +125,61 @@ admission must fail if that bound is unavailable. Do not substitute the current
 length/4 estimate for a proven hard input bound. #51 owns improved context
 estimation and compaction; this contract does not claim that prerequisite exists.
 
+Soft thresholds use known charges plus unreleased monetary reservations, with
+`>=` triggering a warning (including zero). Unknown consumption remains explicitly
+unknown; a warning never reports a reservation as already consumed. Each organization
+receives at most one durable warning per UTC daily bucket and one per UTC monthly
+bucket. A new bucket permits a new warning; policy changes, restart, Run/Session
+purge and a later drop in reserved totals do not reset an existing warning.
+
+Only a successfully accepted, still-authorized Run can claim the warning, for its
+current Session; hard admission denial and cancellation do not consume a warning.
+Check at accepted admission, after reserving each physical attempt and after actual
+settlement. Settlement uses the original reservation buckets. The warning claim,
+static visible assistant notice and original admission/start/finish facts commit
+atomically. Notices are excluded from model context and require no model call.
+Exact attempt retries return the original notice receipt, without rechecking policy
+or creating another message. Stable message IDs and the existing durable output
+sequence govern delivery/replay; reconnect can redeliver that same stored message.
+
+The soft threshold itself never denies an otherwise permitted Run, retry, fallback
+or Tool. Hard limits, unknown-cost policy, authorization, persistence, deadlines and
+actual resource cleanup retain their independent behavior. Warning facts identify
+the original scope, UTC period, limit and known-plus-reserved amount as exact integer
+USD microdollar strings, and indicate incomplete or unknown monetary accounting.
+
 An unfinished or crashed call retains its reservation until accounting resolves;
 ACP process death, a stopped Runtime or a quiescent Run alone does not prove zero
 provider consumption. Tightening policy affects future admission and attempts,
 without rewriting already admitted attempts or losing their reservations.
+
+Settlement preserves actual consumption before stopping business work. In the
+same transaction it compares updated charges plus unresolved reservations with
+the minimum of frozen Run and latest organization caps. The attempt's original
+day/month buckets also determine its settlement decision after a boundary passes;
+later calls still reserve in their current UTC buckets. Actual totals strictly
+above a cap stop execution; equality can complete the current response, while
+subsequent consumption must independently pass admission. Unknown consumption
+retains its reservation and follows the latest unknown-cost policy.
+
+The immutable settlement decision commits with the usage and original finish
+receipt. An exact finish replay returns that same decision without charging again
+or recomputing under a newer policy; missing or malformed decisions fail closed.
+Only after the original model task, cleanup and durable finish have joined does
+ACP consume the decision. An exceeded budget stops retries, fallback, permission
+approval and Tool dispatch. Original returned content and Tool proposals remain
+history, with each unexecuted proposal rejected. Cancellation, lost authority and
+independent persistence/cleanup failures retain their normal precedence.
+
 `budget_exceeded` already exists in the [ACP error catalog](../agent-acp/errors.json)
-and remains HTTP 422 / JSON-RPC -32043, non-retryable. Detailed budget facts and
-the final assistant notice require the ACP producer and consumer acceptance;
-this configuration contract does not claim those are currently emitted.
+and remains HTTP 422 / JSON-RPC -32043 for admission, non-retryable. Accepted v1
+failures retain -32022/-32023. The [error details contract](../agent-acp/errors.md#safe-messages-data-and-fallback)
+defines the original `{scope, limit, used}` fact; ACP stores it with admission
+rejection or terminal outcome, exposes it in audit and validated public errors,
+and writes one static final notice through the existing v1/v2 output stream.
+ACP soft notices use the durable warning rules above. Controller policy
+publication and Console configuration remain separate delivery work. The cross-service Docker acceptance below is
+still required before closing #52.
 
 A per-Provider-connection circuit breaker is also required by #52. Its bounded
 failure threshold, cooldown and half-open probe ownership belong to the ACP batch.

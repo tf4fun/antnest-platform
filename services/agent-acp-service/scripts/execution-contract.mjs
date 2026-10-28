@@ -98,6 +98,34 @@ const contracts = [
       "Local quiescence alone does not prove Runtime foreground calls stopped; see execution-api.md.",
   },
 ];
+
+// The discovery observation is shared with Controller. Retain its closed union
+// and cross-field constraints that Zod refinements cannot serialize to JSON Schema.
+const providerLimits = JSON.parse(
+  await readFile(
+    new URL(
+      "../../../contracts/agent-controller/provider-token-limits.schema.json",
+      import.meta.url,
+    ),
+    "utf8",
+  ),
+);
+function inlineProviderLimits(value) {
+  if (Array.isArray(value)) return value.map(inlineProviderLimits);
+  if (value === null || typeof value !== "object") return value;
+  if (value.$ref) {
+    if (!value.$ref.startsWith("#/$defs/"))
+      throw new Error("Provider limits must be self-contained");
+    const definition = providerLimits.$defs[value.$ref.split("/").at(-1)];
+    if (definition === undefined) throw new Error("Provider limit definition is missing");
+    return inlineProviderLimits(definition);
+  }
+  return Object.fromEntries(
+    Object.entries(value)
+      .filter(([key]) => !["$schema", "$id", "$defs", "title"].includes(key))
+      .map(([key, item]) => [key, inlineProviderLimits(item)]),
+  );
+}
 for (const contract of contracts) {
   const destination = new URL(
     `../../../contracts/agent-acp/${contract.name}.schema.json`,
@@ -110,6 +138,12 @@ for (const contract of contracts) {
   schema.$id = `https://antnest.local/contracts/agent-acp/${contract.name}.schema.json`;
   schema.title = contract.title;
   schema.description = contract.description;
+  if (contract.name === "execution-snapshot") {
+    schema.$defs = { ...schema.$defs, provider_token_limits: inlineProviderLimits(providerLimits) };
+    schema.properties.models.items.properties.provider_token_limits = {
+      $ref: "#/$defs/provider_token_limits",
+    };
+  }
   const expected = `${JSON.stringify(schema, null, 2)}\n`;
   if (mode === "--write") {
     await writeFile(destination, expected);

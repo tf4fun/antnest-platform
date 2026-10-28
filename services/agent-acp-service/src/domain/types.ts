@@ -3,6 +3,8 @@ import type { ModelPricing } from "./usage.js";
 import type { ModelThinking } from "./model-thinking.js";
 import type { AgentOwnershipFence } from "./agent-ownership.js";
 import type { ModelFailover, ModelRetry } from "./model-call-policy.js";
+import type { ModelBudgetFact, RunBudget } from "./model-budget.js";
+import type { ProviderTokenLimits } from "./provider-token-limits.js";
 
 export type JsonPrimitive = string | number | boolean | null;
 export type JsonObject = { [key: string]: JsonValue };
@@ -41,6 +43,7 @@ export type SessionRecord = {
 };
 
 export type ModelSpec = {
+  providerTokenLimits?: ProviderTokenLimits;
   baseUrl: string;
   model: string;
   contextWindow: number;
@@ -74,6 +77,7 @@ export type AgentExecutionSpec = {
   model: ModelSpec;
   maxModelRequests: number;
   modelRetry?: ModelRetry;
+  runBudget?: RunBudget;
   modelFailover?: ModelFailover;
   fallbackModels?: ModelCandidate[];
 };
@@ -127,6 +131,7 @@ export type RunOutcome =
       unknownEffectSource?: never;
       stopReason: RunStopReason;
       errorClass?: never;
+      budget?: never;
     }
   | {
       terminalClass: "cancelled";
@@ -135,6 +140,7 @@ export type RunOutcome =
       unknownEffectSource?: never;
       stopReason?: never;
       errorClass?: never;
+      budget?: never;
     }
   | {
       terminalClass: "failed";
@@ -143,6 +149,7 @@ export type RunOutcome =
       unknownEffectSource?: never;
       stopReason?: never;
       errorClass: string;
+      budget?: ModelBudgetFact;
     }
   | {
       terminalClass: "unresolved";
@@ -151,6 +158,7 @@ export type RunOutcome =
       unknownEffectSource: UnknownEffectSource;
       stopReason?: never;
       errorClass: string;
+      budget?: ModelBudgetFact;
     };
 
 export type ModelMessage =

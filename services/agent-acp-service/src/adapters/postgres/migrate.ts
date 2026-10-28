@@ -28,6 +28,11 @@ export async function migrate(pool: Pool): Promise<void> {
     for (const migration of migrations.slice(applied.rows.length)) {
       await client.query("BEGIN");
       try {
+        // Only an installation with no prior migration history can prove empty
+        // prehistory. Transaction-local state cannot leak to pooled callers.
+        await client.query("SELECT set_config('antnest.fresh_database_install', $1, true)", [
+          String(applied.rows.length === 0),
+        ]);
         await client.query(migration.sql);
         await client.query(
           "INSERT INTO schema_migrations(version, checksum, applied_at) VALUES ($1, $2, now())",

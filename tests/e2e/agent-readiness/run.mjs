@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { readFileSync, mkdirSync } from "node:fs";
+import { readFileSync, mkdirSync, appendFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import {
   dockerClient,
@@ -21,7 +21,8 @@ import {
   writeEvidenceFile,
   shellStoragePreflight,
 } from "../../support/storage.mjs";
-import { inspectRound, inspectBatch } from "./evidence.mjs";
+import { inspectRound, inspectBatch, readinessRounds } from "./evidence.mjs";
+import { phaseTiming, readinessTiming, timingMarkdown } from "./timing.mjs";
 
 const root = fileURLToPath(new URL("../../../", import.meta.url));
 process.chdir(root);
@@ -38,6 +39,10 @@ const save = (name, value) =>
     name,
     typeof value === "string" ? value : JSON.stringify(value, null, 2) + "\n",
   );
+// Validate the round policy before installing timers, listeners or Docker.
+const expectedRounds = readinessRounds(
+  process.env.ANTNEST_E2E_READINESS_ROUNDS,
+);
 const owner = new AbortController(),
   signal = owner.signal;
 const deadline = Number(process.env.ANTNEST_E2E_DEADLINE_MS);
@@ -51,8 +56,30 @@ const docker = dockerClient(process.env, signal, deadline - Date.now());
 const model = `${project}-readiness-model`,
   client = `${project}-readiness-client`;
 const attempted = [],
-  rounds = [];
+  rounds = [],
+  timedRounds = [];
 let baseline, failure, finalModel;
+let businessOutcome = "not_reported",
+  cleanupOutcome = "not_reported",
+  finalCleanupMs = null;
+function publishTiming(summary = false) {
+  try {
+    const report = readinessTiming({
+      rounds: timedRounds,
+      completed: rounds.length,
+      business: businessOutcome,
+      cleanup: cleanupOutcome,
+      cleanupMs: finalCleanupMs,
+    });
+    save("timings.json", report);
+    if (summary && process.env.GITHUB_STEP_SUMMARY)
+      appendFileSync(process.env.GITHUB_STEP_SUMMARY, timingMarkdown(report));
+  } catch {
+    console.warn(
+      "Readiness timing unavailable; business and cleanup admission unchanged",
+    );
+  }
+}
 async function inspect(args) {
   return JSON.parse(await docker(args));
 }
@@ -225,42 +252,69 @@ try {
     "const hold=setInterval(()=>{},3600000);for(const s of ['SIGINT','SIGTERM'])process.once(s,()=>clearInterval(hold));",
   ]);
   await clientCommand("seed");
-  for (let index = 1; index <= 100; index++) {
-    await clientCommand("round", index);
-    let round = await readRound(index);
-    const before = await resources(round.agentId);
-    assertRuntimeStorage(before, round.agentId);
-    assert.equal(before.containers[0].Image, runtimeImageID);
-    const currentStatus = await runtimeStatus(
-      docker,
-      project,
-      before.containers[0].Id,
-      { signal },
-    );
-    await clientCommand("delete", index);
-    round = await readRound(index);
-    const after = await waitForDeletedRuntimeResources(
-      () => resources(round.agentId, before),
-      { signal },
-    );
-    round.resources = { before, after, runtimeStatus: currentStatus };
-    save(`round-${index}.json`, round);
-    inspectRound(round);
-    rounds.push(round);
-    save("progress.json", { completed: rounds.length, required: 100 });
-    console.log(
-      `Acknowledged readiness: ${index}/100 first Prompts completed and Runtime resources joined`,
-    );
+  for (let index = 1; index <= expectedRounds; index++) {
+    const timing = phaseTiming(),
+      recorded = { index, host: timing.values };
+    timedRounds.push(recorded);
+    try {
+      await timing.measure("clientRound", () => clientCommand("round", index));
+      let round = await readRound(index);
+      recorded.round = round.timing?.round;
+      recorded.publication = round.publication;
+      const { before, currentStatus } = await timing.measure(
+        "resourceInspection",
+        async () => {
+          const before = await resources(round.agentId);
+          assertRuntimeStorage(before, round.agentId);
+          assert.equal(before.containers[0].Image, runtimeImageID);
+          const currentStatus = await runtimeStatus(
+            docker,
+            project,
+            before.containers[0].Id,
+            { signal },
+          );
+          return { before, currentStatus };
+        },
+      );
+      await timing.measure("clientDelete", () =>
+        clientCommand("delete", index),
+      );
+      round = await readRound(index);
+      recorded.deletion = round.timing?.deletion;
+      const after = await timing.measure("resourceCleanup", () =>
+        waitForDeletedRuntimeResources(() => resources(round.agentId, before), {
+          signal,
+        }),
+      );
+      await timing.measure("evidence", async () => {
+        round.resources = { before, after, runtimeStatus: currentStatus };
+        save(`round-${index}.json`, round);
+        inspectRound(round);
+        rounds.push(round);
+        save("progress.json", {
+          completed: rounds.length,
+          required: expectedRounds,
+        });
+        console.log(
+          `Acknowledged readiness: ${index}/${expectedRounds} first Prompts completed and Runtime resources joined`,
+        );
+      });
+    } finally {
+      timing.finish();
+      publishTiming();
+    }
   }
   finalModel = await clientJSON("http://readiness-model-peer:8080/status");
-  const result = inspectBatch({ rounds, model: finalModel });
+  const result = inspectBatch({ rounds, model: finalModel }, expectedRounds);
   assert.deepEqual(await resources(), { containers: [], volumes: [] });
   save("business.json", {
     ...result,
     rounds: rounds.length,
     model: finalModel,
   });
+  businessOutcome = "passed";
 } catch (error) {
+  businessOutcome = "failed";
   failure = error;
   save("failure.json", {
     name: error.name,
@@ -268,6 +322,7 @@ try {
     completed: rounds.length,
   });
 } finally {
+  const cleanupStarted = performance.now();
   clearTimeout(timer);
   const cleanup = dockerClient(process.env, undefined, 180000),
     problems = [];
@@ -288,7 +343,7 @@ try {
       ),
     );
     if (!exists.length) continue;
-    if (name === client)
+    if (name === client) {
       await attempt(() =>
         cleanup([
           "cp",
@@ -296,6 +351,23 @@ try {
           `${evidence}/client-private`,
         ]),
       );
+      for (const recorded of timedRounds) {
+        if (recorded.round && recorded.deletion) continue;
+        try {
+          const partial = JSON.parse(
+            readFileSync(
+              `${evidence}/client-private/round-${recorded.index}.json`,
+              "utf8",
+            ),
+          );
+          recorded.round ??= partial.timing?.round;
+          recorded.deletion ??= partial.timing?.deletion;
+          recorded.publication ??= partial.publication;
+        } catch {
+          // A command may have failed before writing its first evidence file.
+        }
+      }
+    }
     await attempt(async () =>
       save(
         name === client ? "client.log" : "model.log",
@@ -326,6 +398,13 @@ try {
       [...(failure ? [failure] : []), ...problems],
       "readiness business or cleanup failed",
     );
+  cleanupOutcome = baseline
+    ? problems.length
+      ? "failed"
+      : "passed"
+    : "not_reported";
+  finalCleanupMs = performance.now() - cleanupStarted;
+  publishTiming(true);
 }
 if (failure) {
   console.error(

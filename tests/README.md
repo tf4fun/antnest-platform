@@ -4,6 +4,36 @@ This document describes where tests live, how to run them from the repository
 root, which external dependencies each level needs, and the resource-hygiene
 rules every test runner follows.
 
+## Readiness phase measurements
+
+The acknowledged-readiness profile still runs 100 serial fresh-Agent rounds,
+requires the publication proxy's two-second delay, admits only the original
+Controller ready event, sends one first Prompt without retry, and independently
+joins deleted Runtime resources. Timing never changes these checks.
+
+Each round records monotonic create, ready-context/ACK-ready observation,
+initialize, session creation, first-Prompt, deletion and resource-cleanup
+durations. Poll request/sleep observations are nested within these phases;
+publication injection and upstream round-trip times use the proxy's own clock.
+These overlap and must not be added to the outer durations. RPC time includes
+network and service work: pure service time is unavailable, not zero. The
+unattributed remainder includes harness/evidence and resource joining, and
+does not establish a service bottleneck. Host command overhead compares elapsed
+durations, never timestamps from different processes.
+
+The host writes a numeric allowlisted `timings.json` beside readiness evidence
+and appends the phase table to GitHub Job Summary when available. It includes
+partial rounds and separate business/final-cleanup outcomes; timing publication
+failure cannot replace either outcome. Missing values remain `null`/`n/a`.
+Raw round identities, credentials, payloads and error text are not copied into
+the timing report. Timing data does not replace the original acceptance evidence.
+
+Focused feedback: `node --test --test-concurrency=1 tests/e2e/agent-readiness/*.test.mjs`.
+The complete remote selected suite remains mandatory. This instrumentation
+batch makes no speedup claim and does not change scheduling or parallelize rounds.
+
+## Deployment secret regression
+
 Deployment secret regression is in `tests/integration/deployment/development-secrets.test.mjs`:
 the generator, file mode/non-overwrite checks and all twelve unset/empty Compose
 fields run in `make test-repo` / `make test-deployment-wiring` with Compose CLI,
@@ -66,7 +96,64 @@ the deliberate graceful Controller restart against their complete topology and
 exact error classes. Raw warnings and error spans remain in the evidence;
 unrelated errors or missing parents fail admission.
 
-## Layout
+## CI failure feedback and timing
+
+Reusable suite jobs enable `ANTNEST_CI_DIAGNOSTICS=1`. The command runner
+keeps raw component output in private local logs and forwards only failure
+identities resolved against tracked public Go/Vitest test source. Job logs and
+Job Summary show the test, repository-relative declaration location, and fixed
+`test_failure` category; runtime assertion values and dynamic test parameters
+are omitted. Ambiguous names are withheld. A source file without a resolvable
+literal title is reported as `[dynamic test name omitted]` at line 1, not as an
+exact assertion location. Unsupported reporters still retain their exit status.
+
+The shard summary retains business and cleanup outcomes separately. Dependency
+cleanup outcomes travel through a runner-owned sidecar, not parsed workload
+stdout. Missing cleanup evidence is `not_reported`, never passed. When only
+completed components reported success but the overall command failed,
+`reported_components_passed` does not claim the whole suite passed. Diagnostics
+never change the existing exit-code, cancellation, strict-completion or resource
+cleanup admission decisions. Raw shard, Go-component and dependency logs, private
+JSON, and client-private evidence are excluded from the public evidence upload;
+sanitized outcomes and timings remain available.
+
+ACP restart failures additionally opt into a bounded location in their public
+client source. The shard validates the repository-relative file and line against
+tracked E2E source before publishing it live; raw assertion values, absolute
+paths and private failure inventories remain withheld.
+
+The post-gate `Report workflow timing` job records the exact candidate and attempt,
+per-job setup/build/test/finalization, start/finish offsets, integration-gate wall
+time and accumulated parallel runner time. This initial measurement covers only
+the integration workflow, not the full cross-workflow required-check envelope.
+The first attempt starts at workflow creation; reruns start at the API's
+attempt start timestamp so inter-attempt idle time is not counted. Pre-start
+queue time for reruns is unavailable rather than inferred.
+GitHub's jobs API cannot separate matrix-slot wait from runner queue time: both
+remain null, and created-to-start delay must not be attributed to runner shortage.
+For Tier C, the dependency-ready offset is the latest successful Select suites or
+image job finish. Pre-creation scheduling is the time from that barrier to job
+creation and includes matrix admission plus GitHub orchestration; it is null when
+a dependency is missing, unsuccessful or its clock is inconsistent.
+First actionable feedback is measured from suite start to observation at the shard;
+no failure observed is not zero latency. No wall-clock savings are claimed from
+summed runner time or from an isolated suite improvement.
+
+Focused development checks after installing the ACP package's locked tooling:
+
+```sh
+node --test --test-concurrency=1 tests/support/ci-failure.test.mjs tests/support/ci-timing.test.mjs tests/support/run-command.test.mjs tests/support/ci-shard.test.mjs tests/support/dependencies.test.mjs tests/support/ci-admission.test.mjs
+```
+
+The failure tests include a deliberately failing real Vitest probe under
+`tests/support/fixtures/ci-feedback.test.mjs`, launched only by its dedicated
+config. Its nonzero result and withholding of assertion values are the expected
+success criteria of the enclosing test. Full remote repository/integration CI
+remains the merge gate; changes to shared support/workflows select all suites.
+This batch does not reduce readiness rounds/delays, remove PostgreSQL coverage,
+or change matrix capacity, dependency caches, image reuse or cancellation.
+
+## Test layout
 
 Tests are placed by the boundary they exercise, not by filename suffix.
 
@@ -799,6 +886,12 @@ catalog: each suite lists its commands, host setup, prebuilt images and the
 paths it exercises. The workflow runs only the suites that match the changed
 files (prose-only changes select none). Changes to the workflow, `tests/support/`,
 `contracts/` or the `Makefile` select every suite.
+
+PostgreSQL components use service-owned isolated shards. Stage 2 keeps its live
+deployment, recovery and role/migration checks, and automatically requires the
+complete ACP PostgreSQL suite instead of running it twice. See the
+[coverage and environment comparison](ci-latency.md) for retained checks,
+isolation, focused commands and measurement limitations.
 
 Suites are grouped into shards by product area (`shards` in the catalog).
 Each shard is one CI job, `Tier <tier> / <shard>`: it installs the setup and

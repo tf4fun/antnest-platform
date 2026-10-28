@@ -466,7 +466,11 @@
         "details": {
           "type": "object",
           "additionalProperties": false,
-          "maxProperties": 0
+          "properties": {
+            "budget": {
+              "$ref": "#/$defs/budgetFact"
+            }
+          }
         }
       },
       "if": {
@@ -480,6 +484,58 @@
           "retryable": {
             "const": true
           }
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "required": ["details"],
+            "properties": {
+              "details": {
+                "type": "object",
+                "required": ["budget"],
+                "properties": {
+                  "budget": {}
+                }
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "code": {
+                "const": "budget_exceeded"
+              },
+              "retryable": {
+                "const": false
+              }
+            }
+          }
+        }
+      ]
+    },
+    "budgetFact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["scope", "limit", "used"],
+      "properties": {
+        "scope": {
+          "type": "string",
+          "enum": [
+            "run_input",
+            "run_output",
+            "run_cost",
+            "organization_daily",
+            "organization_monthly",
+            "unknown_cost"
+          ]
+        },
+        "limit": {
+          "type": ["string", "null"],
+          "pattern": "^(0|[1-9][0-9]*)(?![\\s\\S])"
+        },
+        "used": {
+          "type": ["string", "null"],
+          "pattern": "^(0|[1-9][0-9]*)(?![\\s\\S])"
         }
       }
     }

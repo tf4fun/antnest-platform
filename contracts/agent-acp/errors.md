@@ -102,9 +102,24 @@ they must not be converted into a new Run by this catalog.
 
 JSON-RPC error data uses
 `{code, retryable, retry_after_ms?, details?}`. The schema's `errorData`
-definition rejects undeclared fields and permits only an empty `details`
-object: no detail fields are currently approved. Raw causes, credentials,
-provider payloads and arbitrary exception objects must not appear there.
+definition rejects undeclared fields. `budget_exceeded` with `retryable: false`
+may carry `details: {budget: {scope, limit, used}}`; all three fact fields are
+required and no additional fields are permitted. `scope` is `run_input`,
+`run_output`, `run_cost`, `organization_daily`, `organization_monthly`, or
+`unknown_cost`. Amounts are canonical nonnegative decimal integer strings (tokens
+for input/output, USD microdollars for cost), or `null` when unknown. Strings
+preserve values above the JavaScript safe integer limit; clients must not coerce
+them to floating point. Older errors without details and empty details remain
+valid. Raw causes, credentials, Provider payloads and exception objects must not
+appear there. Only validated facts from a typed budget error or durable terminal
+outcome are projected. Malformed facts are omitted without changing the canonical
+error classification.
+
+Budget rejection before acceptance remains JSON-RPC `-32043`. An accepted Run
+ending with `budget_exceeded` keeps terminal `-32022` (failed) or `-32023`
+(unresolved), with the same optional budget details. ACP v2 acceptance is already
+complete when asynchronous execution stops; its original output stream/replay
+carries the persisted final assistant notice, without a late admission error.
 Public messages use the catalog's fixed safe English strings rather than
 arbitrary exception text. HTTP status is catalog metadata for the applicable
 HTTP route; this contract does not introduce a separate general HTTP envelope.

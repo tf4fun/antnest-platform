@@ -346,6 +346,16 @@ export class PostgresExecutionConfiguration implements ExecutionConfigurationRep
         if (Number(current.revision) > incoming.revision) return false;
         const equalRevision = Number(current.revision) === incoming.revision;
         const knownProjection = parsePublicExecutionConfiguration(current.configuration);
+        const knownBudget = knownProjection.organization_budget;
+        const nextBudget = projection.organization_budget;
+        if (
+          knownBudget !== undefined &&
+          (nextBudget === undefined ||
+            nextBudget.revision < knownBudget.revision ||
+            (nextBudget.revision === knownBudget.revision &&
+              !isDeepStrictEqual(nextBudget, knownBudget)))
+        )
+          throw conflict();
         if (equalRevision && !isDeepStrictEqual(knownProjection, projection)) throw conflict();
         const authority = this.openAuthority(current);
         if (authority !== null) {

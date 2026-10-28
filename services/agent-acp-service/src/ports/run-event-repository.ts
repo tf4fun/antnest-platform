@@ -9,9 +9,16 @@ import type { SessionEvent } from "./acp-application.js";
 import type { ToolPresentation, ToolFileObservation } from "../domain/tool-presentation.js";
 import type { ModelToolCall, ModelUsage } from "./model.js";
 import type { ModelAttemptStarted, ModelAttemptFinished } from "./model-attempts.js";
+import type { ModelBudgetSettlement } from "../domain/model-budget.js";
+import type { BudgetWarningNotice } from "../domain/model-budget-warning.js";
 
 export type StartModelAttemptInput = ModelAttemptStarted & { runId: string };
 export type FinishModelAttemptInput = ModelAttemptFinished & { runId: string; contextSize: number };
+export type ModelAttemptStartReceipt = { warnings: BudgetWarningNotice[] };
+export type ModelAttemptReceipt = ModelAttemptStartReceipt & {
+  event: SessionEvent;
+  settlement: ModelBudgetSettlement;
+};
 
 export type AppendAgentMessageInput = {
   id: string;
@@ -68,8 +75,8 @@ export type InterruptedToolEffects =
   | { toolEffectState: "unknown"; unknownEffectSource: UnknownEffectSource };
 
 export interface RunEventRepository {
-  startModelAttempt(input: StartModelAttemptInput): Promise<void>;
-  finishModelAttempt(input: FinishModelAttemptInput): Promise<SessionEvent>;
+  startModelAttempt(input: StartModelAttemptInput): Promise<ModelAttemptStartReceipt>;
+  finishModelAttempt(input: FinishModelAttemptInput): Promise<ModelAttemptReceipt>;
   appendPlan(input: {
     id: string;
     runId: string;

@@ -36,6 +36,8 @@ test("dependency plans isolate projects and override retained ports and credenti
     ANTNEST_ACP_SKILL_MAINTENANCE_SIGNING_KEY: "retained-key",
     ANTNEST_SERVICE_NETWORK_PREFIX: "10.241.0",
     OTEL_SDK_DISABLED: "false",
+    ANTNEST_CI_DIAGNOSTICS: "1",
+    ANTNEST_CI_OUTCOMES: "/private/outcomes",
   });
   assert.match(plan.project, /^antnest-dependencies-[a-f0-9-]+$/);
   assert.equal(plan.env.ANTNEST_POSTGRES_HOST_PORT, "0");
@@ -52,6 +54,8 @@ test("dependency plans isolate projects and override retained ports and credenti
   assert.equal(plan.env.ANTNEST_ACP_SKILL_MAINTENANCE_SIGNING_KEY, undefined);
   assert.equal(plan.env.ANTNEST_SERVICE_NETWORK_PREFIX, undefined);
   assert.equal(plan.env.OTEL_SDK_DISABLED, undefined);
+  assert.equal(plan.env.ANTNEST_CI_DIAGNOSTICS, "1");
+  assert.equal(plan.env.ANTNEST_CI_OUTCOMES, undefined);
   assert(plan.compose.includes("/dev/null"));
   assert(plan.compose.includes(plan.project));
 });
@@ -143,6 +147,18 @@ test("dependency setup and cleanup failures retain both causes and private evide
 test("dependency profiles preserve startup, command and cleanup limits and a discovered network prefix", async (t) => {
   const output = mkdtempSync(join(tmpdir(), "antnest-dependency-timeout-"));
   t.after(() => rmSync(output, { recursive: true, force: true }));
+  const previous = {
+    ANTNEST_CI_DIAGNOSTICS: process.env.ANTNEST_CI_DIAGNOSTICS,
+    ANTNEST_CI_OUTCOMES: process.env.ANTNEST_CI_OUTCOMES,
+  };
+  process.env.ANTNEST_CI_DIAGNOSTICS = "1";
+  process.env.ANTNEST_CI_OUTCOMES = join(output, "components.jsonl");
+  t.after(() => {
+    for (const [key, value] of Object.entries(previous)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  });
   let startupWait;
   let startedPrefix, cleanupPrefix;
   const dockerFactory = (env) => async (args) => {
@@ -182,6 +198,10 @@ test("dependency profiles preserve startup, command and cleanup limits and a dis
   assert.equal(cleanupPrefix, startedPrefix);
   assert.equal(result.exit_code, 124);
   assert.equal(result.complete, false);
+  assert.deepEqual(
+    JSON.parse(readFileSync(join(output, "components.jsonl"), "utf8")),
+    { version: 1, business: "failed", cleanup: "passed" },
+  );
   assert.equal(
     JSON.parse(readFileSync(join(output, "timed.cleanup.json"))).cleanup,
     true,

@@ -6,12 +6,14 @@ import {
   mkdirSync,
   openSync,
   writeFileSync,
+  writeSync,
 } from "node:fs";
 import { basename, resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { parseArgs } from "node:util";
 import { pathToFileURL } from "node:url";
 import { durablePath } from "./storage.mjs";
+import { FailureObserver } from "./ci-failure.mjs";
 
 function rejectStdinScript(command) {
   const executable = basename(command[0]);
@@ -69,6 +71,9 @@ export async function runCommand({
   env = process.env,
   cwd = process.cwd(),
   pauseFile,
+  failureObserver = env.ANTNEST_CI_DIAGNOSTICS === "1"
+    ? new FailureObserver()
+    : undefined,
 }) {
   output = durablePath(output);
   if (pauseFile && existsSync(durablePath(pauseFile)))
@@ -117,12 +122,36 @@ export async function runCommand({
         cwd,
         env,
         detached: true,
-        stdio: ["ignore", log, log],
+        stdio: [
+          "ignore",
+          failureObserver ? "pipe" : log,
+          failureObserver ? "pipe" : log,
+        ],
       });
     } finally {
       process.umask(previousUmask);
     }
+    if (failureObserver) {
+      for (const [channel, stream] of [
+        ["stdout", child.stdout],
+        ["stderr", child.stderr],
+      ])
+        stream.on("data", (chunk) => {
+          writeSync(log, chunk);
+          try {
+            failureObserver.write(chunk, channel);
+          } catch {
+            /* Auxiliary diagnostics. */
+          }
+        });
+    }
     timer = setTimeout(() => stop("timeout"), timeoutMs);
+    if (failureObserver)
+      child.once("exit", () => {
+        // Descendants must not retain the new diagnostic pipes until timeout.
+        signalGroup("SIGTERM");
+        escalation ??= setTimeout(() => signalGroup("SIGKILL"), graceMs);
+      });
     exitCode = await new Promise((resolveCode) => {
       child.once("error", () => {
         reason = "start-failed";
@@ -156,6 +185,11 @@ export async function runCommand({
       await delay(20);
     }
     closeSync(log);
+    try {
+      failureObserver?.end();
+    } catch {
+      /* Auxiliary diagnostics. */
+    }
     for (const signal of ["SIGINT", "SIGTERM"]) process.off(signal, interrupt);
   }
   const result = {

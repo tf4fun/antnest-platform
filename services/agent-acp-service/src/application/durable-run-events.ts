@@ -12,6 +12,12 @@ import type { ModelAttemptStarted, ModelAttemptFinished } from "../ports/model-a
 import { planResult, planTool, type PlanEntry } from "../domain/plan.js";
 import { retryRunWrite } from "./run-write-retry.js";
 import { assertWorkerOwnership } from "./worker-ownership.js";
+import {
+  ModelBudgetExceededError,
+  modelBudgetSettlementSchema,
+  type ModelBudgetSettlement,
+} from "../domain/model-budget.js";
+import { budgetWarningNoticesSchema } from "../domain/model-budget-warning.js";
 
 const MAX_RESULT_SUMMARY_CHARACTERS = 4_096;
 
@@ -37,21 +43,45 @@ export class DurableRunEvents implements RunEventPort {
 
   public async start(runId: string, fact: ModelAttemptStarted): Promise<void> {
     const input = structuredClone({ runId, ...fact });
-    await this.persist("model attempt start", () =>
-      this.dependencies.repository.startModelAttempt(input),
-    );
+    const warnings = await this.persist("model attempt start", async () => {
+      const raw: unknown = await this.dependencies.repository.startModelAttempt(input);
+      if (typeof raw !== "object" || raw === null || !("warnings" in raw))
+        throw new Error("Model attempt start receipt is invalid");
+      return budgetWarningNoticesSchema.parse(raw.warnings);
+    });
+    for (const warning of warnings) await this.publish(warning);
   }
 
-  public async finish(runId: string, fact: ModelAttemptFinished): Promise<void> {
+  public async finish(runId: string, fact: ModelAttemptFinished): Promise<ModelBudgetSettlement> {
     const input = structuredClone({
       runId,
       ...fact,
       contextSize: fact.contextSize ?? this.dependencies.contextSize,
     });
-    const event = await this.persist("model attempt finish", () =>
-      this.dependencies.repository.finishModelAttempt(input),
-    );
-    await this.publish(event);
+    const receipt = await this.persist("model attempt finish", async () => {
+      const stored = await this.dependencies.repository.finishModelAttempt(input);
+      // Validate the storage boundary at runtime even when the adapter's static
+      // type claims a complete receipt (e.g. a stale or damaged implementation).
+      const raw: unknown = stored;
+      if (
+        typeof raw !== "object" ||
+        raw === null ||
+        !("event" in raw) ||
+        typeof raw.event !== "object" ||
+        raw.event === null ||
+        !("kind" in raw.event) ||
+        raw.event.kind !== "usage"
+      )
+        throw new Error("Model attempt usage receipt is invalid");
+      return {
+        event: stored.event,
+        settlement: modelBudgetSettlementSchema.parse(stored.settlement),
+        warnings: budgetWarningNoticesSchema.parse(stored.warnings),
+      };
+    });
+    await this.publish(receipt.event);
+    for (const warning of receipt.warnings) await this.publish(warning);
+    return receipt.settlement;
   }
 
   public async updatePlan(
@@ -238,6 +268,7 @@ export class DurableRunEvents implements RunEventPort {
       return await retryRunWrite(this.dependencies.ownershipSignal, persist);
     } catch (error) {
       assertWorkerOwnership(this.dependencies.ownershipSignal);
+      if (error instanceof ModelBudgetExceededError) throw error;
       throw new RunEventPersistenceError(operation, error);
     }
   }

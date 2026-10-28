@@ -2,18 +2,29 @@
 // workflow always runs; its suite job consumes the matrix printed here.
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { appendFileSync } from "node:fs";
-import { matchesGlob } from "node:path";
+import { appendFileSync, readFileSync } from "node:fs";
+import { join, matchesGlob } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
+import {
+  buildDependents,
+  contractMarkers,
+  impactedPaths,
+  selectComponents,
+} from "./ci-impact.mjs";
 
-// Any change here can alter every suite's environment or selection.
+const repositoryRoot = fileURLToPath(new URL("../../", import.meta.url));
+
+// Any change here can alter every suite's environment or selection. Shared
+// helpers and contract directories narrow through tests/support/ci-impact.mjs
+// instead of selecting everything.
 const everySuite = [
   ".github/workflows/integration.yml",
+  ".github/workflows/e2e.yml",
   ".github/workflows/_suite.yml",
-  "tests/support/**",
-  "contracts/**",
-  "Makefile",
+  "tests/support/ci-ownership.json",
+  "tests/support/ci-changes.mjs",
+  "tests/support/ci-impact.mjs",
   ".nvmrc",
   ".dockerignore",
 ];
@@ -773,6 +784,7 @@ function tierC() {
         ...(options.paths ?? []),
       ],
       run: [...(options.before ?? []), options.run ?? `make ${target}`],
+      ...(options.requires ? { requires: options.requires } : {}),
       ...(options.strict ? { strict: true } : {}),
     })),
   );
@@ -865,10 +877,10 @@ export function imageSpec(name) {
 }
 
 const isVariant = (name) => typeof images[name] !== "string";
-const isPublishable = (name) => Object.hasOwn(serviceImages, name);
+export const isPublishable = (name) => Object.hasOwn(serviceImages, name);
 
 const registry = "ghcr.io/tf4fun";
-const packageName = (name) =>
+export const packageName = (name) =>
   name.startsWith("antnest-") ? name : `antnest-${name}`;
 const scope = (name) => `scope=${packageName(name)}`;
 const platforms = ["linux/amd64"];
@@ -1003,9 +1015,9 @@ export function imageDigest(name, tree, readBlob) {
   return hash.digest("hex").slice(0, 32);
 }
 
-export function imageReference(name, digest) {
+export function imageReference(name, digest, { registryImages = false } = {}) {
   imageSpec(name);
-  return isPublishable(name)
+  return isPublishable(name) || registryImages
     ? `${registry}/${packageName(name)}:inputs-${digest}`
     : `antnest/${name}:local`;
 }
@@ -1022,10 +1034,15 @@ export function imageExists(ref, run = execFileSync) {
   }
 }
 
-export function resolveImages(names, { tree, readBlob, exists }) {
+export function resolveImages(
+  names,
+  { tree, readBlob, exists, registryImages = false },
+) {
   return names.map((name) => {
-    const ref = imageReference(name, imageDigest(name, tree, readBlob));
-    const publish = isPublishable(name);
+    const ref = imageReference(name, imageDigest(name, tree, readBlob), {
+      registryImages,
+    });
+    const publish = isPublishable(name) || registryImages;
     return {
       name,
       dockerfile: imageSpec(name).dockerfile,
@@ -1052,25 +1069,120 @@ function relevant(file) {
   );
 }
 
-export function selectSuites(files, { all = false, only } = {}) {
+const testFile =
+  /(?:^|\/)(?:test_[^/]*\.py|[^/]*_test\.go|[^/]*\.test\.[^./]+)$/u;
+const codeFile =
+  /\.(?:mjs|cjs|js|ts|mts|cts|jsx|tsx|sh|bash|py|go|rs|json|ya?ml|toml|sql|proto|mod|sum|env|cfg|conf|ini|xml)$/iu;
+const sourceTree =
+  /^(?:contracts|deploy|modules|runtimes|scripts|services|tests)\//u;
+const suiteGlobs = (suite) =>
+  // tests/support/** would make every helper change global again.
+  suite.paths.filter((glob) => glob !== "tests/support/**");
+const matchesSuite = (suite, file) =>
+  suiteGlobs(suite).some((glob) => matchesGlob(file, glob));
+let repositoryDependents;
+function dependents(sources) {
+  if (sources) return buildDependents(sources.list(), sources.read);
+  repositoryDependents ??= buildDependents(
+    execFileSync("git", ["ls-files", "-z"], {
+      cwd: repositoryRoot,
+      encoding: "utf8",
+      maxBuffer: 64 * 1024 * 1024,
+    })
+      .split("\0")
+      .filter(Boolean),
+    (path) => readFileSync(join(repositoryRoot, path), "utf8"),
+  );
+  return repositoryDependents;
+}
+
+function withRequirements(selected) {
+  const ids = new Set(selected.map((suite) => suite.id));
+  for (const id of ids)
+    for (const required of suites.find((suite) => suite.id === id).requires ??
+      []) {
+      if (!suites.some((suite) => suite.id === required && !suite.disabled))
+        throw new Error(`unavailable required suite ${required}`);
+      ids.add(required);
+    }
+  return suites.filter((suite) => ids.has(suite.id));
+}
+
+// Scope is a mandatory intersect after selection: component keeps tier A
+// suites, e2e keeps B and C. Contract directories expand through the
+// ownership map to their owning services, and shared helpers expand
+// through the static reference closure. Unresolved production helpers select
+// everything as a safe fallback; unrelated test helpers select nothing.
+export function selectSuites(
+  files,
+  { all = false, only, scope = "all", sources } = {},
+) {
+  const enabledSuites = () => suites.filter((suite) => !suite.disabled);
+  const withinScope = (selected) => {
+    if (scope === "all") return selected;
+    if (scope === "component")
+      return selected.filter((suite) => suite.tier === "a");
+    if (scope === "e2e") return selected.filter((suite) => suite.tier !== "a");
+    throw new Error(`unknown scope ${scope}`);
+  };
   if (only) {
     for (const id of only)
       if (!suites.some((suite) => suite.id === id))
         throw new Error(`unknown suite ${id}`);
-    return suites.filter((suite) => !suite.disabled && only.includes(suite.id));
+    return withinScope(
+      withRequirements(
+        enabledSuites().filter((suite) => only.includes(suite.id)),
+      ),
+    );
   }
   const changed = files.filter(relevant);
   const global = changed.some((file) =>
     everySuite.some((glob) => matchesGlob(file, glob)),
   );
-  return suites.filter(
-    (suite) =>
-      !suite.disabled &&
-      (all ||
-        global ||
-        changed.some((file) =>
-          suite.paths.some((glob) => matchesGlob(file, glob)),
-        )),
+  if (all || global) return withinScope(withRequirements(enabledSuites()));
+  // Makefile diffs stay conservative until prerequisite ownership is proven.
+  if (changed.includes("Makefile"))
+    return withinScope(withRequirements(enabledSuites()));
+  const selected = new Set();
+  const helpers = [];
+  for (const file of changed) {
+    if (file.startsWith("contracts/")) {
+      const markers = contractMarkers(file);
+      if (markers === null)
+        return withinScope(withRequirements(enabledSuites()));
+      for (const suite of enabledSuites())
+        if (markers.some((marker) => matchesSuite(suite, marker)))
+          selected.add(suite);
+      continue;
+    }
+    let matched = false;
+    for (const suite of enabledSuites())
+      if (matchesSuite(suite, file)) {
+        selected.add(suite);
+        matched = true;
+      }
+    if (!matched) helpers.push(file);
+  }
+  if (helpers.length > 0) {
+    const deps = dependents(sources);
+    for (const file of helpers) {
+      const reached = impactedPaths(file, deps, (path) =>
+        enabledSuites().some((suite) => matchesSuite(suite, path)),
+      );
+      const impacted = enabledSuites().filter((suite) =>
+        [...reached].some((path) => matchesSuite(suite, path)),
+      );
+      if (impacted.length > 0) {
+        for (const suite of impacted) selected.add(suite);
+        continue;
+      }
+      if (testFile.test(file) || !codeFile.test(file) || !sourceTree.test(file))
+        continue;
+      return withinScope(withRequirements(enabledSuites()));
+    }
+  }
+  return withinScope(
+    withRequirements(suites.filter((suite) => selected.has(suite))),
   );
 }
 
@@ -1108,25 +1220,49 @@ export function matrixEntry(suite) {
 // individual targets. Destructive suites come last in their shard.
 export const shards = [
   {
-    id: "a-postgres",
-    name: "PostgreSQL components",
-    suites: [
-      "egress-postgres",
-      "runtime-controller-postgres",
-      "identity-postgres",
-      "agent-controller-postgres",
-      "agent-acp-postgres",
-    ],
+    id: "a-egress-postgres",
+    name: "Runtime Egress PostgreSQL",
+    suites: ["egress-postgres"],
   },
   {
-    id: "a-browser",
-    name: "Browser components",
-    suites: ["admin-console-browser", "agent-ui-browser"],
+    id: "a-runtime-controller-postgres",
+    name: "Runtime Controller PostgreSQL",
+    suites: ["runtime-controller-postgres"],
   },
   {
-    id: "a-contracts",
-    name: "Deployment contracts and SDK probes",
-    suites: ["deployment-contracts", "elicitation-sdk-probe"],
+    id: "a-identity-postgres",
+    name: "Identity Service PostgreSQL",
+    suites: ["identity-postgres"],
+  },
+  {
+    id: "a-agent-controller-postgres",
+    name: "Agent Controller PostgreSQL and Temporal",
+    suites: ["agent-controller-postgres"],
+  },
+  {
+    id: "a-agent-acp-postgres",
+    name: "Agent ACP PostgreSQL and audit",
+    suites: ["agent-acp-postgres"],
+  },
+  {
+    id: "a-admin-console-browser",
+    name: "Admin Console browser",
+    suites: ["admin-console-browser"],
+  },
+  {
+    id: "a-agent-ui-browser",
+    name: "Agent UI browser",
+    suites: ["agent-ui-browser"],
+  },
+  {
+    id: "a-deployment-contracts",
+    name: "Deployment render contracts",
+    suites: ["deployment-contracts"],
+  },
+  {
+    id: "a-elicitation-sdk-probe",
+    name: "Runtime elicitation SDK probe",
+    suites: ["elicitation-sdk-probe"],
   },
   {
     id: "b-auth",
@@ -1230,6 +1366,7 @@ export const shards = [
   {
     id: "c-agent-readiness",
     name: "Acknowledged Agent readiness (100 first Prompts)",
+    priority: true,
     suites: ["c-agent-readiness"],
   },
   {
@@ -1354,6 +1491,37 @@ export function matrices(selected) {
   };
 }
 
+export function workflowPlan(selected, resolved = []) {
+  const { plain, imaged, optional } = matrices(selected);
+  const priorityIds = new Set(
+    shards.filter((shard) => shard.priority).map((shard) => shard.id),
+  );
+  const priority = {
+    include: optional.include.filter((row) => priorityIds.has(row.id)),
+  };
+  const priorityImages = new Set(
+    priority.include.flatMap((row) => row.images.split(",").filter(Boolean)),
+  );
+  const builds = resolved
+    .filter((image) => image.build)
+    .map(({ name, ref, publish }) => ({ name, ref, publish }));
+  return {
+    plain,
+    imaged,
+    priority,
+    optional: {
+      include: optional.include.filter((row) => !priorityIds.has(row.id)),
+    },
+    optionalParallel: priority.include.length ? 5 : 6,
+    priorityBuilds: {
+      include: builds.filter((image) => priorityImages.has(image.name)),
+    },
+    builds: {
+      include: builds.filter((image) => !priorityImages.has(image.name)),
+    },
+  };
+}
+
 const zeroSha = /^0+$/u;
 
 export function changedFiles(base, head, git = execFileSync) {
@@ -1374,7 +1542,9 @@ function main() {
       bake: { type: "string" },
       "resolve-images": { type: "boolean", default: false },
       "all-images": { type: "boolean", default: false },
+      "registry-images": { type: "boolean", default: false },
       only: { type: "string" },
+      scope: { type: "string", default: "all" },
     },
   });
   if (values.bake !== undefined) {
@@ -1388,8 +1558,11 @@ function main() {
   const selected = selectSuites(files, {
     all,
     only: only?.length ? only : undefined,
+    scope: values.scope,
   });
-  const { plain, imaged, optional } = matrices(selected);
+  const { plain, imaged, optional, priority, optionalParallel } =
+    workflowPlan(selected);
+  const system = matrix(selected);
   const lines = [
     `suites=${JSON.stringify(plain)}`,
     `plain=${plain.include.length}`,
@@ -1397,6 +1570,14 @@ function main() {
     `imaged=${imaged.include.length}`,
     `optional_suites=${JSON.stringify(optional)}`,
     `optional=${optional.include.length}`,
+    `system_suites=${JSON.stringify(system)}`,
+    `system_count=${system.include.length}`,
+    `services=${JSON.stringify(
+      selectComponents(files, { all: all || only?.length > 0 }),
+    )}`,
+    `priority_suites=${JSON.stringify(priority)}`,
+    `priority=${priority.include.length}`,
+    `optional_parallel=${optionalParallel}`,
   ];
   let resolved = [];
   if (values["resolve-images"]) {
@@ -1405,13 +1586,25 @@ function main() {
       execFileSync("git", ["cat-file", "blob", object], { encoding: "utf8" });
     resolved = resolveImages(
       suiteImages(selected, { allImages: values["all-images"] }),
-      { tree, readBlob, exists: imageExists },
+      {
+        tree,
+        readBlob,
+        exists: imageExists,
+        registryImages: values["registry-images"],
+      },
     );
-    const builds = resolved.filter((image) => image.build);
+    const { priorityBuilds } = workflowPlan(selected, resolved);
+    const builds = {
+      include: resolved
+        .filter((image) => image.build)
+        .map(({ name, ref, publish }) => ({ name, ref, publish })),
+    };
     lines.push(
       `images=${JSON.stringify(Object.fromEntries(resolved.map(({ name, ref, build }) => [name, { ref, build }])))}`,
-      `builds=${JSON.stringify({ include: builds.map(({ name, ref, publish }) => ({ name, ref, publish })) })}`,
-      `building=${builds.length}`,
+      `builds=${JSON.stringify(builds)}`,
+      `building=${builds.include.length}`,
+      `priority_builds=${JSON.stringify(priorityBuilds)}`,
+      `priority_building=${priorityBuilds.include.length}`,
     );
   }
   if (process.env.GITHUB_OUTPUT)

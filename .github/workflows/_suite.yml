@@ -12,6 +12,14 @@ on:
         description: Resolved images as printed by ci-changes.mjs --resolve-images.
         default: "{}"
         type: string
+      revision:
+        description: Exact source revision of the test harness and image manifest.
+        default: ""
+        type: string
+      readiness-rounds:
+        description: Three functional rounds, or 100 for scheduled soak runs.
+        default: "3"
+        type: string
 
 permissions:
   contents: read
@@ -27,6 +35,8 @@ jobs:
       packages: read
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.revision || github.sha }}
 
       - uses: actions/setup-node@v7
         with:
@@ -161,6 +171,8 @@ jobs:
         env:
           SUITES: ${{ fromJSON(inputs.suite).suites }}
           ANTNEST_CI_PROVIDED_IMAGES: ${{ fromJSON(inputs.suite).images }}
+          ANTNEST_CI_DIAGNOSTICS: "1"
+          ANTNEST_E2E_READINESS_ROUNDS: ${{ inputs.readiness-rounds }}
         run: node tests/support/ci-shard.mjs
 
       # Exclude fixture credentials and private exception diagnostics.
@@ -176,6 +188,11 @@ jobs:
             !artifacts/verification/**/*.pem
             !artifacts/verification/**/*.env
             !artifacts/verification/**/*.private.txt
+            !artifacts/verification/**/*.private.json
+            !artifacts/verification/**/client-private/**
+            !artifacts/verification/ci-shards/**/*.log
+            !artifacts/verification/go-integration/**/*.log
+            !artifacts/verification/dependencies/**/*.log
             !artifacts/verification/**/generate-deployment-env.log
           if-no-files-found: ignore
           retention-days: 14

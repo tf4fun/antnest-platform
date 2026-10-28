@@ -23,6 +23,34 @@ describe.skipIf(databaseUrl === undefined)(
       await pool.end();
     });
 
+    it("migrates as the unprivileged ACP database owner", async () => {
+      const role = await pool.query(`
+        SELECT current_user AS role, pg_get_userbyid(d.datdba) AS owner,
+               r.rolsuper, r.rolcreatedb, r.rolcreaterole, r.rolreplication, r.rolbypassrls
+        FROM pg_database d JOIN pg_roles r ON r.rolname = current_user
+        WHERE d.datname = current_database()
+      `);
+      expect(role.rows).toEqual([
+        {
+          role: "antnest_agent_acp",
+          owner: "antnest_agent_acp",
+          rolsuper: false,
+          rolcreatedb: false,
+          rolcreaterole: false,
+          rolreplication: false,
+          rolbypassrls: false,
+        },
+      ]);
+      await migrate(pool);
+      const tables = await pool.query<{ tableowner: string }>(
+        "SELECT tableowner FROM pg_tables WHERE schemaname = 'public'",
+      );
+      expect(tables.rows.length).toBeGreaterThan(0);
+      expect(
+        tables.rows.every((row) => row.tableowner === "antnest_agent_acp"),
+      ).toBe(true);
+    });
+
     it("applies the remaining schema steps without rewriting existing terminal Runs", async () => {
       const initialSql = await readFile(
         fileURLToPath(
@@ -143,6 +171,7 @@ describe.skipIf(databaseUrl === undefined)(
         "0029_learning_owner_recovery.sql",
         "0030_peer_membership.sql",
         "0031_peer_participation.sql",
+        "0032_model_budget_ledger.sql",
       ]);
       expect(
         (

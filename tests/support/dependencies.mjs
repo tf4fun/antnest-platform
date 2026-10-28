@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
@@ -47,6 +47,9 @@ export function dependencyPlan(profile, inherited = process.env) {
     ANTNEST_SERVICE_AUTH_GID: "65532",
     ANTNEST_DOCKER_SOCKET_GID: "998",
     ANTNEST_IDENTITY_CCT_SIGNING_KID: "dependency-unused",
+    ...(inherited.ANTNEST_CI_DIAGNOSTICS === "1"
+      ? { ANTNEST_CI_DIAGNOSTICS: "1" }
+      : {}),
   };
   for (const key of Object.keys(roles))
     env[`ANTNEST_${key}_POSTGRES_PASSWORD`] =
@@ -297,6 +300,27 @@ export async function withDependencies({
         }),
         { flag: "wx", mode: 0o600 },
       );
+      if (
+        process.env.ANTNEST_CI_DIAGNOSTICS === "1" &&
+        process.env.ANTNEST_CI_OUTCOMES
+      ) {
+        try {
+          appendFileSync(
+            process.env.ANTNEST_CI_OUTCOMES,
+            JSON.stringify({
+              version: 1,
+              business: !result
+                ? "not_run"
+                : result.exit_code === 0
+                  ? "passed"
+                  : "failed",
+              cleanup: cleaned ? "passed" : "failed",
+            }) + "\n",
+          );
+        } catch {
+          /* Diagnostics never replace business/cleanup admission. */
+        }
+      }
     }
   }
   if (primaryError && cleanupError)
