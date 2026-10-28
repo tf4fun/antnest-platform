@@ -28,7 +28,8 @@ func (snapshot ExecutionSnapshot) Validate() error {
 	models := make(map[string]bool, len(snapshot.Models))
 	for _, model := range snapshot.Models {
 		provider, found := providers[model.ConnectionID]
-		if !found || models[model.ModelProfileID] || !model.valid(provider.BaseURL) {
+		if !found || models[model.ModelProfileID] || !model.valid(provider.BaseURL) ||
+			!model.validProviderObservations(snapshot.OrganizationID, provider) {
 			return ErrInvalidExecutionConfiguration
 		}
 		models[model.ModelProfileID] = true
@@ -66,6 +67,34 @@ func (model ExecutionModel) valid(baseURL string) bool {
 	return executionIdentifier.MatchString(model.ModelProfileID) && executionText(model.DisplayName) && executionText(model.Model) &&
 		int64(model.ContextWindow) <= MaximumExecutionRevision && int64(model.MaxOutputTokens) <= MaximumExecutionRevision &&
 		domain.ValidateModelSpec(model.WithEndpoint(baseURL)) == nil
+}
+
+// validProviderObservations requires emitted limits to bind to this exact
+// provider state on an enabled Provider, name this model's API id and carry
+// positive safe-integer dimensions only.
+func (model ExecutionModel) validProviderObservations(organizationID string, provider ExecutionProvider) bool {
+	if model.ProviderTokenLimits == nil {
+		return model.SupportsTools == nil || provider.Enabled
+	}
+	limits := model.ProviderTokenLimits
+	if limits.Source != domain.ProviderTokenLimitsSource || limits.SourceRevision < 1 ||
+		limits.SourceRevision > domain.MaximumSafeInteger || limits.Binding.Model != model.Model ||
+		!provider.Enabled || !validSafeInteger(limits.ContextTokens) || !validSafeInteger(limits.MaxOutputTokens) {
+		return false
+	}
+	if limits.ContextTokens == nil && limits.MaxOutputTokens == nil {
+		return false
+	}
+	if strings.TrimSpace(limits.Binding.Model) == "" || len(limits.Binding.Model) > 200 {
+		return false
+	}
+	return limits.Binding.ProviderObservationBinding.Valid() &&
+		limits.Binding.Matches(organizationID, provider.ConnectionID, provider.ProviderKey,
+			provider.RequestProtocol, provider.BaseURL, provider.CredentialRevision)
+}
+
+func validSafeInteger(value *int64) bool {
+	return value == nil || (*value >= 1 && *value <= domain.MaximumSafeInteger)
 }
 
 func (agent ExecutionAgent) valid() bool {

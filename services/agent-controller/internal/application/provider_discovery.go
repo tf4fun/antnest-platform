@@ -69,7 +69,14 @@ func (service *CatalogService) DiscoverProviderModels(ctx context.Context, organ
 	if err != nil {
 		return ProviderDiscoveryResult{}, ErrDependencyUnavailable
 	}
-	return service.discoverModels(ctx, ports.ProviderDiscoveryConnection{ProviderKey: connection.ProviderKey, BaseURL: connection.BaseURL}, secret)
+	result, err := service.discoverModels(ctx, ports.ProviderDiscoveryConnection{ProviderKey: connection.ProviderKey, BaseURL: connection.BaseURL}, secret)
+	if err != nil {
+		return ProviderDiscoveryResult{}, err
+	}
+	if _, err := service.store.ReplaceProviderObservations(ctx, connection, result.Models); err != nil {
+		return ProviderDiscoveryResult{}, err
+	}
+	return result, nil
 }
 
 func (service *CatalogService) DiscoverDraftProviderModels(ctx context.Context, input DraftProviderDiscoveryInput) (ProviderDiscoveryResult, error) {

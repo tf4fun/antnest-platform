@@ -30,7 +30,7 @@ func TestModelCallPolicyMigrationUpgrades0031WithoutRewritingHistory(t *testing.
 	assertModelPolicyMigrationColumns(t, ctx, store, false)
 
 	require.NoError(t, store.Migrate(ctx))
-	assertModelPolicyMigrationVersion(t, ctx, store, 32)
+	assertModelPolicyMigrationApplied(t, ctx, store)
 	assertModelPolicyMigrationColumns(t, ctx, store, true)
 	require.Equal(t, before, modelPolicyMigrationBusinessSnapshot(t, ctx, store))
 	require.Equal(t, journal, runtimeBarrierPolicyMigrationSnapshot(t, ctx, store, 31))
@@ -74,7 +74,7 @@ func TestModelCallPolicyMigrationConcurrentMigrateAdvancesEachOrganizationOnce(t
 	for err := range results {
 		require.NoError(t, err)
 	}
-	assertModelPolicyMigrationVersion(t, ctx, store, 32)
+	assertModelPolicyMigrationApplied(t, ctx, store)
 	assertModelPolicyMigrationAdvanced(t, ctx, store, synchronization)
 	require.Equal(t, before, modelPolicyMigrationBusinessSnapshot(t, ctx, store))
 	var entries int
@@ -105,7 +105,7 @@ func TestModelCallPolicyMigrationRevisionOverflowRollsBackTheWholeUpgrade(t *tes
 	require.NoError(t, err)
 	safe := modelPolicyMigrationSynchronizations(t, ctx, store)
 	require.NoError(t, store.Migrate(ctx), "a rolled-back upgrade can be retried after the original overflow is resolved")
-	assertModelPolicyMigrationVersion(t, ctx, store, 32)
+	assertModelPolicyMigrationApplied(t, ctx, store)
 	assertModelPolicyMigrationAdvanced(t, ctx, store, safe)
 	require.Equal(t, before, modelPolicyMigrationBusinessSnapshot(t, ctx, store))
 }
@@ -243,6 +243,20 @@ func assertModelPolicyMigrationVersion(t *testing.T, ctx context.Context, store 
 	var version int64
 	require.NoError(t, store.pool.QueryRow(ctx, "SELECT max(version) FROM agent_controller.schema_migrations").Scan(&version))
 	require.Equal(t, expected, version)
+}
+
+// assertModelPolicyMigrationApplied proves the historical 0032 upgrade ran and
+// that the latest Migrate additionally installed the provider_observations
+// table, without pinning the journal tail to a specific successor version.
+func assertModelPolicyMigrationApplied(t *testing.T, ctx context.Context, store *Repository) {
+	t.Helper()
+	var applied bool
+	require.NoError(t, store.pool.QueryRow(ctx, "SELECT EXISTS(SELECT 1 FROM agent_controller.schema_migrations WHERE version=32)").Scan(&applied))
+	require.True(t, applied, "migration 0032 must be installed")
+	var table bool
+	require.NoError(t, store.pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM information_schema.tables
+WHERE table_schema='agent_controller' AND table_name='provider_observations')`).Scan(&table))
+	require.True(t, table, "latest Migrate must create provider_observations")
 }
 
 func assertModelPolicyMigrationColumns(t *testing.T, ctx context.Context, store *Repository, installed bool) {

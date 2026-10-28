@@ -114,3 +114,105 @@ func TestExecutionModelPolicyDefaultsAndExplicitValuesConformToSharedACPContract
 		})
 	}
 }
+
+func observationContractSet(t *testing.T, models []domain.ProviderObservedModel) domain.ProviderObservationSet {
+	t.Helper()
+	canonical, err := domain.CanonicalProviderBaseURL("https://api.deepseek.com")
+	require.NoError(t, err)
+	return domain.ProviderObservationSet{
+		Binding: domain.ProviderObservationBinding{OrganizationID: "org-1", ConnectionID: "provider-1", ProviderKey: "deepseek",
+			RequestProtocol: "openai_chat_completions", BaseURL: canonical, CredentialRevision: "credential-current"},
+		SourceRevision: 3,
+		Models:         models,
+	}
+}
+
+func TestExecutionProviderObservationsConformToSharedACPContract(t *testing.T) {
+	body, err := os.ReadFile("../../../../contracts/agent-acp/execution-snapshot.schema.json")
+	require.NoError(t, err)
+	document, err := jsonschema.UnmarshalJSON(bytes.NewReader(body))
+	require.NoError(t, err)
+	compiler := jsonschema.NewCompiler()
+	compiler.AssertFormat()
+	identifier := "https://antnest.local/contracts/agent-acp/execution-snapshot.schema.json"
+	require.NoError(t, compiler.AddResource(identifier, document))
+	definition, err := compiler.Compile(identifier)
+	require.NoError(t, err)
+
+	contextTokens, maxOutput := int64(128000), int64(8192)
+	toolsTrue, toolsFalse := true, false
+	for _, scenario := range []struct {
+		name   string
+		models []domain.ProviderObservedModel
+		check  func(t *testing.T, model ports.ExecutionModel)
+	}{
+		{"facts", []domain.ProviderObservedModel{{Model: "current-model", ContextTokens: &contextTokens, MaxOutputTokens: &maxOutput, SupportsTools: &toolsTrue}},
+			func(t *testing.T, model ports.ExecutionModel) {
+				require.NotNil(t, model.ProviderTokenLimits)
+				require.NotNil(t, model.SupportsTools)
+			}},
+		{"tools only", []domain.ProviderObservedModel{{Model: "current-model", SupportsTools: &toolsTrue}},
+			func(t *testing.T, model ports.ExecutionModel) {
+				require.Nil(t, model.ProviderTokenLimits)
+				require.True(t, *model.SupportsTools)
+			}},
+		{"explicit false", []domain.ProviderObservedModel{{Model: "current-model", SupportsTools: &toolsFalse}},
+			func(t *testing.T, model ports.ExecutionModel) {
+				require.NotNil(t, model.SupportsTools)
+				require.False(t, *model.SupportsTools)
+			}},
+	} {
+		t.Run(scenario.name, func(t *testing.T) {
+			source := executionSource(t)
+			source.ProviderObservations = []domain.ProviderObservationSet{observationContractSet(t, scenario.models)}
+			value, err := BuildExecutionSnapshot(t.Context(), source, &executionCredentialOpener{})
+			require.NoError(t, err)
+			scenario.check(t, value.Models[0])
+			publisher := &ExecutionPublisher{runtime: fixtureExecutionRuntimeResolver()}
+			require.NoError(t, publisher.resolveRuntimeAuthority(t.Context(), &value))
+			payload, err := json.Marshal(value)
+			require.NoError(t, err)
+			instance, err := jsonschema.UnmarshalJSON(bytes.NewReader(payload))
+			require.NoError(t, err)
+			require.NoError(t, definition.Validate(instance))
+		})
+	}
+}
+
+func TestExecutionProviderObservationsBindExactAPIIDAcrossProfiles(t *testing.T) {
+	contextTokens := int64(128000)
+	tools := true
+	source := executionSource(t)
+	// A second profile on the same connection exposing the same API id, and a
+	// third profile with a different API id; the agent falls back to both.
+	same, err := domain.NewModelProfileRevision(domain.ModelProfileRevisionInput{
+		ID: "model-config-same", ModelProfileID: "model-same", OrganizationID: "org-1", Revision: 1,
+		Model: domain.ModelSpec{BaseURL: "https://api.deepseek.com", Model: "current-model", ContextWindow: 8192, MaxOutputTokens: 1024},
+	})
+	require.NoError(t, err)
+	different, err := domain.NewModelProfileRevision(domain.ModelProfileRevisionInput{
+		ID: "model-config-different", ModelProfileID: "model-different", OrganizationID: "org-1", Revision: 1,
+		Model: domain.ModelSpec{BaseURL: "https://api.deepseek.com", Model: "other-api-model", ContextWindow: 8192, MaxOutputTokens: 1024},
+	})
+	require.NoError(t, err)
+	source.Models = append(source.Models,
+		ports.ModelProfileRecord{OrganizationID: "org-1", ModelProfileID: "model-same", ProviderConnectionID: "provider-1",
+			DisplayName: "Same API", Enabled: true, Revision: same},
+		ports.ModelProfileRecord{OrganizationID: "org-1", ModelProfileID: "model-different", ProviderConnectionID: "provider-1",
+			DisplayName: "Different API", Enabled: true, Revision: different})
+	source.Agents[0].Spec.Snapshot.FallbackModelProfileIDs = []string{"model-same", "model-different"}
+	source.ProviderObservations = []domain.ProviderObservationSet{observationContractSet(t,
+		[]domain.ProviderObservedModel{{Model: "current-model", ContextTokens: &contextTokens, SupportsTools: &tools}})}
+
+	value, err := BuildExecutionSnapshot(t.Context(), source, &executionCredentialOpener{})
+	require.NoError(t, err)
+	facts := make(map[string]ports.ExecutionModel, len(value.Models))
+	for _, model := range value.Models {
+		facts[model.ModelProfileID] = model
+	}
+	require.NotNil(t, facts["model-1"].ProviderTokenLimits, "primary profile binds by API id")
+	require.NotNil(t, facts["model-same"].ProviderTokenLimits, "fallback profile binds by API id, not profile id")
+	require.Nil(t, facts["model-different"].ProviderTokenLimits, "different API id never inherits facts")
+	require.Nil(t, facts["model-different"].SupportsTools)
+	require.Equal(t, "current-model", facts["model-same"].ProviderTokenLimits.Binding.Model)
+}

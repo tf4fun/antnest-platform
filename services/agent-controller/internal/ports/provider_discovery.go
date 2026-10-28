@@ -26,6 +26,7 @@ type DiscoveredModel struct {
 	ContextWindow   *int               `json:"context_window,omitempty"`
 	MaxOutputTokens *int               `json:"max_output_tokens,omitempty"`
 	SupportsImages  *bool              `json:"supports_images,omitempty"`
+	SupportsTools   *bool              `json:"-"`
 	Pricing         *DiscoveredPricing `json:"pricing,omitempty"`
 }
 

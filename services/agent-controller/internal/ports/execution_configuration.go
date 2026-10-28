@@ -15,11 +15,12 @@ const MaximumExecutionRevision int64 = 1<<53 - 1
 // ExecutionSource is one consistent view of Controller-owned current records.
 // Credentials are still sealed; no Session/Run selection enters this contract.
 type ExecutionSource struct {
-	OrganizationID string
-	Revision       int64
-	Providers      []ProviderConnectionRecord
-	Models         []ModelProfileRecord
-	Agents         []ExecutionAgentSource
+	OrganizationID       string
+	Revision             int64
+	Providers            []ProviderConnectionRecord
+	ProviderObservations []domain.ProviderObservationSet
+	Models               []ModelProfileRecord
+	Agents               []ExecutionAgentSource
 }
 
 type ExecutionAgentSource struct {
@@ -56,10 +57,12 @@ type ExecutionProvider struct {
 
 type ExecutionModel struct {
 	domain.ModelParameters
-	ModelProfileID string `json:"model_profile_id"`
-	ConnectionID   string `json:"connection_id"`
-	DisplayName    string `json:"display_name"`
-	Enabled        bool   `json:"enabled"`
+	ModelProfileID      string                      `json:"model_profile_id"`
+	ConnectionID        string                      `json:"connection_id"`
+	DisplayName         string                      `json:"display_name"`
+	Enabled             bool                        `json:"enabled"`
+	ProviderTokenLimits *domain.ProviderTokenLimits `json:"provider_token_limits,omitempty"`
+	SupportsTools       *bool                       `json:"supports_tools,omitempty"`
 }
 
 type ExecutionRuntime struct {

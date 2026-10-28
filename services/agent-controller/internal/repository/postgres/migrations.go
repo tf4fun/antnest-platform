@@ -56,6 +56,7 @@ var (
 		{version: 30, name: "runtime_barrier_recovery_projection", sql: mustMigration("migrations/0030_runtime_barrier_recovery_projection.sql")},
 		{version: 31, name: "agent_runtime_readiness", sql: mustMigration("migrations/0031_agent_runtime_readiness.sql")},
 		{version: 32, name: "model_call_policy", sql: mustMigration("migrations/0032_model_call_policy.sql")},
+		{version: 33, name: "provider_observations", sql: mustMigration("migrations/0033_provider_observations.sql")},
 	}
 )
 

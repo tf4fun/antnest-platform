@@ -19,6 +19,10 @@ func readExecutionSource(ctx context.Context, tx *databaseTransaction, organizat
 	if err != nil {
 		return ports.ExecutionSource{}, err
 	}
+	source.ProviderObservations, err = readProviderObservations(ctx, tx, organizationID)
+	if err != nil {
+		return ports.ExecutionSource{}, err
+	}
 	source.Agents, err = readExecutionAgents(ctx, tx, organizationID)
 	if err != nil {
 		return ports.ExecutionSource{}, err
