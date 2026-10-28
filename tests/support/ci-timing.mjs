@@ -51,6 +51,8 @@ export function workflowTiming(run, jobs) {
         startOffsetMs: elapsed(origin, job.started_at),
         finishOffsetMs: elapsed(origin, job.completed_at),
         createdToStartMs: elapsed(job.created_at, job.started_at),
+        dependencyReadyOffsetMs: null,
+        preCreationSchedulingMs: null,
         // The jobs API does not expose the matrix-slot acquisition timestamp.
         matrixSlotWaitMs: null,
         runnerQueueMs: null,
@@ -63,6 +65,26 @@ export function workflowTiming(run, jobs) {
           : null,
       };
     });
+  const predecessors = rows.filter(
+    (row) => row.name === "Select suites" || row.name.startsWith("Image / "),
+  );
+  if (
+    predecessors.some((row) => row.name === "Select suites") &&
+    predecessors.every(
+      (row) => row.conclusion === "success" && row.finishOffsetMs !== null,
+    )
+  ) {
+    const ready = Math.max(...predecessors.map((row) => row.finishOffsetMs));
+    for (const row of rows.filter((row) => row.name.startsWith("Tier C / "))) {
+      row.dependencyReadyOffsetMs = ready;
+      const created =
+        row.startOffsetMs !== null && row.createdToStartMs !== null
+          ? row.startOffsetMs - row.createdToStartMs
+          : null;
+      row.preCreationSchedulingMs =
+        created !== null && created >= ready ? created - ready : null;
+    }
+  }
   const gate = rows.find((row) => row.name === "Integration checks");
   const suites = rows.filter(
     (row) => row.name.startsWith("Tier ") && row.finishOffsetMs !== null,
@@ -99,13 +121,13 @@ export function timingMarkdown(report) {
     `Candidate: ${report.candidate}; attempt: ${report.attempt}; gate: ${report.gateConclusion}.`,
     `Clock origin: ${report.clockOrigin}. Reruns exclude inter-attempt idle time; their pre-start queue time is unavailable.`,
     `Integration gate wall time: ${seconds(report.integrationGateWallMs)} s. Accumulated runner time: ${seconds(report.totalRunnerMs)} s (parallel, not wall time or savings).`,
-    "Other workflows, including Repository checks, are outside this measurement. Matrix-slot waiting and runner queueing cannot be separated by the jobs API; null is not zero. Created-to-start includes scheduling/dependency waiting and must not be attributed to runner shortage.",
+    "Other workflows, including Repository checks, are outside this measurement. Tier C eligibility follows Select suites and the complete image matrix. Pre-creation scheduling includes matrix admission and GitHub orchestration; created-to-start includes dispatch/provisioning. Neither isolates matrix-slot acquisition or runner queueing; null is not zero.",
     "",
-    "| Job | Start (s) | Finish (s) | Created-to-start (s) | Setup (s) | Build (s) | Test (s) | Finalization (s) |",
-    "| --- | --- | --- | --- | --- | --- | --- | --- |",
+    "| Job | Start (s) | Finish (s) | Dependency-ready (s) | Pre-creation scheduling (s) | Created-to-start (s) | Setup (s) | Build (s) | Test (s) | Finalization (s) |",
+    "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |",
     ...report.jobs.map(
       (row) =>
-        `| ${markdownCell(row.name)} | ${[row.startOffsetMs, row.finishOffsetMs, row.createdToStartMs, row.setupMs, row.buildMs, row.testMs, row.finalizationMs].map(seconds).join(" | ")} |`,
+        `| ${markdownCell(row.name)} | ${[row.startOffsetMs, row.finishOffsetMs, row.dependencyReadyOffsetMs, row.preCreationSchedulingMs, row.createdToStartMs, row.setupMs, row.buildMs, row.testMs, row.finalizationMs].map(seconds).join(" | ")} |`,
     ),
     "",
     report.lastSuite

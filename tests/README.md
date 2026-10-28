@@ -126,6 +126,10 @@ attempt start timestamp so inter-attempt idle time is not counted. Pre-start
 queue time for reruns is unavailable rather than inferred.
 GitHub's jobs API cannot separate matrix-slot wait from runner queue time: both
 remain null, and created-to-start delay must not be attributed to runner shortage.
+For Tier C, the dependency-ready offset is the latest successful Select suites or
+image job finish. Pre-creation scheduling is the time from that barrier to job
+creation and includes matrix admission plus GitHub orchestration; it is null when
+a dependency is missing, unsuccessful or its clock is inconsistent.
 First actionable feedback is measured from suite start to observation at the shard;
 no failure observed is not zero latency. No wall-clock savings are claimed from
 summed runner time or from an isolated suite improvement.

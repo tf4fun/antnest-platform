@@ -99,3 +99,43 @@ test("reruns exclude time between attempts instead of presenting it as current g
   assert.equal(missing.integrationGateWallMs, null);
   assert.equal(missing.complete, false);
 });
+
+test("Tier C separates pre-creation scheduling from post-creation dispatch", () => {
+  const result = workflowTiming(run, [
+    job("Select suites", 0, 10),
+    job("Image / antnest-runtime", 10, 60),
+    {
+      ...job("Tier C / Agent lifecycle / Run", 90, 110),
+      created_at: at(85),
+    },
+    job("Integration checks", 110, 112),
+  ]);
+  const lifecycle = result.jobs[2];
+  assert.equal(lifecycle.dependencyReadyOffsetMs, 60000);
+  assert.equal(lifecycle.preCreationSchedulingMs, 25000);
+  assert.equal(lifecycle.createdToStartMs, 5000);
+  assert.equal(lifecycle.matrixSlotWaitMs, null);
+  assert.equal(lifecycle.runnerQueueMs, null);
+  assert.equal(result.jobs[0].dependencyReadyOffsetMs, null);
+});
+
+test("unavailable dependencies and inconsistent clocks do not fabricate scheduling waits", () => {
+  for (const image of [
+    { ...job("Image / antnest-runtime", 10, 60), conclusion: "failure" },
+    { ...job("Image / antnest-runtime", 10, 60), completed_at: null },
+  ]) {
+    const result = workflowTiming(run, [
+      job("Select suites", 0, 10),
+      image,
+      job("Tier C / Agent lifecycle / Run", 90, 110),
+    ]);
+    assert.equal(result.jobs[2].dependencyReadyOffsetMs, null);
+    assert.equal(result.jobs[2].preCreationSchedulingMs, null);
+  }
+  const result = workflowTiming(run, [
+    job("Select suites", 0, 10),
+    job("Tier C / Agent lifecycle / Run", 15, 20),
+  ]);
+  assert.equal(result.jobs[1].dependencyReadyOffsetMs, 10000);
+  assert.equal(result.jobs[1].preCreationSchedulingMs, null);
+});
