@@ -14,7 +14,7 @@ Issue 状态最后核对于 2026-10-28：141 个 issue，87 个已关闭，54 �
 - 每批遵循共享契约、单个服务的测试/实现/文档、消费方批次、显式集成验收的顺序。新行为先有失败测试。
 - PR 合并门禁仅使用远程受影响服务的 unit、contract、component 与必要清理检查；main 是系统集成分支，合入后独立触发 E2E，结果不阻塞其他 PR 合并（#361，用户于 2026-10-28 确认）。本地仅做定向反馈，不重复完整 CI；协调者核对精确候选的远程证据后合并。
 - 合并前核对 GitHub closingIssuesReferences，子批次不得自动关闭仍有消费方或集成待办的父 issue；平台关联误关闭时核对事件来源后纠正。合并后记录 PR、commit、验证证据并更新复选框，并同步更新 issue #82 及相关子 issue 的交付进度、验收复选框、CI 证据与剩余工作。生产方完成但消费方或集成待交付时，issue 保持开放。
-- 验证证据保存在忽略的 `artifacts/verification/`；测试源、fixtures 和清单遵循 [AGENTS.md](AGENTS.md)，不存放在 `.cache/`。
+- 验证日志、截图与 CI 产物是临时调试输出而非永久档案：`artifacts/verification/`（Git 忽略）只保留当前批次最小日志，远程 PR 证据确认后即删除；唯一未提交代码备份（patch/diff、唯一恢复源）单独保存；测试源、fixtures 和清单遵循 [AGENTS.md](AGENTS.md)，均不存放在 `.cache/`。
 - 开始下一项前读取本文件的当前批次、相关阶段和依赖，并重新核对该 issue 的正文、讨论与当前代码。
 
 ## 当前批次
@@ -22,12 +22,12 @@ Issue 状态最后核对于 2026-10-28：141 个 issue，87 个已关闭，54 �
 当前状态（2026-10-28，北京时间）。2026-10-28 之前的检查点日志已移出本文件：已提交部分见 Git 历史，未提交的 2026-10-22 至 10-25 检查点见 `artifacts/verification/issue-triage-20261028/TODO-current-batch-history.md`。
 
 - **主线 #82 → #52**：#82 结构化子项 8/21 关闭（新挂入 #252、#356）；#52 原验收 1/5。#342 契约、#343 重试、#344 fallback、#345 熔断、#347 ACP 预算记账与执行（`6330f84b`）已合并；#347 只交付 ACP 生产方。
-- **下一主线批次**：Controller Template 模型调用策略发布，本地提交 `46b4b078`（`.worktrees/controller-model-policy`，38 文件；原 `ce87707d` 已无冲突 rebase 到 `57e2ee30`，range-diff 补丁一致，备份 tag `backup/controller-model-policy-before-rebase-20261028`），未推送、无 PR。之后依次是可信 Provider token／capability 观测 → 组织预算 GET／PUT、CAS 和原子发布 → Console 配置 → 跨服务 Docker 业务验收。#52 预算 unit 框待 Controller 发布真实策略来源后再核对。
+- **下一主线批次**：Controller Template 模型调用策略发布，本地提交 `46b4b078`（`.worktrees/controller-model-policy`，38 文件；原 `ce87707d` 已无冲突 rebase 到 `57e2ee30`，range-diff 补丁一致，备份 tag `backup/controller-model-policy-before-rebase-20261028`），已作为 Controller 生产方 PR [#366](https://github.com/tf4fun/antnest-platform/pull/366) 发布（精确 `46b4b078`），远程组件门禁等待中，#52 保持开放。之后依次是可信 Provider token／capability 观测 → 组织预算 GET／PUT、CAS 和原子发布 → Console 配置 → 跨服务 Docker 业务验收。#52 预算 unit 框待 Controller 发布真实策略来源后再核对。
 - **CI 交付模型**：#350 已关闭；#361 第 1 批（#362，`57e2ee30`）已合并：PR 门禁为受影响服务的 unit／contract／component，Docker E2E 在 main 系统集成工作流运行，不阻塞 PR。#361 后续批次（consumer 兼容测试、纯镜像 E2E、Makefile 精确选择、≤15 分钟实测、release 切分）保持开放，不阻塞主线。
 - **新发现问题（已挂 Epic，暂不展开）**：#356 ACP v2-inflight 恢复断言 → #82；#252 egress 停止 metrics 报错 → #82；#355 Identity PG 720s 超时、#357 lifecycle restore 退出码 1 → #83。#247 已标 `diagnostic-only`，保持开放。#165–#169、#246 归入 #83 第 5 组（CI 与验证基础设施）。
 - **Epic 概况**：#80、#81 已关闭；#82 8/21；#83 6/30（含新挂入 10 项）；#84 0/8；#85 0/5。
-- **本地遗留清理（2026-10-28）**：其余 worktree 分支经核对均已由后续 PR 合入或被取代，无未落地改动；仅 `ce87707d` 为真正未交付工作，已 rebase 到 `57e2ee30`。3 个一次性诊断 probe（原未跟踪、按 checkpoint 约定不入库）已移至 `artifacts/verification/issue-triage-20261028/probes/`。`git stash@{0}` 保存同步前的 TODO.md 工作副本，内容已并入本文件与历史备份。
-- **`46b4b078` 剩余工作**（按其 checkpoint）：迁移后实际默认策略发布与 Apply／ACK 证据、最终源码 review，然后作为 Controller-only PR 发布；远程组件门禁未跑。
+- **本地遗留清理（2026-10-28）**：其余 worktree 分支经核对均已由后续 PR 合入或被取代，无未落地改动；仅 `ce87707d` 为真正未交付工作，已 rebase 到 `57e2ee30`。102 个已存在 worktree 目录已移除（记录于 `artifacts/verification/issue-triage-20261028/worktree-preservation/removed-worktrees.json`），15 个 `/private/tmp` 陈旧注册已 prune，所有分支引用保留。`git stash@{0}` 在与 `artifacts/verification/issue-triage-20261028/TODO.working-before-sync.md` 字节一致核对后已 drop。3 个一次性诊断 probe（原未跟踪、按 checkpoint 约定不入库）在 `artifacts/verification/issue-triage-20261028/probes/`。旧 `artifacts/verification` 按用户确认策略清理：124 个历史顶层目录已删除，worktree-preservation 下历史 run 证据删除仍在后台进行；保留当前批次 `controller-model-policy-20261028/` 日志、issue-triage 原始 TODO/issue JSON/probes、worktree-preservation 清单与 removal 记录、ui-vite-security-patch 工作副本备份及 `unique-working-patches/`（71 个 patch/diff）。
+- **`46b4b078` Controller 批次验证**：批次已含生产方 held-ACK 发布测试（`TestModelCallPolicyMigrationPublicationWaitsForActualHTTPAcknowledgement`：真实 PostgreSQL＋ExecutionPublisher＋实际 acpclient HTTP，ACK 对端为 httptest fixture HTTP peer、非真实 ACP 服务，覆盖 valid_ack／http_failure／old_revision_ack）与共享契约校验。本地验证（go1.27.3）：domain／application／server 三包 `-run 'Policy'` 全部通过、`acp-model-policy-contract.test.mjs` 6/6 通过；PG 测试本地因缺少数据库全部跳过，待远程组件 CI。已作为 PR [#366](https://github.com/tf4fun/antnest-platform/pull/366)（Controller-only、精确 `46b4b078`）发布，远程组件门禁等待中，#52 保持开放。
 
 ## 推进队列
 
