@@ -189,7 +189,7 @@ recurrence's public feedback while keeping raw assertions and inventories privat
 
 ## Execution-speed priority follow-up
 
-The next candidate changes scheduling, not test content. The measured critical
+Priority scheduling does not change test content. The measured critical
 path, `c-agent-readiness`, now occupies a dedicated one-slot Tier C matrix that
 depends only on Select suites and the images that shard actually needs. Other
 Tier C shards retain the complete image barrier and five slots when priority work
@@ -206,8 +206,8 @@ group's actual dependency barrier.
 
 Using only the frozen `a149b56` durations, a one-plus-five-slot simulation puts
 priority completion at +37m03s and other Tier C completion at +34m52s. That model
-ignores contention, queueing and cache drift: it is not an achieved saving. The
-new candidate requires its own remote measurement. Coverage, serial readiness
+ignores contention, queueing and cache drift: it is not an achieved saving.
+Coverage, serial readiness
 rounds, two-second publication delay, business deadlines and independent cleanup
 are unchanged.
 
@@ -218,3 +218,39 @@ retain their evidence and unknown causes. No test is disabled or admitted becaus
 it has a tracking issue; failed or superseded runs are not successful performance
 samples. Uncommitted Go diagnostic follow-up work was deferred rather than added
 to this scheduling change.
+
+### Observed priority-lane run
+
+The exact scheduling candidate [4755e58](https://github.com/tf4fun/antnest-platform/actions/runs/40644274404)
+completed with **49 checks passed and two failed**: the operations shard and its
+required aggregate. This is not successful full-gate performance acceptance.
+The [timing report](https://github.com/tf4fun/antnest-platform/actions/runs/40644274404/job/122681313681)
+uses the same definitions as the earlier successful `a149b56` sample:
+
+| Measurement                      | Before priority lane | Priority lane |
+| -------------------------------- | -------------------: | ------------: |
+| Aggregate outcome                |               passed |        failed |
+| Integration completion           |               43m10s |        36m43s |
+| Accumulated runner time          |              271m56s |       273m16s |
+| Readiness runner start           |               +8m55s |        +3m13s |
+| Readiness runner completion      |              +43m04s |       +36m38s |
+| Readiness dependency barrier     |               +8m53s |        +3m11s |
+| Complete image barrier           |               +8m53s |        +9m10s |
+| Observed Tier C concurrency peak |                    6 |             6 |
+
+Readiness started 5m57s before this run's complete image barrier. Its 100 creation,
+ready, first-Prompt, deletion and resource-cleanup rounds all passed; the
+independent final cleanup also passed. All 100 measured publication delays remain
+at least two seconds. The observed start is 5m42s earlier than the prior sample,
+but this does not isolate scheduling from other run-to-run variation. Both
+samples used four builds and ten pulls; that alone does not establish matched
+runner, dependency-cache or contention conditions. Accumulated runner time was
+1m20s higher, not a cost reduction.
+
+The failing `c-lifecycle-restore` exit and missing independent cleanup result are
+tracked separately in [#357](https://github.com/tf4fun/antnest-platform/issues/357).
+Its other three shard members passed. No retry, timeout increase, suppressed
+assertion or admission change was used. The failure's cause remains unknown and
+the 36m43s completion is not a successful timing sample. Three matched-cache,
+complete successful runs and exact-final-candidate admission remain required
+before treating the proposed target as achieved.
