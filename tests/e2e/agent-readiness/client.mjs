@@ -12,6 +12,7 @@ import { withPrivateCommandResources } from "../acp-commands/connection.mjs";
 import { createPrivateACPTelemetry } from "../identity-closeout/private-acp-telemetry.mjs";
 import { readinessProof, publicationProof } from "./readiness-proof.mjs";
 import { snapshotSession, resumeSession } from "./browser-session.mjs";
+import { phaseTiming } from "./timing.mjs";
 
 const directory = "/tmp/agent-readiness";
 const save = (name, value) =>
@@ -53,12 +54,16 @@ async function json(url) {
 }
 const proxy = () => json("http://publication-delay-proxy:8080/status");
 const model = () => json("http://readiness-model-peer:8080/status");
-async function poll(read, accept) {
+async function poll(read, accept, timing, phase) {
   while (true) {
     signal.throwIfAborted();
-    const value = await read();
+    const value = timing
+      ? await timing.measure(`${phase}Request`, read, "polls")
+      : await read();
     if (accept(value)) return value;
-    await delay(100, undefined, { signal });
+    const sleep = () => delay(100, undefined, { signal });
+    if (timing) await timing.measure(`${phase}Sleep`, sleep, "polls");
+    else await sleep();
   }
 }
 async function seed() {
@@ -104,6 +109,7 @@ async function seed() {
   assert.deepEqual((await model()).requests, []);
 }
 async function round(index) {
+  const timing = phaseTiming();
   const context = load("context.json"),
     sessions = loadSessions(),
     phase = `readiness-${index}`;
@@ -113,6 +119,7 @@ async function round(index) {
     principalId: context.principal.user_id,
     organizationId: context.principal.organization_id,
     actions: [],
+    timing: { round: timing.values },
   };
   const preserve = () => save(`round-${index}.json`, row);
   const mark = (name) => row.actions.push({ name, at: performance.now() });
@@ -123,25 +130,28 @@ async function round(index) {
       clients,
       telemetry,
       async () => {
-        await resumeSession(admin, sessions.admin);
-        const principal = await resumeSession(member, sessions.member);
-        assert.equal(principal.user_id, row.principalId);
-        const created = await api("/api/admin/agents", {
-          status: 202,
-          headers: { "Idempotency-Key": randomUUID() },
-          body: {
-            owner_user_id: row.principalId,
-            name: phase,
-            template_id: context.template.template_id,
-            template_revision: context.template.revision,
-          },
+        const principal = await timing.measure("sessions", async () => {
+          await resumeSession(admin, sessions.admin);
+          return resumeSession(member, sessions.member);
         });
+        assert.equal(principal.user_id, row.principalId);
+        const created = await timing.measure("create", () =>
+          api("/api/admin/agents", {
+            status: 202,
+            headers: { "Idempotency-Key": randomUUID() },
+            body: {
+              owner_user_id: row.principalId,
+              name: phase,
+              template_id: context.template.template_id,
+              template_revision: context.template.revision,
+            },
+          }),
+        );
         row.agentId = created.agent.agent_id;
         row.operationId = created.operation.request_id;
         preserve();
-        const { context: caller } = await service.sessionContext(
-          admin.accessToken,
-          row.agentId,
+        const { context: caller } = await timing.measure("readyContext", () =>
+          service.sessionContext(admin.accessToken, row.agentId),
         );
         const raw = (suffix) =>
           service.json(
@@ -160,111 +170,138 @@ async function round(index) {
         };
         // Only Controller's raw v2 event opens admission. No ACP-ready polling,
         // catalog wait, sleeping after ready, or Prompt retry is allowed here.
-        while (true) {
-          signal.throwIfAborted();
-          row.events = await events();
-          if (row.events.some((event) => event.event_type === "agent_ready")) {
-            readinessProof(row.events, row);
-            mark("ready_observed");
-            break;
-          }
-          if (!row.delayed) {
-            const status = await proxy();
-            const before = status.attempts.find(
-              (attempt) =>
-                attempt.organizationId === row.organizationId &&
-                attempt.delayStartedAt !== null &&
-                attempt.forwardedAt === null &&
-                attempt.bindings.some(
-                  (binding) =>
-                    binding.agent_id === row.agentId &&
-                    binding.accepting_runs === true &&
-                    binding.runtime_revision,
-                ),
-            );
-            if (before) {
-              const current = await agent(),
-                during = await events();
-              const after = (await proxy()).attempts.find(
-                (attempt) => attempt.id === before.id,
+        await timing.measure("ready", async () => {
+          const observe = (read) =>
+            timing.measure("readyRequest", read, "polls");
+          while (true) {
+            signal.throwIfAborted();
+            row.events = await observe(events);
+            if (
+              row.events.some((event) => event.event_type === "agent_ready")
+            ) {
+              readinessProof(row.events, row);
+              mark("ready_observed");
+              break;
+            }
+            if (!row.delayed) {
+              const status = await observe(proxy);
+              const before = status.attempts.find(
+                (attempt) =>
+                  attempt.organizationId === row.organizationId &&
+                  attempt.delayStartedAt !== null &&
+                  attempt.forwardedAt === null &&
+                  attempt.bindings.some(
+                    (binding) =>
+                      binding.agent_id === row.agentId &&
+                      binding.accepting_runs === true &&
+                      binding.runtime_revision,
+                  ),
               );
-              if (after?.forwardedAt === null) {
-                assert.equal(current.readiness, "preparing");
-                assert(
-                  !during.some((event) => event.event_type === "agent_ready"),
+              if (before) {
+                const current = await observe(agent),
+                  during = await observe(events);
+                const after = (await observe(proxy)).attempts.find(
+                  (attempt) => attempt.id === before.id,
                 );
-                row.delayed = { before, after, agent: current, events: during };
-                preserve();
+                if (after?.forwardedAt === null) {
+                  assert.equal(current.readiness, "preparing");
+                  assert(
+                    !during.some((event) => event.event_type === "agent_ready"),
+                  );
+                  row.delayed = {
+                    before,
+                    after,
+                    agent: current,
+                    events: during,
+                  };
+                  preserve();
+                }
               }
             }
+            await timing.measure(
+              "readySleep",
+              () => delay(50, undefined, { signal }),
+              "polls",
+            );
           }
-          await delay(50, undefined, { signal });
-        }
+        });
         mark("initialize_started");
-        const connection = await openStage3Connection(
-          { name: phase, version: 1 },
-          row.agentId,
-          member,
-          {
-            principal,
-            telemetry,
-            service,
-            secrets: [
-              account.password,
-              memberAccount.password,
-              "stage3-model-secret",
-              ...admin.cookies.values(),
-              ...member.cookies.values(),
-            ],
-            signal,
-            preserve(snapshot) {
-              row.connection = snapshot;
-              preserve();
+        const connection = await timing.measure("initialize", () =>
+          openStage3Connection(
+            { name: phase, version: 1 },
+            row.agentId,
+            member,
+            {
+              principal,
+              telemetry,
+              service,
+              secrets: [
+                account.password,
+                memberAccount.password,
+                "stage3-model-secret",
+                ...admin.cookies.values(),
+                ...member.cookies.values(),
+              ],
+              signal,
+              preserve(snapshot) {
+                row.connection = snapshot;
+                preserve();
+              },
             },
-          },
+          ),
         );
         clients.add(connection);
         mark("new_started");
-        const session = await connection.request("new", {
-          cwd: "/workspace",
-          mcpServers: [],
-        });
+        const session = await timing.measure("session", () =>
+          connection.request("new", {
+            cwd: "/workspace",
+            mcpServers: [],
+          }),
+        );
         mark("prompt_started");
-        const result = await connection.request(
-          "prompt",
-          {
-            sessionId: session.sessionId,
-            prompt: [{ type: "text", text: phase }],
-          },
-          120000,
+        const result = await timing.measure("prompt", () =>
+          connection.request(
+            "prompt",
+            {
+              sessionId: session.sessionId,
+              prompt: [{ type: "text", text: phase }],
+            },
+            120000,
+          ),
         );
         assert.equal(result.stopReason, "end_turn");
-        await connection.closeAndWait();
-        clients.delete(connection);
-        row.currentAgent = await agent();
-        row.events = await events();
-        const proof = readinessProof(row.events, row);
-        const attempts = (await proxy()).attempts;
-        row.publication = attempts.find(
-          (attempt) => attempt.id === row.delayed?.before.id,
-        );
-        publicationProof(row.publication, proof, row);
-        row.runList = await poll(
-          () =>
-            api(
-              `/api/admin/execution-audits?agent_id=${row.agentId}&limit=100`,
-            ),
-          (page) => page.items.length > 0,
-        );
-        assert.equal(row.runList.items.length, 1);
-        row.run = await poll(
-          () =>
-            api(`/api/admin/execution-audits/${row.runList.items[0].run_id}`),
-          (run) =>
-            run.state === "completed" && run.executor_state === "quiescent",
-        );
-        row.model = await model();
-        row.status = "prompt_passed";
+        await timing.measure("evidence", async () => {
+          await connection.closeAndWait();
+          clients.delete(connection);
+          row.currentAgent = await agent();
+          row.events = await events();
+          const proof = readinessProof(row.events, row);
+          const attempts = (await proxy()).attempts;
+          row.publication = attempts.find(
+            (attempt) => attempt.id === row.delayed?.before.id,
+          );
+          publicationProof(row.publication, proof, row);
+          row.runList = await poll(
+            () =>
+              api(
+                `/api/admin/execution-audits?agent_id=${row.agentId}&limit=100`,
+              ),
+            (page) => page.items.length > 0,
+            timing,
+            "audit",
+          );
+          assert.equal(row.runList.items.length, 1);
+          row.run = await poll(
+            () =>
+              api(`/api/admin/execution-audits/${row.runList.items[0].run_id}`),
+            (run) =>
+              run.state === "completed" && run.executor_state === "quiescent",
+            timing,
+            "audit",
+          );
+          row.model = await model();
+          row.status = "prompt_passed";
+        });
       },
       { directory },
     );
@@ -273,37 +310,52 @@ async function round(index) {
     row.failure = { name: error.name, message: error.message };
     throw error;
   } finally {
+    timing.finish();
     preserve();
   }
 }
 async function remove(index) {
+  const timing = phaseTiming();
   const row = load(`round-${index}.json`);
+  row.timing ??= {};
+  row.timing.deletion = timing.values;
   assert(row.agentId);
   try {
-    await resumeSession(admin, loadSessions().admin);
-    const accepted = await api(`/api/admin/agents/${row.agentId}/delete`, {
-      status: 202,
-      body: {},
-      headers: { "Idempotency-Key": randomUUID() },
-    });
-    const operation = await poll(
-      () =>
-        api(
-          `/api/admin/operations/${accepted.request_id ?? accepted.operation?.request_id}`,
-        ),
-      (operation) => {
-        assert(
-          ["running", "completed"].includes(operation.state),
-          "delete operation failed",
-        );
-        return operation.state === "completed";
-      },
+    await timing.measure("sessions", () =>
+      resumeSession(admin, loadSessions().admin),
+    );
+    const accepted = await timing.measure("deleteRequest", () =>
+      api(`/api/admin/agents/${row.agentId}/delete`, {
+        status: 202,
+        body: {},
+        headers: { "Idempotency-Key": randomUUID() },
+      }),
+    );
+    const operation = await timing.measure("deleteWait", () =>
+      poll(
+        () =>
+          api(
+            `/api/admin/operations/${accepted.request_id ?? accepted.operation?.request_id}`,
+          ),
+        (operation) => {
+          assert(
+            ["running", "completed"].includes(operation.state),
+            "delete operation failed",
+          );
+          return operation.state === "completed";
+        },
+        timing,
+        "delete",
+      ),
     );
     row.deleted = {
       operation,
-      agent: await api(`/api/admin/agents/${row.agentId}`),
+      agent: await timing.measure("evidence", () =>
+        api(`/api/admin/agents/${row.agentId}`),
+      ),
     };
   } finally {
+    timing.finish();
     save(`round-${index}.json`, row);
   }
 }

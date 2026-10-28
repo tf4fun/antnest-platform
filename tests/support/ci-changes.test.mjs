@@ -31,7 +31,60 @@ import {
   shards,
   suiteImages,
   suites,
+  workflowPlan,
 } from "./ci-changes.mjs";
+
+test("priority scheduling preserves every shard and build while reserving one of six Tier C slots", () => {
+  const resolved = Object.keys(images).map((name) => ({
+    name,
+    ref: `test/${name}`,
+    build: true,
+    publish: false,
+  }));
+  const plan = workflowPlan(suites, resolved);
+  assert.deepEqual(
+    plan.priority.include.map((row) => row.id),
+    ["c-agent-readiness"],
+  );
+  assert.equal(plan.optionalParallel, 5);
+  const planned = [
+    plan.plain,
+    plan.imaged,
+    plan.optional,
+    plan.priority,
+  ].flatMap((group) => group.include.map((row) => row.id));
+  assert.deepEqual(
+    planned.sort(),
+    matrix(suites)
+      .include.map((row) => row.id)
+      .sort(),
+  );
+  assert.equal(new Set(planned).size, planned.length);
+  const needed = plan.priority.include[0].images.split(",");
+  assert.deepEqual(
+    plan.priorityBuilds.include.map((row) => row.name).sort(),
+    needed.sort(),
+  );
+  assert(plan.builds.include.every((row) => !needed.includes(row.name)));
+  assert.equal(
+    plan.builds.include.length + plan.priorityBuilds.include.length,
+    resolved.length,
+  );
+  const cached = workflowPlan(
+    suites,
+    resolved.map((row) => ({ ...row, build: false })),
+  );
+  assert.deepEqual(cached.priorityBuilds.include, []);
+  assert.deepEqual(cached.builds.include, []);
+  assert.equal(cached.priority.include.length, 1);
+  const ordinary = workflowPlan(
+    suites.filter((suite) => suite.id !== "c-agent-readiness"),
+    resolved,
+  );
+  assert.equal(ordinary.optionalParallel, 6);
+  assert.deepEqual(ordinary.priority.include, []);
+  assert.deepEqual(ordinary.priorityBuilds.include, []);
+});
 import { temporaryStorageRoot } from "./storage.mjs";
 
 test("ACP survivor admission runs the actual two-replica and browser scenario", () => {
@@ -304,6 +357,7 @@ test("managed MCP and deployment wiring runners select their suites", () => {
   assert.deepEqual(
     required(selectSuites(["tests/e2e/managed-mcp/model.mjs"])),
     [
+      "agent-acp-postgres",
       "deployment-contracts",
       "managed-mcp-secrets-v1",
       "managed-mcp-secrets-v2",
@@ -524,17 +578,20 @@ test("shard entries run their selected suites in shard order with merged setup",
     for (const value of Object.values(row))
       assert(["string", "boolean"].includes(typeof value));
   const pick = (...names) => suites.filter((suite) => names.includes(suite.id));
-  const [postgres] = matrix(
+  const postgres = matrix(
     pick("agent-controller-postgres", "egress-postgres", "auth-console"),
-  ).include.filter((row) => row.id === "a-postgres");
+  ).include.filter((row) => row.id.endsWith("-postgres"));
   assert.deepEqual(
-    JSON.parse(postgres.suites).map(({ id }) => id),
+    postgres.flatMap((row) => JSON.parse(row.suites).map(({ id }) => id)),
     ["egress-postgres", "agent-controller-postgres"],
   );
-  assert.equal(postgres.images, "temporal");
-  assert.equal(postgres.setup_go, true);
-  assert.equal(postgres.setup_rust, true);
-  assert.equal(postgres.setup_chromium, false);
+  assert.equal(postgres[0].images, "");
+  assert.equal(postgres[0].setup_rust, true);
+  assert.equal(postgres[0].setup_go, false);
+  assert.equal(postgres[1].images, "temporal");
+  assert.equal(postgres[1].setup_go, true);
+  assert.equal(postgres[1].setup_rust, false);
+  assert(postgres.every((row) => row.setup_chromium === false));
   const [identity] = matrix(pick("c-identity-access")).include;
   assert.deepEqual(JSON.parse(identity.suites), [
     {
@@ -545,6 +602,55 @@ test("shard entries run their selected suites in shard order with merged setup",
     },
   ]);
   assert.deepEqual(matrix([]), { include: [] });
+});
+
+test("PostgreSQL components use one isolated shard per owning service", () => {
+  const ids = [
+    "egress-postgres",
+    "runtime-controller-postgres",
+    "identity-postgres",
+    "agent-controller-postgres",
+    "agent-acp-postgres",
+  ];
+  const owners = ids.map((id) =>
+    shards.filter((shard) => shard.suites.includes(id)),
+  );
+  assert(owners.every((matches) => matches.length === 1));
+  assert.equal(new Set(owners.map(([shard]) => shard.id)).size, 5);
+  for (const [shard] of owners) assert.equal(shard.suites.length, 1);
+});
+
+test("stage2 selection always includes the complete ACP PostgreSQL owner", () => {
+  for (const selected of [
+    selectSuites([], { only: ["c-stage2"] }),
+    selectSuites(["tests/e2e/e2e-stage2.sh"]),
+  ]) {
+    assert(selected.some((suite) => suite.id === "c-stage2"));
+    const acp = selected.find((suite) => suite.id === "agent-acp-postgres");
+    assert(acp);
+    assert(acp.run.includes("make test-agent-acp-postgres"));
+  }
+});
+
+test("stage2 keeps deployed-role migrations and worker recovery without rerunning all ACP components", () => {
+  const source = readFileSync(
+    new URL("../e2e/e2e-stage2.sh", import.meta.url),
+    "utf8",
+  );
+  assert.match(
+    source,
+    /npm --prefix services\/agent-acp-service run test:postgres -- migrate\.postgres\.test\.ts/u,
+  );
+  assert.match(
+    source,
+    /createdb -U antnest_test_admin -O antnest_agent_acp stage2_acp_test/u,
+  );
+  assert.match(source, /dropdb -U antnest_test_admin stage2_acp_test/u);
+  assert.match(source, /stage2-boundary-flow\.mjs/u);
+  assert.match(
+    source,
+    /TestTemporal\(CreationSurvivesWorkerReplacement\|LifecycleWorkerReplacement\|ResumesAfterBusinessCommitBeforeActivityAcknowledgement\)/u,
+  );
 });
 
 test("required shards split by image need; tier C forms its own matrix", () => {

@@ -692,7 +692,7 @@ function tierC() {
       ],
     ],
     "Authenticated shell": [
-      ["e2e-stage2", "stage 2"],
+      ["e2e-stage2", "stage 2", { requires: ["agent-acp-postgres"] }],
       ["e2e-lifecycle", "lifecycle"],
     ],
     Lifecycle: [
@@ -773,6 +773,7 @@ function tierC() {
         ...(options.paths ?? []),
       ],
       run: [...(options.before ?? []), options.run ?? `make ${target}`],
+      ...(options.requires ? { requires: options.requires } : {}),
       ...(options.strict ? { strict: true } : {}),
     })),
   );
@@ -1052,25 +1053,41 @@ function relevant(file) {
   );
 }
 
+function withRequirements(selected) {
+  const ids = new Set(selected.map((suite) => suite.id));
+  for (const id of ids)
+    for (const required of suites.find((suite) => suite.id === id).requires ??
+      []) {
+      if (!suites.some((suite) => suite.id === required && !suite.disabled))
+        throw new Error(`unavailable required suite ${required}`);
+      ids.add(required);
+    }
+  return suites.filter((suite) => ids.has(suite.id));
+}
+
 export function selectSuites(files, { all = false, only } = {}) {
   if (only) {
     for (const id of only)
       if (!suites.some((suite) => suite.id === id))
         throw new Error(`unknown suite ${id}`);
-    return suites.filter((suite) => !suite.disabled && only.includes(suite.id));
+    return withRequirements(
+      suites.filter((suite) => !suite.disabled && only.includes(suite.id)),
+    );
   }
   const changed = files.filter(relevant);
   const global = changed.some((file) =>
     everySuite.some((glob) => matchesGlob(file, glob)),
   );
-  return suites.filter(
-    (suite) =>
-      !suite.disabled &&
-      (all ||
-        global ||
-        changed.some((file) =>
-          suite.paths.some((glob) => matchesGlob(file, glob)),
-        )),
+  return withRequirements(
+    suites.filter(
+      (suite) =>
+        !suite.disabled &&
+        (all ||
+          global ||
+          changed.some((file) =>
+            suite.paths.some((glob) => matchesGlob(file, glob)),
+          )),
+    ),
   );
 }
 
@@ -1107,16 +1124,18 @@ export function matrixEntry(suite) {
 // (tests/support/ci-shard.mjs), so jobs follow product areas rather than
 // individual targets. Destructive suites come last in their shard.
 export const shards = [
+  ...["egress", "runtime-controller", "identity", "agent-controller"].map(
+    (owner) => ({
+      id: `a-${owner}-postgres`,
+      name: suites.find((suite) => suite.id === `${owner}-postgres`).name,
+      suites: [`${owner}-postgres`],
+    }),
+  ),
   {
     id: "a-postgres",
+    // Retain the existing check identity for historical timing consumers.
     name: "PostgreSQL components",
-    suites: [
-      "egress-postgres",
-      "runtime-controller-postgres",
-      "identity-postgres",
-      "agent-controller-postgres",
-      "agent-acp-postgres",
-    ],
+    suites: ["agent-acp-postgres"],
   },
   {
     id: "a-browser",
@@ -1230,6 +1249,7 @@ export const shards = [
   {
     id: "c-agent-readiness",
     name: "Acknowledged Agent readiness (100 first Prompts)",
+    priority: true,
     suites: ["c-agent-readiness"],
   },
   {
@@ -1354,6 +1374,37 @@ export function matrices(selected) {
   };
 }
 
+export function workflowPlan(selected, resolved = []) {
+  const { plain, imaged, optional } = matrices(selected);
+  const priorityIds = new Set(
+    shards.filter((shard) => shard.priority).map((shard) => shard.id),
+  );
+  const priority = {
+    include: optional.include.filter((row) => priorityIds.has(row.id)),
+  };
+  const priorityImages = new Set(
+    priority.include.flatMap((row) => row.images.split(",").filter(Boolean)),
+  );
+  const builds = resolved
+    .filter((image) => image.build)
+    .map(({ name, ref, publish }) => ({ name, ref, publish }));
+  return {
+    plain,
+    imaged,
+    priority,
+    optional: {
+      include: optional.include.filter((row) => !priorityIds.has(row.id)),
+    },
+    optionalParallel: priority.include.length ? 5 : 6,
+    priorityBuilds: {
+      include: builds.filter((image) => priorityImages.has(image.name)),
+    },
+    builds: {
+      include: builds.filter((image) => !priorityImages.has(image.name)),
+    },
+  };
+}
+
 const zeroSha = /^0+$/u;
 
 export function changedFiles(base, head, git = execFileSync) {
@@ -1389,7 +1440,8 @@ function main() {
     all,
     only: only?.length ? only : undefined,
   });
-  const { plain, imaged, optional } = matrices(selected);
+  const { plain, imaged, optional, priority, optionalParallel } =
+    workflowPlan(selected);
   const lines = [
     `suites=${JSON.stringify(plain)}`,
     `plain=${plain.include.length}`,
@@ -1397,6 +1449,9 @@ function main() {
     `imaged=${imaged.include.length}`,
     `optional_suites=${JSON.stringify(optional)}`,
     `optional=${optional.include.length}`,
+    `priority_suites=${JSON.stringify(priority)}`,
+    `priority=${priority.include.length}`,
+    `optional_parallel=${optionalParallel}`,
   ];
   let resolved = [];
   if (values["resolve-images"]) {
@@ -1407,11 +1462,13 @@ function main() {
       suiteImages(selected, { allImages: values["all-images"] }),
       { tree, readBlob, exists: imageExists },
     );
-    const builds = resolved.filter((image) => image.build);
+    const { builds, priorityBuilds } = workflowPlan(selected, resolved);
     lines.push(
       `images=${JSON.stringify(Object.fromEntries(resolved.map(({ name, ref, build }) => [name, { ref, build }])))}`,
-      `builds=${JSON.stringify({ include: builds.map(({ name, ref, publish }) => ({ name, ref, publish })) })}`,
-      `building=${builds.length}`,
+      `builds=${JSON.stringify(builds)}`,
+      `building=${builds.include.length}`,
+      `priority_builds=${JSON.stringify(priorityBuilds)}`,
+      `priority_building=${priorityBuilds.include.length}`,
     );
   }
   if (process.env.GITHUB_OUTPUT)

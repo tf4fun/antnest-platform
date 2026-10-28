@@ -24,6 +24,10 @@ const selected = {
   DRAFT: "false",
   IMAGES: "skipped",
   BUILDING: "0",
+  PRIORITY_IMAGES: "skipped",
+  PRIORITY_BUILDING: "0",
+  PRIORITY_SUITE: "skipped",
+  PRIORITY: "0",
   SUITE: "skipped",
   PLAIN: "0",
   IMAGE_SUITE: "skipped",
@@ -41,7 +45,15 @@ const check = (changes = {}) =>
 test("all selected tiers are dependencies of the required integration result", () => {
   assert.deepEqual(
     new Set(gate.needs),
-    new Set(["changes", "images", "suite", "image-suite", "optional-suite"]),
+    new Set([
+      "changes",
+      "images",
+      "priority-images",
+      "suite",
+      "image-suite",
+      "optional-suite",
+      "priority-suite",
+    ]),
   );
   assert.equal(gate.if, "always()");
   assert.equal(
@@ -68,6 +80,8 @@ test("only unselected matrices may skip, including a docs-only run", () => {
   );
   for (const [count, result] of [
     ["BUILDING", "IMAGES"],
+    ["PRIORITY_BUILDING", "PRIORITY_IMAGES"],
+    ["PRIORITY", "PRIORITY_SUITE"],
     ["PLAIN", "SUITE"],
     ["IMAGED", "IMAGE_SUITE"],
     ["OPTIONAL", "OPTIONAL_SUITE"],
@@ -84,6 +98,36 @@ test("only unselected matrices may skip, including a docs-only run", () => {
       result,
     );
   }
+});
+
+test("priority Tier C starts without unrelated image builds and remains a blocking capped group", () => {
+  const priority = workflow.jobs["priority-suite"];
+  assert.deepEqual(priority.needs, ["changes", "priority-images"]);
+  assert.equal(priority.strategy["max-parallel"], 1);
+  assert.equal(
+    workflow.jobs["optional-suite"].strategy["max-parallel"],
+    "${{ fromJSON(needs.changes.outputs.optional_parallel) }}",
+  );
+  assert.deepEqual(
+    workflow.jobs["priority-images"].steps,
+    workflow.jobs.images.steps,
+  );
+  for (const status of ["failure", "cancelled", "skipped", "", "unknown"]) {
+    assert.notEqual(check({ PRIORITY: "1", PRIORITY_SUITE: status }).status, 0);
+    assert.notEqual(
+      check({ PRIORITY_BUILDING: "1", PRIORITY_IMAGES: status }).status,
+      0,
+    );
+  }
+  assert.equal(
+    check({
+      PRIORITY: "1",
+      PRIORITY_SUITE: "success",
+      PRIORITY_BUILDING: "1",
+      PRIORITY_IMAGES: "success",
+    }).status,
+    0,
+  );
 });
 
 test("cancelled workflows and failed selection never produce a successful gate", () => {
@@ -135,7 +179,7 @@ test("only normal full runs use the required name, even when selection fails ear
   }
 });
 
-test("uploaded evidence excludes generated fixture credentials but retains suite logs and timings", () => {
+test("uploaded evidence excludes raw component logs and private inputs but retains outcomes and timings", () => {
   const suite = parse(
     readFileSync(
       new URL("../../.github/workflows/_suite.yml", import.meta.url),
@@ -159,10 +203,14 @@ test("uploaded evidence excludes generated fixture credentials but retains suite
     "artifacts/verification/run/private.key",
     "artifacts/verification/run/private.pem",
     "artifacts/verification/run/failure.private.txt",
+    "artifacts/verification/run/failure.private.json",
+    "artifacts/verification/run/client-private/round-1.json",
+    "artifacts/verification/ci-shards/shard-123/first.log",
+    "artifacts/verification/go-integration/first.log",
+    "artifacts/verification/dependencies/first.log",
   ])
     assert(filtered(path), `${path} contains fixture credentials`);
   for (const path of [
-    "artifacts/verification/ci-shards/shard-123/first.log",
     "artifacts/verification/ci-shards/shard-123/results.json",
     "artifacts/verification/run/result.json",
   ])
