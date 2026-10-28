@@ -848,6 +848,12 @@ paths it exercises. The workflow runs only the suites that match the changed
 files (prose-only changes select none). Changes to the workflow, `tests/support/`,
 `contracts/` or the `Makefile` select every suite.
 
+PostgreSQL components use service-owned isolated shards. Stage 2 keeps its live
+deployment, recovery and role/migration checks, and automatically requires the
+complete ACP PostgreSQL suite instead of running it twice. See the
+[coverage and environment comparison](ci-latency.md) for retained checks,
+isolation, focused commands and measurement limitations.
+
 Suites are grouped into shards by product area (`shards` in the catalog).
 Each shard is one CI job, `Tier <tier> / <shard>`: it installs the setup and
 images its selected suites need and runs them in order on one runner through
