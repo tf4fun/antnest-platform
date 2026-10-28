@@ -393,7 +393,17 @@ describe.skipIf(databaseUrl === undefined)(
           );
           expect(
             (await admissionFacts(fixture, test.input.runId)).messages,
-          ).toBe(1);
+          ).toBe(scenario === "soft_only" ? 2 : 1);
+          const messages = await fixture.observer.query(
+            "SELECT kind,context_excluded FROM session_messages WHERE run_id=$1 ORDER BY sequence",
+            [test.input.runId],
+          );
+          expect(messages.rows).toEqual([
+            { kind: "user_message", context_excluded: false },
+            ...(scenario === "soft_only"
+              ? [{ kind: "agent_message", context_excluded: true }]
+              : []),
+          ]);
         });
       },
     );

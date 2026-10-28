@@ -254,9 +254,9 @@ describe.skipIf(databaseUrl === undefined)(
           );
         }
         const next = start(run.runId, previous + 1);
-        await expect(
-          run.events.startModelAttempt(next),
-        ).resolves.toBeUndefined();
+        await expect(run.events.startModelAttempt(next)).resolves.toEqual({
+          warnings: [],
+        });
         const rows = await messages(fixture, run.session.sessionId);
         expect(
           rows
@@ -293,7 +293,7 @@ describe.skipIf(databaseUrl === undefined)(
         await run.events.finishModelAttempt(finish(run.runId, 1));
         await expect(
           run.events.startModelAttempt(start(run.runId, 2)),
-        ).resolves.toBeUndefined();
+        ).resolves.toEqual({ warnings: [] });
       });
     });
 

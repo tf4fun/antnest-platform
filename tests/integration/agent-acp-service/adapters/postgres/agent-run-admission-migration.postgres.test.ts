@@ -232,7 +232,7 @@ async function facts(pool: Pool) {
   ]) {
     const expression =
       table === "runs"
-        ? "to_jsonb(stored) - 'organization_id' - 'agent_id' - 'execution_owner_registration_id' - 'execution_owner_member_id' - 'execution_owner_incarnation_id' - 'execution_owner_epoch'"
+        ? "('{\"budget_reason\":null}'::jsonb || to_jsonb(stored)) - 'organization_id' - 'agent_id' - 'execution_owner_registration_id' - 'execution_owner_member_id' - 'execution_owner_incarnation_id' - 'execution_owner_epoch'"
         : "to_jsonb(stored)";
     result[table] = (
       await pool.query<{ value: unknown }>(
@@ -372,6 +372,7 @@ describe.skipIf(databaseUrl === undefined)(
           "0029_learning_owner_recovery.sql",
           "0030_peer_membership.sql",
           "0031_peer_participation.sql",
+          "0032_model_budget_ledger.sql",
         ]);
         const index = await pool.query<{ indexdef: string }>(
           "SELECT indexdef FROM pg_indexes WHERE schemaname='public' AND indexname='runs_agent_nonterminal_unique'",
