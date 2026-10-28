@@ -62,6 +62,9 @@ jobs:
       - name: Markdown links
         run: make check-links
 
+      - name: Contract ownership
+        run: node tests/support/ci-impact.mjs --check
+
       - name: Storage policy
         run: make test-storage-policy
 

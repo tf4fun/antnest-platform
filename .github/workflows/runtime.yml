@@ -11,6 +11,10 @@ on:
       - tests/integration/antnest-runtime/**
       - tests/integration/skill-registry/package-rules-v1.json
       - contracts/runtime/**
+      - contracts/platform/**
+      - contracts/skill-learning/**
+      - contracts/skill-registry/**
+      - tests/support/ci-ownership.json
       - contracts/platform/service-token-fixtures.json
       - tests/e2e/service-authentication/runtime/**
       - .github/workflows/runtime.yml
@@ -24,22 +28,28 @@ on:
       - tests/integration/antnest-runtime/**
       - tests/integration/skill-registry/package-rules-v1.json
       - contracts/runtime/**
+      - contracts/platform/**
+      - contracts/skill-learning/**
+      - contracts/skill-registry/**
+      - tests/support/ci-ownership.json
       - contracts/platform/service-token-fixtures.json
       - tests/e2e/service-authentication/runtime/**
       - .github/workflows/runtime.yml
       - .github/workflows/_rust-crate.yml
       - .github/workflows/_image.yml
   workflow_dispatch:
+  workflow_call:
 
 permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.ref }}-antnest-runtime
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   check:
+    if: github.event_name != 'pull_request' || github.workflow == 'integration'
     uses: ./.github/workflows/_rust-crate.yml
     with:
       crate-path: runtimes/antnest-runtime
@@ -59,6 +69,7 @@ jobs:
   # The default, last Docker target is release. Its build never reads the
   # feature argument; only explicitly selected E2E targets can enable it.
   image:
+    if: github.event_name != 'pull_request'
     needs: [check, check-test-features]
     permissions:
       contents: read

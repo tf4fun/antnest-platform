@@ -11,6 +11,8 @@ on:
       - tests/integration/runtime-egress/**
       - contracts/runtime/**
       - contracts/egress/**
+      - contracts/platform/**
+      - tests/support/ci-ownership.json
       - rust-toolchain.toml
       - .github/workflows/runtime-egress.yml
       - .github/workflows/_rust-crate.yml
@@ -23,33 +25,39 @@ on:
       - tests/integration/runtime-egress/**
       - contracts/runtime/**
       - contracts/egress/**
+      - contracts/platform/**
+      - tests/support/ci-ownership.json
       - rust-toolchain.toml
       - .github/workflows/runtime-egress.yml
       - .github/workflows/_rust-crate.yml
       - .github/workflows/_image.yml
   workflow_dispatch:
+  workflow_call:
 
 permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.ref }}-runtime-egress
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   transport:
+    if: github.event_name != 'pull_request' || github.workflow == 'integration'
     uses: ./.github/workflows/_rust-crate.yml
     with:
       crate-path: modules/runtime-tunnel
       integration-path: modules/runtime-tunnel/tests
 
   check:
+    if: github.event_name != 'pull_request' || github.workflow == 'integration'
     uses: ./.github/workflows/_rust-crate.yml
     with:
       crate-path: services/runtime-egress
       integration-path: tests/integration/runtime-egress
 
   image:
+    if: github.event_name != 'pull_request'
     needs: [check, transport]
     permissions:
       contents: read

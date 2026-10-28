@@ -9,8 +9,17 @@ on:
       - modules/service-authentication/**
       - tests/integration/go/admin-console/**
       - tests/integration/admin-console/**
-      - tests/support/**
-      - contracts/**
+      - tests/support/go*.mjs
+      - tests/support/service-authentication*
+      - tests/support/ci-ownership.json
+      - contracts/admin-console/**
+      - contracts/agent-acp/**
+      - contracts/agent-controller/**
+      - contracts/edge-gateway/**
+      - contracts/identity/**
+      - contracts/platform/**
+      - contracts/skill-learning/**
+      - contracts/skill-registry/**
       - go.work
       - go.work.sum
       - .golangci.yml
@@ -24,8 +33,17 @@ on:
       - modules/service-authentication/**
       - tests/integration/go/admin-console/**
       - tests/integration/admin-console/**
-      - tests/support/**
-      - contracts/**
+      - tests/support/go*.mjs
+      - tests/support/service-authentication*
+      - tests/support/ci-ownership.json
+      - contracts/admin-console/**
+      - contracts/agent-acp/**
+      - contracts/agent-controller/**
+      - contracts/edge-gateway/**
+      - contracts/identity/**
+      - contracts/platform/**
+      - contracts/skill-learning/**
+      - contracts/skill-registry/**
       - go.work
       - go.work.sum
       - .golangci.yml
@@ -34,21 +52,24 @@ on:
       - .github/workflows/_go-service.yml
       - .github/workflows/_image.yml
   workflow_dispatch:
+  workflow_call:
 
 permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.ref }}-admin-console
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   check:
+    if: github.event_name != 'pull_request' || github.workflow == 'integration'
     uses: ./.github/workflows/_go-service.yml
     with:
       service: admin-console
 
   web:
+    if: github.event_name != 'pull_request' || github.workflow == 'integration'
     name: Web typecheck and test
     runs-on: ubuntu-24.04
     timeout-minutes: 20
@@ -71,6 +92,7 @@ jobs:
       - run: npm test
 
   image:
+    if: github.event_name != 'pull_request'
     needs: [check, web]
     permissions:
       contents: read
