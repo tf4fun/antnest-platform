@@ -30,6 +30,8 @@ import { captureResource, type ResourceState } from "../lib/resource-state";
 import { runtimeImageLabel } from "../lib/runtime-image";
 import { RuntimeImageChoice } from "../components/runtime-image-choice";
 import { ManagedMCPDetails, ManagedMCPEditor } from "../components/managed-mcp";
+import { ModelCallPolicyDetails, TemplateModelPolicyEditor } from "../components/model-call-policy";
+import { templateModelPolicyInput } from "../lib/model-call-policy";
 import { TemplateSkills } from "../components/template-skills";
 import { managedMCPInput } from "../lib/managed-mcp";
 import { templateCreationGate } from "../lib/setup";
@@ -129,6 +131,7 @@ function TemplateList() {
         system_prompt: String(data.get("system_prompt") ?? ""),
         max_model_requests: positiveInteger(data.get("max_model_requests"), 32),
         skill_refs: selectedSkills,
+        ...templateModelPolicyInput(data),
         runtime: customImage || servers.length ? {
           ...(customImage ? { image_ref: imageRef } : {}),
           ...(servers.length ? { mcp_servers: servers } : {}),
@@ -376,6 +379,7 @@ function TemplateList() {
           {defaults.status === "ready" ? (
             <RuntimeImageChoice image={defaults.data.runtime_image_ref} inheritedLabel="Platform default" />
           ) : null}
+          <TemplateModelPolicyEditor disabled={pending} />
           <ManagedMCPEditor disabled={pending} />
           <div className="mt-1 flex justify-end gap-2">
             <Button
@@ -516,6 +520,7 @@ function TemplateDetail({ templateID, revisionID }: { templateID: string; revisi
         system_prompt: String(data.get("system_prompt") ?? ""),
         max_model_requests: positiveInteger(data.get("max_model_requests"), template.max_model_requests),
         skill_refs: selectedSkills,
+        ...templateModelPolicyInput(data),
         runtime: {
           image_ref: imageRef,
           resources: template.runtime.resources,
@@ -601,6 +606,7 @@ function TemplateDetail({ templateID, revisionID }: { templateID: string; revisi
         <p className="break-all text-sm font-medium">{runtimeImageLabel(template.runtime.image_ref, template.runtime.image_source)}</p>
       </Section>
       <Section title="MCP servers"><ManagedMCPDetails servers={template.runtime.mcp_servers} /></Section>
+      <Section title="Model call policy"><ModelCallPolicyDetails policy={template} /></Section>
       {!historical ? <Dialog dismissible={!pending} open={open} onOpenChange={setOpen} title="Create template revision" description="Publish a new configuration. Rebuild existing Agents to apply this revision.">
         <form className="grid gap-5" key={template.revision} onSubmit={revise}>
           {formError ? <ErrorNotice message={formError} /> : null}
@@ -623,6 +629,7 @@ function TemplateDetail({ templateID, revisionID }: { templateID: string; revisi
           <Field label="System prompt" hint="Defines the Agent's default role and operating boundaries."><Textarea name="system_prompt" defaultValue={template.system_prompt} /></Field>
           <Field label="Maximum model requests"><Input name="max_model_requests" type="number" min="1" max="128" defaultValue={template.max_model_requests} required /></Field>
           <RuntimeImageChoice image={template.runtime.image_ref} source={template.runtime.image_source} inheritedLabel="Keep current image" />
+          <TemplateModelPolicyEditor initial={template} disabled={pending} />
           <ManagedMCPEditor initial={template.runtime.mcp_servers} disabled={pending} />
           <div className="flex justify-end gap-2"><Button disabled={pending} type="button" variant="secondary" onClick={() => setOpen(false)}>Cancel</Button><Button aria-busy={pending} disabled={pending || !modelSelected} type="submit">{pending ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}Publish revision</Button></div>
         </form>

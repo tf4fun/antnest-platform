@@ -1,6 +1,6 @@
 {
   "contract": "antnest.admin-console.bff",
-  "version": 57,
+  "version": 58,
   "scim_lifecycle_policy": "../identity/scim-lifecycle-policy.json",
   "base_path": "/api/admin",
   "authentication_contract": "service-authentication.md",
@@ -272,6 +272,18 @@
       "headers": {
         "required": ["Idempotency-Key", "X-Antnest-Expected-Principal"]
       }
+    },
+    "get_model_call_policy": {
+      "method": "GET",
+      "path": "/model-call-policy",
+      "response": "model-call-policy.schema.json#/$defs/model_call_policy"
+    },
+    "set_model_call_policy": {
+      "method": "PUT",
+      "path": "/model-call-policy",
+      "requires": ["Idempotency-Key"],
+      "request": "model-call-policy.schema.json#/$defs/set_model_call_policy_request",
+      "response": "model-call-policy.schema.json#/$defs/model_call_policy"
     },
     "rebuild_agent": {
       "method": "POST",

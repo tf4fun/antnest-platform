@@ -147,6 +147,8 @@ func (h *handler) routes() {
 	h.mux.HandleFunc("GET /api/admin/agents/{agent_id}", h.withPrincipal(h.getAgent))
 	h.mux.HandleFunc("GET /api/admin/agents/{agent_id}/network-policy", h.withPrincipal(h.getNetworkPolicy))
 	h.mux.HandleFunc("PUT /api/admin/agents/{agent_id}/network-policy", h.withPrincipal(h.setNetworkPolicy))
+	h.mux.HandleFunc("GET /api/admin/model-call-policy", h.withPrincipal(h.getModelCallPolicy))
+	h.mux.HandleFunc("PUT /api/admin/model-call-policy", h.withPrincipal(h.setModelCallPolicy))
 	for _, action := range []string{"rebuild", "disable", "enable", "delete"} {
 		h.mux.HandleFunc("POST /api/admin/agents/{agent_id}/"+action, h.withPrincipal(h.lifecycle(action)))
 	}
@@ -601,6 +603,21 @@ type createTemplateInput struct {
 	MaxModelRequests        int                      `json:"max_model_requests,omitempty"`
 	Runtime                 runtimeInput             `json:"runtime,omitempty"`
 	SkillRefs               []templateSkillReference `json:"skill_refs,omitempty"`
+	templateModelPolicyInput
+}
+
+func (input *createTemplateInput) UnmarshalJSON(raw []byte) error {
+	type wire createTemplateInput
+	var decoded wire
+	if err := serviceauth.DecodeObject(raw, &decoded); err != nil {
+		return err
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &fields); err != nil {
+		return err
+	}
+	*input = createTemplateInput(decoded)
+	return validateTemplatePolicyFields(fields, &input.templateModelPolicyInput)
 }
 
 type templateSkillReference struct {
@@ -671,6 +688,7 @@ func (h *handler) createTemplate(response http.ResponseWriter, request *http.Req
 		"context_policy_version": "context-v1", "runtime": input.Runtime,
 		"skill_refs": append([]templateSkillReference{}, input.SkillRefs...),
 	}
+	forwardTemplateModelPolicy(payload, input.templateModelPolicyInput)
 	h.forwardProjectedJSON(response, request, upstream.AgentController, http.MethodPost,
 		"/internal/agent-templates", "", payload, projectTemplate)
 }
@@ -698,6 +716,21 @@ type reviseTemplateInput struct {
 	MaxModelRequests        int                      `json:"max_model_requests"`
 	Runtime                 runtimeInput             `json:"runtime"`
 	SkillRefs               []templateSkillReference `json:"skill_refs,omitempty"`
+	templateModelPolicyInput
+}
+
+func (input *reviseTemplateInput) UnmarshalJSON(raw []byte) error {
+	type wire reviseTemplateInput
+	var decoded wire
+	if err := serviceauth.DecodeObject(raw, &decoded); err != nil {
+		return err
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &fields); err != nil {
+		return err
+	}
+	*input = reviseTemplateInput(decoded)
+	return validateTemplatePolicyFields(fields, &input.templateModelPolicyInput)
 }
 
 func (h *handler) reviseTemplate(response http.ResponseWriter, request *http.Request, actor principal.Principal) {
@@ -733,6 +766,7 @@ func (h *handler) reviseTemplate(response http.ResponseWriter, request *http.Req
 		"context_policy_version": "context-v1", "runtime": input.Runtime,
 		"skill_refs": append([]templateSkillReference{}, input.SkillRefs...),
 	}
+	forwardTemplateModelPolicy(payload, input.templateModelPolicyInput)
 	h.forwardProjectedJSON(response, request, upstream.AgentController, http.MethodPost,
 		"/internal/agent-templates/"+url.PathEscape(request.PathValue("template_id"))+"/revisions",
 		"", payload, projectTemplate)

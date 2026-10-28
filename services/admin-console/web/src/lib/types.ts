@@ -279,6 +279,9 @@ export type AgentTemplate = {
   enabled: boolean;
   created_at: string;
   updated_at: string;
+  model_retry?: import("./model-call-policy").ModelRetry;
+  failover?: "never" | "before_output";
+  run_budget?: import("./model-call-policy").RunBudget;
 };
 
 export type TemplateList = {
