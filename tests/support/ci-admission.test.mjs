@@ -17,23 +17,37 @@ const workflow = parse(
   ),
 );
 const gate = workflow.jobs.integration;
+const unitServices = [
+  "admin-console",
+  "agent-acp-service",
+  "agent-controller",
+  "agent-ui",
+  "antnest-runtime",
+  "edge-gateway",
+  "identity-service",
+  "runtime-controller",
+  "runtime-egress",
+  "skill-registry",
+];
+const unitResults = (result = "skipped") =>
+  JSON.stringify(
+    Object.fromEntries(
+      unitServices.map((name) => [`unit-${name}`, { result }]),
+    ),
+  );
 const selected = {
   CHANGES: "success",
-  MODE: "full",
+  MODE: "component",
   EVENT: "pull_request",
   DRAFT: "false",
   IMAGES: "skipped",
   BUILDING: "0",
-  PRIORITY_IMAGES: "skipped",
-  PRIORITY_BUILDING: "0",
-  PRIORITY_SUITE: "skipped",
-  PRIORITY: "0",
   SUITE: "skipped",
   PLAIN: "0",
   IMAGE_SUITE: "skipped",
   IMAGED: "0",
-  OPTIONAL_SUITE: "success",
-  OPTIONAL: "1",
+  SERVICES: "[]",
+  UNIT_RESULTS: unitResults(),
 };
 const check = (changes = {}) =>
   spawnSync("bash", ["-e", "-o", "pipefail", "-c", gate.steps[0].run], {
@@ -42,49 +56,44 @@ const check = (changes = {}) =>
     env: { PATH: process.env.PATH, ...selected, ...changes },
   });
 
-test("all selected tiers are dependencies of the required integration result", () => {
+test("all component tiers are dependencies of the required integration result", () => {
   assert.deepEqual(
     new Set(gate.needs),
     new Set([
       "changes",
       "images",
-      "priority-images",
       "suite",
       "image-suite",
-      "optional-suite",
-      "priority-suite",
+      "unit-admin-console",
+      "unit-agent-acp-service",
+      "unit-agent-controller",
+      "unit-agent-ui",
+      "unit-antnest-runtime",
+      "unit-edge-gateway",
+      "unit-identity-service",
+      "unit-runtime-controller",
+      "unit-runtime-egress",
+      "unit-skill-registry",
     ]),
   );
   assert.equal(gate.if, "always()");
-  assert.equal(
-    gate.steps[0].env.OPTIONAL_SUITE,
-    "${{ needs.optional-suite.result }}",
-  );
-  assert.equal(
-    gate.steps[0].env.OPTIONAL,
-    "${{ needs.changes.outputs.optional }}",
-  );
+  const env = gate.steps[0].env;
+  assert.equal(env.MODE, "${{ needs.changes.outputs.mode }}");
+  assert.equal(env.SUITE, "${{ needs.suite.result }}");
+  assert.equal(env.IMAGE_SUITE, "${{ needs.image-suite.result }}");
+  for (const key of Object.keys(env))
+    assert(
+      !key.startsWith("OPTIONAL"),
+      `${key} is a Tier C variable; the component gate has none`,
+    );
 });
 
-test("a selected Tier C failure, cancellation or skip blocks admission", () => {
+test("a component gate admits exactly the selected matrices and nothing else", () => {
   assert.equal(check().status, 0);
-  for (const status of ["failure", "cancelled", "skipped", "", "unknown"])
-    assert.notEqual(check({ OPTIONAL_SUITE: status }).status, 0, status);
-});
-
-test("only unselected matrices may skip, including a docs-only run", () => {
-  assert.equal(check({ OPTIONAL: "0", OPTIONAL_SUITE: "skipped" }).status, 0);
-  assert.notEqual(
-    check({ OPTIONAL: "0", OPTIONAL_SUITE: "success" }).status,
-    0,
-  );
   for (const [count, result] of [
     ["BUILDING", "IMAGES"],
-    ["PRIORITY_BUILDING", "PRIORITY_IMAGES"],
-    ["PRIORITY", "PRIORITY_SUITE"],
     ["PLAIN", "SUITE"],
     ["IMAGED", "IMAGE_SUITE"],
-    ["OPTIONAL", "OPTIONAL_SUITE"],
   ]) {
     for (const value of ["", "-1", "1x", "unknown"])
       assert.notEqual(
@@ -97,36 +106,65 @@ test("only unselected matrices may skip, including a docs-only run", () => {
       0,
       result,
     );
+    for (const status of ["failure", "cancelled"])
+      assert.notEqual(
+        check({ [count]: "0", [result]: status }).status,
+        0,
+        `${result}=${status}`,
+      );
   }
 });
 
-test("priority Tier C starts without unrelated image builds and remains a blocking capped group", () => {
-  const priority = workflow.jobs["priority-suite"];
-  assert.deepEqual(priority.needs, ["changes", "priority-images"]);
-  assert.equal(priority.strategy["max-parallel"], 1);
-  assert.equal(
-    workflow.jobs["optional-suite"].strategy["max-parallel"],
-    "${{ fromJSON(needs.changes.outputs.optional_parallel) }}",
+test("the component gate carries no Tier C or priority E2E variables", () => {
+  for (const job of ["optional-suite", "priority-suite", "priority-images"])
+    assert(!Object.hasOwn(workflow.jobs, job), `${job} left the gate`);
+  const env = gate.steps[0].env;
+  for (const key of Object.keys(env))
+    assert(!/OPTIONAL|PRIORITY/u.test(key), `${key} is E2E, not component`);
+});
+
+test("selected unit checks block admission while E2E results cannot", () => {
+  const service = unitServices[0];
+  const chosen = { SERVICES: JSON.stringify([service]) };
+  chosen.UNIT_RESULTS = JSON.stringify(
+    Object.fromEntries(
+      unitServices.map((name) => [
+        `unit-${name}`,
+        { result: name === service ? "success" : "skipped" },
+      ]),
+    ),
   );
-  assert.deepEqual(
-    workflow.jobs["priority-images"].steps,
-    workflow.jobs.images.steps,
-  );
-  for (const status of ["failure", "cancelled", "skipped", "", "unknown"]) {
-    assert.notEqual(check({ PRIORITY: "1", PRIORITY_SUITE: status }).status, 0);
+  assert.equal(check(chosen).status, 0);
+  for (const result of ["failure", "cancelled", "skipped", "", "unknown"])
     assert.notEqual(
-      check({ PRIORITY_BUILDING: "1", PRIORITY_IMAGES: status }).status,
+      check({
+        ...chosen,
+        UNIT_RESULTS: JSON.stringify(
+          Object.fromEntries(
+            unitServices.map((name) => [
+              `unit-${name}`,
+              { result: name === service ? result : "skipped" },
+            ]),
+          ),
+        ),
+      }).status,
       0,
+      `unit ${service}=${result}`,
     );
-  }
-  assert.equal(
-    check({
-      PRIORITY: "1",
-      PRIORITY_SUITE: "success",
-      PRIORITY_BUILDING: "1",
-      PRIORITY_IMAGES: "success",
-    }).status,
+  assert.notEqual(
+    check({ ...chosen, UNIT_RESULTS: "{}" }).status,
     0,
+    "missing unit results",
+  );
+  assert.notEqual(
+    check({ ...chosen, SERVICES: `["${service}","${service}"]` }).status,
+    0,
+    "duplicate selection",
+  );
+  assert.notEqual(
+    check({ ...chosen, SERVICES: '["ghost"]' }).status,
+    0,
+    "unknown selection",
   );
 });
 
@@ -145,38 +183,27 @@ test("cancelled workflows and failed selection never produce a successful gate",
     0,
     "cancellation fails even after a successful docs-only gate",
   );
-  for (const MODE of ["", "unknown", "ignored"])
+  for (const MODE of ["", "unknown", "ignored", "full"])
     assert.notEqual(check({ MODE }).status, 0, MODE);
   assert.notEqual(check({ MODE: "light", DRAFT: "false" }).status, 0);
   assert.equal(check({ MODE: "light", DRAFT: "true" }).status, 0);
 });
 
-test("only normal full runs use the required name, even when selection fails early", () => {
+test("only normal component runs use the required name, even when selection fails early", () => {
   const expression = gate.name.slice(3, -2).trim();
-  const name = ({
-    event = "pull_request",
-    draft = false,
-    suites = "",
-    mode,
-  } = {}) =>
+  const name = ({ event = "pull_request", draft = false, suites = "" } = {}) =>
     runInNewContext(expression, {
       github: { event_name: event, event: { pull_request: { draft } } },
       inputs: { suites },
-      needs: { changes: { outputs: { mode } } },
     });
-  for (const mode of ["full", undefined]) {
-    assert.equal(name({ mode }), "Integration checks");
-    assert.equal(name({ event: "push", mode }), "Integration checks");
-    assert.equal(
-      name({ event: "workflow_dispatch", mode }),
-      "Integration checks",
-    );
-    assert.equal(
-      name({ event: "workflow_dispatch", suites: "egress-postgres", mode }),
-      "Integration checks (partial)",
-    );
-    assert.equal(name({ draft: true, mode }), "Integration checks (not run)");
-  }
+  assert.equal(name(), "Integration checks");
+  assert.equal(name({ event: "push" }), "Integration checks");
+  assert.equal(name({ event: "workflow_dispatch" }), "Integration checks");
+  assert.equal(
+    name({ event: "workflow_dispatch", suites: "egress-postgres" }),
+    "Integration checks (partial)",
+  );
+  assert.equal(name({ draft: true }), "Integration checks (not run)");
 });
 
 test("uploaded evidence excludes raw component logs and private inputs but retains outcomes and timings", () => {

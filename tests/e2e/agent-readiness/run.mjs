@@ -21,7 +21,7 @@ import {
   writeEvidenceFile,
   shellStoragePreflight,
 } from "../../support/storage.mjs";
-import { inspectRound, inspectBatch } from "./evidence.mjs";
+import { inspectRound, inspectBatch, readinessRounds } from "./evidence.mjs";
 import { phaseTiming, readinessTiming, timingMarkdown } from "./timing.mjs";
 
 const root = fileURLToPath(new URL("../../../", import.meta.url));
@@ -39,6 +39,10 @@ const save = (name, value) =>
     name,
     typeof value === "string" ? value : JSON.stringify(value, null, 2) + "\n",
   );
+// Validate the round policy before installing timers, listeners or Docker.
+const expectedRounds = readinessRounds(
+  process.env.ANTNEST_E2E_READINESS_ROUNDS,
+);
 const owner = new AbortController(),
   signal = owner.signal;
 const deadline = Number(process.env.ANTNEST_E2E_DEADLINE_MS);
@@ -248,7 +252,7 @@ try {
     "const hold=setInterval(()=>{},3600000);for(const s of ['SIGINT','SIGTERM'])process.once(s,()=>clearInterval(hold));",
   ]);
   await clientCommand("seed");
-  for (let index = 1; index <= 100; index++) {
+  for (let index = 1; index <= expectedRounds; index++) {
     const timing = phaseTiming(),
       recorded = { index, host: timing.values };
     timedRounds.push(recorded);
@@ -287,9 +291,12 @@ try {
         save(`round-${index}.json`, round);
         inspectRound(round);
         rounds.push(round);
-        save("progress.json", { completed: rounds.length, required: 100 });
+        save("progress.json", {
+          completed: rounds.length,
+          required: expectedRounds,
+        });
         console.log(
-          `Acknowledged readiness: ${index}/100 first Prompts completed and Runtime resources joined`,
+          `Acknowledged readiness: ${index}/${expectedRounds} first Prompts completed and Runtime resources joined`,
         );
       });
     } finally {
@@ -298,7 +305,7 @@ try {
     }
   }
   finalModel = await clientJSON("http://readiness-model-peer:8080/status");
-  const result = inspectBatch({ rounds, model: finalModel });
+  const result = inspectBatch({ rounds, model: finalModel }, expectedRounds);
   assert.deepEqual(await resources(), { containers: [], volumes: [] });
   save("business.json", {
     ...result,

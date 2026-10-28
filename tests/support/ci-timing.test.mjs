@@ -45,7 +45,7 @@ test("critical path uses elapsed wall time, not summed parallel runner time", ()
   const result = workflowTiming(run, [
     job("Select suites", 0, 10),
     job("Image / antnest-runtime", 10, 60, [step("Build image", 20, 50)]),
-    job("Tier A / PostgreSQL components / Run", 10, 100, [
+    job("Tier A / Agent ACP PostgreSQL and audit / Run", 10, 100, [
       step("Run suites", 20, 90),
     ]),
     job("Tier C / Agent lifecycle / Run", 60, 110, [
@@ -111,7 +111,7 @@ test("missing runner durations remain unavailable instead of reducing the total"
     const result = workflowTiming(run, [
       job("Select suites", 0, 1),
       {
-        ...job("Tier A / PostgreSQL components / Run", 1, 2),
+        ...job("Tier A / Agent ACP PostgreSQL and audit / Run", 1, 2),
         ...unavailable,
       },
       job("Integration checks", 3, 4),

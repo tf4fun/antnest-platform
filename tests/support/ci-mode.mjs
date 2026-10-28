@@ -10,14 +10,14 @@ const REVIEW_ACTIONS = new Set([
 ]);
 
 /**
- * full: select and run integration suites and report `Integration checks`.
+ * component: select and run component suites and report `Integration checks`.
  * light: run nothing; the required check stays pending for this head.
  * ignored: an event that must not start or replace an integration run.
  */
 export function integrationMode({ event, action, draft }) {
-  if (event !== "pull_request") return "full";
+  if (event !== "pull_request") return "component";
   if (!REVIEW_ACTIONS.has(action)) return "ignored";
-  return draft ? "light" : "full";
+  return draft ? "light" : "component";
 }
 
 if (

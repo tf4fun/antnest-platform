@@ -191,11 +191,28 @@ export function inspectRound(row) {
   return { agent: row.agentId, session: sessionId, run: run.run_id };
 }
 
-export function inspectBatch({ rounds, model }) {
-  assert.equal(rounds.length, 100, "100 executed rounds required");
+// CI runs three functional rounds; the nightly soak keeps the full hundred.
+export function readinessRounds(value) {
+  assert(
+    value === undefined || value === "3" || value === "100",
+    `ANTNEST_E2E_READINESS_ROUNDS accepts only "3" or "100", got ${JSON.stringify(value)}`,
+  );
+  return Number(value ?? "100");
+}
+
+export function inspectBatch({ rounds, model }, expectedRounds = 100) {
+  assert(
+    expectedRounds === 3 || expectedRounds === 100,
+    `invalid expected rounds ${expectedRounds}`,
+  );
+  assert.equal(
+    rounds.length,
+    expectedRounds,
+    `${expectedRounds} executed rounds required`,
+  );
   assert.deepEqual(
     rounds.map((round) => round.index),
-    Array.from({ length: 100 }, (_, index) => index + 1),
+    Array.from({ length: expectedRounds }, (_, index) => index + 1),
   );
   rounds.forEach(inspectRound);
   for (const select of [
@@ -208,19 +225,19 @@ export function inspectBatch({ rounds, model }) {
   ])
     assert.equal(
       new Set(rounds.map(select)).size,
-      100,
+      expectedRounds,
       "reused original identity",
     );
-  assert.equal(model.requests.length, 100);
+  assert.equal(model.requests.length, expectedRounds);
   assert.deepEqual(model.errors, []);
   rounds.forEach((round) => modelReply(model, round.phase));
   return {
     status: "business_passed",
-    fresh_agents: 100,
-    first_prompts: 100,
-    completed_runs: 100,
-    model_replies: 100,
-    runtime_cleanup: 100,
+    fresh_agents: expectedRounds,
+    first_prompts: expectedRounds,
+    completed_runs: expectedRounds,
+    model_replies: expectedRounds,
+    runtime_cleanup: expectedRounds,
     publication_delay_ms: 2000,
   };
 }
