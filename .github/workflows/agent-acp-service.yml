@@ -7,7 +7,14 @@ on:
     paths:
       - services/agent-acp-service/**
       - tests/integration/agent-acp-service/**
-      - contracts/**
+      - contracts/agent-acp/**
+      - contracts/agent-controller/**
+      - contracts/identity/**
+      - contracts/platform/**
+      - contracts/runtime/**
+      - contracts/skill-learning/**
+      - contracts/skill-registry/**
+      - tests/support/ci-ownership.json
       - .nvmrc
       - .github/workflows/agent-acp-service.yml
       - .github/workflows/_image.yml
@@ -15,21 +22,30 @@ on:
     paths:
       - services/agent-acp-service/**
       - tests/integration/agent-acp-service/**
-      - contracts/**
+      - contracts/agent-acp/**
+      - contracts/agent-controller/**
+      - contracts/identity/**
+      - contracts/platform/**
+      - contracts/runtime/**
+      - contracts/skill-learning/**
+      - contracts/skill-registry/**
+      - tests/support/ci-ownership.json
       - .nvmrc
       - .github/workflows/agent-acp-service.yml
       - .github/workflows/_image.yml
   workflow_dispatch:
+  workflow_call:
 
 permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.ref }}-agent-acp-service
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   check:
+    if: github.event_name != 'pull_request' || github.workflow == 'integration'
     name: Lint and test
     runs-on: ubuntu-24.04
     timeout-minutes: 30
@@ -65,6 +81,7 @@ jobs:
         run: npm run test:integration
 
   image:
+    if: github.event_name != 'pull_request'
     needs: check
     permissions:
       contents: read

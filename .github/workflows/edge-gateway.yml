@@ -8,8 +8,14 @@ on:
       - services/edge-gateway/**
       - modules/service-authentication/**
       - tests/integration/go/edge-gateway/**
-      - tests/support/**
-      - contracts/**
+      - tests/support/go*.mjs
+      - tests/support/service-authentication*
+      - tests/support/ci-ownership.json
+      - contracts/admin-console/**
+      - contracts/agent-ui/**
+      - contracts/edge-gateway/**
+      - contracts/identity/**
+      - contracts/platform/**
       - go.work
       - go.work.sum
       - .golangci.yml
@@ -22,8 +28,14 @@ on:
       - services/edge-gateway/**
       - modules/service-authentication/**
       - tests/integration/go/edge-gateway/**
-      - tests/support/**
-      - contracts/**
+      - tests/support/go*.mjs
+      - tests/support/service-authentication*
+      - tests/support/ci-ownership.json
+      - contracts/admin-console/**
+      - contracts/agent-ui/**
+      - contracts/edge-gateway/**
+      - contracts/identity/**
+      - contracts/platform/**
       - go.work
       - go.work.sum
       - .golangci.yml
@@ -32,21 +44,24 @@ on:
       - .github/workflows/_go-service.yml
       - .github/workflows/_image.yml
   workflow_dispatch:
+  workflow_call:
 
 permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.ref }}-edge-gateway
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   check:
+    if: github.event_name != 'pull_request' || github.workflow == 'integration'
     uses: ./.github/workflows/_go-service.yml
     with:
       service: edge-gateway
 
   image:
+    if: github.event_name != 'pull_request'
     needs: check
     permissions:
       contents: read
