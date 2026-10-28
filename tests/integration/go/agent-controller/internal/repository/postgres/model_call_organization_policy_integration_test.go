@@ -67,8 +67,33 @@ func insertModelCallPolicySyncRow(t *testing.T, ctx context.Context, store *Repo
 	t.Helper()
 	_, err := store.pool.Exec(ctx, `INSERT INTO agent_controller.execution_configuration_sync
 (organization_id, revision, applied_revision, updated_at, applied_at)
-VALUES ($1,$2,$3,NOW(),CASE WHEN $3>0 THEN NOW() END)`, organizationID, revision, applied)
+VALUES ($1,$2,$3,NOW(),CASE WHEN $3::bigint > 0 THEN NOW() END)`, organizationID, revision, applied)
 	require.NoError(t, err)
+}
+
+func TestModelCallPolicySyncFixturePreservesBigintRevisions(t *testing.T) {
+	store := providerTestRepository(t)
+	ctx := runtimeBarrierPolicyTestContext(t)
+	for _, row := range []struct {
+		name           string
+		organizationID string
+		revision       int64
+		applied        int64
+	}{
+		{"fixture-zero", "fixture-zero", 5, 0},
+		{"fixture-positive", "fixture-positive", 5, 4},
+		{"fixture-bigint", "fixture-bigint", (1 << 31) + 8, (1 << 31) + 7},
+	} {
+		insertModelCallPolicySyncRow(t, ctx, store, row.organizationID, row.revision, row.applied)
+		state := modelCallPolicySyncState(t, ctx, store, row.organizationID)
+		require.Equal(t, row.revision, state.Revision, row.name)
+		require.Equal(t, row.applied, state.AppliedRevision, row.name)
+		if row.applied == 0 {
+			require.Nil(t, state.AppliedAt, row.name)
+		} else {
+			require.NotNil(t, state.AppliedAt, row.name)
+		}
+	}
 }
 
 func TestModelCallPolicyAbsentReadDoesNotPersistDefaultsOrHead(t *testing.T) {
