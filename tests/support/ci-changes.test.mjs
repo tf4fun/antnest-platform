@@ -1154,6 +1154,14 @@ test("tier C organization display installs the Agent UI browser client", () => {
   assert.deepEqual(suite.setup, ["agent-ui-web", "chromium"]);
 });
 
+test("Session observer installs its Agent UI dependencies without Chromium", () => {
+  const suite = suites.find((item) => item.id === "c-acp-session");
+  assert.deepEqual(suite.setup, ["agent-ui-web"]);
+  const entry = matrixEntry(suite);
+  assert.equal(entry.setup_agent_ui_web, true);
+  assert.equal(entry.setup_chromium, false);
+});
+
 test("foundation runners report strict-only findings through exit 2", () => {
   const foundation = {
     "c-acp-survivor": "acp-survivor/run.mjs",
