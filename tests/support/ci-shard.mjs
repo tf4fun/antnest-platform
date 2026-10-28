@@ -1,9 +1,20 @@
 // Runs one CI shard: its selected suites in order on one runner. Every suite
 // runs even when an earlier one fails, so a shard reports all its outcomes.
 import { spawn } from "node:child_process";
-import { appendFileSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import {
+  appendFileSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  writeFileSync,
+} from "node:fs";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import {
+  FailureObserver,
+  markdownCell,
+  publishFailure,
+} from "./ci-failure.mjs";
 import {
   compareEnvironment,
   snapshotEnvironment,
@@ -172,14 +183,31 @@ export function createResourceCheckedRunner({
 // job stops every process it started, including detached Compose clients.
 export function runBash(
   command,
-  { log, stream, timeoutMs = 60 * 60_000, graceMs = 30_000 },
+  {
+    log,
+    stream,
+    timeoutMs = 60 * 60_000,
+    graceMs = 30_000,
+    failureObserver = process.env.ANTNEST_CI_DIAGNOSTICS === "1"
+      ? new FailureObserver({ report: publishFailure })
+      : undefined,
+  },
 ) {
   return new Promise((resolve, reject) => {
     writeFileSync(log, "", { flag: "wx", mode: 0o600 });
+    const outcomesPath = failureObserver
+      ? `${log}.components.jsonl`
+      : undefined;
+    if (outcomesPath)
+      writeFileSync(outcomesPath, "", { flag: "wx", mode: 0o600 });
     const chunks = [];
     const child = spawn("bash", ["-euo", "pipefail", "-c", command], {
       detached: true,
       stdio: ["ignore", "pipe", "pipe"],
+      env: {
+        ...process.env,
+        ...(outcomesPath ? { ANTNEST_CI_OUTCOMES: outcomesPath } : {}),
+      },
     });
     let timedOut = false;
     let forced;
@@ -203,15 +231,25 @@ export function runBash(
     }, timeoutMs);
     const interrupt = () => stop();
     for (const signal of signals) process.on(signal, interrupt);
-    const collect = (chunk) => {
+    const collect = (chunk, channel) => {
       chunks.push(chunk);
       appendFileSync(log, chunk);
       stream(chunk);
+      try {
+        failureObserver?.write(chunk, channel);
+      } catch {
+        /* Auxiliary diagnostics. */
+      }
     };
-    child.stdout.on("data", collect);
-    child.stderr.on("data", collect);
+    child.stdout.on("data", (chunk) => collect(chunk, "stdout"));
+    child.stderr.on("data", (chunk) => collect(chunk, "stderr"));
     child.on("error", reject);
     child.on("close", (code, signal) => {
+      try {
+        failureObserver?.end();
+      } catch {
+        /* Auxiliary diagnostics. */
+      }
       clearTimeout(timer);
       clearTimeout(forced);
       for (const name of signals) process.removeListener(name, interrupt);
@@ -225,6 +263,8 @@ export function runBash(
         code: code ?? (signal ? 128 : 1),
         output: Buffer.concat(chunks).toString("utf8"),
         timedOut,
+        failures: failureObserver?.failures ?? [],
+        components: readComponentOutcomes(outcomesPath),
       });
     });
   });
@@ -256,10 +296,14 @@ export async function runShard(
     }
     write(`::group::${suite.name}`);
     const start = now();
-    const { code, output, timedOut, resourceCleanup } = await run(
-      suite.run,
-      suite.id,
-    );
+    const {
+      code,
+      output,
+      timedOut,
+      resourceCleanup,
+      failures = [],
+      components = [],
+    } = await run(suite.run, suite.id);
     const end = now();
     const interrupted = stopped();
     write("::endgroup::");
@@ -286,6 +330,13 @@ export async function runShard(
       timedOut: Boolean(timedOut),
       interrupted,
       ...(resourceCleanup ? { resourceCleanup } : {}),
+      failures,
+      ...componentOutcomes(components, {
+        status,
+        resourceCleanup,
+        interrupted,
+        timedOut,
+      }),
     });
   }
   return results;
@@ -293,13 +344,94 @@ export async function runShard(
 
 export function summary(results) {
   return [
-    "| Suite | Result | Exit | Duration (s) |",
-    "| --- | --- | --- | --- |",
+    "| Suite | Result | Exit | Duration (s) | Business | Cleanup | First actionable feedback (s) |",
+    "| --- | --- | --- | --- | --- | --- | --- |",
     ...results.map(
-      ({ name, status, code, durationMs }) =>
-        `| ${name} | ${status} | ${code} | ${(durationMs / 1000).toFixed(3)} |`,
+      ({
+        name,
+        status,
+        code,
+        durationMs,
+        business = "not_run",
+        cleanup = "not_reported",
+        startedAt,
+        failures = [],
+      }) => {
+        const first =
+          failures.length && startedAt
+            ? Math.max(
+                0,
+                Math.min(...failures.map((row) => row.reportedAt)) -
+                  Date.parse(startedAt),
+              ) / 1000
+            : null;
+        return `| ${markdownCell(name)} | ${status} | ${code} | ${(durationMs / 1000).toFixed(3)} | ${business} | ${cleanup} | ${first === null ? "not observed" : first.toFixed(3)} |`;
+      },
     ),
   ].join("\n");
+}
+
+function readComponentOutcomes(path) {
+  if (!path) return [];
+  try {
+    return readFileSync(path, "utf8")
+      .trim()
+      .split(/\r?\n/u)
+      .map((line) => JSON.parse(line))
+      .filter(
+        (row) =>
+          row?.version === 1 &&
+          ["passed", "failed", "not_run"].includes(row.business) &&
+          ["passed", "failed"].includes(row.cleanup),
+      )
+      .map(({ business, cleanup }) => ({ business, cleanup }));
+  } catch {
+    return [];
+  }
+}
+
+export function componentOutcomes(
+  components,
+  { status, resourceCleanup, interrupted, timedOut },
+) {
+  const outcomes = [...components];
+  if (resourceCleanup)
+    outcomes.push({
+      business: !resourceCleanup.business?.executed
+        ? "not_run"
+        : resourceCleanup.business.code === 0
+          ? "passed"
+          : "failed",
+      cleanup: resourceCleanup.status,
+    });
+  const business =
+    interrupted || timedOut
+      ? "incomplete"
+      : resourceCleanup?.business?.executed
+        ? resourceCleanup.business.code === 0 || status === "warning"
+          ? "passed"
+          : "failed"
+        : outcomes.length && outcomes.every((row) => row.business === "not_run")
+          ? "not_run"
+          : outcomes.some((row) => row.business !== "passed")
+            ? "failed"
+            : status !== "failed"
+              ? "passed"
+              : outcomes.length
+                ? "reported_components_passed"
+                : "failed_or_not_run";
+  return {
+    business,
+    components: outcomes.map(({ business, cleanup }) => ({
+      business,
+      cleanup,
+    })),
+    cleanup: outcomes.some((row) => row.cleanup === "failed")
+      ? "failed"
+      : outcomes.length
+        ? "passed"
+        : "not_reported",
+  };
 }
 
 async function main() {
@@ -320,7 +452,10 @@ async function main() {
     run: (command, id) =>
       runBash(command, {
         log: join(logs, `${id}.log`),
-        stream: (chunk) => process.stdout.write(chunk),
+        stream: (chunk) => {
+          if (process.env.ANTNEST_CI_DIAGNOSTICS !== "1")
+            process.stdout.write(chunk);
+        },
       }),
     record: (id, evidence) =>
       writeFileSync(
@@ -345,7 +480,18 @@ async function main() {
       if (result.resourceCleanup) {
         const line = `${JSON.stringify({ resource_cleanup: result.resourceCleanup })}\n`;
         appendFileSync(join(logs, `${id}.log`), line, { mode: 0o600 });
-        process.stdout.write(line);
+        process.stdout.write(
+          JSON.stringify({
+            resource_cleanup: {
+              status: result.resourceCleanup.status,
+              business: {
+                executed: result.resourceCleanup.business?.executed,
+                code: result.resourceCleanup.business?.code,
+              },
+              unchanged: result.resourceCleanup.comparison?.unchanged,
+            },
+          }) + "\n",
+        );
       }
       return result;
     },

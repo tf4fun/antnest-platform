@@ -90,7 +90,3 @@ GOCACHE="$repository_root/.cache/go-build" GOMODCACHE="$repository_root/.cache/g
 node tests/integration/go/run.mjs agent-controller -- -timeout=5m \
   -run '^TestTemporal(CreationSurvivesWorkerReplacement|LifecycleWorkerReplacement|ResumesAfterBusinessCommitBeforeActivityAcknowledgement)$' -v
 compose exec -T postgres dropdb -U antnest_test_admin stage2_workflow_test
-compose exec -T postgres createdb -U antnest_test_admin -O antnest_agent_acp stage2_acp_test
-ANTNEST_ACP_TEST_DATABASE_URL="postgres://antnest_agent_acp:${ANTNEST_AGENT_ACP_POSTGRES_PASSWORD:-antnest-agent-acp-dev}@127.0.0.1:$ANTNEST_POSTGRES_HOST_PORT/stage2_acp_test" \
-npm --prefix services/agent-acp-service run test:postgres
-compose exec -T postgres dropdb -U antnest_test_admin stage2_acp_test

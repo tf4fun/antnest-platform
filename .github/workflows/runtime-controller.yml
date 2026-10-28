@@ -8,8 +8,16 @@ on:
       - services/runtime-controller/**
       - modules/service-authentication/**
       - tests/integration/go/runtime-controller/**
-      - tests/support/**
-      - contracts/**
+      - tests/support/go*.mjs
+      - tests/support/service-authentication*
+      - tests/support/ci-ownership.json
+      - contracts/agent-acp/**
+      - contracts/agent-controller/**
+      - contracts/egress/**
+      - contracts/platform/**
+      - contracts/runtime/**
+      - contracts/skill-learning/**
+      - contracts/skill-registry/**
       - go.work
       - go.work.sum
       - .golangci.yml
@@ -22,8 +30,16 @@ on:
       - services/runtime-controller/**
       - modules/service-authentication/**
       - tests/integration/go/runtime-controller/**
-      - tests/support/**
-      - contracts/**
+      - tests/support/go*.mjs
+      - tests/support/service-authentication*
+      - tests/support/ci-ownership.json
+      - contracts/agent-acp/**
+      - contracts/agent-controller/**
+      - contracts/egress/**
+      - contracts/platform/**
+      - contracts/runtime/**
+      - contracts/skill-learning/**
+      - contracts/skill-registry/**
       - go.work
       - go.work.sum
       - .golangci.yml
@@ -32,21 +48,24 @@ on:
       - .github/workflows/_go-service.yml
       - .github/workflows/_image.yml
   workflow_dispatch:
+  workflow_call:
 
 permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.ref }}-runtime-controller
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   check:
+    if: github.event_name != 'pull_request' || github.workflow == 'integration'
     uses: ./.github/workflows/_go-service.yml
     with:
       service: runtime-controller
 
   image:
+    if: github.event_name != 'pull_request'
     needs: check
     permissions:
       contents: read

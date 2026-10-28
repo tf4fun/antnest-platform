@@ -6,6 +6,8 @@ import type {
 } from "../domain/types.js";
 
 import type { ModelUsage } from "../domain/usage.js";
+import type { ModelReservation } from "../domain/model-budget.js";
+import type { ProviderTokenLimits } from "../domain/provider-token-limits.js";
 export type { ModelUsage } from "../domain/usage.js";
 
 export type ModelToolCall = {
@@ -41,12 +43,30 @@ export type ModelRequest = {
 };
 
 export interface ModelPort {
+  /** Pure preparation; complete owns and joins the original network task. */
+  prepare?(request: ModelRequest): PreparedModelCall;
   complete(request: ModelRequest): Promise<ModelResult>;
 }
+
+export type PreparedModelCall = {
+  readonly reservation: ModelReservation;
+  /** Absent means unknown. Read only after the original complete task joins. */
+  readonly dispatchState?: "not_dispatched" | "possibly_dispatched" | undefined;
+  complete(): Promise<ModelResult>;
+  release(): void;
+};
+
+export type PreparedModelTransportCall = {
+  readonly reservation: ModelReservation;
+  readonly dispatchState?: "not_dispatched" | "possibly_dispatched" | undefined;
+  /** Read current authority at the final send boundary, after endpoint lookup. */
+  complete(credential: () => string): Promise<ModelResult>;
+};
 
 export type AuthenticatedModelRequest = ModelRequest & { credential: string };
 
 export interface AuthenticatedModelTransport {
+  prepare?(request: ModelRequest, limits?: ProviderTokenLimits): PreparedModelTransportCall;
   // Abort pending I/O promptly; preserve known usage in ModelError when interrupted.
   complete(request: AuthenticatedModelRequest): Promise<ModelResult>;
 }

@@ -1,0 +1,64 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://antnest.local/contracts/agent-controller/provider-token-limits.schema.json",
+  "title": "Observed Provider token limits",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["source", "source_revision", "binding"],
+  "anyOf": [
+    { "properties": { "context_tokens": {} }, "required": ["context_tokens"] },
+    {
+      "properties": { "max_output_tokens": {} },
+      "required": ["max_output_tokens"]
+    }
+  ],
+  "properties": {
+    "source": { "const": "models" },
+    "source_revision": { "$ref": "#/$defs/positive" },
+    "binding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "organization_id",
+        "connection_id",
+        "provider_key",
+        "request_protocol",
+        "base_url",
+        "model",
+        "credential_revision"
+      ],
+      "properties": {
+        "organization_id": { "$ref": "#/$defs/id" },
+        "connection_id": { "$ref": "#/$defs/id" },
+        "provider_key": {
+          "enum": ["deepseek", "openrouter", "openai_compatible"]
+        },
+        "request_protocol": { "const": "openai_chat_completions" },
+        "base_url": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^https?://"
+        },
+        "model": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "credential_revision": { "$ref": "#/$defs/id" }
+      }
+    },
+    "context_tokens": { "$ref": "#/$defs/positive" },
+    "max_output_tokens": { "$ref": "#/$defs/positive" },
+    "context_includes_media": { "type": "boolean" },
+    "output_includes_reasoning": { "type": "boolean" }
+  },
+  "$defs": {
+    "positive": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 9007199254740991
+    },
+    "id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$"
+    }
+  }
+}

@@ -1,11 +1,7 @@
 name: integration
 
-# Component, browser and service-owned Docker E2E suites. The workflow has no
-# path filter; tests/support/ci-changes.mjs selects the suites a change
-# exercises and groups them into one job per shard of each tier.
-# tests/support/ci-mode.mjs runs them on every push to a pull request in
-# review; a draft runs only the repository and service workflows until it is
-# marked ready.
+# Required component CI only. System E2E lives in e2e.yml and never contributes
+# to this workflow's required Integration checks status.
 on:
   push:
     branches: [main]
@@ -14,7 +10,7 @@ on:
   workflow_dispatch:
     inputs:
       suites:
-        description: Suite ids to run (comma or space separated); empty runs every suite.
+        description: Component suite ids; empty selects all component suites.
         default: ""
         type: string
 
@@ -38,12 +34,11 @@ jobs:
       packages: read
     outputs:
       mode: ${{ steps.mode.outputs.mode }}
+      services: ${{ steps.select.outputs.services }}
       suites: ${{ steps.select.outputs.suites }}
       plain: ${{ steps.select.outputs.plain }}
       image_suites: ${{ steps.select.outputs.image_suites }}
       imaged: ${{ steps.select.outputs.imaged }}
-      optional_suites: ${{ steps.select.outputs.optional_suites }}
-      optional: ${{ steps.select.outputs.optional }}
       images: ${{ steps.select.outputs.images }}
       builds: ${{ steps.select.outputs.builds }}
       building: ${{ steps.select.outputs.building }}
@@ -65,30 +60,23 @@ jobs:
         run: node tests/support/ci-mode.mjs >> "$GITHUB_OUTPUT"
 
       - uses: docker/login-action@v4
-        if: steps.mode.outputs.mode == 'full'
+        if: steps.mode.outputs.mode == 'component'
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # A push whose previous head is unknown (new branch, force push) and a
-      # manual run both select every suite, unless the manual run names
-      # suites. Images are named by a hash of
-      # their build inputs; any that GHCR lacks are built by the image job.
-      # Runs on main also resolve every service/Runtime release image.
-      # Dependencies and test variants are built only for selected suites
-      # and shared as artifacts within this run; they are never published.
+      # Scope is intersected with selection, including explicit manual ids.
+      # Missing history conservatively selects every component, never E2E.
       - name: Select suites
         id: select
-        if: steps.mode.outputs.mode == 'full'
+        if: steps.mode.outputs.mode == 'component'
         env:
           EVENT: ${{ github.event_name }}
           BASE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
-          PUBLISH: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' }}
           ONLY: ${{ inputs.suites }}
         run: |
-          set -- --resolve-images
-          [ "$PUBLISH" = true ] && set -- "$@" --all-images
+          set -- --scope component --resolve-images
           [ -n "$ONLY" ] && set -- "$@" --only "$ONLY"
           if [ "$EVENT" != workflow_dispatch ] && [ -n "$BASE" ] && git cat-file -e "$BASE^{commit}" 2>/dev/null; then
             node tests/support/ci-changes.mjs "$@" --base "$BASE" --head HEAD
@@ -96,15 +84,95 @@ jobs:
             node tests/support/ci-changes.mjs "$@" --all
           fi
 
+  unit-admin-console:
+    needs: changes
+    if: contains(fromJSON(needs.changes.outputs.services || '[]'), 'admin-console')
+    permissions:
+      contents: read
+      packages: write
+    uses: ./.github/workflows/admin-console.yml
+
+  unit-agent-acp-service:
+    needs: changes
+    if: contains(fromJSON(needs.changes.outputs.services || '[]'), 'agent-acp-service')
+    permissions:
+      contents: read
+      packages: write
+    uses: ./.github/workflows/agent-acp-service.yml
+
+  unit-agent-controller:
+    needs: changes
+    if: contains(fromJSON(needs.changes.outputs.services || '[]'), 'agent-controller')
+    permissions:
+      contents: read
+      packages: write
+    uses: ./.github/workflows/agent-controller.yml
+
+  unit-agent-ui:
+    needs: changes
+    if: contains(fromJSON(needs.changes.outputs.services || '[]'), 'agent-ui')
+    permissions:
+      contents: read
+      packages: write
+    uses: ./.github/workflows/agent-ui.yml
+
+  unit-antnest-runtime:
+    needs: changes
+    if: contains(fromJSON(needs.changes.outputs.services || '[]'), 'antnest-runtime')
+    permissions:
+      contents: read
+      packages: write
+    uses: ./.github/workflows/runtime.yml
+
+  unit-edge-gateway:
+    needs: changes
+    if: contains(fromJSON(needs.changes.outputs.services || '[]'), 'edge-gateway')
+    permissions:
+      contents: read
+      packages: write
+    uses: ./.github/workflows/edge-gateway.yml
+
+  unit-identity-service:
+    needs: changes
+    if: contains(fromJSON(needs.changes.outputs.services || '[]'), 'identity-service')
+    permissions:
+      contents: read
+      packages: write
+    uses: ./.github/workflows/identity-service.yml
+
+  unit-runtime-controller:
+    needs: changes
+    if: contains(fromJSON(needs.changes.outputs.services || '[]'), 'runtime-controller')
+    permissions:
+      contents: read
+      packages: write
+    uses: ./.github/workflows/runtime-controller.yml
+
+  unit-runtime-egress:
+    needs: changes
+    if: contains(fromJSON(needs.changes.outputs.services || '[]'), 'runtime-egress')
+    permissions:
+      contents: read
+      packages: write
+    uses: ./.github/workflows/runtime-egress.yml
+
+  unit-skill-registry:
+    needs: changes
+    if: contains(fromJSON(needs.changes.outputs.services || '[]'), 'skill-registry')
+    permissions:
+      contents: read
+      packages: write
+    uses: ./.github/workflows/skill-registry.yml
+
   images:
     name: Image / ${{ matrix.name }}
     needs: changes
-    if: needs.changes.outputs.mode == 'full' && needs.changes.outputs.building != '0'
+    if: needs.changes.outputs.mode == 'component' && needs.changes.outputs.building != '0'
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     permissions:
       contents: read
-      packages: write
+      packages: read
     strategy:
       fail-fast: false
       matrix: ${{ fromJSON(needs.changes.outputs.builds) }}
@@ -144,30 +212,11 @@ jobs:
           compression-level: 0
           retention-days: 1
 
-      # Only main publishes service/Runtime release images. Dependency and
-      # test images stay in this run's artifacts; a pull request cannot place
-      # an image under a reference that later runs trust.
-      - uses: docker/login-action@v4
-        if: matrix.publish && github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Publish image
-        if: matrix.publish && github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
-        env:
-          NAME: ${{ matrix.name }}
-          REF: ${{ matrix.ref }}
-        run: |
-          docker tag "antnest/$NAME:local" "$REF"
-          docker push "$REF"
-
   # Shards without images start at once; the others wait for the image job.
   suite:
     name: Tier ${{ matrix.tier }} / ${{ matrix.name }}
     needs: changes
-    if: needs.changes.outputs.mode == 'full' && needs.changes.outputs.plain != '0'
+    if: needs.changes.outputs.mode == 'component' && needs.changes.outputs.plain != '0'
     permissions:
       contents: read
       actions: read
@@ -184,7 +233,7 @@ jobs:
     needs: [changes, images]
     if: >-
       !cancelled() && needs.changes.result == 'success' &&
-      needs.changes.outputs.mode == 'full' &&
+      needs.changes.outputs.mode == 'component' &&
       needs.changes.outputs.imaged != '0' &&
       (needs.images.result == 'success' || needs.images.result == 'skipped')
     permissions:
@@ -199,35 +248,26 @@ jobs:
       suite: ${{ toJSON(matrix) }}
       images: ${{ needs.changes.outputs.images }}
 
-  # Tier C also blocks `Integration checks` when selected. The parallel cap
-  # leaves runners available for the other required shards.
-  optional-suite:
-    name: Tier ${{ matrix.tier }} / ${{ matrix.name }}
-    needs: [changes, images]
-    if: >-
-      !cancelled() && needs.changes.result == 'success' &&
-      needs.changes.outputs.mode == 'full' &&
-      needs.changes.outputs.optional != '0' &&
-      (needs.images.result == 'success' || needs.images.result == 'skipped')
-    permissions:
-      contents: read
-      actions: read
-      packages: read
-    strategy:
-      fail-fast: false
-      max-parallel: 6
-      matrix: ${{ fromJSON(needs.changes.outputs.optional_suites) }}
-    uses: ./.github/workflows/_suite.yml
-    with:
-      suite: ${{ toJSON(matrix) }}
-      images: ${{ needs.changes.outputs.images }}
-
   integration:
     # Drafts and partial manual runs report under other names. Event-based
     # naming keeps selection failures on the required check even before the
     # mode output exists.
     name: ${{ github.event_name == 'pull_request' && github.event.pull_request.draft && 'Integration checks (not run)' || github.event_name == 'workflow_dispatch' && inputs.suites != '' && 'Integration checks (partial)' || 'Integration checks' }}
-    needs: [changes, images, suite, image-suite, optional-suite]
+    needs:
+      - changes
+      - images
+      - suite
+      - image-suite
+      - unit-admin-console
+      - unit-agent-acp-service
+      - unit-agent-controller
+      - unit-agent-ui
+      - unit-antnest-runtime
+      - unit-edge-gateway
+      - unit-identity-service
+      - unit-runtime-controller
+      - unit-runtime-egress
+      - unit-skill-registry
     if: always()
     runs-on: ubuntu-24.04
     timeout-minutes: 5
@@ -240,18 +280,18 @@ jobs:
           IMAGES: ${{ needs.images.result }}
           SUITE: ${{ needs.suite.result }}
           IMAGE_SUITE: ${{ needs.image-suite.result }}
-          OPTIONAL_SUITE: ${{ needs.optional-suite.result }}
           BUILDING: ${{ needs.changes.outputs.building }}
           PLAIN: ${{ needs.changes.outputs.plain }}
           IMAGED: ${{ needs.changes.outputs.imaged }}
-          OPTIONAL: ${{ needs.changes.outputs.optional }}
           EVENT: ${{ github.event_name }}
           DRAFT: ${{ github.event.pull_request.draft }}
+          SERVICES: ${{ needs.changes.outputs.services }}
+          UNIT_RESULTS: ${{ toJSON(needs) }}
         run: |
           [ "$CHANGES" = success ] || exit 1
-          echo "changes=$CHANGES images=$IMAGES/$BUILDING suite=$SUITE/$PLAIN image-suite=$IMAGE_SUITE/$IMAGED optional-suite=$OPTIONAL_SUITE/$OPTIONAL"
+          echo "changes=$CHANGES images=$IMAGES/$BUILDING suite=$SUITE/$PLAIN image-suite=$IMAGE_SUITE/$IMAGED"
           case "$MODE" in
-            full) ;;
+            component) ;;
             light)
               [ "$EVENT" = pull_request ] && [ "$DRAFT" = true ] || exit 1
               echo "::notice::Integration suites did not run ($MODE). Mark the pull request ready for review to run them."
@@ -266,8 +306,52 @@ jobs:
           expect "$IMAGES" "$BUILDING"
           expect "$SUITE" "$PLAIN"
           expect "$IMAGE_SUITE" "$IMAGED"
-          expect "$OPTIONAL_SUITE" "$OPTIONAL"
+          node --input-type=module <<'JS'
+          const known = [
+            "admin-console", "agent-acp-service", "agent-controller", "agent-ui",
+            "antnest-runtime", "edge-gateway", "identity-service",
+            "runtime-controller", "runtime-egress", "skill-registry",
+          ];
+          const selected = JSON.parse(process.env.SERVICES);
+          const results = JSON.parse(process.env.UNIT_RESULTS);
+          if (!Array.isArray(selected) || selected.some(name => !known.includes(name)) ||
+              new Set(selected).size !== selected.length) process.exit(1);
+          for (const name of known) {
+            const expected = selected.includes(name) ? "success" : "skipped";
+            if (results[`unit-${name}`]?.result !== expected) {
+              console.error(`Unit checks for ${name} did not report ${expected}`);
+              process.exit(1);
+            }
+          }
+          JS
 
       - name: Reject workflow cancellation
         if: cancelled()
         run: exit 1
+
+  timing:
+    name: Report workflow timing
+    continue-on-error: true
+    needs: [changes, integration]
+    if: always() && needs.changes.outputs.mode == 'component'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+      - name: Measure completed integration jobs
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node tests/support/ci-timing.mjs
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: ci-timing
+          path: artifacts/verification/ci-timing/timing.json
+          if-no-files-found: ignore
+          retention-days: 14

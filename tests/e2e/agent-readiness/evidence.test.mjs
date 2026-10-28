@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { inspectBatch, inspectRound } from "./evidence.mjs";
+import { inspectBatch, inspectRound, readinessRounds } from "./evidence.mjs";
 
 // Synthetic wire/inspect DTOs exercise the admission boundary only. They do not
 // stand in for the real Docker run, its proxy delay, or its persisted Run facts.
@@ -329,8 +329,8 @@ function roundFixture(index = 1, overrides = {}) {
   };
 }
 
-function batchFixture() {
-  const rounds = Array.from({ length: 100 }, (_, index) =>
+function batchFixture(count = 100) {
+  const rounds = Array.from({ length: count }, (_, index) =>
     roundFixture(index + 1),
   );
   return {
@@ -354,6 +354,30 @@ test("one hundred fresh rounds preserve distinct original Agents, operations, ph
   const before = structuredClone(batch);
   assert.doesNotThrow(() => inspectBatch(batch));
   assert.deepEqual(batch, before);
+});
+
+test("the default expectation is the full one hundred rounds", () => {
+  assert.throws(() => inspectBatch(batchFixture(99)));
+  assert.doesNotThrow(() => inspectBatch(batchFixture(3), 3));
+});
+
+test("three functional rounds pass only when all three complete", () => {
+  assert.doesNotThrow(() => inspectBatch(batchFixture(3), 3));
+  assert.throws(() => inspectBatch(batchFixture(2), 3));
+  assert.throws(() => inspectBatch(batchFixture(100), 3));
+});
+
+test("the expected round count accepts only the functional or soak policy", () => {
+  for (const expected of [0, 1, 2, 4, 99, 101, "3", "100", undefined])
+    assert.throws(() => inspectBatch(batchFixture(3), expected));
+});
+
+test("the environment round policy accepts only three or one hundred", () => {
+  assert.equal(readinessRounds(undefined), 100);
+  assert.equal(readinessRounds("3"), 3);
+  assert.equal(readinessRounds("100"), 100);
+  for (const value of ["", "0", "2", "99", "1000", "three", " 3", "3 "])
+    assert.throws(() => readinessRounds(value), value);
 });
 
 for (const [name, change] of [

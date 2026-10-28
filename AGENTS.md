@@ -13,8 +13,19 @@ one explicit, disjoint write set and one mechanical transformation. It must not
 run tests, builds, generators, Docker, network calls, or Git operations. The
 coordinator reviews every delegated change and runs all admission checks.
 
-New behavior is developed test-first. A stage is complete only when its unit,
-contract, component, and applicable Docker E2E evidence passes.
+New behavior is developed test-first. PR admission requires the affected
+services' unit, contract and component checks. The required Integration
+checks status includes those selected service checks. Docker E2E is
+post-merge system integration evidence, not a PR merge gate.
+
+`main` is the system integration branch, not a release branch. A main push
+builds a version set and runs the independent system E2E workflow; failures
+remain failures and feed fix-forward work without automatically freezing
+other PR merges. Nightly retains 100 readiness rounds; normal system runs
+use three. An `e2e` label or explicit manifest dispatch runs independent
+E2E. PR artifacts never enter the trusted registry namespace or qualify as
+release evidence. A frozen release must use a complete passed main version
+manifest; partial/manual PR results do not establish a release.
 
 Use remote CI as the complete merge gate. Local verification is for targeted
 failure reproduction and focused development feedback; do not duplicate the

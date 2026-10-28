@@ -125,6 +125,50 @@
         "null"
       ]
     },
+    "budget_reason": {
+      "type": "object",
+      "properties": {
+        "scope": {
+          "type": "string",
+          "enum": [
+            "run_input",
+            "run_output",
+            "run_cost",
+            "organization_daily",
+            "organization_monthly",
+            "unknown_cost"
+          ]
+        },
+        "limit": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^(0|[1-9][0-9]*)(?![\\s\\S])"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "used": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^(0|[1-9][0-9]*)(?![\\s\\S])"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "scope",
+        "limit",
+        "used"
+      ],
+      "additionalProperties": false
+    },
     "unknown_effect_source": {
       "anyOf": [
         {

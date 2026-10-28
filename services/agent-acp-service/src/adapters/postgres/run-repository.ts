@@ -10,6 +10,11 @@ import {
 
 import type { EnvironmentChangeFact, SessionRecord } from "../../domain/types.js";
 import { DomainError } from "../../domain/errors.js";
+import {
+  budgetFactSchema,
+  ModelBudgetExceededError,
+  type ModelBudgetFact,
+} from "../../domain/model-budget.js";
 import type {
   AcceptRunInput,
   CreateRunIntentInput,
@@ -18,6 +23,8 @@ import type {
 } from "../../ports/run-repository.js";
 import type { PostgresKernel } from "./kernel.js";
 import { RunWriteAuthority, type RunOwnerColumns } from "./run-write-authority.js";
+import { assertModelBudgetAdmission } from "./model-budget.js";
+import { appendModelBudgetWarnings } from "./model-budget-warning.js";
 
 type LockedSession = {
   organization_id: string;
@@ -256,29 +263,93 @@ export class PostgresRunRepository implements RunRepository {
 
   public async acceptRun(request: AcceptRunInput): Promise<"accepted" | "cancelled"> {
     const input = structuredClone(request);
-    return this.#authority.transaction(this.kernel, async (client) => {
-      const { session: sessionRow, run: runRow } = requireRow(
-        await this.lockRun(client, input.runId),
-        "Run intent does not exist",
-      );
-      if (runRow.state !== "admitting") {
-        throw new Error("Run intent is no longer admitting");
-      }
-      if (runRow.pending_user_message_id === null || runRow.prompt_is_array !== true) {
-        throw new Error("Run intent has no recoverable prompt");
-      }
-      if (runRow.client_mcp_revision_id !== input.snapshot.clientMcpRevisionId) {
-        throw new Error("Run snapshot does not match its captured client MCP revision");
-      }
-      if (runRow.cancel_requested_at !== null || sessionRow.state !== "active") {
-        await client.query(
-          `UPDATE runs
+    // Resolve only the lock key before the transaction. The locked Session and
+    // Run remain the authority; a caller's snapshot cannot choose another org.
+    const identity = requireRow(
+      (
+        await this.kernel.query<{ organization_id: string }>(
+          "SELECT organization_id FROM runs WHERE id=$1",
+          [input.runId],
+        )
+      ).rows[0],
+      "Run intent does not exist",
+    );
+    const outcome = await this.#authority.organizationTransaction<
+      "accepted" | "cancelled" | ModelBudgetExceededError
+    >(
+      this.kernel,
+      identity.organization_id,
+      async (client) => {
+        const { session: sessionRow, run: runRow } = requireRow(
+          await this.lockRun(client, input.runId),
+          "Run intent does not exist",
+        );
+        if (runRow.organization_id !== identity.organization_id)
+          throw new Error("Run organization changed during admission");
+        if (runRow.state !== "admitting") {
+          throw new Error("Run intent is no longer admitting");
+        }
+        if (runRow.pending_user_message_id === null || runRow.prompt_is_array !== true) {
+          throw new Error("Run intent has no recoverable prompt");
+        }
+        if (runRow.client_mcp_revision_id !== input.snapshot.clientMcpRevisionId) {
+          throw new Error("Run snapshot does not match its captured client MCP revision");
+        }
+        if (runRow.cancel_requested_at !== null || sessionRow.state !== "active") {
+          await client.query(
+            `UPDATE runs
               SET state = 'cancelled', execution_snapshot = $2::jsonb, deadline_at = $3,
                   pending_user_message_id = NULL,
                   terminal_class = 'cancelled', executor_state = 'quiescent',
                   tool_effect_state = 'none', error_class = NULL,
                   cancel_requested_at = COALESCE(cancel_requested_at, $4), updated_at = $4
             WHERE id = $1`,
+            [
+              input.runId,
+              JSON.stringify(input.snapshot),
+              input.snapshot.deadlineAt,
+              input.acceptedAt,
+            ],
+          );
+          return "cancelled";
+        }
+
+        try {
+          await assertModelBudgetAdmission(client, runRow.organization_id);
+        } catch (error) {
+          if (!(error instanceof ModelBudgetExceededError)) throw error;
+          // Commit this exact rejection before exposing a DomainError. Only that
+          // receipt permits PromptCoordinator to release its original Runtime pin.
+          // A lost COMMIT/rollback receipt remains an ordinary recovery failure.
+          await rejectLockedRunIntent(client, input.runId, error.code, input.acceptedAt, {
+            scope: error.scope,
+            limit: error.limit,
+            used: error.used,
+          });
+          return error;
+        }
+
+        let sequence = Number(sessionRow.last_message_sequence);
+        if (input.environmentFact !== null) {
+          sequence += 1;
+          await insertEnvironmentFact(client, input, input.environmentFact, sequence);
+        }
+        sequence += 1;
+        const message = await client.query(
+          `INSERT INTO session_messages(
+           id, session_id, run_id, sequence, kind, visible, payload, created_at
+         ) SELECT pending_user_message_id, session_id, id, $2, 'user_message', true,
+                  jsonb_build_object('kind', 'user_message',
+                    'messageId', pending_user_message_id, 'content', input_prompt), $3
+             FROM runs WHERE id = $1`,
+          [input.runId, sequence, input.acceptedAt],
+        );
+        if (message.rowCount !== 1) throw new Error("Run user message was not created");
+        await client.query(
+          `UPDATE runs
+            SET state = 'running', execution_snapshot = $2::jsonb, deadline_at = $3,
+                pending_user_message_id = NULL, updated_at = $4
+          WHERE id = $1`,
           [
             input.runId,
             JSON.stringify(input.snapshot),
@@ -286,47 +357,30 @@ export class PostgresRunRepository implements RunRepository {
             input.acceptedAt,
           ],
         );
-        return "cancelled";
-      }
-
-      let sequence = Number(sessionRow.last_message_sequence);
-      if (input.environmentFact !== null) {
-        sequence += 1;
-        await insertEnvironmentFact(client, input, input.environmentFact, sequence);
-      }
-      sequence += 1;
-      const message = await client.query(
-        `INSERT INTO session_messages(
-           id, session_id, run_id, sequence, kind, visible, payload, created_at
-         ) SELECT pending_user_message_id, session_id, id, $2, 'user_message', true,
-                  jsonb_build_object('kind', 'user_message',
-                    'messageId', pending_user_message_id, 'content', input_prompt), $3
-             FROM runs WHERE id = $1`,
-        [input.runId, sequence, input.acceptedAt],
-      );
-      if (message.rowCount !== 1) throw new Error("Run user message was not created");
-      await client.query(
-        `UPDATE runs
-            SET state = 'running', execution_snapshot = $2::jsonb, deadline_at = $3,
-                pending_user_message_id = NULL, updated_at = $4
-          WHERE id = $1`,
-        [input.runId, JSON.stringify(input.snapshot), input.snapshot.deadlineAt, input.acceptedAt],
-      );
-      await client.query(
-        `UPDATE acp_sessions
+        await client.query(
+          `UPDATE acp_sessions
             SET last_execution_revision = $2, last_message_sequence = $3,
                 title = COALESCE(title, $5), updated_at = $4
           WHERE id = $1`,
-        [
-          runRow.session_id,
-          input.snapshot.executionRevision,
-          sequence,
-          input.acceptedAt,
-          input.sessionTitle ?? null,
-        ],
-      );
-      return "accepted";
-    });
+          [
+            runRow.session_id,
+            input.snapshot.executionRevision,
+            sequence,
+            input.acceptedAt,
+            input.sessionTitle ?? null,
+          ],
+        );
+        await appendModelBudgetWarnings(client, {
+          runId: input.runId,
+          source: "admission",
+          createdAt: input.acceptedAt,
+        });
+        return "accepted";
+      },
+      { requireLiveFenceAtCommit: true },
+    );
+    if (outcome instanceof ModelBudgetExceededError) throw outcome;
+    return outcome;
   }
 
   public async rejectRun(
@@ -385,7 +439,11 @@ export async function rejectLockedRunIntent(
   runId: string,
   errorClass: string,
   capturedAt: Date,
+  budget?: ModelBudgetFact,
 ): Promise<"failed" | "cancelled"> {
+  const reason = budget === undefined ? undefined : budgetFactSchema.parse(budget);
+  if (reason !== undefined && errorClass !== "budget_exceeded")
+    throw new Error("Budget facts require a budget rejection");
   const result = await client.query<{ state: "failed" | "cancelled" }>(
     `UPDATE runs
           SET state = CASE WHEN cancel_requested_at IS NULL THEN 'failed' ELSE 'cancelled' END,
@@ -394,10 +452,11 @@ export async function rejectLockedRunIntent(
               executor_state = CASE WHEN cancel_requested_at IS NULL THEN NULL ELSE 'quiescent' END,
               tool_effect_state = CASE WHEN cancel_requested_at IS NULL THEN NULL ELSE 'none' END,
               error_class = CASE WHEN cancel_requested_at IS NULL THEN $2 ELSE NULL END,
+              budget_reason = CASE WHEN cancel_requested_at IS NULL THEN $4::jsonb ELSE NULL END,
               updated_at = $3
         WHERE id = $1 AND state = 'admitting'
         RETURNING state`,
-    [runId, errorClass, capturedAt],
+    [runId, errorClass, capturedAt, reason === undefined ? null : JSON.stringify(reason)],
   );
   if (result.rowCount !== 1) {
     throw new Error("Run intent is no longer admitting");

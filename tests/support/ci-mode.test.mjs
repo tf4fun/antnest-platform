@@ -13,14 +13,14 @@ const pr = (action, extra = {}) => ({
   ...extra,
 });
 
-test("every head of a pull request in review runs the full integration suite", () => {
+test("every head of a pull request in review runs the component gate", () => {
   for (const action of [
     "opened",
     "reopened",
     "ready_for_review",
     "synchronize",
   ])
-    assert.equal(integrationMode(pr(action)), "full", action);
+    assert.equal(integrationMode(pr(action)), "component", action);
 });
 
 test("drafts run only repository and service checks", () => {
@@ -33,9 +33,12 @@ test("no other pull request event selects a mode, labels included", () => {
     assert.equal(integrationMode(pr(action)), "ignored", action);
 });
 
-test("main pushes and manual runs stay full", () => {
+test("main pushes and manual runs stay component", () => {
   for (const event of ["push", "workflow_dispatch"])
-    assert.equal(integrationMode({ event, action: "", draft: false }), "full");
+    assert.equal(
+      integrationMode({ event, action: "", draft: false }),
+      "component",
+    );
 });
 
 test("the CLI reads the GitHub event from the environment", () => {
@@ -58,13 +61,13 @@ test("the CLI reads the GitHub event from the environment", () => {
     ACTION: "synchronize",
     DRAFT: "false",
   });
-  assert.equal(pushed.stdout, "mode=full\n");
+  assert.equal(pushed.stdout, "mode=component\n");
   assert.notEqual(run({}).status, 0, "a missing event must not default");
 });
 
 // Draft and targeted manual runs cannot replace a full run's required check.
 // The real aggregator and its name expression are exercised in ci-admission.test.mjs.
-test("integration.yml keeps event selection and execution wired to full mode", () => {
+test("integration.yml keeps event selection and execution wired to component mode", () => {
   const workflow = readFileSync(
     new URL("../../.github/workflows/integration.yml", import.meta.url),
     "utf8",
@@ -87,8 +90,8 @@ test("integration.yml keeps event selection and execution wired to full mode", (
     /group: \$\{\{ github\.workflow \}\}-\$\{\{ github\.ref \}\}\n/u,
   );
   assert.doesNotMatch(workflow, /label/iu);
-  // Every suite job is gated on the full mode, not only on its selection.
-  for (const job of ["images", "suite", "image-suite", "optional-suite"]) {
+  // Every suite job is gated on the component mode, not only on its selection.
+  for (const job of ["images", "suite", "image-suite"]) {
     const body = workflow.split(new RegExp(`\\n  ${job}:\\n`, "u"))[1];
     assert(body, `${job} job missing`);
     const condition = body
@@ -97,8 +100,8 @@ test("integration.yml keeps event selection and execution wired to full mode", (
       ?.split(/\n {4}[a-z-]+:/u)[0];
     assert.match(
       condition ?? "",
-      /needs\.changes\.outputs\.mode == 'full'/u,
-      `${job} must run only in full mode`,
+      /needs\.changes\.outputs\.mode == 'component'/u,
+      `${job} must run only in component mode`,
     );
   }
 });

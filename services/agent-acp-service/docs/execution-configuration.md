@@ -46,6 +46,15 @@ Cross-service ownership between Controller and ACP is summarized in
 
 ## Configuration Authority
 
+ACP accepts optional Agent `run_budget` and organization `organization_budget`
+fields in both the domain parser and the complete execution snapshot schema.
+The Run freezes its Template cap; enforcement reads the latest durable
+organization policy. A later execution publication cannot omit a previously
+published organization policy, regress its policy revision, or change its
+contents without increasing that revision. Omission on legacy configurations
+adds no cap; explicit zero is retained. Parsing these fields does not establish
+complete production budget enforcement or Controller/Console delivery.
+
 The internal HTTP entry is `POST /rpc/agent-acp/apply-execution-snapshot`.
 It accepts JSON only and delegates to the same execution directory as local
 access checks. The request body is bounded independently from ACP prompt size

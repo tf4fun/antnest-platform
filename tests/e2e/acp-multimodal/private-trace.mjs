@@ -52,7 +52,7 @@ const outputQueries = new Map(
 const finishQuery = normalize(`WITH finished AS (UPDATE runs
           SET state = $2, terminal_class = $2, executor_state = $3,
               tool_effect_state = $4, unknown_effect_source = $5,
-              stop_reason = $6, error_class = $7, updated_at = $8
+              stop_reason = $6, error_class = $7, updated_at = $8, budget_reason = $9::jsonb
         WHERE id = $1 AND state = 'running' RETURNING id, session_id),
        refused_messages AS (
          UPDATE session_messages SET context_excluded = true

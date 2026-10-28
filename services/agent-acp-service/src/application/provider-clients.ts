@@ -5,7 +5,14 @@ import {
   type ExecutionConfiguration,
   type ProviderRouting,
 } from "../domain/execution-configuration.js";
-import { ModelError, type AuthenticatedModelTransport, type ModelPort } from "../ports/model.js";
+import {
+  ModelError,
+  type AuthenticatedModelTransport,
+  type ModelPort,
+  type ModelRequest,
+  type PreparedModelCall,
+} from "../ports/model.js";
+import { matchingProviderTokenLimits } from "../domain/provider-token-limits.js";
 import type { ProviderCircuitPermit, ProviderCircuitPort } from "../ports/provider-circuit.js";
 import { ProviderCircuit, type ProviderCircuitOptions } from "./provider-circuit.js";
 
@@ -110,62 +117,129 @@ export class ProviderClients implements ProviderCircuitPort {
       throw new DomainError("provider_unavailable", "Provider client is unavailable");
     }
     let released = false;
-    return {
-      signal: client.stop.signal,
-      complete: async (request) => {
-        if (released) {
+    const prepare = (request: ModelRequest): PreparedModelCall => {
+      const signal = AbortSignal.any([request.signal, client.stop.signal]);
+      const input: ModelRequest = {
+        ...request,
+        signal,
+        snapshot: structuredClone(request.snapshot),
+        messages: structuredClone(request.messages),
+        tools: structuredClone(request.tools),
+        ...(request.onDelta === undefined
+          ? {}
+          : {
+              onDelta: async (delta) => {
+                signal.throwIfAborted();
+                await request.onDelta!(delta);
+              },
+            }),
+      };
+      const assertCurrent = (): void => {
+        if (released)
           throw new DomainError("provider_handle_released", "Provider client handle was released");
-        }
-        const signal = AbortSignal.any([request.signal, client.stop.signal]);
         signal.throwIfAborted();
         if (
-          request.snapshot.organizationId !== organizationId ||
-          request.snapshot.providerConnectionId !== connectionId ||
-          request.snapshot.executionSpec.model.baseUrl !== client.routing.base_url
+          input.snapshot.organizationId !== organizationId ||
+          input.snapshot.providerConnectionId !== connectionId ||
+          input.snapshot.executionSpec.model.baseUrl !== client.routing.base_url
         )
           throw new ModelError(
             "provider_unavailable",
             "Provider routing does not match the frozen Run",
             false,
           );
-        try {
-          const result = await this.transport.complete({
-            ...request,
-            signal,
-            credential: client.secret,
-            ...(request.onDelta === undefined
-              ? {}
-              : {
-                  onDelta: async (delta) => {
-                    signal.throwIfAborted();
-                    await request.onDelta!(delta);
-                  },
-                }),
-          });
-          if (signal.aborted) {
-            const error = new ModelError(
-              "model_unavailable",
-              "Model request was interrupted",
-              true,
-              undefined,
-              { cause: signal.reason },
+      };
+      assertCurrent();
+      const limits = matchingProviderTokenLimits(
+        input.snapshot.executionSpec.model.providerTokenLimits,
+        {
+          organization_id: organizationId,
+          connection_id: connectionId,
+          provider_key: client.routing.provider_key,
+          request_protocol: client.routing.request_protocol,
+          base_url: client.routing.base_url,
+          model: input.snapshot.executionSpec.model.model,
+          credential_revision: client.credentialRevision,
+        },
+      );
+      const operation = this.transport.prepare?.(input, limits);
+      const reservation = Object.freeze({ ...operation?.reservation });
+      const boundRevision = client.credentialRevision;
+      const bound = reservation.inputTokens !== undefined || reservation.outputTokens !== undefined;
+      let disposed = false;
+      let consumed = false;
+      let delegated = false;
+      return {
+        reservation,
+        get dispatchState() {
+          return operation?.dispatchState ?? (delegated ? undefined : "not_dispatched");
+        },
+        release: () => {
+          disposed = true;
+        },
+        complete: async () => {
+          if (disposed || consumed)
+            throw new DomainError(
+              "provider_handle_released",
+              "Prepared Provider request is no longer available",
             );
-            error.usage = result.usage;
-            error.outputStarted =
-              [...result.content, ...(result.thought ?? [])].some(
-                (block) =>
-                  block.type !== "text" ||
-                  (typeof block.text === "string" && block.text.length > 0),
-              ) ||
-              (result.kind === "tool_calls" && result.calls.length > 0);
+          consumed = true;
+          assertCurrent();
+          try {
+            const credential = (): string => {
+              assertCurrent();
+              if (disposed || (bound && client.credentialRevision !== boundRevision))
+                throw new ModelError(
+                  "provider_unavailable",
+                  "Prepared Provider authority changed",
+                  false,
+                );
+              return client.secret;
+            };
+            // Legacy transports cannot prove whether a delegated request was sent.
+            const legacyCredential = operation === undefined ? credential() : undefined;
+            delegated = true;
+            const result =
+              operation === undefined
+                ? await this.transport.complete({ ...input, credential: legacyCredential! })
+                : await operation.complete(credential);
+            if (signal.aborted) {
+              const error = new ModelError(
+                "model_unavailable",
+                "Model request was interrupted",
+                true,
+                undefined,
+                { cause: signal.reason },
+              );
+              error.usage = result.usage;
+              error.outputStarted =
+                [...result.content, ...(result.thought ?? [])].some(
+                  (block) =>
+                    block.type !== "text" ||
+                    (typeof block.text === "string" && block.text.length > 0),
+                ) ||
+                (result.kind === "tool_calls" && result.calls.length > 0);
+              throw error;
+            }
+            return result;
+          } catch (error) {
+            // The transport owns cancellation and can attach usage received before abort.
+            if (error instanceof ModelError) throw error;
+            signal.throwIfAborted();
             throw error;
           }
-          return result;
-        } catch (error) {
-          // The transport owns cancellation and can attach usage received before abort.
-          if (error instanceof ModelError) throw error;
-          signal.throwIfAborted();
-          throw error;
+        },
+      };
+    };
+    return {
+      signal: client.stop.signal,
+      prepare,
+      complete: async (request) => {
+        const prepared = prepare(request);
+        try {
+          return await prepared.complete();
+        } finally {
+          prepared.release();
         }
       },
       release: () => {

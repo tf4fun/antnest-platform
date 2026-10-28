@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import catalog from "../../../../contracts/agent-acp/errors.json" with { type: "json" };
 import type { ErrorSurface } from "../../src/domain/error-catalog.js";
 import { DomainError } from "../../src/domain/errors.js";
+import { ModelBudgetExceededError } from "../../src/domain/model-budget.js";
 import { RunRecoveryRequiredError } from "../../src/ports/acp-application.js";
 import { publicError } from "../../src/transport/public-error.js";
 
@@ -163,4 +164,144 @@ describe("the shared public ACP error projection", () => {
       }
     },
   );
+
+  describe("typed model budget details", () => {
+    const largeUsed = "900719925474099312345678901234567890";
+    const budgetCases = [
+      { scope: "run_input", limit: "0", used: "1" },
+      { scope: "run_output", limit: "10", used: "11" },
+      { scope: "run_cost", limit: "1", used: largeUsed },
+      { scope: "organization_daily", limit: "10", used: null },
+      { scope: "organization_monthly", limit: null, used: largeUsed },
+      { scope: "unknown_cost", limit: null, used: null },
+    ] as const;
+
+    it.each(budgetCases)(
+      "projects only the validated $scope fact on catalog surfaces",
+      (budget) => {
+        const original = Object.assign(
+          new ModelBudgetExceededError(budget.scope, budget.limit, budget.used),
+          {
+            message: privateMessage,
+            cause: new Error(privateCause),
+            credential: privateCause,
+            details: { budget: { ...budget, secret: privateCause }, secret: privateMessage },
+          },
+        );
+        for (const surface of surfaces) {
+          const projected = publicError(original, surface);
+          const applicable = catalog.errors.budget_exceeded.surfaces.includes(surface);
+          const canonical = expectedPublicError("budget_exceeded", catalog.errors.budget_exceeded);
+          expect(projected).toStrictEqual(
+            applicable
+              ? { ...canonical, data: { ...canonical.data, details: { budget } } }
+              : fallback,
+          );
+          if (applicable) {
+            expect(projected).toMatchObject({
+              jsonRpcCode: -32043,
+              httpStatus: 422,
+              data: { code: "budget_exceeded", retryable: false },
+            });
+          }
+          expect(JSON.stringify(projected)).not.toContain(privateMessage);
+          expect(JSON.stringify(projected)).not.toContain(privateCause);
+        }
+        expect(original.scope).toBe(budget.scope);
+        expect(original.limit).toBe(budget.limit);
+        expect(original.used).toBe(budget.used);
+        expect(original.message).toBe(privateMessage);
+      },
+    );
+
+    it("does not trust budget-looking fields on an ordinary DomainError", () => {
+      const original = Object.assign(domainFailure("budget_exceeded"), {
+        scope: "run_cost",
+        limit: "1",
+        used: largeUsed,
+        cause: new Error(privateCause),
+        details: { budget: { scope: "run_cost", limit: "1", used: largeUsed } },
+        credential: privateCause,
+      });
+      for (const surface of surfaces) {
+        expect(publicError(original, surface)).toStrictEqual(
+          catalog.errors.budget_exceeded.surfaces.includes(surface)
+            ? expectedPublicError("budget_exceeded", catalog.errors.budget_exceeded)
+            : fallback,
+        );
+      }
+    });
+
+    it.each([false, true])("does not classify a forged budget error (Error=%s)", (isError) => {
+      const original = Object.assign(isError ? new Error(privateMessage) : {}, {
+        name: "ModelBudgetExceededError",
+        code: "budget_exceeded",
+        scope: "run_cost",
+        limit: "1",
+        used: largeUsed,
+        message: privateMessage,
+        cause: new Error(privateCause),
+        details: { budget: { scope: "run_cost", limit: "1", used: largeUsed } },
+      });
+      for (const surface of surfaces)
+        expect(publicError(original, surface)).toStrictEqual(fallback);
+    });
+
+    const corruptions: { label: string; fields: Record<string, unknown> }[] = [
+      { label: "unknown scope", fields: { scope: privateMessage } },
+      { label: "scope with a trailing newline", fields: { scope: "run_cost\n" } },
+      { label: "missing scope", fields: { scope: undefined } },
+      { label: "missing limit", fields: { limit: undefined } },
+      { label: "numeric limit", fields: { limit: 1 } },
+      { label: "negative limit", fields: { limit: "-1" } },
+      { label: "fractional limit", fields: { limit: "1.5" } },
+      { label: "noncanonical limit", fields: { limit: "01" } },
+      { label: "missing used", fields: { used: undefined } },
+      { label: "unsafe numeric used", fields: { used: Number.MAX_SAFE_INTEGER + 1 } },
+      { label: "exponent used", fields: { used: "1e3" } },
+      { label: "used with a trailing newline", fields: { used: "2\n" } },
+      { label: "object used", fields: { used: { secret: privateCause } } },
+    ];
+    it.each(corruptions)("omits details safely for a genuine error with $label", ({ fields }) => {
+      const original = Object.assign(new ModelBudgetExceededError("run_cost", "1", "2"), {
+        message: privateMessage,
+        cause: new Error(privateCause),
+        credential: privateCause,
+        ...fields,
+      });
+      for (const surface of surfaces) {
+        const projected = publicError(original, surface);
+        expect(projected).toStrictEqual(
+          catalog.errors.budget_exceeded.surfaces.includes(surface)
+            ? expectedPublicError("budget_exceeded", catalog.errors.budget_exceeded)
+            : fallback,
+        );
+        expect(JSON.stringify(projected)).not.toContain(privateMessage);
+        expect(JSON.stringify(projected)).not.toContain(privateCause);
+      }
+    });
+
+    it("freezes copied budget details independently of the mutable error", () => {
+      const mutableBudget = { scope: "run_cost", limit: "1", used: largeUsed };
+      const mutableDetails = { budget: mutableBudget };
+      const original = Object.assign(new ModelBudgetExceededError("run_cost", "1", largeUsed), {
+        details: mutableDetails,
+      });
+      const projected = publicError(original, "admission");
+      const details: unknown = "details" in projected.data ? projected.data.details : undefined;
+      expect(details).toStrictEqual({ budget: { scope: "run_cost", limit: "1", used: largeUsed } });
+      if (typeof details !== "object" || details === null || !("budget" in details)) {
+        throw new Error("Expected public budget details");
+      }
+      const budget: unknown = details.budget;
+      expect(Object.isFrozen(details)).toBe(true);
+      expect(Object.isFrozen(budget)).toBe(true);
+      expect(details).not.toBe(mutableDetails);
+      expect(budget).not.toBe(mutableBudget);
+      expect(budget).not.toBe(original);
+      Object.assign(original, { scope: "unknown_cost", limit: null, used: null });
+      mutableBudget.used = "3";
+      expect(details).toStrictEqual({ budget: { scope: "run_cost", limit: "1", used: largeUsed } });
+    });
+  });
 });

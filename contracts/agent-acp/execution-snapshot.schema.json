@@ -12,6 +12,84 @@
       "exclusiveMinimum": 0,
       "maximum": 9007199254740991
     },
+    "organization_budget": {
+      "type": "object",
+      "properties": {
+        "revision": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "unknown_cost": {
+          "type": "string",
+          "enum": [
+            "allow",
+            "deny"
+          ]
+        },
+        "run_caps": {
+          "type": "object",
+          "properties": {
+            "max_input_tokens": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "max_output_tokens": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "max_cost_usd_micros": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            }
+          },
+          "additionalProperties": false
+        },
+        "daily": {
+          "type": "object",
+          "properties": {
+            "soft_cost_usd_micros": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "hard_cost_usd_micros": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            }
+          },
+          "additionalProperties": false
+        },
+        "monthly": {
+          "type": "object",
+          "properties": {
+            "soft_cost_usd_micros": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "hard_cost_usd_micros": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "revision",
+        "unknown_cost",
+        "run_caps",
+        "daily",
+        "monthly"
+      ],
+      "additionalProperties": false
+    },
     "providers": {
       "type": "array",
       "items": {
@@ -185,6 +263,9 @@
       "items": {
         "type": "object",
         "properties": {
+          "provider_token_limits": {
+            "$ref": "#/$defs/provider_token_limits"
+          },
           "model_profile_id": {
             "type": "string",
             "minLength": 1,
@@ -506,6 +587,27 @@
               "before_output"
             ]
           },
+          "run_budget": {
+            "type": "object",
+            "properties": {
+              "max_input_tokens": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "max_output_tokens": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "max_cost_usd_micros": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              }
+            },
+            "additionalProperties": false
+          },
           "runtime": {
             "anyOf": [
               {
@@ -640,5 +742,113 @@
   "additionalProperties": false,
   "$id": "https://antnest.local/contracts/agent-acp/execution-snapshot.schema.json",
   "title": "Organization execution configuration",
-  "description": "Structural contract. Apply also validates unique identifiers, references and accepting-Agent readiness; see execution-api.md."
+  "description": "Structural contract. Apply also validates unique identifiers, references and accepting-Agent readiness; see execution-api.md.",
+  "$defs": {
+    "provider_token_limits": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "source",
+        "source_revision",
+        "binding"
+      ],
+      "anyOf": [
+        {
+          "properties": {
+            "context_tokens": {}
+          },
+          "required": [
+            "context_tokens"
+          ]
+        },
+        {
+          "properties": {
+            "max_output_tokens": {}
+          },
+          "required": [
+            "max_output_tokens"
+          ]
+        }
+      ],
+      "properties": {
+        "source": {
+          "const": "models"
+        },
+        "source_revision": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "binding": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "organization_id",
+            "connection_id",
+            "provider_key",
+            "request_protocol",
+            "base_url",
+            "model",
+            "credential_revision"
+          ],
+          "properties": {
+            "organization_id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200,
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$"
+            },
+            "connection_id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200,
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$"
+            },
+            "provider_key": {
+              "enum": [
+                "deepseek",
+                "openrouter",
+                "openai_compatible"
+              ]
+            },
+            "request_protocol": {
+              "const": "openai_chat_completions"
+            },
+            "base_url": {
+              "type": "string",
+              "minLength": 1,
+              "pattern": "^https?://"
+            },
+            "model": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            },
+            "credential_revision": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200,
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$"
+            }
+          }
+        },
+        "context_tokens": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "max_output_tokens": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "context_includes_media": {
+          "type": "boolean"
+        },
+        "output_includes_reasoning": {
+          "type": "boolean"
+        }
+      }
+    }
+  }
 }

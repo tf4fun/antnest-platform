@@ -7,6 +7,7 @@ import {
   type ModelPort,
   type ModelRequest,
   type ModelResult,
+  type PreparedModelCall,
 } from "../ports/model.js";
 import type { ProviderClientHandle, ProviderClients } from "./provider-clients.js";
 
@@ -28,6 +29,15 @@ export class RunModelClient implements ModelPort {
   }
 
   public async complete(request: ModelRequest): Promise<ModelResult> {
+    const prepared = this.prepare(request);
+    try {
+      return await prepared.complete();
+    } finally {
+      prepared.release();
+    }
+  }
+
+  public prepare(request: ModelRequest): PreparedModelCall {
     const input: ModelRequest = {
       ...request,
       snapshot: structuredClone(request.snapshot),
@@ -49,22 +59,56 @@ export class RunModelClient implements ModelPort {
       throw error;
     }
 
+    let operation: PreparedModelCall | undefined;
     try {
-      // A judge's temporary connection must not replace the Provider that owns
-      // the foreground Tool proposal. Its own handle still cancels its call.
-      if (input.purpose !== "permission_judge") this.onForegroundProvider?.(handle.signal);
-      let response: ModelResult;
-      try {
-        response = await handle.complete(input);
-      } catch (error) {
-        if (handle.signal.aborted) throw providerUnavailable(error);
-        throw error;
-      }
-      if (handle.signal.aborted) throw providerUnavailable(handle.signal.reason, response);
-      return response;
-    } finally {
+      operation = handle.prepare?.(input);
+    } catch (error) {
       handle.release();
+      if (handle.signal.aborted) throw providerUnavailable(error);
+      throw error;
     }
+    let released = false;
+    let consumed = false;
+    let delegated = false;
+    return {
+      reservation: Object.freeze({ ...operation?.reservation }),
+      get dispatchState() {
+        return operation?.dispatchState ?? (delegated ? undefined : "not_dispatched");
+      },
+      release: () => {
+        if (released) return;
+        released = true;
+        try {
+          operation?.release();
+        } finally {
+          handle.release();
+        }
+      },
+      complete: async () => {
+        if (released || consumed)
+          throw new DomainError(
+            "provider_handle_released",
+            "Prepared model request is no longer available",
+          );
+        consumed = true;
+        input.signal.throwIfAborted();
+        // A judge's temporary connection must not replace the Provider that owns
+        // the foreground Tool proposal. Its own handle still cancels its call.
+        if (input.purpose !== "permission_judge") this.onForegroundProvider?.(handle.signal);
+        let response: ModelResult;
+        try {
+          delegated = true;
+          response = await (operation === undefined
+            ? handle.complete(input)
+            : operation.complete());
+        } catch (error) {
+          if (handle.signal.aborted) throw providerUnavailable(error);
+          throw error;
+        }
+        if (handle.signal.aborted) throw providerUnavailable(handle.signal.reason, response);
+        return response;
+      },
+    };
   }
 
   private assertSnapshot(request: ModelRequest): void {

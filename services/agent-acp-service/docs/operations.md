@@ -342,6 +342,45 @@ stop proofs to admit the upgrade. Delivery also requires the
 (`c-acp-survivor`), including actual resource cleanup, and the complete remote
 gate for the exact candidate commit. Focused two-Node evidence alone is insufficient.
 
+Migration `0032_model_budget_ledger.sql` requires the same retirement of all old
+workers and pending startups before starting the new deployment. It refuses an
+active shared or exclusive worker lock before creating accounting tables. The
+migration imports available per-call `usage.measurement` receipts with exact
+decimal arithmetic; it never sums the public cumulative `usage.cost`. Fork
+copies are excluded by their deterministic copy IDs, while soft-deleted Sessions
+and original receipts with a purged Run remain accounting sources. Imported
+receipt identities and accounting totals have no execution-record foreign keys
+and therefore survive later purge. The migration journal makes the import
+atomic and prevents duplicate charging on restart.
+
+Receipts linked to the exact hidden attempt use its original UTC start day and
+month, including calls that finish after midnight. Older receipts without that
+identity link retain their receipt-time basis. An unmatched hidden start is an
+independent unknown input/output/cost fact, even for a terminal or purged Run;
+only its exact hidden finish and atomic usage receipt prove completion. An
+empty usage receipt with that complete identity link is still unknown and is
+counted once. Stopping an old worker does not settle these facts as zero
+consumption. A complete canonical start/finish/usage pair can carry an internal
+`notDispatched` proof: failed/cancelled, no output or HTTP status, and matching
+zero-token measurements without a Provider cost. Only this original identity
+link imports known zero cost. Missing or mismatched receipts, contradictory
+usage and a lost Run association remain conservative.
+
+The independent `model_budget_history` row records the cutover time. Only a fresh
+installation with no prior migration history proves complete empty prehistory;
+an upgrade, including one whose Sessions were physically purged, retains an
+explicit coverage gap. A partial installation resumed after interruption is
+also conservative. For an incomplete UTC daily/monthly bucket, a hard monetary
+cap with `unknown_cost=deny` rejects another call. An explicit allow policy keeps
+the gap without inventing charges or unknown attempts. The next full UTC day and
+month become complete independently; the gap is not propagated into future
+periods. Fresh installations are complete from their first call. These records
+have no execution-record foreign keys and remain after deletion and restart.
+
+Production request bounds, reservation/admission integration, excess handling
+and soft-limit notifications still require the owning ACP delivery batch before
+the budget business workflow can be considered complete.
+
 The owned Run repository factory captures one immutable registration and fence.
 Intent, accept, reject, cancellation, event/tool-attempt and terminal writes verify the live lease and actual
 Session/Run scope in the same transaction; existing Runs must also match their

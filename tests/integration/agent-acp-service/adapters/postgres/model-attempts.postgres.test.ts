@@ -184,7 +184,7 @@ describe.skipIf(databaseUrl === undefined)(
           status: 200,
         };
         const receipt = await run.events.finishModelAttempt(completed);
-        expect(receipt).toMatchObject({
+        expect(receipt.event).toMatchObject({
           kind: "usage",
           size: 32_000,
           measurement: completedUsage,
@@ -254,9 +254,9 @@ describe.skipIf(databaseUrl === undefined)(
           );
         }
         const next = start(run.runId, previous + 1);
-        await expect(
-          run.events.startModelAttempt(next),
-        ).resolves.toBeUndefined();
+        await expect(run.events.startModelAttempt(next)).resolves.toEqual({
+          warnings: [],
+        });
         const rows = await messages(fixture, run.session.sessionId);
         expect(
           rows
@@ -293,7 +293,7 @@ describe.skipIf(databaseUrl === undefined)(
         await run.events.finishModelAttempt(finish(run.runId, 1));
         await expect(
           run.events.startModelAttempt(start(run.runId, 2)),
-        ).resolves.toBeUndefined();
+        ).resolves.toEqual({ warnings: [] });
       });
     });
 
@@ -312,9 +312,11 @@ describe.skipIf(databaseUrl === undefined)(
           status: 200,
         };
         await run.events.startModelAttempt(first);
-        const failedReceipt = await run.events.finishModelAttempt(failed);
+        const { event: failedReceipt } =
+          await run.events.finishModelAttempt(failed);
         await run.events.startModelAttempt(second);
-        const completedReceipt = await run.events.finishModelAttempt(completed);
+        const { event: completedReceipt } =
+          await run.events.finishModelAttempt(completed);
 
         expect(failedReceipt).toMatchObject({
           kind: "usage",
@@ -590,13 +592,13 @@ describe.skipIf(databaseUrl === undefined)(
           reason: "completed",
           status: 200,
         });
-        expect(unknown).toEqual({
+        expect(unknown.event).toEqual({
           kind: "usage",
           used: 0,
           size: 64_000,
           measurement: {},
         });
-        expect(zero).toEqual({
+        expect(zero.event).toEqual({
           kind: "usage",
           used: 0,
           size: 64_000,

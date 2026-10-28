@@ -2,6 +2,12 @@ import { deriveResourceId } from "../../domain/resource-id.js";
 import type { PoolClient } from "pg";
 import { isDeepStrictEqual } from "node:util";
 import { projectUsage } from "../../domain/usage.js";
+import {
+  reserveModelBudget,
+  settleModelBudget,
+  storedModelBudgetSettlement,
+} from "./model-budget.js";
+import { appendModelBudgetWarnings, storedModelBudgetWarnings } from "./model-budget-warning.js";
 
 import type {
   ToolEffectState,
@@ -18,6 +24,8 @@ import type {
   AppendToolProgressInput,
   AppendRejectedToolCallInput,
   FinishToolAttemptInput,
+  ModelAttemptReceipt,
+  ModelAttemptStartReceipt,
   RunEventRepository,
   StartToolAttemptInput,
 } from "../../ports/run-event-repository.js";
@@ -154,7 +162,7 @@ export class PostgresRunEventRepository implements RunEventRepository {
 
   public startModelAttempt(
     request: Parameters<RunEventRepository["startModelAttempt"]>[0],
-  ): Promise<void> {
+  ): Promise<ModelAttemptStartReceipt> {
     const input = structuredClone(request);
     requireOrdinal(input.ordinal);
     const id = modelAttemptId(input.runId, input.ordinal, "start");
@@ -167,20 +175,28 @@ export class PostgresRunEventRepository implements RunEventRepository {
       model: input.model,
       purpose: input.purpose,
       startedAt: input.startedAt,
+      ...(input.reservation === undefined ? {} : { reservation: input.reservation }),
     };
-    return this.#authority.transaction(this.kernel, async (client) => {
+    return this.modelTransaction(input.runId, async (client) => {
       const locked = await lockSessionRun(client, input.runId, this.#authority);
-      if (await storedModelAttempt(client, locked, id, event, input.startedAt)) return;
+      if (await storedModelAttempt(client, locked, id, event, input.startedAt))
+        return {
+          warnings: await storedModelBudgetWarnings(client, {
+            runId: input.runId,
+            sessionId: locked.sessionId,
+            organizationId: locked.organizationId,
+            ordinal: input.ordinal,
+            source: "start",
+          }),
+        };
       requireRunning(locked.state);
       const row = await client.query<{ execution_snapshot: RunExecutionSnapshot }>(
         "SELECT execution_snapshot FROM runs WHERE id=$1",
         [input.runId],
       );
       const frozen = requireRow(row.rows[0], "Run snapshot is missing").execution_snapshot;
-      if (
-        frozenModelCandidate(frozen, input) === undefined ||
-        input.ordinal > frozen.executionSpec.maxModelRequests
-      )
+      const candidate = frozenModelCandidate(frozen, input);
+      if (candidate === undefined || input.ordinal > frozen.executionSpec.maxModelRequests)
         throw new Error("Model attempt does not match the frozen Run");
       const previous = await client.query<{ ordinal: string | null }>(
         `SELECT max((payload->>'ordinal')::bigint)::text AS ordinal FROM session_messages
@@ -200,15 +216,44 @@ export class PostgresRunEventRepository implements RunEventRepository {
         );
         if (prior.rowCount !== 1) throw new Error("Previous model attempt is unfinished");
       }
+      await reserveModelBudget(client, {
+        runId: input.runId,
+        ordinal: input.ordinal,
+        organizationId: locked.organizationId,
+        agentId: locked.agentId,
+        ...(frozen.executionSpec.runBudget === undefined
+          ? {}
+          : { runBudget: frozen.executionSpec.runBudget }),
+        ...(input.reservation === undefined ? {} : { reservation: input.reservation }),
+        ...(candidate.model.pricing === undefined ? {} : { pricing: candidate.model.pricing }),
+      });
       await appendModelAttemptLocked(client, locked, id, event, input.startedAt);
+      return {
+        warnings: await appendModelBudgetWarnings(client, {
+          runId: input.runId,
+          ordinal: input.ordinal,
+          source: "start",
+          createdAt: input.startedAt,
+        }),
+      };
     });
   }
 
   public finishModelAttempt(
     request: Parameters<RunEventRepository["finishModelAttempt"]>[0],
-  ): Promise<SessionEvent> {
+  ): Promise<ModelAttemptReceipt> {
     const input = structuredClone(request);
     requireOrdinal(input.ordinal);
+    if (
+      input.notDispatched === true &&
+      (input.outcome === "completed" ||
+        input.outputStarted ||
+        input.status !== undefined ||
+        !isDeepStrictEqual(input.usage, { inputTokens: 0, outputTokens: 0 }))
+    )
+      return Promise.reject(
+        new Error("No-dispatch proof conflicts with the original model attempt"),
+      );
     const id = modelAttemptId(input.runId, input.ordinal, "finish");
     const event = {
       kind: "model_attempt",
@@ -219,6 +264,7 @@ export class PostgresRunEventRepository implements RunEventRepository {
       durationMs: input.durationMs,
       outputStarted: input.outputStarted,
       usage: input.usage,
+      ...(input.notDispatched === undefined ? {} : { notDispatched: input.notDispatched }),
       ...(input.status === undefined ? {} : { status: input.status }),
       finishedAt: input.finishedAt,
       contextSize: input.contextSize,
@@ -230,14 +276,29 @@ export class PostgresRunEventRepository implements RunEventRepository {
       contextSize: input.contextSize,
       createdAt: input.finishedAt,
     };
-    return this.#authority.transaction(this.kernel, async (client) => {
+    return this.modelTransaction(input.runId, async (client) => {
       const locked = await lockSessionRun(client, input.runId, this.#authority);
       const receipt = await storedModelAttempt(client, locked, id, event, input.finishedAt);
       const usageReceipt = await storedUsage(client, locked, usage);
       if (receipt || usageReceipt !== undefined) {
         if (!receipt || usageReceipt === undefined)
           throw new Error("Model attempt receipt is incomplete");
-        return usageReceipt;
+        return {
+          event: usageReceipt,
+          warnings: await storedModelBudgetWarnings(client, {
+            runId: input.runId,
+            sessionId: locked.sessionId,
+            organizationId: locked.organizationId,
+            ordinal: input.ordinal,
+            source: "finish",
+          }),
+          settlement: await storedModelBudgetSettlement(
+            client,
+            input.runId,
+            input.ordinal,
+            locked.organizationId,
+          ),
+        };
       }
       requireRunning(locked.state);
       const started = await client.query<{
@@ -255,8 +316,33 @@ export class PostgresRunEventRepository implements RunEventRepository {
       const candidate = frozenModelCandidate(original.execution_snapshot, original.payload);
       if (candidate === undefined || input.contextSize !== candidate.model.contextWindow)
         throw new Error("Model attempt context does not match its frozen candidate");
+      const settlement = await settleModelBudget(client, {
+        runId: input.runId,
+        ordinal: input.ordinal,
+        organizationId: locked.organizationId,
+        usage: input.usage,
+        ...(original.execution_snapshot.executionSpec.runBudget === undefined
+          ? {}
+          : { runBudget: original.execution_snapshot.executionSpec.runBudget }),
+        ...(input.notDispatched === undefined ? {} : { notDispatched: input.notDispatched }),
+        ...(candidate.model.pricing === undefined ? {} : { pricing: candidate.model.pricing }),
+      });
       await appendModelAttemptLocked(client, locked, id, event, input.finishedAt);
-      return appendUsageLocked(client, { ...locked, nextSequence: locked.nextSequence + 1 }, usage);
+      const usageEvent = await appendUsageLocked(
+        client,
+        { ...locked, nextSequence: locked.nextSequence + 1 },
+        usage,
+      );
+      return {
+        event: usageEvent,
+        settlement,
+        warnings: await appendModelBudgetWarnings(client, {
+          runId: input.runId,
+          ordinal: input.ordinal,
+          source: "finish",
+          createdAt: input.finishedAt,
+        }),
+      };
     });
   }
 
@@ -304,6 +390,36 @@ export class PostgresRunEventRepository implements RunEventRepository {
       await appendLocked(client, locked, input.id, "tool_call", event, input.createdAt);
       return event;
     });
+  }
+
+  private async modelTransaction<T>(
+    runId: string,
+    operation: (client: PoolClient) => Promise<T>,
+  ): Promise<T> {
+    const identity = (
+      await this.kernel.query<{ organization_id: string }>(
+        "SELECT organization_id FROM runs WHERE id=$1",
+        [runId],
+      )
+    ).rows[0];
+    if (identity === undefined) throw new Error("Run does not exist");
+    return this.#authority.organizationTransaction(
+      this.kernel,
+      identity.organization_id,
+      async (client) => {
+        // The pre-lock lookup is only a lock key, never admission authority.
+        const current = (
+          await client.query<{ organization_id: string }>(
+            "SELECT organization_id FROM runs WHERE id=$1",
+            [runId],
+          )
+        ).rows[0];
+        if (current?.organization_id !== identity.organization_id)
+          throw new Error("Run organization changed");
+        return operation(client);
+      },
+      { requireLiveFenceAtCommit: true },
+    );
   }
 
   public async appendRejectedToolCall(request: AppendRejectedToolCallInput): Promise<SessionEvent> {
@@ -790,7 +906,7 @@ async function lockSessionRun(
   client: PoolClient,
   runId: string,
   authority: RunWriteAuthority,
-): Promise<LockedRun & { state: string }> {
+): Promise<LockedRun & { state: string; organizationId: string; agentId: string }> {
   const identity = await client.query<{ session_id: string }>(
     "SELECT session_id FROM runs WHERE id = $1",
     [runId],
@@ -825,6 +941,8 @@ async function lockSessionRun(
     runId,
     sessionId,
     state: runRow.state,
+    organizationId: runRow.organization_id,
+    agentId: runRow.agent_id,
     nextSequence: Number(sessionRow.last_message_sequence) + 1,
   };
 }

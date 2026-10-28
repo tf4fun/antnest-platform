@@ -24,6 +24,7 @@ export type OutputApplication = Omit<
 export function withOutputHistory(
   application: OutputApplication,
   infoAfterAccept?: SessionOutputSnapshot["info"],
+  admissionEvents: readonly SessionEvent[] = [],
 ): AcpApplicationPort {
   const history = new Map<string, SessionEvent[]>();
   const infos = new Map<string, SessionOutputSnapshot["info"]>();
@@ -68,13 +69,17 @@ export function withOutputHistory(
     }),
     acceptPrompt: vi.fn<AcpApplicationPort["acceptPrompt"]>((input) =>
       supervisor.submit(input, async () => {
+        const outputSequence = history.get(input.sessionId)?.length ?? 0;
         const accepted = await application.acceptPrompt(input);
+        const events = history.get(accepted.sessionId) ?? [];
+        events.push(...structuredClone(admissionEvents));
+        history.set(accepted.sessionId, events);
         if (infoAfterAccept !== undefined)
           infos.set(accepted.sessionId, infoAfterAccept);
         states.set(accepted.sessionId, { kind: "state", state: "running" });
         return {
           ...accepted,
-          outputSequence: history.get(accepted.sessionId)?.length ?? 0,
+          outputSequence,
         };
       }),
     ),
