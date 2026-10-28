@@ -42,11 +42,12 @@ type observedExecutionPublication struct {
 
 // The HTTP peer decodes the wire contract, not Controller's outbound domain DTOs.
 type receivedExecutionSnapshot struct {
-	OrganizationID string                    `json:"organization_id"`
-	Revision       int64                     `json:"revision"`
-	Providers      []ports.ExecutionProvider `json:"providers"`
-	Models         []json.RawMessage         `json:"models"`
-	Agents         []json.RawMessage         `json:"agents"`
+	OrganizationID     string                    `json:"organization_id"`
+	Revision           int64                     `json:"revision"`
+	OrganizationBudget json.RawMessage           `json:"organization_budget"`
+	Providers          []ports.ExecutionProvider `json:"providers"`
+	Models             []json.RawMessage         `json:"models"`
+	Agents             []json.RawMessage         `json:"agents"`
 }
 
 func TestExecutionPublisherPostgresAndHTTPResendCurrentCredentials(t *testing.T) {

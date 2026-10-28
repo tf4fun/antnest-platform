@@ -1,9 +1,56 @@
-# Template model-call policy
+# Model-call policy
+
+## Organization budget management
+
+`GET /internal/model-call-policy?organization_id=…` and
+`PUT /internal/model-call-policy` manage one budget policy per organization.
+Both reuse the verified `admin-console` workload and system/Organization
+administrator caller context; the requested `organization_id` must match signed
+`org` and PUT's `actor_principal_id` must match signed `sub`. GET returns the
+flattened policy (`organization_id`, `revision`, `unknown_cost`, `run_caps`,
+`daily`, `monthly`). An organization without a persisted policy reads as
+revision 0, `unknown_cost=allow` and empty cap objects — a logical default that
+creates no policy row, receipt or execution head.
+
+PUT is a complete strict replacement: all eight fields are required and
+non-null, including `expected_revision` (explicit 0 accepted for the default),
+`unknown_cost` (`allow`/`deny`), `run_caps`, `daily` and `monthly`. Nested cap
+objects keep the shared bounds: optional nonnegative safe-integer
+`max_input_tokens`/`max_output_tokens`/`max_cost_usd_micros` and
+`soft_cost_usd_micros`/`hard_cost_usd_micros` with soft never above hard.
+Unknown, case-aliased or duplicated members are rejected.
+
+The mutation fingerprints the full request intent `(request_id,
+organization_id, actor_principal_id, expected_revision, unknown_cost, run_caps,
+daily, monthly)` onto a durable `(organization_id, request_id)` receipt. After
+current authentication an identical replay returns its original stored response
+without touching policy, receipt or publication head — even after later
+updates. Changed intent on a used request ID returns
+`409 request_id_conflict` before CAS; a fresh request with a stale expected
+revision returns `409 resource_version_conflict`. Revision exhaustion conflicts
+rather than wrapping; the bound is 9007199254740991.
+
+A committed replacement writes the current policy row, advances the
+organization's normal execution publication head (through the same capacity
+check and after-commit observer hint as catalog mutations) and stores the
+receipt in one transaction, serialized with the ordinary publication/catalog
+organization lock. Capacity, revision-overflow and receipt-write failures roll
+back all three effects and emit no observer hint. Policy changes record no
+accounting or Run history.
+
+Once persisted, the policy is published as `organization_budget` (`revision`,
+`unknown_cost`, `run_caps`, `daily`, `monthly`, without an embedded
+organization) in every ordinary execution snapshot for that organization.
+Absent rows emit no field, so existing publication bytes are unchanged until
+the first PUT — the revision-0 GET default is semantically identical to the
+legacy absent default. ACP treats the emitted budget as the current durable
+organization policy per the shared contract.
 
 Controller owns the immutable Template policy and the effective configuration
 published to ACP. Control contract revision 44 adds optional `model_retry`,
 `failover` and `run_budget` fields to Template create/revise/read and the frozen
-Agent configuration projection. The [shared policy contract](../../../contracts/agent-controller/model-call-policy.md)
+Agent configuration projection. Revision 45 adds the organization budget policy
+described above. The [shared policy contract](../../../contracts/agent-controller/model-call-policy.md)
 defines their exact wire units and bounds.
 
 `model_retry` requires all three members: `max` is zero through eight retries,

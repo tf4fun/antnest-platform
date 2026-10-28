@@ -5,9 +5,11 @@ The shared [schema](model-call-policy.schema.json),
 define configuration shapes for owning-service batches. ACP implements retry,
 fallback, circuit breaking and budget accounting/enforcement. Controller control
 revision 44 stores immutable Template policy and publishes effective retry/failover
-defaults. Provider observations, organization policy publication and Console controls
+defaults; revision 45 activates the organization policy GET/PUT routes and
+publishes the committed policy as the execution snapshot's `organization_budget`.
+Console controls and cross-service integration
 remain separate deliveries. These artifacts do
-not add a live Controller route or establish complete #52 acceptance.
+not establish complete #52 acceptance.
 
 ## Configuration and compatibility
 
@@ -40,12 +42,11 @@ precision or overflow. Existing USD-per-million-token price fields retain their
 current units and wire shape. Their decimal values must be converted to exact
 arithmetic before charging; the floating-point reporting total is not a ledger.
 
-The planned GET/PUT `/internal/model-call-policy` uses the existing verified
+The GET/PUT `/internal/model-call-policy` routes use the existing verified
 workload and caller context and organization administrator authorization. GET
 does not create a policy. Missing policy is revision zero with empty caps and
 `unknown_cost=allow`. PUT replaces the entire policy, requires `expected_revision`
 and the original idempotency request, and increments the policy revision.
-It must not enter the active route/caller manifests before the handler exists.
 The body actor must match the verified caller, and the requested organization
 must be authorized by that context. Neither field grants authority. Reusing an
 idempotency key with different policy content must conflict rather than replace

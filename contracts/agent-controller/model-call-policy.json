@@ -1,7 +1,7 @@
 {
   "contract": "antnest.model-call-policy",
-  "revision": 1,
-  "status": "planned",
+  "revision": 2,
+  "status": "implemented",
   "schema": "model-call-policy.schema.json",
   "fixtures": "model-call-policy-fixtures.json",
   "policy_path": "/internal/model-call-policy",
@@ -73,7 +73,6 @@
     "retryable": false
   },
   "pending_batches": [
-    "Controller trusted Provider observations and organization policy publication",
     "Console Template and organization policy controls",
     "Real retry, fallback, budget and cross-replica integration"
   ]

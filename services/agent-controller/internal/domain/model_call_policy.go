@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"strings"
 )
 
@@ -93,6 +94,146 @@ func (budget *RunBudget) UnmarshalJSON(data []byte) error {
 		return err
 	}
 	*budget = value
+	return nil
+}
+
+var modelCallPolicyIdentifier = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,199}$`)
+
+func ValidModelCallPolicyIdentifier(value string) bool {
+	return modelCallPolicyIdentifier.MatchString(value)
+}
+
+type PeriodCaps struct {
+	SoftCostUSDMicros *int64 `json:"soft_cost_usd_micros,omitempty"`
+	HardCostUSDMicros *int64 `json:"hard_cost_usd_micros,omitempty"`
+}
+
+type OrganizationBudget struct {
+	Revision    int64      `json:"revision"`
+	UnknownCost string     `json:"unknown_cost"`
+	RunCaps     RunBudget  `json:"run_caps"`
+	Daily       PeriodCaps `json:"daily"`
+	Monthly     PeriodCaps `json:"monthly"`
+}
+
+type ModelCallPolicy struct {
+	OrganizationID string `json:"organization_id"`
+	OrganizationBudget
+}
+
+func DefaultModelCallPolicy(organizationID string) ModelCallPolicy {
+	return ModelCallPolicy{OrganizationID: organizationID,
+		OrganizationBudget: OrganizationBudget{UnknownCost: "allow"}}
+}
+
+func (caps *PeriodCaps) Clone() *PeriodCaps {
+	if caps == nil {
+		return nil
+	}
+	copy := *caps
+	for _, target := range []**int64{&copy.SoftCostUSDMicros, &copy.HardCostUSDMicros} {
+		if *target != nil {
+			value := **target
+			*target = &value
+		}
+	}
+	return &copy
+}
+
+func (budget *OrganizationBudget) Clone() *OrganizationBudget {
+	if budget == nil {
+		return nil
+	}
+	return &OrganizationBudget{Revision: budget.Revision, UnknownCost: budget.UnknownCost,
+		RunCaps: *budget.RunCaps.Clone(), Daily: *budget.Daily.Clone(), Monthly: *budget.Monthly.Clone()}
+}
+
+func validatePeriodCaps(caps *PeriodCaps) error {
+	if caps == nil {
+		return nil
+	}
+	for _, value := range []*int64{caps.SoftCostUSDMicros, caps.HardCostUSDMicros} {
+		if value != nil && (*value < 0 || *value > MaximumModelBudget) {
+			return fmt.Errorf("invalid period budget bound")
+		}
+	}
+	if caps.SoftCostUSDMicros != nil && caps.HardCostUSDMicros != nil && *caps.SoftCostUSDMicros > *caps.HardCostUSDMicros {
+		return fmt.Errorf("invalid period budget ordering")
+	}
+	return nil
+}
+
+func periodCapsEmpty(caps PeriodCaps) bool {
+	return caps.SoftCostUSDMicros == nil && caps.HardCostUSDMicros == nil
+}
+
+func (budget OrganizationBudget) Validate() error {
+	if budget.Revision < 0 || budget.Revision > MaximumModelBudget ||
+		(budget.UnknownCost != "allow" && budget.UnknownCost != "deny") {
+		return fmt.Errorf("invalid organization budget")
+	}
+	if err := ValidateModelCallPolicy(nil, "", &budget.RunCaps); err != nil {
+		return err
+	}
+	for _, caps := range []*PeriodCaps{&budget.Daily, &budget.Monthly} {
+		if err := validatePeriodCaps(caps); err != nil {
+			return err
+		}
+	}
+	if budget.Revision == 0 && (budget.UnknownCost != "allow" ||
+		budget.RunCaps.MaxInputTokens != nil || budget.RunCaps.MaxOutputTokens != nil || budget.RunCaps.MaxCostUSDMicros != nil ||
+		!periodCapsEmpty(budget.Daily) || !periodCapsEmpty(budget.Monthly)) {
+		return fmt.Errorf("invalid organization budget default")
+	}
+	return nil
+}
+
+func (policy ModelCallPolicy) Validate() error {
+	if !ValidModelCallPolicyIdentifier(policy.OrganizationID) {
+		return fmt.Errorf("invalid model call policy")
+	}
+	return policy.OrganizationBudget.Validate()
+}
+
+func (caps *PeriodCaps) UnmarshalJSON(data []byte) error {
+	type wireCaps PeriodCaps
+	var wire wireCaps
+	if err := decodeModelPolicyObject(data, &wire, "soft_cost_usd_micros", "hard_cost_usd_micros"); err != nil {
+		return err
+	}
+	value := PeriodCaps(wire)
+	if err := validatePeriodCaps(&value); err != nil {
+		return err
+	}
+	*caps = value
+	return nil
+}
+
+func (policy *ModelCallPolicy) UnmarshalJSON(data []byte) error {
+	var wire struct {
+		OrganizationID *string     `json:"organization_id"`
+		Revision       *int64      `json:"revision"`
+		UnknownCost    *string     `json:"unknown_cost"`
+		RunCaps        *RunBudget  `json:"run_caps"`
+		Daily          *PeriodCaps `json:"daily"`
+		Monthly        *PeriodCaps `json:"monthly"`
+	}
+	if err := decodeModelPolicyObject(data, &wire,
+		"organization_id", "revision", "unknown_cost", "run_caps", "daily", "monthly"); err != nil {
+		return err
+	}
+	if wire.OrganizationID == nil || wire.Revision == nil || wire.UnknownCost == nil ||
+		wire.RunCaps == nil || wire.Daily == nil || wire.Monthly == nil {
+		return fmt.Errorf("model call policy requires organization_id, revision, unknown_cost, run_caps, daily and monthly")
+	}
+	value := ModelCallPolicy{OrganizationID: *wire.OrganizationID, OrganizationBudget: OrganizationBudget{
+		Revision: *wire.Revision, UnknownCost: *wire.UnknownCost,
+		RunCaps: *wire.RunCaps, Daily: *wire.Daily, Monthly: *wire.Monthly,
+	}}
+	if err := value.Validate(); err != nil {
+		return err
+	}
+	*policy = value
 	return nil
 }
 

@@ -273,7 +273,7 @@ VALUES ('migration-org',7,6,'2026-10-22T00:00:00Z','2026-10-21T23:59:00Z')`)
 
 	require.NoError(t, store.Migrate(ctx))
 	require.NoError(t, store.pool.QueryRow(ctx, `SELECT max(version) FROM agent_controller.schema_migrations`).Scan(&version))
-	require.EqualValues(t, 33, version)
+	require.EqualValues(t, 34, version)
 	expectedData := runtimeBarrierPolicyAfterModelPolicyMigration(t, ctx, store, legacyData)
 	require.Equal(t, expectedData, runtimeBarrierPolicyLegacySnapshot(t, ctx, store))
 	assertModelPolicyLegacyColumnsNull(t, ctx, store)

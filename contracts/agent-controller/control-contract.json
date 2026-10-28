@@ -1,6 +1,6 @@
 {
   "contract": "antnest.agent-controller.lifecycle",
-  "revision": 44,
+  "revision": 45,
   "transport": "json-over-http",
   "trust": "verified-workload-and-caller-context",
   "authentication": "service-authentication.md",
@@ -49,6 +49,22 @@
         "success_status": 200,
         "request": "control-api.schema.json#/$defs/set_runtime_barrier_recovery_policy_request",
         "response": "control-api.schema.json#/$defs/runtime_barrier_recovery_policy"
+      }
+    },
+    "model_call_policy": {
+      "get": {
+        "method": "GET",
+        "path": "/internal/model-call-policy",
+        "query": ["organization_id"],
+        "success_status": 200,
+        "response": "control-api.schema.json#/$defs/model_call_policy"
+      },
+      "replace": {
+        "method": "PUT",
+        "path": "/internal/model-call-policy",
+        "success_status": 200,
+        "request": "control-api.schema.json#/$defs/set_model_call_policy_request",
+        "response": "control-api.schema.json#/$defs/model_call_policy"
       }
     },
     "provider_connections": {

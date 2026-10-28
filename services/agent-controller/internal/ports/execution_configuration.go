@@ -21,6 +21,7 @@ type ExecutionSource struct {
 	ProviderObservations []domain.ProviderObservationSet
 	Models               []ModelProfileRecord
 	Agents               []ExecutionAgentSource
+	OrganizationBudget   *domain.OrganizationBudget
 }
 
 type ExecutionAgentSource struct {
@@ -33,11 +34,12 @@ type ExecutionAgentSource struct {
 }
 
 type ExecutionSnapshot struct {
-	OrganizationID string              `json:"organization_id"`
-	Revision       int64               `json:"revision"`
-	Providers      []ExecutionProvider `json:"providers"`
-	Models         []ExecutionModel    `json:"models"`
-	Agents         []ExecutionAgent    `json:"agents"`
+	OrganizationID     string                     `json:"organization_id"`
+	Revision           int64                      `json:"revision"`
+	OrganizationBudget *domain.OrganizationBudget `json:"organization_budget,omitempty"`
+	Providers          []ExecutionProvider        `json:"providers"`
+	Models             []ExecutionModel           `json:"models"`
+	Agents             []ExecutionAgent           `json:"agents"`
 }
 
 type ExecutionCredential struct {

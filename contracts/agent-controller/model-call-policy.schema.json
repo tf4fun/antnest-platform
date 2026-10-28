@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://antnest.local/contracts/agent-controller/model-call-policy.schema.json",
-  "title": "Planned model call policy",
-  "description": "Planned shared contract. Services are not wired to this policy; this schema does not declare an active route.",
+  "title": "Model call policy",
+  "description": "Shared contract. Controller implements the organization policy GET/PUT routes; Template policy and execution publication share these definitions.",
   "$ref": "#/$defs/policy",
   "$defs": {
     "identity": {

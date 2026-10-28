@@ -18,6 +18,9 @@ func (snapshot ExecutionSnapshot) Validate() error {
 		snapshot.Providers == nil || snapshot.Models == nil || snapshot.Agents == nil {
 		return ErrInvalidExecutionConfiguration
 	}
+	if snapshot.OrganizationBudget != nil && snapshot.OrganizationBudget.Validate() != nil {
+		return ErrInvalidExecutionConfiguration
+	}
 	providers := make(map[string]ExecutionProvider, len(snapshot.Providers))
 	for _, provider := range snapshot.Providers {
 		if _, duplicate := providers[provider.ConnectionID]; duplicate || !provider.valid() {
