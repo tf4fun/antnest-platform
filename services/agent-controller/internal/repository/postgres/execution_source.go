@@ -43,7 +43,7 @@ func readExecutionOrganizationBudget(ctx context.Context, tx *databaseTransactio
 	if stored == nil {
 		return nil, nil
 	}
-	return stored.OrganizationBudget.Clone(), nil
+	return stored.Clone(), nil
 }
 
 func readExecutionProviders(ctx context.Context, tx *databaseTransaction, organizationID string) ([]ports.ProviderConnectionRecord, error) {
