@@ -2,6 +2,7 @@ package application
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"testing"
 	"time"
@@ -513,4 +514,152 @@ func mustTemplateRevisionAt(
 		t.Fatalf("create Template revision: %v", err)
 	}
 	return revision
+}
+
+func TestCatalogTemplateModelPolicyCreateReviseAndHistoricalRead(t *testing.T) {
+	t.Parallel()
+	const originalPolicy = `{"model_retry":{"max":0,"base_ms":1,"cap_ms":1},"failover":"never","run_budget":{"max_input_tokens":0,"max_output_tokens":0,"max_cost_usd_micros":0}}`
+	const revisedPolicy = `{"model_retry":{"max":2,"base_ms":200,"cap_ms":30000},"failover":"before_output","run_budget":{"max_input_tokens":128,"max_output_tokens":4,"max_cost_usd_micros":9007199254740991}}`
+	model := mustModelRevision(t, "model-revision-1", "org-1")
+	store := &catalogStoreStub{modelRevision: model}
+	service := NewCatalogService(store, &sealerStub{}, fixedClock{now: time.Unix(1, 0).UTC()})
+	input := catalogModelPolicyInput()
+	if err := json.Unmarshal([]byte(originalPolicy), &input); err != nil {
+		t.Fatal(err)
+	}
+	created, err := service.CreateTemplate(t.Context(), input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	requireModelPolicyJSON(t, created, originalPolicy)
+	historical := store.templateRecord.Revision
+	requireModelPolicyJSON(t, historical.Snapshot(), originalPolicy)
+	historicalJSON, err := json.Marshal(historical.Snapshot())
+	if err != nil {
+		t.Fatal(err)
+	}
+	frozen, err := domain.MaterializeAgentSpec(historical, model)
+	if err != nil {
+		t.Fatal(err)
+	}
+	originalDigest, err := frozen.Digest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal([]byte(revisedPolicy), &input); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal([]byte(revisedPolicy), &created); err != nil {
+		t.Fatal(err)
+	}
+	revision := ReviseTemplateInput{
+		RequestID: "request-template-policy-revise", OrganizationID: "org-1",
+		TemplateID: created.TemplateID, Name: "Policy V2", ModelProfileID: "model-1",
+		SystemPrompt: "prompt", MaxModelRequests: 8, ContextPolicyVersion: domain.ContextPolicyV1,
+		Runtime: validRuntimeInput(),
+	}
+	if err := json.Unmarshal([]byte(revisedPolicy), &revision); err != nil {
+		t.Fatal(err)
+	}
+	revised, err := service.ReviseTemplate(t.Context(), revision)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if revised.Revision != 2 || store.expectedTemplateRevision != 1 {
+		t.Fatalf("Template revision boundary changed: view=%+v expected=%d", revised, store.expectedTemplateRevision)
+	}
+	requireModelPolicyJSON(t, revised, revisedPolicy)
+	requireModelPolicyJSON(t, store.templateRecord.Revision.Snapshot(), revisedPolicy)
+	current, err := service.GetTemplate(t.Context(), "org-1", created.TemplateID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	requireModelPolicyJSON(t, current, revisedPolicy)
+	store.templateRevision = historical
+	previous, err := service.GetTemplateRevision(t.Context(), "org-1", created.TemplateID, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	requireModelPolicyJSON(t, previous, originalPolicy)
+	after, err := json.Marshal(historical.Snapshot())
+	if err != nil || string(after) != string(historicalJSON) {
+		t.Fatalf("old Template policy changed: %s -> %s, error=%v", historicalJSON, after, err)
+	}
+	requireModelPolicyJSON(t, frozen.Snapshot(), originalPolicy)
+	digest, err := frozen.Digest()
+	if err != nil || digest != originalDigest {
+		t.Fatalf("old AgentSpec digest changed after Template revision: %q -> %q, error=%v", originalDigest, digest, err)
+	}
+}
+
+func TestCatalogLegacyTemplatePolicyRemainsAbsentFromStoredRevisionAndViews(t *testing.T) {
+	t.Parallel()
+	store := &catalogStoreStub{modelRevision: mustModelRevision(t, "model-revision-1", "org-1")}
+	service := NewCatalogService(store, &sealerStub{}, fixedClock{now: time.Unix(1, 0).UTC()})
+	created, err := service.CreateTemplate(t.Context(), catalogModelPolicyInput())
+	if err != nil {
+		t.Fatal(err)
+	}
+	requireModelPolicyJSON(t, created, `{}`)
+	requireModelPolicyJSON(t, store.templateRecord.Revision.Snapshot(), `{}`)
+	loaded, err := service.GetTemplate(t.Context(), "org-1", created.TemplateID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	requireModelPolicyJSON(t, loaded, `{}`)
+}
+
+func TestCatalogRejectsInvalidTemplateModelPoliciesWithoutPersisting(t *testing.T) {
+	t.Parallel()
+	for _, policy := range []string{
+		`{"model_retry":{"max":1,"base_ms":2,"cap_ms":1}}`,
+		`{"failover":"always"}`,
+		`{"run_budget":{"max_cost_usd_micros":9007199254740992}}`,
+	} {
+		t.Run(policy, func(t *testing.T) {
+			store := &catalogStoreStub{modelRevision: mustModelRevision(t, "model-revision-1", "org-1")}
+			service := NewCatalogService(store, &sealerStub{}, fixedClock{now: time.Unix(1, 0).UTC()})
+			input := catalogModelPolicyInput()
+			if err := json.Unmarshal([]byte(policy), &input); err != nil {
+				return
+			}
+			if _, err := service.CreateTemplate(t.Context(), input); !errors.Is(err, ErrInvalidInput) {
+				t.Fatalf("invalid policy error = %v", err)
+			}
+			if store.templateRecord.TemplateID != "" {
+				t.Fatal("invalid Template policy reached persistence")
+			}
+		})
+	}
+}
+
+func TestCatalogTemplateRequestFingerprintIncludesExplicitModelPolicy(t *testing.T) {
+	t.Parallel()
+	var fingerprints []string
+	for _, policy := range []string{
+		`{"model_retry":{"max":0,"base_ms":200,"cap_ms":30000},"failover":"never","run_budget":{"max_cost_usd_micros":0}}`,
+		`{"model_retry":{"max":2,"base_ms":200,"cap_ms":30000},"failover":"before_output","run_budget":{"max_cost_usd_micros":1}}`,
+	} {
+		store := &catalogStoreStub{modelRevision: mustModelRevision(t, "model-revision-1", "org-1")}
+		service := NewCatalogService(store, &sealerStub{}, fixedClock{now: time.Unix(1, 0).UTC()})
+		input := catalogModelPolicyInput()
+		if err := json.Unmarshal([]byte(policy), &input); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := service.CreateTemplate(t.Context(), input); err != nil {
+			t.Fatal(err)
+		}
+		fingerprints = append(fingerprints, store.templateRecord.RequestFingerprint)
+	}
+	if fingerprints[0] == "" || fingerprints[0] == fingerprints[1] {
+		t.Fatal("distinct policies shared a Template idempotency fingerprint")
+	}
+}
+
+func catalogModelPolicyInput() CreateTemplateInput {
+	return CreateTemplateInput{
+		RequestID: "request-template-policy", OrganizationID: "org-1", TemplateKey: "policy",
+		Name: "Policy", ModelProfileID: "model-1", SystemPrompt: "prompt", MaxModelRequests: 8,
+		ContextPolicyVersion: domain.ContextPolicyV1, Runtime: validRuntimeInput(),
+	}
 }

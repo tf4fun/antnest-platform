@@ -183,6 +183,9 @@ type CreateTemplateInput struct {
 	FallbackModelProfileIDs []string
 	SystemPrompt            string
 	MaxModelRequests        int
+	ModelRetry              *domain.ModelRetryPolicy `json:"model_retry,omitempty"`
+	Failover                string                   `json:"failover,omitempty"`
+	RunBudget               *domain.RunBudget        `json:"run_budget,omitempty"`
 	ContextPolicyVersion    string
 	Runtime                 domain.RuntimeSpecInput
 	SkillRefs               []domain.SkillReference
@@ -198,6 +201,9 @@ type TemplateView struct {
 	FallbackModelProfileIDs []string
 	SystemPrompt            string
 	MaxModelRequests        int
+	ModelRetry              *domain.ModelRetryPolicy `json:"model_retry,omitempty"`
+	Failover                string                   `json:"failover,omitempty"`
+	RunBudget               *domain.RunBudget        `json:"run_budget,omitempty"`
 	ContextPolicyVersion    string
 	Runtime                 domain.RuntimeSpecInput
 	SkillRefs               []domain.FrozenSkill
@@ -252,6 +258,7 @@ func (service *CatalogService) CreateTemplate(ctx context.Context, input CreateT
 		ModelProfileID:          input.ModelProfileID,
 		FallbackModelProfileIDs: input.FallbackModelProfileIDs,
 		SystemPrompt:            input.SystemPrompt, MaxModelRequests: input.MaxModelRequests,
+		ModelRetry: input.ModelRetry.Clone(), Failover: input.Failover, RunBudget: input.RunBudget.Clone(),
 		Runtime: input.Runtime, ContextPolicyVersion: input.ContextPolicyVersion, SkillRefs: skills,
 	})
 	if err != nil {
@@ -290,6 +297,9 @@ type ReviseTemplateInput struct {
 	FallbackModelProfileIDs []string
 	SystemPrompt            string
 	MaxModelRequests        int
+	ModelRetry              *domain.ModelRetryPolicy `json:"model_retry,omitempty"`
+	Failover                string                   `json:"failover,omitempty"`
+	RunBudget               *domain.RunBudget        `json:"run_budget,omitempty"`
 	ContextPolicyVersion    string
 	Runtime                 domain.RuntimeSpecInput
 	SkillRefs               []domain.SkillReference
@@ -347,6 +357,7 @@ func (service *CatalogService) ReviseTemplate(
 		Revision: current.Revision.Revision() + 1, ModelProfileID: input.ModelProfileID,
 		FallbackModelProfileIDs: input.FallbackModelProfileIDs,
 		SystemPrompt:            input.SystemPrompt, MaxModelRequests: input.MaxModelRequests,
+		ModelRetry: input.ModelRetry.Clone(), Failover: input.Failover, RunBudget: input.RunBudget.Clone(),
 		ContextPolicyVersion: input.ContextPolicyVersion, Runtime: input.Runtime, SkillRefs: skills,
 	})
 	if err != nil {
@@ -609,12 +620,13 @@ func templateView(record ports.TemplateRecord) TemplateView {
 		FallbackModelProfileIDs: record.Revision.Snapshot().FallbackModelProfileIDs,
 		SystemPrompt:            snapshot.SystemPrompt,
 		MaxModelRequests:        snapshot.MaxModelRequests,
-		ContextPolicyVersion:    record.Revision.ContextPolicyVersion(),
-		Runtime:                 publicMCPRuntime(snapshot.Runtime),
-		SkillRefs:               snapshot.SkillRefs,
-		SkillSetDigest:          snapshot.SkillSetDigest,
-		Enabled:                 record.Enabled,
-		CreatedAt:               record.CreatedAt,
-		UpdatedAt:               record.UpdatedAt,
+		ModelRetry:              snapshot.ModelRetry.Clone(), Failover: snapshot.Failover, RunBudget: snapshot.RunBudget.Clone(),
+		ContextPolicyVersion: record.Revision.ContextPolicyVersion(),
+		Runtime:              publicMCPRuntime(snapshot.Runtime),
+		SkillRefs:            snapshot.SkillRefs,
+		SkillSetDigest:       snapshot.SkillSetDigest,
+		Enabled:              record.Enabled,
+		CreatedAt:            record.CreatedAt,
+		UpdatedAt:            record.UpdatedAt,
 	}
 }

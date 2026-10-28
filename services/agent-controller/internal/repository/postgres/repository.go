@@ -283,7 +283,8 @@ func (repository *Repository) GetTemplate(
 SELECT t.id, t.organization_id, t.template_key, t.name,
        t.enabled, t.created_at, t.updated_at,
        r.revision, r.model_profile_id, r.system_prompt,
-       r.max_model_requests, r.context_policy_version, r.runtime_input, r.fallback_model_profile_ids, r.skill_refs
+       r.max_model_requests, r.context_policy_version, r.runtime_input, r.fallback_model_profile_ids, r.skill_refs,
+       r.model_retry, r.failover, r.run_budget
 FROM agent_controller.agent_templates t
 JOIN agent_controller.agent_template_revisions r
   ON r.template_id = t.id
@@ -313,7 +314,8 @@ func (repository *Repository) ListTemplates(
 SELECT t.id, t.organization_id, t.template_key, t.name,
        t.enabled, t.created_at, t.updated_at,
        r.revision, r.model_profile_id, r.system_prompt,
-       r.max_model_requests, r.context_policy_version, r.runtime_input, r.fallback_model_profile_ids, r.skill_refs
+       r.max_model_requests, r.context_policy_version, r.runtime_input, r.fallback_model_profile_ids, r.skill_refs,
+       r.model_retry, r.failover, r.run_budget
 FROM agent_controller.agent_templates t
 JOIN agent_controller.agent_template_revisions r
   ON r.template_id = t.id
