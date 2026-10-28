@@ -227,6 +227,8 @@ export function sessionHarnessArguments(env, { evidence, checkpoints }) {
     "-v",
     `${root}/services/agent-ui/web/server/src/protocol:/app/services/agent-ui/web/server/src/protocol:ro`,
     "-v",
+    `${root}/services/agent-ui/web/node_modules/zod:/app/services/agent-ui/web/node_modules/zod:ro`,
+    "-v",
     `${checkpoints}:/checkpoints`,
     acp,
     "node",

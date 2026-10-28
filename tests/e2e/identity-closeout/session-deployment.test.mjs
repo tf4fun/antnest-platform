@@ -1,7 +1,16 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { mkdtempSync, rmSync } from "node:fs";
-import { cp, mkdir, mkdtemp, readFile, rm, symlink } from "node:fs/promises";
+import {
+  cp,
+  mkdir,
+  mkdtemp,
+  readFile,
+  realpath,
+  rm,
+  symlink,
+} from "node:fs/promises";
+import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -265,19 +274,27 @@ test("the Session client mounts the real Bridge observer import tree read-only",
     join(app, "node_modules"),
     "dir",
   );
-  const locks = await Promise.all(
-    ["agent-acp-service", "agent-ui/web"].map(
-      async (service) =>
-        JSON.parse(
-          await readFile(
-            join(root, "services", service, "package-lock.json"),
-            "utf8",
-          ),
-        ).packages["node_modules/zod"],
+  const resolved = createRequire(
+    pathToFileURL(
+      join(
+        app,
+        "services/agent-ui/web/server/src/protocol/agent-view-delta.ts",
+      ),
+    ),
+  ).resolve("zod/package.json");
+  const installed = join(
+    app,
+    "services/agent-ui/web/node_modules/zod/package.json",
+  );
+  assert.equal(resolved, await realpath(installed));
+  const manifest = JSON.parse(await readFile(resolved, "utf8"));
+  const lock = JSON.parse(
+    await readFile(
+      join(root, "services/agent-ui/web/package-lock.json"),
+      "utf8",
     ),
   );
-  assert.equal(locks[0].version, locks[1].version);
-  assert.equal(locks[0].integrity, locks[1].integrity);
+  assert.equal(manifest.version, lock.packages["node_modules/zod"].version);
   const imports = [
     "bridge-session-observer.mjs",
     "bridge-session-cause.mjs",
