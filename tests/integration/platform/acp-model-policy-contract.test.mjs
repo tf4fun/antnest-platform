@@ -139,7 +139,7 @@ test("the implemented boundary advertises organization policy GET/PUT with exact
   });
   assert.equal(contract.delivery_defaults.failover, "before_output");
   const active = read("agent-controller/control-contract.json");
-  assert.equal(active.revision, 45);
+  assert.equal(active.revision, 46);
   const expected = {
     get: {
       method: "GET",
