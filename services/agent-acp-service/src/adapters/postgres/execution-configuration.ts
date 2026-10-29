@@ -2,12 +2,15 @@ import { createHash } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
 import { z } from "zod";
 import {
-  parseExecutionConfiguration,
   parsePublicExecutionConfiguration,
   publicExecutionConfiguration,
   type ExecutionConfiguration,
   type PublicExecutionConfiguration,
 } from "../../domain/execution-configuration.js";
+import {
+  allowsV1ToV2Upgrade,
+  parseExecutionAuthority,
+} from "../../domain/execution-publication-v2.js";
 import { DomainError } from "../../domain/errors.js";
 import {
   AgentOwnershipLostError,
@@ -110,7 +113,7 @@ function retainIdentities(previous: Identities, incoming: ExecutionConfiguration
       identities.providers.push(identity);
       providers.set(identity.connection_id, identity);
     } else if (!isDeepStrictEqual(identity.routing, routing)) throw conflict();
-    if ("credential" in provider) {
+    if ("credential" in provider && "secret" in provider.credential) {
       const next = {
         revision: provider.credential_revision,
         digest: fingerprint(provider.credential.secret),
@@ -208,7 +211,7 @@ export class PostgresExecutionConfiguration implements ExecutionConfigurationRep
   ): Promise<void> {
     const timeoutMs = transactionBudget(options.timeoutMs ?? 10_000);
     if (timeoutMs > 10_000) throw new RangeError("Publication confirmation exceeds its deadline");
-    const expected = parseExecutionConfiguration(structuredClone(input));
+    const expected = parseExecutionAuthority(structuredClone(input));
     const captured = options.participation;
     const participation =
       captured === undefined
@@ -306,7 +309,7 @@ export class PostgresExecutionConfiguration implements ExecutionConfigurationRep
           associatedData(row.organization_id, revision),
         ),
       );
-      const configuration = parseExecutionConfiguration(envelope.configuration);
+      const configuration = parseExecutionAuthority(envelope.configuration);
       requireUniqueIdentities(envelope.identities);
       const projection = parsePublicExecutionConfiguration(row.configuration);
       if (
@@ -330,7 +333,7 @@ export class PostgresExecutionConfiguration implements ExecutionConfigurationRep
     input: ExecutionConfiguration,
     expectedRevision: number | null,
   ): Promise<boolean> {
-    const incoming = parseExecutionConfiguration(input);
+    const incoming = parseExecutionAuthority(input);
     const projection = publicExecutionConfiguration(incoming);
     return this.kernel.transaction(async (client) => {
       await lockRuntimeBarrierOrganization(client, incoming.organization_id);
@@ -340,6 +343,7 @@ export class PostgresExecutionConfiguration implements ExecutionConfigurationRep
       );
       const current = selected.rows[0];
       let identities: Identities = { providers: [], runtimes: [] };
+      let equalRevisionUpgrade = false;
       if ((current === undefined ? null : Number(current.revision)) !== expectedRevision)
         return false;
       if (current !== undefined) {
@@ -360,8 +364,9 @@ export class PostgresExecutionConfiguration implements ExecutionConfigurationRep
         const authority = this.openAuthority(current);
         if (authority !== null) {
           if (equalRevision) {
-            if (!isDeepStrictEqual(authority.configuration, incoming)) throw conflict();
-            return true;
+            if (isDeepStrictEqual(authority.configuration, incoming)) return true;
+            if (!allowsV1ToV2Upgrade(authority.configuration, incoming)) throw conflict();
+            equalRevisionUpgrade = true;
           }
           identities = authority.identities;
         } else {
@@ -416,8 +421,8 @@ export class PostgresExecutionConfiguration implements ExecutionConfigurationRep
               `UPDATE execution_configurations SET revision = $2, configuration = $3::jsonb,
              authority_version = $4, authority_nonce = $5, authority_ciphertext = $6, updated_at = now()
            WHERE organization_id = $1 AND revision = $7
-             AND (revision < $2 OR (revision = $2 AND authority_version IS NULL))`,
-              [...values, expectedRevision],
+             AND (revision < $2 OR (revision = $2 AND (authority_version IS NULL OR $8)))`,
+              [...values, expectedRevision, equalRevisionUpgrade],
             );
       if (saved.rowCount !== 1) return false;
       await retireReplacedRuntimeBarriers(client, projection);

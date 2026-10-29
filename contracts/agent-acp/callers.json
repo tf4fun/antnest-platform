@@ -275,6 +275,22 @@
       },
       "request_body": "json",
       "notes": "Directional member credentials authenticate the fixed peer listener. Reapply the original skill-registry policy without a user CCT. Validate the body digest, actor/Agent scope, full registrations, private publication, original live epoch and shared 8.5-second deadline. The original owner retains its source-read gate and Runtime authority; cancellation joins original work and independent cleanup failures prevent retirement ACK."
+    },
+    "POST /rpc/agent-acp/apply-execution-delta": {
+      "callers": ["agent-controller"],
+      "authentication": "workload",
+      "caller_context": {
+        "agent-controller": "operation"
+      },
+      "request_body": "json"
+    },
+    "POST /rpc/agent-acp/get-execution-digest": {
+      "callers": ["agent-controller"],
+      "authentication": "workload",
+      "caller_context": {
+        "agent-controller": "operation"
+      },
+      "request_body": "json"
     }
   },
   "guarded_sources": {

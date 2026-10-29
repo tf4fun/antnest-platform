@@ -829,9 +829,15 @@ function configuration(): ExecutionConfiguration {
 
 function provider(input: ExecutionConfiguration) {
   const value = input.providers[0];
-  if (value === undefined || !("credential" in value))
+  const credential = value !== undefined && "credential" in value ? value.credential : undefined;
+  if (
+    value === undefined ||
+    credential === undefined ||
+    !("secret" in credential) ||
+    !("credential_revision" in value)
+  )
     throw new Error("Fixture Provider authority is missing");
-  return value;
+  return { ...value, credential };
 }
 
 function runtime(input: ExecutionConfiguration) {

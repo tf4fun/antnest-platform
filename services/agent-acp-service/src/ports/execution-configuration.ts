@@ -2,6 +2,7 @@ import type {
   ExecutionConfiguration,
   PublicExecutionConfiguration,
 } from "../domain/execution-configuration.js";
+import type { ExecutionDigestResponse } from "../domain/execution-publication-v2.js";
 
 export class InvalidExecutionAuthorityError extends Error {
   public constructor() {
@@ -12,6 +13,8 @@ export class InvalidExecutionAuthorityError extends Error {
 
 export interface ExecutionConfigurationPort {
   apply(input: unknown): Promise<{ organization_id: string; applied_revision: number }>;
+  applyDelta?(input: unknown): Promise<{ organization_id: string; applied_revision: number }>;
+  getDigest?(input: unknown): Promise<ExecutionDigestResponse>;
 }
 
 export interface ExecutionConfigurationRepository {

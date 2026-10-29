@@ -48,6 +48,7 @@ export type AgentAcpConfig = {
   skillMaintenanceSigning?: { kid: string; privateKey: KeyObject };
   skillLearningControllerUrl?: string;
   skillLearningDebugAgentId?: string;
+  executionControllerUrl?: string;
   skillDiscovery?: { registryUrl: string };
   runTimeoutMs: number;
   providerAllowPrivateEndpoints: boolean;
@@ -114,6 +115,7 @@ export function loadConfig(environment: NodeJS.ProcessEnv = process.env): AgentA
   );
   const discovery = parseSkillDiscovery(environment);
   const learningController = parseSkillLearningControllerUrl(environment);
+  const executionController = parseExecutionControllerUrl(environment);
   const ownerIncarnation = parseOwnerIncarnation(
     environment,
     [listen, controlListen],
@@ -125,6 +127,9 @@ export function loadConfig(environment: NodeJS.ProcessEnv = process.env): AgentA
       ...(learningController.skillLearningControllerUrl === undefined
         ? []
         : [new URL(learningController.skillLearningControllerUrl).origin]),
+      ...(executionController.executionControllerUrl === undefined
+        ? []
+        : [new URL(executionController.executionControllerUrl).origin]),
     ],
   );
   const peer = parsePeerConfiguration(environment, ownerIncarnation.ownerIncarnation, [
@@ -151,10 +156,26 @@ export function loadConfig(environment: NodeJS.ProcessEnv = process.env): AgentA
   if (learningController.skillLearningControllerUrl !== undefined) {
     const origin = new URL(learningController.skillLearningControllerUrl).origin;
     if (origins.has(origin)) throw new ConfigError("Dependency origins must be distinct");
+    origins.add(origin);
     dependencyFetchers.controller = workload.fetchFor(
       "agent-controller",
       learningController.skillLearningControllerUrl,
     );
+  }
+  if (executionController.executionControllerUrl !== undefined) {
+    const origin = new URL(executionController.executionControllerUrl).origin;
+    const learning = learningController.skillLearningControllerUrl;
+    const learningOrigin = learning === undefined ? undefined : new URL(learning).origin;
+    if (learningOrigin !== undefined && learningOrigin !== origin)
+      throw new ConfigError("Controller dependency origins must match");
+    if (learningOrigin === undefined) {
+      if (origins.has(origin)) throw new ConfigError("Dependency origins must be distinct");
+      origins.add(origin);
+      dependencyFetchers.controller = workload.fetchFor(
+        "agent-controller",
+        executionController.executionControllerUrl,
+      );
+    }
   }
 
   return {
@@ -195,6 +216,7 @@ export function loadConfig(environment: NodeJS.ProcessEnv = process.env): AgentA
     allowDevelopmentSettings,
     ...parseSkillMaintenanceSigning(environment),
     ...learningController,
+    ...executionController,
     ...parseSkillLearningDebugAgentId(environment, allowDevelopmentSettings),
     ...discovery,
     runTimeoutMs: parseDuration(
@@ -423,6 +445,19 @@ function parseSkillLearningControllerUrl(
           "ANTNEST_ACP_SKILL_LEARNING_CONTROLLER_URL",
         ).toString(),
       };
+}
+
+function parseExecutionControllerUrl(
+  environment: NodeJS.ProcessEnv,
+): Pick<AgentAcpConfig, "executionControllerUrl"> {
+  const value = optional(environment.ANTNEST_ACP_EXECUTION_CONTROLLER_URL);
+  if (value === undefined) return {};
+  const url = normalizedHttpUrl(value, "ANTNEST_ACP_EXECUTION_CONTROLLER_URL");
+  if (url.pathname !== "/")
+    throw new ConfigError(
+      "ANTNEST_ACP_EXECUTION_CONTROLLER_URL must be a bare origin without a path",
+    );
+  return { executionControllerUrl: url.toString() };
 }
 
 function parseSkillMaintenanceSigning(

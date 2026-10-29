@@ -16,10 +16,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Agent, fetch as undiciFetch } from "undici";
 import { DomainError } from "../domain/errors.js";
-import {
-  parseExecutionConfiguration,
-  type ExecutionConfiguration,
-} from "../domain/execution-configuration.js";
+import { parseExecutionAuthority } from "../domain/execution-publication-v2.js";
+import type { ExecutionConfiguration } from "../domain/execution-configuration.js";
 import {
   runtimeConnectionIdSchema,
   runtimeMcpEndpointSchema,
@@ -95,7 +93,7 @@ export class RuntimeConnections implements RuntimeConnectionAuthority {
 
   public prepare(raw: ExecutionConfiguration): PreparedRuntimeConnections {
     if (this.closed) throw unavailable();
-    const configuration = parseExecutionConfiguration(raw);
+    const configuration = parseExecutionAuthority(raw);
     const organizationId = configuration.organization_id;
     if (this.preparing.has(organizationId)) throw conflict();
     const reserved = new Set<string>();

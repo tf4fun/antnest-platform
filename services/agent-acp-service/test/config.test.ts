@@ -207,6 +207,62 @@ describe("loadConfig", () => {
     expect(config.skillMaintenanceSigning?.privateKey.type).toBe("private");
   });
 
+  it("loads a normalized bare origin for execution credential resolution", () => {
+    const config = loadConfig({
+      ...testSecurityEnvironment(),
+      ...{
+        ...requiredEnvironment(),
+        ANTNEST_ACP_EXECUTION_CONTROLLER_URL: "http://agent-controller:8080",
+      },
+    });
+    expect(config.executionControllerUrl).toBe("http://agent-controller:8080/");
+    expect(config.skillLearningControllerUrl).toBeUndefined();
+    expect(config.dependencyFetchers.controller).toBeDefined();
+  });
+
+  it("permits identical Skill learning and execution Controller origins with one fetcher", () => {
+    const config = loadConfig({
+      ...testSecurityEnvironment(),
+      ...{
+        ...requiredEnvironment(),
+        ANTNEST_ACP_SKILL_LEARNING_CONTROLLER_URL: "http://agent-controller:8080",
+        ANTNEST_ACP_EXECUTION_CONTROLLER_URL: "http://agent-controller:8080",
+      },
+    });
+    expect(config.skillLearningControllerUrl).toBe("http://agent-controller:8080/");
+    expect(config.executionControllerUrl).toBe("http://agent-controller:8080/");
+    expect(config.dependencyFetchers.controller).toBeDefined();
+  });
+
+  it("rejects divergent Controller origins and origins colliding with other dependencies", () => {
+    for (const patch of [
+      {
+        ANTNEST_ACP_SKILL_LEARNING_CONTROLLER_URL: "http://agent-controller:8080",
+        ANTNEST_ACP_EXECUTION_CONTROLLER_URL: "http://other-controller:8080",
+      },
+      { ANTNEST_ACP_EXECUTION_CONTROLLER_URL: "http://identity.invalid/" },
+      {
+        ANTNEST_ACP_EXECUTION_CONTROLLER_URL: "http://agent-controller",
+        ANTNEST_ACP_SKILL_REGISTRY_URL: "http://agent-controller",
+      },
+      { ANTNEST_ACP_EXECUTION_CONTROLLER_URL: "http://agent-controller/path" },
+      { ANTNEST_ACP_EXECUTION_CONTROLLER_URL: "http://user:secret@agent-controller" },
+      { ANTNEST_ACP_EXECUTION_CONTROLLER_URL: "http://agent-controller/?x=1" },
+      { ANTNEST_ACP_EXECUTION_CONTROLLER_URL: "http://agent-controller/#h" },
+      { ANTNEST_ACP_EXECUTION_CONTROLLER_URL: "ftp://agent-controller" },
+    ]) {
+      expect(() =>
+        loadConfig({ ...testSecurityEnvironment(), ...requiredEnvironment(), ...patch }),
+      ).toThrow();
+    }
+    expect(
+      loadConfig({
+        ...testSecurityEnvironment(),
+        ...requiredEnvironment(),
+      }).executionControllerUrl,
+    ).toBeUndefined();
+  });
+
   it("loads a normalized Controller endpoint for Skill learning policy reads", () => {
     const config = loadConfig({
       ...testSecurityEnvironment(),

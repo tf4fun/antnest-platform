@@ -29,7 +29,7 @@ import { ExecutionDirectory } from "../../../../services/agent-acp-service/src/a
 import { ProviderClients } from "../../../../services/agent-acp-service/src/application/provider-clients.js";
 import { PostgresExecutionConfiguration } from "../../../../services/agent-acp-service/src/adapters/postgres/execution-configuration.js";
 import type {
-  ExecutionConfiguration,
+  ExecutionConfigurationV1,
   ExecutionIdentity,
   ExecutionAccessSnapshot,
 } from "../../../../services/agent-acp-service/src/domain/execution-configuration.js";
@@ -52,7 +52,7 @@ export async function startBoundaryApplication(
   information = runtimeInformation(),
   options: {
     runTimeoutMs?: number;
-    configuration?: ExecutionConfiguration;
+    configuration?: ExecutionConfigurationV1;
     providerCircuit?: { failureThreshold: number; cooldownMs: number };
     modelTransport?: AuthenticatedModelTransport;
   } = {},
@@ -165,7 +165,7 @@ export async function startBoundaryApplication(
       outputs.invalidateOrganization(organizationId),
   });
   const stored = await configurations.load("organization-1");
-  const configuration: ExecutionConfiguration =
+  const configuration: ExecutionConfigurationV1 =
     options.configuration !== undefined
       ? structuredClone(options.configuration)
       : stored === null
@@ -360,7 +360,7 @@ function identity(principalId: string, agentId: string): ExecutionIdentity {
   return { organizationId: "organization-1", principalId, agentId };
 }
 
-function boundaryConfiguration(): ExecutionConfiguration {
+function boundaryConfiguration(): ExecutionConfigurationV1 {
   const configuration = executionConfiguration();
   const provider = configuration.providers[0]!;
   provider.connection_id = "connection-1";

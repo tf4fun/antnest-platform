@@ -66,6 +66,10 @@ import { LearningChangeReader } from "./application/learning-change-reader.js";
 import { LearningNoticePublisher } from "./application/learning-notice-publisher.js";
 import { LearningChangeCursor } from "./domain/learning-change-cursor.js";
 import { tracedFetch } from "./telemetry/http.js";
+import {
+  ControllerExecutionCredentialsClient,
+  executionCredentialResolver,
+} from "./adapters/controller-execution-credentials.js";
 import { RuntimeSkillMaintenanceSigner } from "./adapters/runtime-skill-maintenance-signer.js";
 import { PostgresLearningChangeRead } from "./adapters/postgres/learning-change-read.js";
 import type { AgentAcpConfig } from "./config.js";
@@ -606,7 +610,18 @@ export function buildComponents(
     }),
     telemetry,
   );
-  const providers = new ProviderClients(model, config.providerCircuit);
+  const providers = new ProviderClients(
+    model,
+    config.providerCircuit,
+    config.executionControllerUrl === undefined
+      ? undefined
+      : executionCredentialResolver(
+          new ControllerExecutionCredentialsClient(
+            config.executionControllerUrl,
+            tracedFetch(config.dependencyFetchers.controller!, "agent_controller"),
+          ),
+        ),
+  );
   const legacyModelRequests = new Set<Promise<unknown>>();
   const legacyModelCleanupFailures: ModelTransportCleanupError[] = [];
   const retainLegacyModelRequest = (original: Promise<unknown>): void => {
