@@ -182,6 +182,8 @@ export type ModelSpec = {
   supports_images: boolean;
   supports_audio?: boolean;
   supports_pdf?: boolean;
+  tokenizer?: "o200k" | "cl100k" | "none";
+  compaction_model_profile_id?: string;
 };
 
 export type ModelParameters = Omit<ModelSpec, "base_url">;

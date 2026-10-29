@@ -142,3 +142,19 @@ and verifies merged/saved/fallback views on desktop and mobile. It never calls a
 completion endpoint or changes credentials. Only final screenshots and a compact
 summary are written to the Git-ignored
 `artifacts/verification/model-discovery-acceptance/` directory.
+
+## Model context metadata
+
+Model profiles carry two optional context fields forwarded to the Agent
+Controller and frozen into Run execution snapshots: `tokenizer`
+(`o200k`, `cl100k`, or `none`) selects the encoder used for input budgeting
+before each model request, and `compaction_model_profile_id` names an enabled
+same-organization Model profile whose Model the ACP uses for history
+summarization. The owner validates both fields before forwarding (enum values,
+non-empty references of at most 200 bytes without whitespace) and the ACP
+enforces the reference against the published catalog at execution selection
+time. Leaving `tokenizer` unset keeps the conservative UTF-8 bound (shown as
+"Conservative fallback"); leaving the compaction reference unset keeps the
+selected Run model for summaries. Summarization is a budgeted prompt with a
+deterministic previous-summary-first fallback, and token estimates remain a
+compatibility bound rather than exact provider metering.

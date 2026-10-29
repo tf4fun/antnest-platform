@@ -203,6 +203,42 @@ export function ModelEditor({
                 />
               </Field>
             </div>
+            <div className="grid gap-4 sm:grid-cols-2">
+              <Field label="Tokenizer">
+                <Select
+                  value={model.tokenizer ?? ""}
+                  onChange={(event) => {
+                    const { tokenizer: _tokenizer, ...rest } = model;
+                    setModel(
+                      event.target.value === ""
+                        ? rest
+                        : {
+                            ...rest,
+                            tokenizer: event.target.value as "o200k" | "cl100k" | "none",
+                          },
+                    );
+                  }}
+                >
+                  <option value="">Automatic (conservative fallback)</option>
+                  <option value="o200k">o200k</option>
+                  <option value="cl100k">cl100k</option>
+                  <option value="none">none</option>
+                </Select>
+              </Field>
+              <Field label="Compaction model profile ID">
+                <Input
+                  value={model.compaction_model_profile_id ?? ""}
+                  onChange={(event) => {
+                    const { compaction_model_profile_id: _reference, ...rest } = model;
+                    setModel(
+                      event.target.value === ""
+                        ? rest
+                        : { ...rest, compaction_model_profile_id: event.target.value },
+                    );
+                  }}
+                />
+              </Field>
+            </div>
             <div className="grid gap-3 sm:grid-cols-3">
               <CheckboxField
                 label="Image input"
