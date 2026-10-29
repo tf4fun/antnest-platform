@@ -528,8 +528,17 @@ stored context reconstruction; see [Model reasoning history](model-reasoning-his
 4. Check the complete model-input context estimate before each model request.
    Fallback preserves the input and skips candidates that cannot accept its
    media, Tool definitions/history, exact thinking effort or context size. The
-   existing length/4 estimate is compatibility checking, not a hard token/cost
-   spending bound; improved estimation remains under #51.
+   estimate uses the Model's tokenizer: `o200k`/`cl100k` chunk text into 128
+   UTF-16 code-unit spans (surrogate-safe) through cached tiktoken encoders as a
+   conservative approximation, and `none`/unset uses the UTF-8 byte-length bound.
+   Unknown-dimension images reserve eight tiles under the conventional OpenAI
+   formula (with the smaller model prefix scaling); provider-specific non-OpenAI
+   formulas are unsupported. Audio and PDF blobs reserve a fixed 4096, never
+   their base64 length. Each attempt start records the raw estimate and
+   tokenizer, and a p95 ratio over the newest 128 immutable receipts per
+   (organization, profile, model, tokenizer) feeds a floored 1.05 safety budget;
+   the ephemeral per-process cache holds at most 512 keys and seeds a monotonic
+   floor from `model_token_calibration` on context load.
 5. Call the model and persist/emit text or thought output. Mixed text and Tool
    calls are retained as one assistant response. Before persistence, derive each
    Tool ID from `(runId, model request index, provider call ID)`. This single ID

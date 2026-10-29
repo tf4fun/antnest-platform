@@ -8,6 +8,8 @@ import type { ProviderClients } from "./provider-clients.js";
 import type { ModelPort } from "../ports/model.js";
 import type { ProviderCircuitPort } from "../ports/provider-circuit.js";
 import { RunModelClient } from "./run-model-client.js";
+import { ModelCallPolicy } from "./model-call-policy.js";
+import { ModelRequestBudget } from "./model-request-budget.js";
 import type { ExecutionRepository } from "../ports/execution-repository.js";
 import type { RunEventRepository } from "../ports/run-event-repository.js";
 import type { ToolCatalogPort } from "../ports/tools.js";
@@ -174,6 +176,34 @@ export class RunExecutor implements RunExecutionPort {
         input.accepted.snapshot.organizationId,
         input.accepted.snapshot.providerConnectionId,
       );
+      const budget = new ModelRequestBudget(input.accepted.snapshot.executionSpec.maxModelRequests);
+      const client = new RunModelClient({
+        providers: this.dependencies.providers,
+        snapshot: input.accepted.snapshot,
+        onForegroundProvider: observeForegroundProvider,
+      });
+      const buildEvents = new DurableRunEvents({
+        repository: this.dependencies.events,
+        ownershipSignal: this.dependencies.ownershipSignal,
+        publish: input.publish,
+        id: this.dependencies.id,
+        now: this.dependencies.now,
+        contextSize: input.accepted.snapshot.executionSpec.model.contextWindow,
+      });
+      const buildTryModelAttempt = this.dependencies.providers.tryModelAttempt;
+      const buildPolicy = new ModelCallPolicy({
+        model: client,
+        budget,
+        attempts: buildEvents,
+        ...(buildTryModelAttempt === undefined
+          ? {}
+          : {
+              providerCircuit: {
+                tryModelAttempt: buildTryModelAttempt.bind(this.dependencies.providers),
+              },
+            }),
+        clock: { now: () => this.dependencies.now().getTime() },
+      });
       let context: Awaited<ReturnType<ContextBuilder["build"]>>;
       try {
         observeForegroundProvider(guard.signal);
@@ -182,20 +212,15 @@ export class RunExecutor implements RunExecutionPort {
           input.accepted.snapshot,
           signal,
           input.accepted.runId,
+          {
+            complete: (request) => buildPolicy.complete({ runId: input.accepted.runId, request }),
+          },
         );
         signal.throwIfAborted();
       } finally {
         guard.release();
       }
-      const result = await this.runWithContext(
-        { ...input, signal },
-        new RunModelClient({
-          providers: this.dependencies.providers,
-          snapshot: input.accepted.snapshot,
-          onForegroundProvider: observeForegroundProvider,
-        }),
-        context,
-      );
+      const result = await this.runWithContext({ ...input, signal }, client, context, budget);
       if (!providerStop.signal.aborted) return result;
       return result.toolEffectState === "unknown"
         ? { ...result, errorClass: "provider_unavailable" }
@@ -214,6 +239,7 @@ export class RunExecutor implements RunExecutionPort {
     input: RunExecutionInput,
     client: ModelPort,
     context: Awaited<ReturnType<ContextBuilder["build"]>>,
+    budget: ModelRequestBudget,
   ): Promise<ExecuteRunResult> {
     const events = new DurableRunEvents({
       repository: this.dependencies.events,
@@ -241,6 +267,7 @@ export class RunExecutor implements RunExecutionPort {
       catalog: context.tools,
       events,
       now: this.dependencies.now,
+      budget,
     });
     return withWorkerOwnership(this.dependencies.ownershipSignal, () =>
       runner.run({

@@ -12,7 +12,7 @@ import type {
 } from "../../ports/model.js";
 import type { ProviderTokenLimits } from "../../domain/provider-token-limits.js";
 import { ModelError, ModelTransportCleanupError } from "../../ports/model.js";
-import { OpenAICompatibleModelError, invalidResponse } from "./errors.js";
+import { OpenAICompatibleModelError, contextOverflow, invalidResponse } from "./errors.js";
 import { readStream, type StreamObservation } from "./openai-stream.js";
 import { extractUsage, modelUsage } from "./openai-usage.js";
 import type { ModelUsage } from "../../domain/usage.js";
@@ -196,6 +196,17 @@ export class OpenAICompatibleModel implements AuthenticatedModelTransport {
         );
         const delay = retryAfterDelay(response.headers.get("retry-after"), Date.now());
         if (delay !== undefined) failure.retryAfterMs = delay;
+        if (response.status === 400 || response.status === 413 || response.status === 422) {
+          const overflowPayload = await readPayload(response);
+          if (contextOverflow(overflowPayload))
+            throw new OpenAICompatibleModelError(
+              "context_overflow",
+              `Model API returned HTTP ${response.status}`,
+              false,
+              response.status,
+            );
+          throw failure;
+        }
         try {
           await response.body?.cancel();
         } catch (cleanupError) {

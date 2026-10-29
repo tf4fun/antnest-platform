@@ -94,7 +94,8 @@ export class RunModelClient implements ModelPort {
         input.signal.throwIfAborted();
         // A judge's temporary connection must not replace the Provider that owns
         // the foreground Tool proposal. Its own handle still cancels its call.
-        if (input.purpose !== "permission_judge") this.onForegroundProvider?.(handle.signal);
+        if (input.purpose !== "permission_judge" && input.purpose !== "compaction")
+          this.onForegroundProvider?.(handle.signal);
         let response: ModelResult;
         try {
           delegated = true;
@@ -117,12 +118,17 @@ export class RunModelClient implements ModelPort {
       providerConnectionId: this.snapshot.providerConnectionId,
       model: this.snapshot.executionSpec.model,
     };
-    const candidates = [
-      primary,
-      ...(this.snapshot.executionSpec.modelFailover === "before_output"
-        ? (this.snapshot.executionSpec.fallbackModels ?? [])
-        : []),
-    ];
+    const candidates =
+      request.purpose === "compaction"
+        ? this.snapshot.executionSpec.compactionModel === undefined
+          ? [primary]
+          : [this.snapshot.executionSpec.compactionModel]
+        : [
+            primary,
+            ...(this.snapshot.executionSpec.modelFailover === "before_output"
+              ? (this.snapshot.executionSpec.fallbackModels ?? [])
+              : []),
+          ];
     const allowed = candidates.some((candidate) => {
       const expected = structuredClone(this.snapshot);
       expected.modelProfileId = candidate.modelProfileId;
@@ -133,6 +139,13 @@ export class RunModelClient implements ModelPort {
           256,
           candidate.model.maxOutputTokens,
         );
+        expected.executionSpec.model.temperature = 0;
+      }
+      if (request.purpose === "compaction") {
+        const cap = request.snapshot.executionSpec.model.maxOutputTokens;
+        if (!Number.isInteger(cap) || cap <= 0 || cap > candidate.model.maxOutputTokens)
+          return false;
+        expected.executionSpec.model.maxOutputTokens = cap;
         expected.executionSpec.model.temperature = 0;
       }
       return isDeepStrictEqual(request.snapshot, expected);

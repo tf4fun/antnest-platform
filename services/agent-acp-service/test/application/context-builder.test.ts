@@ -88,11 +88,16 @@ describe("ContextBuilder", () => {
       {
         sequence: 1,
         kind: "user_message",
-        content: [{ type: "text", text: `/skill:system:documents ${"old ".repeat(1000)}` }],
+        content: [{ type: "text", text: "Original task" }],
       },
-      { sequence: 2, kind: "agent_message", content: [{ type: "text", text: "done" }] },
       {
-        sequence: 3,
+        sequence: 2,
+        kind: "user_message",
+        content: [{ type: "text", text: `/skill:system:documents ${"old ".repeat(5_000)}` }],
+      },
+      { sequence: 3, kind: "agent_message", content: [{ type: "text", text: "done" }] },
+      {
+        sequence: 4,
         kind: "user_message",
         content: [{ type: "text", text: "/skill:system:documents Find current docs" }],
       },
@@ -106,7 +111,7 @@ describe("ContextBuilder", () => {
       now: () => new Date(),
     });
     const constrained = snapshot();
-    constrained.executionSpec.model.contextWindow = 1536;
+    constrained.executionSpec.model.contextWindow = 8_192;
     constrained.executionSpec.model.maxOutputTokens = 128;
     const result = await builder.build(
       "session-1",
@@ -118,8 +123,8 @@ describe("ContextBuilder", () => {
     expect(JSON.stringify(result.messages.at(-1))).toContain("PRIVATE SKILL BODY");
     expect(saveCheckpoint).toHaveBeenCalled();
     expect(JSON.stringify(saveCheckpoint.mock.calls)).not.toContain("PRIVATE SKILL BODY");
-    messages[2] = {
-      sequence: 3,
+    messages[3] = {
+      sequence: 4,
       kind: "user_message",
       content: [{ type: "text", text: "Another task" }],
     };
@@ -203,12 +208,12 @@ describe("ContextBuilder", () => {
             {
               sequence: 2,
               kind: "user_message",
-              content: [{ type: "text", text: "x".repeat(4_000) }],
+              content: [{ type: "text", text: "Original task" }],
             },
             {
               sequence: 3,
               kind: "agent_message",
-              content: [{ type: "text", text: "intermediate" }],
+              content: [{ type: "text", text: "x".repeat(24_000) }],
             },
             {
               sequence: 4,
@@ -227,7 +232,7 @@ describe("ContextBuilder", () => {
       now: () => new Date("2026-08-30T00:00:00Z"),
     });
     const constrained = snapshot();
-    constrained.executionSpec.model.contextWindow = 1_536;
+    constrained.executionSpec.model.contextWindow = 8_192;
     constrained.executionSpec.model.maxOutputTokens = 128;
 
     const { messages } = await builder.build(
@@ -243,7 +248,7 @@ describe("ContextBuilder", () => {
         id: "checkpoint-2",
         sessionId: "session-1",
         runId: "original-run",
-        throughSequence: 2,
+        throughSequence: 3,
       }),
     );
   });
@@ -324,10 +329,15 @@ describe("ContextBuilder", () => {
             {
               sequence: 1,
               kind: "user_message",
-              content: [{ type: "text", text: "x".repeat(4_000) }],
+              content: [{ type: "text", text: "Original task" }],
             },
             {
               sequence: 2,
+              kind: "agent_message",
+              content: [{ type: "text", text: "x".repeat(24_000) }],
+            },
+            {
+              sequence: 3,
               kind: "user_message",
               content: [{ type: "text", text: "latest request" }],
             },
@@ -343,7 +353,7 @@ describe("ContextBuilder", () => {
       now: () => new Date("2026-08-30T00:00:00Z"),
     });
     const constrained = snapshot();
-    constrained.executionSpec.model.contextWindow = 1_024;
+    constrained.executionSpec.model.contextWindow = 8_192;
     constrained.executionSpec.model.maxOutputTokens = 128;
 
     await expect(
@@ -362,10 +372,15 @@ describe("ContextBuilder", () => {
             {
               sequence: 1,
               kind: "user_message",
-              content: [{ type: "text", text: "x".repeat(4_000) }],
+              content: [{ type: "text", text: "Original task" }],
             },
             {
               sequence: 2,
+              kind: "agent_message",
+              content: [{ type: "text", text: "x".repeat(24_000) }],
+            },
+            {
+              sequence: 3,
               kind: "user_message",
               content: [{ type: "text", text: "latest request" }],
             },
@@ -384,12 +399,85 @@ describe("ContextBuilder", () => {
       now: () => new Date("2026-08-30T00:00:00Z"),
     });
     const constrained = snapshot();
-    constrained.executionSpec.model.contextWindow = 1_536;
+    constrained.executionSpec.model.contextWindow = 8_192;
     constrained.executionSpec.model.maxOutputTokens = 128;
 
     await expect(
       builder.build("session-1", constrained, ownership.signal, "run-1"),
     ).rejects.toThrow("worker lock lost");
+  });
+
+  it("compacts oversized history through the supplied model call and records checkpoint metadata", async () => {
+    type CompactionComplete = NonNullable<
+      NonNullable<Parameters<ContextBuilder["build"]>[4]>["complete"]
+    >;
+    const complete = vi.fn<CompactionComplete>(() =>
+      Promise.resolve({
+        kind: "message" as const,
+        content: [{ type: "text" as const, text: "任务摘要" }],
+        usage: {},
+        stopReason: "end_turn" as const,
+      }),
+    );
+    const saveCheckpoint = vi.fn<ContextRepository["saveCheckpoint"]>();
+    const pinnedEntry = {
+      sequence: 1,
+      kind: "user_message" as const,
+      content: [{ type: "text", text: "Original task" }],
+    };
+    Reflect.set(pinnedEntry, "id", "msg-1");
+    const source: ContextSource = {
+      checkpoint: { throughSequence: 1, summary: "previous summary" },
+      messages: [
+        {
+          sequence: 2,
+          kind: "user_message" as const,
+          content: [{ type: "text", text: "x".repeat(24_000) }],
+        },
+        {
+          sequence: 3,
+          kind: "agent_message" as const,
+          content: [{ type: "text", text: "intermediate ".repeat(300) }],
+        },
+        {
+          sequence: 4,
+          kind: "user_message" as const,
+          content: [{ type: "text", text: "Latest question" }],
+        },
+      ],
+    };
+    Reflect.set(source, "pinned", [pinnedEntry]);
+    const builder = new ContextBuilder({
+      ...emptyRuntimePreparation(),
+      repository: { load: () => Promise.resolve(source), saveCheckpoint },
+      id: () => "checkpoint-compaction",
+      now: () => new Date("2026-08-30T00:00:00Z"),
+    });
+    const constrained = snapshot();
+    constrained.executionSpec.model.contextWindow = 8_192;
+    constrained.executionSpec.model.maxOutputTokens = 128;
+
+    const { messages } = await builder.build(
+      "session-1",
+      constrained,
+      new AbortController().signal,
+      "run-1",
+      { complete },
+    );
+
+    expect(complete).toHaveBeenCalled();
+    const request = complete.mock.calls[0]![0];
+    expect(request.purpose).toBe("compaction");
+    expect(JSON.stringify(request.messages)).toContain("previous summary");
+    expect(saveCheckpoint).toHaveBeenCalledWith(
+      expect.objectContaining({
+        compactionPromptVersion: "context-summary-v1",
+        pinnedMessageIds: expect.arrayContaining(["msg-1"]),
+      }),
+    );
+    expect(JSON.stringify(messages)).toContain("Original task");
+    expect(JSON.stringify(messages)).toContain("Latest question");
+    expect(JSON.stringify(messages)).toContain("任务摘要");
   });
 });
 

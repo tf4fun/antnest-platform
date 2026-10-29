@@ -40,6 +40,9 @@ export function runSnapshot(input: {
           modelFailover: selected.modelFailover,
           fallbackModels: structuredClone(selected.fallbackModels ?? []),
         }),
+    ...(selected.compactionModel === undefined
+      ? {}
+      : { compactionModel: structuredClone(selected.compactionModel) }),
   };
   return {
     organizationId: selected.organizationId,

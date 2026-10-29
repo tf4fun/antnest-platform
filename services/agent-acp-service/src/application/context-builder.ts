@@ -12,6 +12,8 @@ import type {
 import type { RuntimeInformationPort } from "../ports/runtime-information.js";
 import type { ToolCatalogPort } from "../ports/tools.js";
 import { estimateMessages, estimateText, inputBudget } from "./context-budget.js";
+import { compactModelContext, type CompactionComplete } from "./context-compaction.js";
+import { seedTokenCalibration } from "./token-calibration.js";
 import { runtimeContext } from "./runtime-context.js";
 import type {
   ContextCheckpoint,
@@ -47,6 +49,7 @@ export class ContextBuilder {
     snapshot: RunExecutionSnapshot,
     ownershipSignal: AbortSignal,
     runId: string,
+    options?: { complete?: CompactionComplete },
   ): Promise<PreparedRunContext> {
     if (snapshot.executionSpec.skillInstructions.length !== 0) {
       throw new DomainError(
@@ -60,11 +63,57 @@ export class ContextBuilder {
         ? []
         : withPlanTool(await this.dependencies.tools.list(snapshot, ownershipSignal));
     assertWorkerOwnership(ownershipSignal);
+    const calibrations = await withWorkerOwnership(ownershipSignal, async () => {
+      const compaction = snapshot.executionSpec.compactionModel;
+      const candidate =
+        compaction === undefined
+          ? undefined
+          : {
+              ...snapshot,
+              modelProfileId: compaction.modelProfileId,
+              providerConnectionId: compaction.providerConnectionId,
+              executionSpec: { ...snapshot.executionSpec, model: compaction.model },
+            };
+      return {
+        ratio: (await this.dependencies.repository.loadCalibration?.(snapshot)) ?? 1,
+        candidateRatio:
+          candidate === undefined
+            ? undefined
+            : ((await this.dependencies.repository.loadCalibration?.(candidate)) ?? 1),
+        candidate,
+      };
+    });
+    seedTokenCalibration(snapshot, calibrations.ratio);
+    if (calibrations.candidate !== undefined && calibrations.candidateRatio !== undefined)
+      seedTokenCalibration(calibrations.candidate, calibrations.candidateRatio);
     const budget = inputBudget(snapshot, tools);
     const source = await withWorkerOwnership(ownershipSignal, () =>
       this.dependencies.repository.load(sessionId),
     );
-    const newestUser = source.messages.findLast((message) => message.kind === "user_message");
+    const storedSequences = new Set(source.messages.map((message) => message.sequence));
+    for (const entry of source.pinned ?? []) {
+      if (entry.id === undefined || !storedSequences.has(entry.sequence)) continue;
+      const current = source.messages.find((message) => message.sequence === entry.sequence);
+      if (current !== undefined && current.id === undefined) current.id = entry.id;
+    }
+    const stream: StoredContextMessage[] = [
+      ...(source.pinned ?? []).filter((entry) => !storedSequences.has(entry.sequence)),
+      ...source.messages,
+    ];
+    const pinnedSequences = new Set((source.pinned ?? []).map((entry) => entry.sequence));
+    const pinnedIndexes = new Set<number>();
+    for (let index = 0; index < stream.length - source.messages.length; index += 1)
+      pinnedIndexes.add(index);
+    stream.forEach((message, index) => {
+      if (pinnedSequences.has(message.sequence)) pinnedIndexes.add(index);
+    });
+    const firstUserStored = stream.findIndex((message) => message.kind === "user_message");
+    if (firstUserStored !== -1) pinnedIndexes.add(firstUserStored);
+    const pinnedMessageIds = [...pinnedIndexes]
+      .sort((left, right) => left - right)
+      .map((index) => stream[index]?.id)
+      .filter((id): id is string => id !== undefined);
+    const newestUser = stream.findLast((message) => message.kind === "user_message");
     const invocation =
       newestUser?.kind === "user_message" ? skillInvocation(newestUser.content) : undefined;
     let expanded: ContentBlock[] | undefined;
@@ -101,12 +150,12 @@ export class ContextBuilder {
     const system = systemMessage(snapshot);
     system.content.push({
       type: "text",
-      text: runtimeContext(information, Math.min(16384, Math.floor(budget / 4) * 4)),
+      text: runtimeContext(information, Math.min(16384, Math.max(0, Math.floor(budget / 4) * 4))),
     });
     const prefix: ModelMessage[] = [system];
     if (source.plan !== undefined)
       prefix.push({
-        role: "assistant",
+        role: "system",
         content: [
           {
             type: "text",
@@ -115,32 +164,45 @@ export class ContextBuilder {
         ],
       });
     const checkpoint = checkpointMessage(source.checkpoint);
-    const history = source.messages.flatMap(modelMessages);
-    const complete = [...prefix, ...(checkpoint === null ? [] : [checkpoint]), ...history];
-    if (estimateMessages(complete) <= budget) {
+    const estimatorModel = snapshot.executionSpec.model;
+    const complete: ModelMessage[] = [];
+    for (const entry of prefix) complete.push(entry);
+    if (checkpoint !== null) complete.push(checkpoint);
+    const modelIndexByStored: number[][] = stream.map(() => []);
+    stream.forEach((message, storedIndex) => {
+      for (const modelMessage of modelMessages(message)) {
+        modelIndexByStored[storedIndex]!.push(complete.length);
+        complete.push(modelMessage);
+      }
+    });
+    if (estimateMessages(complete, estimatorModel) <= budget) {
       assertWorkerOwnership(ownershipSignal);
       return { messages: complete, tools, runtimeWorkspace: information.environment.workspace };
     }
 
-    const systemCost = estimateMessages(prefix);
-    const tailBudget = Math.max(1, Math.floor((budget - systemCost) * 0.55));
-    const { dropped, kept } = keepNewest(source.messages, tailBudget, modelMessages);
-    if (kept.length === 0) {
-      throw new DomainError(
-        "context_budget_exhausted",
-        "The newest user request does not fit the selected model context window",
-      );
-    }
+    const compacted = await compactModelContext({
+      snapshot,
+      messages: complete,
+      tools,
+      signal: ownershipSignal,
+      ...(options?.complete === undefined ? {} : { complete: options.complete }),
+    });
+    assertWorkerOwnership(ownershipSignal);
 
-    const summary = boundedSummary(
-      source.checkpoint,
-      dropped,
-      Math.max(256, Math.floor((budget - systemCost) * 4 * 0.3)),
-    );
-    if (dropped.length > 0) {
-      const lastDropped = dropped.at(-1);
-      const throughSequence =
-        lastDropped === undefined ? undefined : (lastDropped.endSequence ?? lastDropped.sequence);
+    const dropped = new Set(compacted.droppedIndexes);
+    let boundary = -1;
+    for (let storedIndex = 0; storedIndex < stream.length; storedIndex += 1) {
+      if (pinnedIndexes.has(storedIndex)) continue;
+      const indexes = modelIndexByStored[storedIndex]!;
+      if (indexes.length > 0 && indexes.every((index) => dropped.has(index))) {
+        boundary = storedIndex;
+      } else {
+        break;
+      }
+    }
+    if (boundary !== -1) {
+      const lastDropped = stream[boundary];
+      const throughSequence = lastDropped?.endSequence ?? lastDropped?.sequence;
       if (throughSequence === undefined) {
         throw new DomainError("context_compaction_failed", "Compaction boundary is missing");
       }
@@ -150,26 +212,21 @@ export class ContextBuilder {
           sessionId,
           runId,
           throughSequence,
-          summary,
-          tokenCount: estimateText(summary),
+          summary: compacted.summary,
+          tokenCount: estimateText(compacted.summary, estimatorModel),
           createdAt: this.dependencies.now(),
+          compactionPromptVersion: compacted.promptVersion,
+          ...(pinnedMessageIds.length === 0 ? {} : { pinnedMessageIds }),
         }),
       );
     }
 
-    const compacted = [
-      ...prefix,
-      ...(summary.length === 0 ? [] : [summaryMessage(summary)]),
-      ...kept.flatMap(modelMessages),
-    ];
-    if (estimateMessages(compacted) > budget) {
-      throw new DomainError(
-        "context_budget_exhausted",
-        "Conversation context does not fit the selected model context window",
-      );
-    }
     assertWorkerOwnership(ownershipSignal);
-    return { messages: compacted, tools, runtimeWorkspace: information.environment.workspace };
+    return {
+      messages: compacted.messages,
+      tools,
+      runtimeWorkspace: information.environment.workspace,
+    };
   }
 }
 
@@ -222,74 +279,4 @@ function toModelMessages(message: StoredContextMessage): ModelMessage[] {
         })),
       ];
   }
-}
-
-function keepNewest(
-  messages: StoredContextMessage[],
-  budget: number,
-  modelMessages: (message: StoredContextMessage) => ModelMessage[] = toModelMessages,
-): { dropped: StoredContextMessage[]; kept: StoredContextMessage[] } {
-  let used = 0;
-  let boundary = messages.length;
-  for (let index = messages.length - 1; index >= 0; index -= 1) {
-    const message = messages[index];
-    if (message === undefined) {
-      continue;
-    }
-    const cost = estimateMessages(modelMessages(message));
-    if (used > 0 && used + cost > budget) {
-      break;
-    }
-    used += cost;
-    boundary = index;
-  }
-  return { dropped: messages.slice(0, boundary), kept: messages.slice(boundary) };
-}
-
-function boundedSummary(
-  checkpoint: ContextCheckpoint | null,
-  dropped: StoredContextMessage[],
-  maxCharacters: number,
-): string {
-  const entries = [
-    ...(checkpoint === null || checkpoint.summary.length === 0
-      ? []
-      : [`[previous_summary] ${checkpoint.summary}`]),
-    ...dropped.map(summaryEntry),
-  ];
-  const kept: string[] = [];
-  let used = 0;
-  for (let index = entries.length - 1; index >= 0; index -= 1) {
-    const entry = entries[index];
-    if (entry === undefined) {
-      continue;
-    }
-    const cost = entry.length + (kept.length === 0 ? 0 : 1);
-    if (cost > maxCharacters - used) {
-      continue;
-    }
-    kept.unshift(entry);
-    used += cost;
-  }
-  const omitted = kept.length < entries.length ? "[Earlier complete entries omitted]" : "";
-  return [omitted, ...kept].filter((entry) => entry.length > 0).join("\n");
-}
-
-function summaryEntry(message: StoredContextMessage): string {
-  if (message.kind === "tool_exchange") {
-    return (
-      `[tool_exchange] assistant=${contentText(message.assistant.content)} ` +
-      `calls=${JSON.stringify(message.assistant.toolCalls)} ` +
-      `results=${message.results.map((result) => `${result.toolCallId}:${contentText(result.content)}`).join(" | ")}`
-    );
-  }
-  return `[${message.kind}] ${contentText(message.content)}`;
-}
-
-function contentText(content: ContentBlock[]): string {
-  return content
-    .map((block) =>
-      block.type === "text" && typeof block.text === "string" ? block.text : `[${block.type}]`,
-    )
-    .join(" ");
 }

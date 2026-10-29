@@ -19,6 +19,8 @@ import type { ProviderCircuitPort } from "../ports/provider-circuit.js";
 import { RunEventPersistenceError } from "./durable-run-events.js";
 import { ModelRequestLimitError, type ModelRequestBudget } from "./model-request-budget.js";
 import { assertModelInputBudget } from "./context-budget.js";
+import { createTokenEstimator } from "./token-estimator.js";
+import { recordTokenCalibration } from "./token-calibration.js";
 
 export type ModelCallPolicyOptions = {
   providerCircuit?: ProviderCircuitPort;
@@ -86,12 +88,15 @@ export class ModelCallPolicy {
       messages: input.request.messages,
       tools: input.request.tools,
     });
-    const policy = frozen.snapshot.executionSpec.modelRetry ?? {
-      max: 0,
-      baseMs: 200,
-      capMs: 30000,
-    };
-    const reserve = purpose === "permission_judge" ? 1 : 0;
+    const policy =
+      purpose === "compaction"
+        ? { max: 0, baseMs: 200, capMs: 30000 }
+        : (frozen.snapshot.executionSpec.modelRetry ?? {
+            max: 0,
+            baseMs: 200,
+            capMs: 30000,
+          });
+    const reserve = purpose === "permission_judge" || purpose === "compaction" ? 1 : 0;
     const candidates = candidateSnapshots(frozen, purpose);
     const timeout = new AbortController();
     const signal = AbortSignal.any([originalSignal, timeout.signal]);
@@ -163,6 +168,10 @@ export class ModelCallPolicy {
           };
           prepared = this.options.model.prepare?.(actualRequest);
           current();
+          const estimator = createTokenEstimator(snapshot.executionSpec.model);
+          const estimatedInputTokens =
+            estimator.estimateMessages(actualRequest.messages) +
+            estimator.estimateTools(actualRequest.tools);
           try {
             await this.options.attempts.start(runId, {
               ordinal,
@@ -171,6 +180,8 @@ export class ModelCallPolicy {
               model: snapshot.executionSpec.model.model,
               purpose: purpose ?? "foreground",
               startedAt: new Date(clock.now()),
+              estimatedInputTokens,
+              tokenizer: snapshot.executionSpec.model.tokenizer ?? "none",
               ...(prepared === undefined
                 ? {}
                 : { reservation: structuredClone(prepared.reservation) }),
@@ -300,6 +311,8 @@ export class ModelCallPolicy {
               throw interrupted(error, result);
             }
             if (result === undefined) throw new Error("Model attempt completed without a result");
+            if (typeof result.usage.inputTokens === "number")
+              recordTokenCalibration(snapshot, estimatedInputTokens, result.usage.inputTokens);
             return result;
           }
           if (
@@ -378,6 +391,7 @@ function candidateSnapshots(
       model: primary.executionSpec.model,
     }),
   ];
+  if (purpose === "compaction") return snapshots;
   if (primary.executionSpec.modelFailover !== "before_output") return snapshots;
   const needsTools =
     input.tools.length > 0 ||

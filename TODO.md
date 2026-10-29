@@ -20,6 +20,7 @@ Issue 状态最后核对于 2026-10-28：141 个 issue，87 个已关闭，54 �
 ## 当前批次
 
 - **#51 上下文管理（2026-10-29）**：按 Controller → ACP → Admin Console → 独立集成批次交付，每个服务独立 PR，不等待 CI、不自动合并或关闭父 issue。Controller 批次已定义可选 `tokenizer`（`o200k`／`cl100k`／`none`）与 `compaction_model_profile_id`，通过现有模型 JSON 持久化及 execution snapshot 透传；domain／application 定向测试已先红（unknown field）后绿。ACP 估算、校准、模型摘要、首任务 pinning、溢出重试，Console 配置和系统验收均待交付；远程完整门禁待 PR CI，不以定向本地结果代替。
+- **#51 ACP 消费批次**：Controller PR [#385](https://github.com/tf4fun/antnest-platform/pull/385) 之后堆叠交付。ACP 已实现可选 tokenizer／摘要模型冻结、UTF-8 上界与有界分块 tiktoken、与 base64 长度无关的媒体预算、模型摘要和持久首任务 pin、完整 Tool 交换保留、无输出 overflow 一次重试及共享请求／费用／截止预算。127 项相关 unit 测试通过（新增功能先红后绿）；PostgreSQL migration、实际预算记账与组件门仍须远程 CI。校准复用不可变 attempt start／finish receipts，`model_token_calibration` 为最近 128 个有效样本的 p95 视图，而非重复写入的第二份账本；组织／profile／model／tokenizer 隔离。未知图像采用常规 OpenAI 8-tile 上界，非 OpenAI 特有图像公式未覆盖。Console 与独立集成／200-turn 中文系统验收待交付，#51 保持开放。
 
 当前状态（2026-10-28，北京时间）。2026-10-28 之前的检查点日志已移出本文件：已提交部分见 Git 历史，未提交的 2026-10-22 至 10-25 检查点见 `artifacts/verification/issue-triage-20261028/TODO-current-batch-history.md`。
 

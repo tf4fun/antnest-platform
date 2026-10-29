@@ -175,6 +175,10 @@ export class PostgresRunEventRepository implements RunEventRepository {
       model: input.model,
       purpose: input.purpose,
       startedAt: input.startedAt,
+      ...(input.estimatedInputTokens === undefined
+        ? {}
+        : { estimatedInputTokens: input.estimatedInputTokens }),
+      ...(input.tokenizer === undefined ? {} : { tokenizer: input.tokenizer }),
       ...(input.reservation === undefined ? {} : { reservation: input.reservation }),
     };
     return this.modelTransaction(input.runId, async (client) => {

@@ -54,6 +54,8 @@ export type ModelSpec = {
   supportsAudio?: boolean;
   supportsPdf?: boolean;
   supportsTools?: boolean;
+  tokenizer?: "o200k" | "cl100k" | "none";
+  compactionModelProfileId?: string;
   pricing?: ModelPricing;
 };
 
@@ -80,6 +82,7 @@ export type AgentExecutionSpec = {
   runBudget?: RunBudget;
   modelFailover?: ModelFailover;
   fallbackModels?: ModelCandidate[];
+  compactionModel?: ModelCandidate;
 };
 
 export type RuntimeBinding = {

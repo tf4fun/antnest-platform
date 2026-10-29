@@ -310,4 +310,96 @@ describe("execution configuration", () => {
       ),
     ).toThrow("access");
   });
+
+  it.each(["o200k", "cl100k", "none"] as const)(
+    "accepts tokenizer %s from the incoming model and retains it through publication and selection",
+    (tokenizer) => {
+      const fixture = executionConfiguration();
+      Reflect.set(fixture.models[0]!, "tokenizer", tokenizer);
+      const snapshot = parseExecutionConfiguration(fixture);
+      expect(snapshot.models[0]).toHaveProperty("tokenizer", tokenizer);
+      const projected = publicExecutionConfiguration(snapshot);
+      expect(projected.models[0]).toHaveProperty("tokenizer", tokenizer);
+      const selected = resolveExecutionConfiguration(projected, executionIdentity(), {});
+      expect(selected.model).toHaveProperty("tokenizer", tokenizer);
+    },
+  );
+
+  it.each([null, 0, 1, "bogus", "O200K", {}, []])(
+    "rejects invalid tokenizer %j at ingestion",
+    (value) => {
+      const fixture = executionConfiguration();
+      Reflect.set(fixture.models[0]!, "tokenizer", value);
+      expect(() => parseExecutionConfiguration(fixture)).toThrow();
+    },
+  );
+
+  it.each([null, 0, 1, "has space", " ", "x".repeat(201), {}, []])(
+    "rejects invalid compaction_model_profile_id %j at ingestion",
+    (value) => {
+      const fixture = executionConfiguration();
+      Reflect.set(fixture.models[0]!, "compaction_model_profile_id", value);
+      expect(() => parseExecutionConfiguration(fixture)).toThrow();
+    },
+  );
+
+  it("resolves an enabled compaction model and omits compactionModel when unreferenced", () => {
+    const fixture = executionConfiguration();
+    const compaction = {
+      ...fixture.models[0]!,
+      model_profile_id: "model-compaction",
+      model: "compaction-model",
+    };
+    Reflect.set(fixture.models[0]!, "tokenizer", "o200k");
+    Reflect.set(fixture.models[0]!, "compaction_model_profile_id", "model-compaction");
+    const snapshot = parseExecutionConfiguration({
+      ...fixture,
+      models: [...fixture.models, compaction],
+    });
+    const selected = resolveExecutionConfiguration(snapshot, executionIdentity(), {});
+    expect(selected).toMatchObject({
+      compactionModel: {
+        modelProfileId: "model-compaction",
+        providerConnectionId: "provider-1",
+        model: { model: "compaction-model" },
+      },
+    });
+    const plain = resolveExecutionConfiguration(
+      parseExecutionConfiguration(executionConfiguration()),
+      executionIdentity(),
+      {},
+    );
+    expect(plain).not.toHaveProperty("compactionModel");
+  });
+
+  it.each(["missing", "disabled model", "disabled provider"] as const)(
+    "reports model_unavailable at Run resolution for a %s compaction reference",
+    (scenario) => {
+      const fixture = executionConfiguration();
+      const providers: unknown[] = [...fixture.providers];
+      const models = fixture.models.map((model) => ({ ...model }));
+      const compaction = {
+        ...fixture.models[0]!,
+        model_profile_id: "model-compaction",
+        model: "compaction-model",
+        enabled: scenario !== "disabled model",
+      };
+      if (scenario === "disabled provider") {
+        compaction.connection_id = "provider-disabled";
+        providers.push({
+          connection_id: "provider-disabled",
+          provider_key: "deepseek",
+          request_protocol: "openai_chat_completions",
+          base_url: "https://disabled.example/v1",
+          enabled: false,
+        });
+      }
+      Reflect.set(models[0]!, "compaction_model_profile_id", "model-compaction");
+      if (scenario !== "missing") models.push(compaction);
+      const snapshot = parseExecutionConfiguration({ ...fixture, providers, models });
+      expect(() => resolveExecutionConfiguration(snapshot, executionIdentity(), {})).toThrowError(
+        expect.objectContaining({ name: DomainError.name, code: "model_unavailable" }),
+      );
+    },
+  );
 });
