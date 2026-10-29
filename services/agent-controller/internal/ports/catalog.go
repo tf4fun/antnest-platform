@@ -88,6 +88,7 @@ type TemplateRecord struct {
 
 type CatalogStore interface {
 	CatalogAvailabilityStore
+	ProviderObservationStore
 	GetCurrentModelProfileRevision(context.Context, string) (domain.ModelProfileRevision, error)
 	ProviderStore
 	ReplayModelProfileRequest(ctx context.Context, kind CatalogRequestKind, requestID string, fingerprint string) (ModelProfileRecord, bool, error)

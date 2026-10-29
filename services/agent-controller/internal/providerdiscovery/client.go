@@ -76,13 +76,12 @@ func (client *Client) ListModels(ctx context.Context, connection Connection, sec
 }
 
 type remoteModel struct {
-	ID          string `json:"id"`
-	Name        string `json:"name"`
-	Context     *int   `json:"context_length"`
-	TopProvider struct {
-		Output *int `json:"max_completion_tokens"`
-	} `json:"top_provider"`
-	Architecture struct {
+	ID                  string          `json:"id"`
+	Name                string          `json:"name"`
+	Context             json.RawMessage `json:"context_length"`
+	TopProvider         json.RawMessage `json:"top_provider"`
+	SupportedParameters json.RawMessage `json:"supported_parameters"`
+	Architecture        struct {
 		Inputs []string `json:"input_modalities"`
 	} `json:"architecture"`
 	Pricing remotePricing `json:"pricing"`
@@ -111,7 +110,7 @@ func decodeModels(body []byte) ([]Model, error) {
 }
 
 func (remote remoteModel) candidate() Model {
-	model := Model{ModelID: remote.ID, DisplayName: remote.Name, ContextWindow: positive(remote.Context), MaxOutputTokens: positive(remote.TopProvider.Output), Pricing: modelPricing(remote.Pricing)}
+	model := Model{ModelID: remote.ID, DisplayName: remote.Name, ContextWindow: optionalDimension(remote.Context), MaxOutputTokens: remote.maxCompletionTokens(), SupportsTools: remote.supportsTools(), Pricing: modelPricing(remote.Pricing)}
 	if strings.TrimSpace(model.DisplayName) == "" {
 		model.DisplayName = remote.ID
 	}
@@ -122,9 +121,58 @@ func (remote remoteModel) candidate() Model {
 	return model
 }
 
-func positive(value *int) *int {
-	if value == nil || *value <= 0 {
+const maximumSafeInteger = 9007199254740991
+
+// optionalDimension decodes one optional /models integer hint. Only an actual
+// JSON integer token counts — quoted numbers, fractions, booleans, null,
+// non-positive and out-of-safe-range values are all "unknown", never a list
+// error and never an invented limit.
+func optionalDimension(raw json.RawMessage) *int {
+	if len(raw) == 0 {
 		return nil
 	}
-	return value
+	var value int64
+	if err := json.Unmarshal(raw, &value); err != nil || value <= 0 || value > maximumSafeInteger {
+		return nil
+	}
+	converted := int(value)
+	return &converted
+}
+
+func (remote remoteModel) maxCompletionTokens() *int {
+	if len(remote.TopProvider) == 0 || string(remote.TopProvider) == "null" {
+		return nil
+	}
+	var top struct {
+		Output json.RawMessage `json:"max_completion_tokens"`
+	}
+	if err := json.Unmarshal(remote.TopProvider, &top); err != nil {
+		return nil
+	}
+	return optionalDimension(top.Output)
+}
+
+// supportsTools only trusts a complete valid array where every element is an
+// actual string token; absent, null, malformed arrays or non-string elements
+// (e.g. ["tools", null]) stay unknown (nil).
+func (remote remoteModel) supportsTools() *bool {
+	if len(remote.SupportedParameters) == 0 || string(remote.SupportedParameters) == "null" {
+		return nil
+	}
+	var elements []json.RawMessage
+	if err := json.Unmarshal(remote.SupportedParameters, &elements); err != nil || elements == nil {
+		return nil
+	}
+	parameters := make([]string, 0, len(elements))
+	for _, element := range elements {
+		var parameter string
+		// Require an actual JSON string token: unmarshalling "null" into a
+		// string silently succeeds and must not count as a parameter.
+		if len(element) == 0 || element[0] != '"' || json.Unmarshal(element, &parameter) != nil {
+			return nil
+		}
+		parameters = append(parameters, parameter)
+	}
+	value := slices.Contains(parameters, "tools")
+	return &value
 }

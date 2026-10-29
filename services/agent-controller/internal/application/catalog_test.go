@@ -346,6 +346,20 @@ type catalogStoreStub struct {
 	modelReplay              ports.ModelProfileRecord
 	templateReplay           ports.TemplateRecord
 	replayFound              bool
+	observationWrites        int
+	observationError         error
+	observationOriginal      ports.ProviderConnectionRecord
+	observedModels           []ports.DiscoveredModel
+}
+
+func (store *catalogStoreStub) ReplaceProviderObservations(_ context.Context, original ports.ProviderConnectionRecord, models []ports.DiscoveredModel) (int64, error) {
+	if store.observationError != nil {
+		return 0, store.observationError
+	}
+	store.observationWrites++
+	store.observationOriginal = original
+	store.observedModels = models
+	return int64(store.observationWrites), nil
 }
 
 func (store *catalogStoreStub) ReplayModelProfileRequest(

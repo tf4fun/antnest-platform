@@ -15,11 +15,36 @@ reply or schema includes a credential.
 The dedicated `ProviderAccessReader` reads current credential identity and
 ciphertext in one database snapshot. Saved discovery checks scope, availability
 and destination before opening the key, then sends it only to the checked Provider.
-It performs no writes or credential caching; rotation is visible on the next
-discovery. Draft discovery neither reads nor stores a credential. Normal
-connection reads select metadata only. Model response normalization is the former
-Console discovery adapter, including optional context/pricing metadata; builtin
+On success it durably replaces that connection's observation set (see
+"Discovery observations" below); it performs no credential caching, and
+rotation invalidates the stored set immediately. Draft discovery neither reads
+nor stores a credential and never writes observations. Normal connection reads
+select metadata only. Model response normalization is the former Console
+discovery adapter, including optional context/pricing metadata; builtin
 candidate defaults and user selection remain Console responsibilities.
+
+## Discovery observations
+
+Each successful saved discovery atomically replaces the connection's
+`provider_observations` set inside the same serial transaction order as
+credential writes. The set stores only whitelisted facts: a binding
+(organization, connection, provider, request protocol, canonical base URL and
+the STRING credential version it was observed under) plus the complete
+normalized model list. Each observed model carries the provider's exact API id
+and optional `context_tokens` / `max_output_tokens` hints and a `tools`
+capability from `/models` `supported_parameters`; malformed or absent optional
+fields decode as unknown, never as invented limits or capability claims.
+
+Replacement is compare-and-swap on that binding: a rotated credential, edited
+base URL, disabled connection or otherwise stale original rejects the whole
+transaction without touching the set or the execution revision. Concurrent
+saved discoveries on the same binding serialize — the last successful
+completion wins and advances `source_revision`. An empty but
+successful result clears the connection's models. Stale sets stay durable
+across rotation but publish nothing until a fresh discovery re-binds them.
+Model edits never trigger discovery; ordinary reads never call it. Observed
+bounds are trusted read-only facts for execution publication — they are not
+editable model parameters and not provider invoicing.
 
 Creation and each discovery apply the shared
 [Provider destination policy](../../../contracts/platform/provider-destination-policy.md).

@@ -550,6 +550,17 @@ does not spawn an independent publication task.
   authentication material on disabled connections, but ACP revokes disabled
   clients and aborts existing holders; it does not drain or revive them.
   Credential rotation on an enabled connection preserves that client's lifetime.
+- Publish trusted Provider discovery facts only while the stored observation
+  set's binding still matches the current connection: organization, connection,
+  provider, request protocol, canonical base URL and the current STRING
+  credential version. A matching set emits `provider_token_limits`
+  (`source:"models"`, its durable `source_revision`, binding and API model id)
+  on the execution model with the same API id — only when at least one token
+  dimension was observed — and `supports_tools` whenever capability was
+  proven. Rotated, edited, disabled or mismatched bindings publish nothing;
+  editable `context_window`/`max_output_tokens` can never fill an unknown
+  observed dimension. Facts live on the execution model only — never on
+  editable `ModelParameters`, history or fingerprints.
 - Publish the Agent's committed executable configuration, or its known build
   configuration with execution closed before the first successful build. Never
   substitute a pending rebuild target for a still-running configuration.
@@ -795,7 +806,6 @@ consistent changes of owner/access revision invalidate an old request proof.
 The internal Provider section contains current decrypted credentials. It must
 remain internal; Runtime deployment commands, managed-MCP arguments/environment
 and ciphertext storage details are not part of the published Agent payload.
-
 
 ## Model-call policy publication upgrade
 

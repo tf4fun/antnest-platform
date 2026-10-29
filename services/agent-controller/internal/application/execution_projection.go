@@ -39,6 +39,7 @@ func BuildExecutionSnapshot(ctx context.Context, source ports.ExecutionSource, o
 		}
 		result.Models = append(result.Models, ports.ExecutionModel{ModelParameters: model.Revision.Snapshot().Model.Parameters(), ModelProfileID: model.ModelProfileID, ConnectionID: model.ProviderConnectionID, DisplayName: model.DisplayName, Enabled: model.Enabled})
 	}
+	attachProviderObservations(result, source.ProviderObservations)
 	seenAgents := make(map[string]bool, len(source.Agents))
 	for _, agent := range source.Agents {
 		if agent.Agent.OrganizationID != source.OrganizationID || agent.Agent.AgentID == "" || seenAgents[agent.Agent.AgentID] {
@@ -60,6 +61,63 @@ func BuildExecutionSnapshot(ctx context.Context, source ports.ExecutionSource, o
 		return ports.ExecutionSnapshot{}, err
 	}
 	return result, nil
+}
+
+// attachProviderObservations publishes discovered facts only where the stored
+// set's binding still matches the current connection; stale/disabled/invalid
+// bindings emit nothing. Facts clone stored values.
+func attachProviderObservations(snapshot ports.ExecutionSnapshot, sets []domain.ProviderObservationSet) {
+	for _, set := range sets {
+		if !set.ValidObservationSet() {
+			continue
+		}
+		provider := findExecutionProvider(snapshot.Providers, set.Binding.ConnectionID)
+		if provider == nil || !provider.Enabled || set.Binding.OrganizationID != snapshot.OrganizationID {
+			continue
+		}
+		support, ok := domain.SupportedProvider(provider.ProviderKey)
+		if !ok || !set.Binding.Matches(snapshot.OrganizationID, provider.ConnectionID, provider.ProviderKey,
+			support.RequestProtocol, provider.BaseURL, provider.CredentialRevision) {
+			continue
+		}
+		for index := range snapshot.Models {
+			model := &snapshot.Models[index]
+			if model.ConnectionID != provider.ConnectionID {
+				continue
+			}
+			for _, observed := range set.Models {
+				if observed.Model != model.Model {
+					continue
+				}
+				if observed.ContextTokens != nil || observed.MaxOutputTokens != nil {
+					model.ProviderTokenLimits = &domain.ProviderTokenLimits{Source: domain.ProviderTokenLimitsSource, SourceRevision: set.SourceRevision,
+						Binding:       domain.ProviderTokenLimitBinding{ProviderObservationBinding: set.Binding, Model: observed.Model},
+						ContextTokens: cloneInt64(observed.ContextTokens), MaxOutputTokens: cloneInt64(observed.MaxOutputTokens)}
+				}
+				if observed.SupportsTools != nil {
+					tools := *observed.SupportsTools
+					model.SupportsTools = &tools
+				}
+			}
+		}
+	}
+}
+
+func findExecutionProvider(providers []ports.ExecutionProvider, connectionID string) *ports.ExecutionProvider {
+	for index := range providers {
+		if providers[index].ConnectionID == connectionID {
+			return &providers[index]
+		}
+	}
+	return nil
+}
+
+func cloneInt64(value *int64) *int64 {
+	if value == nil {
+		return nil
+	}
+	cloned := *value
+	return &cloned
 }
 
 func projectExecutionAgent(source ports.ExecutionAgentSource) ports.ExecutionAgent {

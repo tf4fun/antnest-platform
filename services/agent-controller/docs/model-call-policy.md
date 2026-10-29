@@ -48,10 +48,19 @@ then sends the new effective policy through the ordinary ACP Apply/ACK path.
 An old ACK does not acknowledge the new desired revision. The migration journal
 makes repeated or concurrent startup idempotent. Revision exhaustion fails the
 whole migration, including its DDL; it never wraps or skips an organization.
+
+Migration 0033 adds `provider_observations` for durable saved-discovery sets
+(see [provider-management.md](provider-management.md)). Published
+`provider_token_limits` are trusted observed bounds bound to the current
+credential version — token accounting uses them as observed capacity hints,
+not as provider invoices, and they never relax the editable
+`context_window`/`max_output_tokens` or Template/Run policy bounds.
 Do not roll back the database journal or publication revisions. An older binary
 rejects a newer migration history; use a compatible forward correction.
 
-Provider capability/token observations, organization policy management and
+The Provider capability/token observation producer is delivered above:
+saved discovery persists binding-checked sets and publication emits trusted
+`provider_token_limits`/`supports_tools`. Organization policy management and
 publication, Console controls and the final cross-service Docker acceptance
-remain separate #52 deliveries. This Template producer does not establish those
-workflows or promise a hard token bound from an editable model setting.
+remain separate #52 deliveries. Neither producer establishes those workflows
+or promises a hard token bound from an editable model setting.
