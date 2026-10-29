@@ -537,6 +537,10 @@ func (h *handler) createModelProfile(response http.ResponseWriter, request *http
 		writeError(response, http.StatusBadRequest, "invalid_request", "Required Model Profile field is empty")
 		return
 	}
+	if err := validateModelContextMetadata(input.Model); err != nil {
+		writeError(response, http.StatusBadRequest, "invalid_request", "Invalid Model context metadata")
+		return
+	}
 	requestID, ok := commandRequestID(response, request, actor.OrganizationID, "catalog")
 	if !ok {
 		return
@@ -570,6 +574,10 @@ func (h *handler) reviseModelProfile(response http.ResponseWriter, request *http
 	}
 	if !required(input.DisplayName) || len(input.Model) == 0 || input.ExpectedVersion < 1 {
 		writeError(response, http.StatusBadRequest, "invalid_request", "Required Model Profile field is empty")
+		return
+	}
+	if err := validateModelContextMetadata(input.Model); err != nil {
+		writeError(response, http.StatusBadRequest, "invalid_request", "Invalid Model context metadata")
 		return
 	}
 	requestID, ok := commandRequestID(response, request, actor.OrganizationID, "catalog")

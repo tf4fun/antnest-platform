@@ -207,15 +207,17 @@ type runtimeProjectionSource struct {
 }
 
 type agentModelSpecSource struct {
-	Pricing         modelPricingSource `json:"pricing,omitzero"`
-	BaseURL         string             `json:"base_url"`
-	Model           string             `json:"model"`
-	ContextWindow   int                `json:"context_window"`
-	MaxOutputTokens int                `json:"max_output_tokens"`
-	Temperature     *float64           `json:"temperature,omitempty"`
-	SupportsImages  bool               `json:"supports_images"`
-	SupportsAudio   bool               `json:"supports_audio,omitempty"`
-	SupportsPDF     bool               `json:"supports_pdf,omitempty"`
+	Pricing                  modelPricingSource `json:"pricing,omitzero"`
+	BaseURL                  string             `json:"base_url"`
+	Model                    string             `json:"model"`
+	ContextWindow            int                `json:"context_window"`
+	MaxOutputTokens          int                `json:"max_output_tokens"`
+	Temperature              *float64           `json:"temperature,omitempty"`
+	SupportsImages           bool               `json:"supports_images"`
+	SupportsAudio            bool               `json:"supports_audio,omitempty"`
+	SupportsPDF              bool               `json:"supports_pdf,omitempty"`
+	Tokenizer                string             `json:"tokenizer,omitempty"`
+	CompactionModelProfileID string             `json:"compaction_model_profile_id,omitempty"`
 }
 
 type agentRuntimeResourcesSource struct {
