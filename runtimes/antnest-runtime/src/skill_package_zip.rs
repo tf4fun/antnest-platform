@@ -57,9 +57,8 @@ pub(crate) fn validate_skill_zip(artifact: &[u8]) -> Result<SkillPackage, &'stat
         let raw_name = std::str::from_utf8(entry.name_raw())
             .map_err(|_| "invalid_package")?
             .to_owned();
-        if raw_name != entry.name()
+        if raw_name != entry.name().map_err(|_| "invalid_package")?
             || entry.encrypted()
-            || !safe_extra(entry.extra_data())
             || !portable_encoding(artifact, entry.central_header_start(), entry.name_raw())
         {
             return Err("invalid_package");
@@ -205,6 +204,7 @@ fn portable_encoding(artifact: &[u8], start: u64, name: &[u8]) -> bool {
     let flags = u16::from_le_bytes([header[8], header[9]]);
     let utf8 = flags & 0x800 != 0;
     name == &data[..name_len]
+        && safe_extra(Some(&data[name_len..name_len + extra_len]))
         && std::str::from_utf8(comment).is_ok()
         && (utf8 || (name.is_ascii() && comment.is_ascii()))
 }
