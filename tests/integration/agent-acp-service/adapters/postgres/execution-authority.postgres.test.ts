@@ -265,6 +265,18 @@ describe.skipIf(databaseUrl === undefined)(
       },
     );
 
+    it("keeps Provider fixture edits on the original authority", () => {
+      const input = configuration();
+      const selected = provider(input);
+      expect(selected).toBe(input.providers[0]);
+      selected.credential_revision = "fixture-next";
+      selected.base_url = "https://fixture-routing.example/v1";
+      expect(input.providers[0]).toMatchObject({
+        credential_revision: "fixture-next",
+        base_url: "https://fixture-routing.example/v1",
+      });
+    });
+
     it("permits explicit new Provider and Runtime credential identities at a newer revision", async () => {
       const first = configuration();
       expect(await repository.save(first, null)).toBe(true);
@@ -838,7 +850,7 @@ function provider(input: ExecutionConfiguration) {
     !("credential_revision" in value)
   )
     throw new Error("Fixture Provider authority is missing");
-  return { ...value, credential };
+  return value as typeof value & { credential: typeof credential };
 }
 
 function runtime(input: ExecutionConfiguration) {
