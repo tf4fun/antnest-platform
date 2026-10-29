@@ -23,6 +23,7 @@ import {
   imageSpec,
   isPublishable,
   listTree,
+  makefileChange,
   matrices,
   matrix,
   matrixEntry,
@@ -289,7 +290,7 @@ test("documentation-only changes select no suites", () => {
   );
 });
 
-test("workflow, selector, ownership, contract root and Makefile changes select every suite", () => {
+test("workflow, selector, ownership, contract root and unattributed Makefile changes select every suite", () => {
   for (const file of [
     ".github/workflows/integration.yml",
     ".github/workflows/e2e.yml",
@@ -558,11 +559,70 @@ test("the scope option intersects every selection mode afterwards", () => {
   );
 });
 
-test("Makefile changes stay conservative until target ownership is proven", () => {
-  assert.equal(
-    selectSuites(["Makefile"]).length,
-    enabled.length,
-    "a Makefile change selects every suite (narrowing pending)",
+test("a Makefile change selects the suites whose make targets reach it", () => {
+  const makefile = readFileSync(resolve(root, "Makefile"), "utf8");
+  const select = (targets, files = ["Makefile"]) =>
+    ids(selectSuites(files, { makefile: { targets, texts: [makefile] } }));
+  assert.deepEqual(select(new Set(["test-egress-postgres"])), [
+    "egress-postgres",
+  ]);
+  assert.deepEqual(
+    select(new Set(["e2e-service-authentication-integration"])),
+    ["c-service-authentication-integration", "c-encryption-key-rotation"],
+    "a recursive $(MAKE) call reaches the target",
+  );
+  assert.deepEqual(select(new Set(["fmt"])), [], "no suite runs fmt");
+  assert.deepEqual(select(new Set()), [], "a comment-only change runs none");
+  const fixture = [
+    "test-egress-postgres: helper-z",
+    "\tsh x",
+    "helper-z:",
+    "\ttrue",
+    "",
+  ].join("\n");
+  assert.deepEqual(
+    ids(
+      selectSuites(["Makefile"], {
+        makefile: { targets: new Set(["helper-z"]), texts: [fixture] },
+      }),
+    ),
+    ["egress-postgres"],
+    "a prerequisite change reaches the suite",
+  );
+  assert(
+    select(new Set(["test-egress-postgres"]), [
+      "Makefile",
+      "services/identity-service/internal/server/http.go",
+    ]).includes("identity-postgres"),
+    "other changed files still select their suites",
+  );
+});
+
+test("an unattributed Makefile change stays conservative", () => {
+  for (const makefile of [undefined, { targets: null, texts: [] }])
+    assert.equal(
+      selectSuites(["Makefile"], { makefile }).length,
+      enabled.length,
+    );
+});
+
+test("makefileChange reports changed targets and both Makefile revisions", () => {
+  const base = "test-a:\n\tnode a.mjs\n";
+  const head = "test-a:\n\tnode a2.mjs\n";
+  const git = (command, args) => {
+    if (args[0] === "diff") return "@@ -2 +2 @@\n";
+    if (args[0] === "show") return args[1] === "base:Makefile" ? base : head;
+    throw new Error(`unexpected ${args}`);
+  };
+  assert.deepEqual(makefileChange("base", "head", git), {
+    targets: new Set(["test-a"]),
+    texts: [base, head],
+  });
+  assert.deepEqual(
+    makefileChange("base", "head", () => {
+      throw new Error("no history");
+    }),
+    { targets: null, texts: [] },
   );
 });
 

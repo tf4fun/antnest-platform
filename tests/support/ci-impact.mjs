@@ -225,7 +225,10 @@ export function selectComponents(files, { all = false, sources } = {}) {
       selected.add(direct);
       continue;
     }
-    if (helperTest.test(file) || file === "LICENSE") continue;
+    // Service workflows never run the root Makefile; its suites narrow by
+    // target in ci-changes.mjs.
+    if (helperTest.test(file) || file === "LICENSE" || file === "Makefile")
+      continue;
     const owned = workflowService.exec(file)?.[1];
     if (owned) {
       const service = owned === "runtime" ? "antnest-runtime" : owned;
@@ -239,7 +242,6 @@ export function selectComponents(files, { all = false, sources } = {}) {
       file === "go.work" ||
       file === "go.work.sum" ||
       file === ".golangci.yml" ||
-      file === "Makefile" ||
       file === "tests/support/ci-ownership.json" ||
       file.startsWith(".github/")
     ) {
@@ -282,10 +284,61 @@ export function selectComponents(files, { all = false, sources } = {}) {
 }
 
 const targetLine = /^([A-Za-z0-9][\w.-]*)\s*:(?!\s*=)/u;
+const targetName = /^[A-Za-z0-9][\w.-]*$/u;
+const recursiveMake =
+  /(?:^|[\s;&|(])(?:make|\$\(MAKE\))\s+([A-Za-z0-9][\w.-]*)/gu;
+// Blank lines, comments and .PHONY declarations change no recipe.
+const inert = (line) =>
+  line === undefined ||
+  line.trim() === "" ||
+  line.trimStart().startsWith("#") ||
+  /^\.PHONY\s*:/u.test(line);
+
+// The targets each Makefile target reaches directly: its prerequisites and
+// the targets its recipe runs through make or $(MAKE).
+export function makefileGraph(text) {
+  const graph = new Map();
+  let current = null;
+  for (const line of text.split("\n")) {
+    if (line.startsWith("\t")) {
+      if (current)
+        for (const [, target] of line.matchAll(recursiveMake))
+          graph.get(current).add(target);
+      continue;
+    }
+    const header = /^([A-Za-z0-9][\w.-]*)\s*:(?!\s*=)(.*)$/u.exec(line);
+    if (header) {
+      current = header[1];
+      if (!graph.has(current)) graph.set(current, new Set());
+      for (const prerequisite of header[2].split(/\s+/u))
+        if (targetName.test(prerequisite))
+          graph.get(current).add(prerequisite);
+      continue;
+    }
+    // Any other top-level line, .PHONY included, ends the recipe.
+    if (line.trim() !== "" && !line.trimStart().startsWith("#")) current = null;
+  }
+  return graph;
+}
+
+// The make targets a command runs, followed through every graph.
+export function makeTargetsRun(commands, graphs) {
+  const reached = new Set();
+  const pending = commands.flatMap((command) =>
+    [...command.matchAll(recursiveMake)].map(([, target]) => target),
+  );
+  while (pending.length > 0) {
+    const target = pending.pop();
+    if (reached.has(target)) continue;
+    reached.add(target);
+    for (const graph of graphs) pending.push(...(graph.get(target) ?? []));
+  }
+  return reached;
+}
 
 // The Makefile targets whose recipe lines a diff touched, or null when a
 // change cannot be attributed to named targets and callers must stay
-// conservative.
+// conservative. Blank, comment and .PHONY lines are attributed to none.
 export function makefileTargets(base, head, git = execFileSync) {
   const diff = git(
     "git",
@@ -324,6 +377,7 @@ export function makefileTargets(base, head, git = execFileSync) {
         line < Number(baseStart) + Number(baseCount);
         line++
       ) {
+        if (inert(blob(base)[line - 1])) continue;
         const target = owner(base, line);
         if (target === null) return null;
         changed.add(target);
@@ -334,6 +388,7 @@ export function makefileTargets(base, head, git = execFileSync) {
         line < Number(headStart) + Number(headCount);
         line++
       ) {
+        if (inert(blob(head)[line - 1])) continue;
         const target = owner(head, line);
         if (target === null) return null;
         changed.add(target);
