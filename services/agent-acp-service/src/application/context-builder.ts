@@ -150,7 +150,12 @@ export class ContextBuilder {
     const system = systemMessage(snapshot);
     system.content.push({
       type: "text",
-      text: runtimeContext(information, Math.min(16384, Math.max(0, Math.floor(budget / 4) * 4))),
+      text: runtimeContext(
+        information,
+        Math.min(16384, Math.floor(budget / 4)),
+        (text) => estimateText(text, snapshot.executionSpec.model),
+        budget,
+      ),
     });
     const prefix: ModelMessage[] = [system];
     if (source.plan !== undefined)

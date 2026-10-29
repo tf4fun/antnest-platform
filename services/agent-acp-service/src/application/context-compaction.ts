@@ -184,7 +184,10 @@ export async function compactModelContext(
   const summaryFrame = estimator.estimateMessages([
     { role: "system", content: [{ type: "text", text: SUMMARY_PREFIX }] },
   ]);
-  const summaryBudget = budget - pinnedCost - used - summaryFrame;
+  const summaryBudget = Math.min(
+    Math.floor(budget * OUTPUT_SHARE),
+    budget - pinnedCost - used - summaryFrame,
+  );
   if (summaryBudget <= 0)
     throw new DomainError(
       "context_budget_exhausted",
@@ -482,5 +485,5 @@ function mechanicalSummary(
     kept.push(entry);
     used += cost;
   }
-  return kept.join("\n");
+  return boundText(kept.join("\n"), budget, estimator);
 }

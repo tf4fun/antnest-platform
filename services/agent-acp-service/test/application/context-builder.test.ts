@@ -2,6 +2,7 @@ import { emptyRuntimePreparation, runtimeInformation } from "../fixtures/runtime
 import { describe, expect, it, vi } from "vitest";
 
 import { ContextBuilder } from "../../src/application/context-builder.js";
+import { estimateMessages, inputBudget } from "../../src/application/context-budget.js";
 import type { ContextRepository, ContextSource } from "../../src/ports/context-repository.js";
 import type { RunExecutionSnapshot } from "../../src/domain/types.js";
 
@@ -472,12 +473,67 @@ describe("ContextBuilder", () => {
     expect(saveCheckpoint).toHaveBeenCalledWith(
       expect.objectContaining({
         compactionPromptVersion: "context-summary-v1",
-        pinnedMessageIds: expect.arrayContaining(["msg-1"]),
       }),
     );
+    expect(saveCheckpoint.mock.calls[0]?.[0].pinnedMessageIds).toContain("msg-1");
     expect(JSON.stringify(messages)).toContain("Original task");
     expect(JSON.stringify(messages)).toContain("Latest question");
     expect(JSON.stringify(messages)).toContain("任务摘要");
+  });
+
+  it("keeps the pinned first task when runtime context consumes most of the byte budget", async () => {
+    const information = runtimeInformation();
+    information.instructions!.content = "中".repeat(12_000);
+    information.skills = Array.from({ length: 40 }, (_, index) => ({
+      source: "system" as const,
+      name: `skill-${index}`,
+      description: "中文技能说明".repeat(100),
+      path: { root: "system_skills" as const, path: `skills/skill-${index}/SKILL.md` },
+    }));
+    const originalTask = "原始任务要求".repeat(80);
+    const builder = new ContextBuilder({
+      ...emptyRuntimePreparation(),
+      runtimeInformation: { read: () => Promise.resolve(information) },
+      repository: {
+        load: () =>
+          Promise.resolve({
+            checkpoint: null,
+            messages: [
+              {
+                sequence: 1,
+                kind: "user_message",
+                content: [{ type: "text", text: originalTask }],
+              },
+              {
+                sequence: 2,
+                kind: "user_message",
+                content: [{ type: "text", text: "继续" }],
+              },
+            ],
+          }),
+        saveCheckpoint: vi.fn(),
+      },
+      id: () => "checkpoint-runtime",
+      now: () => new Date("2026-08-30T00:00:00Z"),
+    });
+    const constrained = snapshot();
+    constrained.executionSpec.model.contextWindow = 8_192;
+    constrained.executionSpec.model.maxOutputTokens = 128;
+    constrained.executionSpec.model.tokenizer = "none";
+
+    const { messages, tools } = await builder.build(
+      "session-1",
+      constrained,
+      new AbortController().signal,
+      "run-1",
+    );
+
+    expect(estimateMessages(messages, constrained.executionSpec.model)).toBeLessThanOrEqual(
+      inputBudget(constrained, tools),
+    );
+    expect(JSON.stringify(messages)).toContain(originalTask);
+    expect(JSON.stringify(messages)).toContain("/workspace/AGENTS.md");
+    expect(JSON.stringify(messages)).not.toContain("中".repeat(12_000));
   });
 });
 
