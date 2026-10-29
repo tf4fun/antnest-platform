@@ -117,6 +117,15 @@ its connection, not globally. Parameters have no endpoint: the connection owns i
 Credentials are write-only to browser clients, sealed with organization/connection/version as AEAD
 context. Rotation writes no model, template, Agent, or Runtime revision.
 
+Model parameters carry optional context metadata owned by the organization
+profile. `tokenizer` selects the context token estimator (`o200k`, `cl100k`,
+or `none`); omission or `none` keeps the conservative estimator. An optional
+`compaction_model_profile_id` names an enabled Model in the same organization
+for compaction summarization, resolved and frozen at Run acceptance by ACP;
+when absent, the selected Run model applies. Controller only stores,
+validates and publishes this metadata — the ACP consumer batch is pending.
+Both fields persist inside the stored model JSON; no migration is required.
+
 Request IDs and fingerprints provide command replay; a reused ID with different
 input is a conflict. Initial models and credentials either all commit or all roll
 back. Reads and mutations are organization-scoped. RPC transport instrumentation

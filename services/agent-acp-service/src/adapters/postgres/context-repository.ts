@@ -1,4 +1,4 @@
-import type { ContentBlock } from "../../domain/types.js";
+import type { ContentBlock, RunExecutionSnapshot } from "../../domain/types.js";
 import { decodeSessionEvent, type StoredSessionEvent } from "./session-event-codec.js";
 import type {
   ContextCheckpoint,
@@ -22,12 +22,28 @@ export class PostgresContextRepository implements ContextRepository {
     this.#authority = authority;
   }
 
+  public async loadCalibration(snapshot: RunExecutionSnapshot): Promise<number> {
+    const result = await this.kernel.query<{ ratio_p95: number | string }>(
+      "SELECT ratio_p95 FROM model_token_calibration WHERE organization_id=$1 AND model_profile_id=$2 AND model=$3 AND tokenizer=$4",
+      [
+        snapshot.organizationId,
+        snapshot.modelProfileId,
+        snapshot.executionSpec.model.model,
+        snapshot.executionSpec.model.tokenizer ?? "none",
+      ],
+    );
+    const ratio = Number(result.rows[0]?.ratio_p95);
+    return Number.isFinite(ratio) && ratio > 0 ? ratio : 1;
+  }
+
   public async load(sessionId: string): Promise<ContextSource> {
     const checkpointResult = await this.kernel.query<{
       through_sequence: string;
       summary: string;
+      compaction_prompt_version: string | null;
+      pinned_message_ids: unknown;
     }>(
-      `SELECT through_sequence, summary
+      `SELECT through_sequence, summary, compaction_prompt_version, pinned_message_ids
          FROM context_checkpoints
         WHERE session_id = $1
         ORDER BY through_sequence DESC
@@ -35,6 +51,15 @@ export class PostgresContextRepository implements ContextRepository {
       [sessionId],
     );
     const checkpoint = mapCheckpoint(checkpointResult.rows[0]);
+    const pinnedResult = await this.kernel.query<{
+      id: string;
+      sequence: string;
+      kind: string;
+      payload: unknown;
+    }>(
+      `SELECT id,sequence,kind,payload FROM session_messages WHERE session_id=$1 AND NOT context_excluded AND kind='user_message' ORDER BY sequence LIMIT 1`,
+      [sessionId],
+    );
     const messagesResult = await this.kernel.query<{
       sequence: string;
       kind: string;
@@ -55,8 +80,23 @@ export class PostgresContextRepository implements ContextRepository {
     );
     const latestPlan =
       plan.rows[0] === undefined ? undefined : decodeSessionEvent(plan.rows[0].payload);
+    const pinnedRow = pinnedResult.rows[0];
+    const pinned: StoredContextMessage[] =
+      pinnedRow === undefined
+        ? []
+        : [
+            {
+              id: pinnedRow.id,
+              sequence: Number(pinnedRow.sequence),
+              kind: "user_message",
+              content: asContent(
+                asRecord(pinnedRow.payload, "Session message payload is invalid").content,
+              ),
+            },
+          ];
     return {
       checkpoint,
+      pinned,
       messages: mapContextMessages(
         messagesResult.rows.map((row) => ({
           ...row,
@@ -98,8 +138,9 @@ export class PostgresContextRepository implements ContextRepository {
       if (runRow.state !== "running") throw new Error("Run is not running");
       await client.query(
         `INSERT INTO context_checkpoints(
-         id, session_id, through_sequence, summary, token_count, created_at
-       ) VALUES ($1, $2, $3, $4, $5, $6)
+         id, session_id, through_sequence, summary, token_count, created_at,
+         compaction_prompt_version, pinned_message_ids
+       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
        ON CONFLICT (session_id, through_sequence) DO NOTHING`,
         [
           input.id,
@@ -108,6 +149,8 @@ export class PostgresContextRepository implements ContextRepository {
           input.summary,
           input.tokenCount,
           input.createdAt,
+          input.compactionPromptVersion ?? null,
+          JSON.stringify(input.pinnedMessageIds ?? []),
         ],
       );
     });
@@ -115,7 +158,14 @@ export class PostgresContextRepository implements ContextRepository {
 }
 
 function mapCheckpoint(
-  row: { through_sequence: string; summary: string } | undefined,
+  row:
+    | {
+        through_sequence: string;
+        summary: string;
+        compaction_prompt_version: string | null;
+        pinned_message_ids: unknown;
+      }
+    | undefined,
 ): ContextCheckpoint | null {
   if (row === undefined) {
     return null;
@@ -123,6 +173,13 @@ function mapCheckpoint(
   return {
     throughSequence: Number(row.through_sequence),
     summary: row.summary,
+    ...(row.compaction_prompt_version === null
+      ? {}
+      : { compactionPromptVersion: row.compaction_prompt_version }),
+    ...(Array.isArray(row.pinned_message_ids) &&
+    row.pinned_message_ids.every((id) => typeof id === "string")
+      ? { pinnedMessageIds: row.pinned_message_ids }
+      : {}),
   };
 }
 

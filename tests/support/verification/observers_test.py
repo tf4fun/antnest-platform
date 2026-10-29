@@ -242,12 +242,18 @@ class ObserverTests(unittest.TestCase):
         self.assertFalse((self.root / 'parent.json').exists())
         self.assertFalse(self.output.exists())
 
-    def observe_snapshots(self, name):
-        self.start(name, OBSERVER_DOCKER_MODE='observe')
+    def observe_snapshots(self, name, *, preload=None):
+        self.start(name, preload=preload, OBSERVER_DOCKER_MODE='observe')
         self.ready()
         suffix = '.diagnostic-states.json' if name == 'commands' else '.state.json'
         deadline = time.monotonic() + 6
-        while not list(self.output.glob('*' + suffix)) and time.monotonic() < deadline:
+        while time.monotonic() < deadline:
+            self.assertIsNone(self.process.poll())
+            states = list(self.output.glob('*' + suffix))
+            private = [entry for entry in self.output.glob('*.private.log')
+                       if entry.read_text() == 'private fixture log\n']
+            if states and len(private) == 1:
+                break
             time.sleep(0.02)
         self.assertTrue(list(self.output.glob('*' + suffix)))
         files = list(self.output.glob('*.private.log'))
@@ -264,6 +270,9 @@ class ObserverTests(unittest.TestCase):
 
     def test_sdk_keeps_filtered_container_states_and_private_logs(self):
         self.observe_snapshots('sdk')
+
+    def test_sdk_private_log_written_after_state_snapshot(self):
+        self.observe_snapshots('sdk', preload="import pathlib,time;original=pathlib.Path.write_text;pathlib.Path.write_text=lambda self,*args,**kwargs: (time.sleep(0.2) if self.name.endswith('.private.log') else None) or original(self,*args,**kwargs)")
 
 
 if __name__ == '__main__':

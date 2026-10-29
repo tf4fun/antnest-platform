@@ -78,6 +78,8 @@ export const executionModelSchema = z.strictObject({
   supports_audio: z.boolean().optional(),
   supports_pdf: z.boolean().optional(),
   supports_tools: z.boolean().optional(),
+  tokenizer: z.enum(["o200k", "cl100k", "none"]).optional(),
+  compaction_model_profile_id: identifier.regex(/^\S+$/u).optional(),
   pricing: pricingSchema.optional(),
 });
 
@@ -440,6 +442,27 @@ export function resolveExecutionConfiguration(
   if (model === undefined || !model.enabled || provider === undefined || !provider.enabled) {
     throw new DomainError("model_unavailable", "Selected model is unavailable");
   }
+  const compactionId = model.compaction_model_profile_id;
+  let compaction: ModelCandidate | undefined;
+  if (compactionId !== undefined) {
+    const candidate = snapshot.models.find((item) => item.model_profile_id === compactionId);
+    const connection = snapshot.providers.find(
+      (item) => item.connection_id === candidate?.connection_id,
+    );
+    if (
+      candidate === undefined ||
+      !candidate.enabled ||
+      connection === undefined ||
+      !connection.enabled
+    ) {
+      throw new DomainError("model_unavailable", "Selected model is unavailable");
+    }
+    compaction = {
+      modelProfileId: candidate.model_profile_id,
+      providerConnectionId: connection.connection_id,
+      model: modelSpec(candidate, connection.base_url),
+    };
+  }
   if (
     agent.runtime === null ||
     agent.runtime.connection_id === undefined ||
@@ -502,6 +525,7 @@ export function resolveExecutionConfiguration(
       ...modelSpec(model, provider.base_url),
       ...(thinking === undefined ? {} : { thinking }),
     },
+    ...(compaction === undefined ? {} : { compactionModel: compaction }),
     authorization: resolveAuthorization(agent, selection),
     authorizationRevision: agent.authorization_revision,
     runtime: {
@@ -671,6 +695,10 @@ function modelSpec(model: ExecutionModel, baseUrl: string): ModelSpec {
     ...(model.supports_audio === undefined ? {} : { supportsAudio: model.supports_audio }),
     ...(model.supports_pdf === undefined ? {} : { supportsPdf: model.supports_pdf }),
     ...(model.supports_tools === undefined ? {} : { supportsTools: model.supports_tools }),
+    ...(model.tokenizer === undefined ? {} : { tokenizer: model.tokenizer }),
+    ...(model.compaction_model_profile_id === undefined
+      ? {}
+      : { compactionModelProfileId: model.compaction_model_profile_id }),
     ...(price === undefined
       ? {}
       : {

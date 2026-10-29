@@ -68,6 +68,25 @@ export function validateModelParameters(model: ModelParameters): ModelParameters
   if (!Number.isSafeInteger(model.max_output_tokens) || model.max_output_tokens < 1) {
     throw new Error("Maximum output must be a positive token count.");
   }
+  if (
+    model.tokenizer !== undefined &&
+    model.tokenizer !== "o200k" &&
+    model.tokenizer !== "cl100k" &&
+    model.tokenizer !== "none"
+  ) {
+    throw new Error("Tokenizer must be automatic, o200k, cl100k, or none.");
+  }
+  if (model.compaction_model_profile_id !== undefined) {
+    const reference = model.compaction_model_profile_id;
+    if (
+      typeof reference !== "string" ||
+      reference.length === 0 ||
+      /\s/.test(reference) ||
+      new TextEncoder().encode(reference).length > 200
+    ) {
+      throw new Error("Compaction model profile ID must be 1 to 200 bytes without spaces.");
+    }
+  }
   return { ...model, model: model.model.trim() };
 }
 

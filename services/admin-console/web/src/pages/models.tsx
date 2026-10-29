@@ -106,6 +106,8 @@ function ModelDetail({ modelID }: { modelID: string }) {
     ["Context window", profile.model.context_window.toLocaleString()],
     ["Maximum output", profile.model.max_output_tokens.toLocaleString()],
     ["Input formats", modelInputLabel(profile.model)],
+    ["Tokenizer", profile.model.tokenizer ?? "Conservative fallback"],
+    ["Compaction model", profile.model.compaction_model_profile_id ?? "Selected Run model"],
     ["Profile updated", dateTime(profile.updated_at)],
   ];
   return (

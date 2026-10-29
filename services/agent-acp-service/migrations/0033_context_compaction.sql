@@ -1,0 +1,1 @@
+ALTER TABLE context_checkpoints ADD COLUMN compaction_prompt_version text, ADD COLUMN pinned_message_ids jsonb NOT NULL DEFAULT '[]'::jsonb; ALTER TABLE context_checkpoints ADD CONSTRAINT context_checkpoint_pins_array CHECK (jsonb_typeof(pinned_message_ids)='array');

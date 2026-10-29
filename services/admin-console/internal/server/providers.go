@@ -84,6 +84,10 @@ func (h *handler) createProviderConnection(w http.ResponseWriter, r *http.Reques
 	}
 	models := make([]map[string]any, 0, len(input.Models))
 	for index, model := range input.Models {
+		if err := validateModelContextMetadata(model.Model); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid_request", "Invalid Model context metadata")
+			return
+		}
 		models = append(models, map[string]any{"profile_key": fmt.Sprintf("%s-%d", requestID, index),
 			"display_name": model.DisplayName, "model": model.Model})
 	}
