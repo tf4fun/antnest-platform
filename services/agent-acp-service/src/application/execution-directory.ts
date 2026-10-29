@@ -4,7 +4,6 @@ import {
   authorizeConfiguredAgent,
   findConfiguredAgent,
   freezeExecutionConfiguration,
-  parseExecutionConfiguration,
   publicExecutionConfiguration,
   requireSameProviderRouting,
   type AgentConfiguration,
@@ -27,6 +26,15 @@ import {
   executionPublication,
   parseExecutionPublication,
 } from "../domain/execution-publication.js";
+import {
+  absentExecutionDigest,
+  executionDigestResponse,
+  executionDigestRequestSchema,
+  parseExecutionAuthority,
+  parseExecutionDelta,
+  reconstructExecutionDelta,
+  type ExecutionDigestResponse,
+} from "../domain/execution-publication-v2.js";
 
 export type ExecutionPreparationContext = Readonly<{ signal?: AbortSignal; deadline: number }>;
 
@@ -145,12 +153,104 @@ export class ExecutionDirectory {
     }
   }
 
+  public async applyDelta(
+    input: unknown,
+  ): Promise<{ organization_id: string; applied_revision: number }> {
+    const deadline = new Date(Date.now() + 10000);
+    const context = { deadline: deadline.getTime() };
+    const delta = parseExecutionDelta(input);
+    const { applied, publication } = await this.authorized(
+      delta.organization_id,
+      undefined,
+      async () => {
+        const current = await this.dependencies.repository.loadAuthority(delta.organization_id);
+        if (
+          current === null ||
+          !("schema_version" in current) ||
+          current.revision !== delta.base_revision
+        )
+          throw new DomainError(
+            "configuration_base_mismatch",
+            "Execution authority base revision changed",
+          );
+        const rebuilt = reconstructExecutionDelta(current, delta);
+        const applied = await this.applyCurrent(rebuilt, context);
+        const publication = this.publications.get(applied.organization_id);
+        if (
+          publication === undefined ||
+          publication.configuration.revision !== applied.applied_revision
+        )
+          throw new DomainError(
+            "configuration_unavailable",
+            "Execution configuration is unavailable",
+          );
+        return { applied, publication };
+      },
+    );
+    await this.dependencies.beforeAck?.(publication.configuration);
+    await this.dependencies.beforePeerAck?.(publication, deadline);
+    publication.assertCurrent();
+    return applied;
+  }
+
+  public async getDigest(input: unknown): Promise<ExecutionDigestResponse> {
+    const parsed = executionDigestRequestSchema.safeParse(input);
+    if (!parsed.success)
+      throw new DomainError("invalid_execution_configuration", "Invalid digest request");
+    const organizationId = parsed.data.organization_id;
+    const deadline = new Date(Date.now() + 10000);
+    const context = { deadline: deadline.getTime() };
+    const publication = await this.authorized(organizationId, undefined, async () => {
+      const authority = await this.dependencies.repository.loadAuthority(organizationId);
+      if (authority === null) {
+        const projection = await this.dependencies.repository.load(organizationId);
+        if (projection !== null)
+          throw new DomainError(
+            "configuration_unavailable",
+            "Execution configuration is unavailable",
+          );
+        return undefined;
+      }
+      if (authority.organization_id !== organizationId)
+        throw new DomainError(
+          "configuration_unavailable",
+          "Execution configuration is unavailable",
+        );
+      let capture = this.publications.get(organizationId);
+      if (capture === undefined || !isDeepStrictEqual(capture.authority, authority)) {
+        await this.applyCurrent(authority, context);
+        capture = this.publications.get(organizationId);
+        if (capture === undefined || !isDeepStrictEqual(capture.authority, authority))
+          throw new DomainError(
+            "configuration_unavailable",
+            "Execution configuration is unavailable",
+          );
+      }
+      return capture;
+    });
+    if (publication === undefined) return absentExecutionDigest(organizationId);
+    await this.dependencies.beforeAck?.(publication.configuration);
+    await this.dependencies.beforePeerAck?.(publication, deadline);
+    publication.assertCurrent();
+    return executionDigestResponse({
+      organization_id: organizationId,
+      schema_version: "schema_version" in publication.authority ? 2 : 1,
+      revision: publication.authority.revision,
+      providers: publication.authority.providers,
+      models: publication.authority.models,
+      agents: publication.authority.agents,
+      ...(publication.authority.organization_budget === undefined
+        ? {}
+        : { organization_budget: publication.authority.organization_budget }),
+    });
+  }
+
   public async apply(
     input: unknown,
   ): Promise<{ organization_id: string; applied_revision: number }> {
     const deadline = new Date(Date.now() + 10000);
     const context = { deadline: deadline.getTime() };
-    const configuration = parseExecutionConfiguration(input);
+    const configuration = parseExecutionAuthority(input);
     const beforeAck = this.dependencies.beforeAck;
     const beforePeerAck = this.dependencies.beforePeerAck;
     if (beforeAck === undefined && beforePeerAck === undefined)
@@ -195,7 +295,7 @@ export class ExecutionDirectory {
         throw publicationUnavailable();
       // Own this capture: neither an adapter nor a later caller may mutate the
       // private payload that the final aggregate transaction must confirm.
-      const authority = parseExecutionConfiguration(stored);
+      const authority = parseExecutionAuthority(stored);
       if (!isDeepStrictEqual(executionPublication(authority), expected))
         throw publicationUnavailable();
       freezeAuthority(authority);
@@ -425,7 +525,8 @@ export class ExecutionDirectory {
       if (
         applied?.revision === next.revision &&
         this.dependencies.beforeAck === undefined &&
-        this.dependencies.beforePeerAck === undefined
+        this.dependencies.beforePeerAck === undefined &&
+        isDeepStrictEqual(this.publications.get(organizationId)?.authority, incoming)
       ) {
         connections.commit();
         return { organization_id: organizationId, applied_revision: next.revision };
@@ -443,7 +544,7 @@ export class ExecutionDirectory {
     beforeCommit?: () => Promise<void>,
     context: ExecutionPreparationContext = { deadline: Date.now() + 10000 },
   ): Promise<void> {
-    const authority = parseExecutionConfiguration(incoming);
+    const authority = parseExecutionAuthority(incoming);
     freezeAuthority(authority);
     const next = freezeExecutionConfiguration(publicExecutionConfiguration(authority));
     const organizationId = incoming.organization_id;

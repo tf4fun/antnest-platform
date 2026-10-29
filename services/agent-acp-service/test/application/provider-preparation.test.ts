@@ -106,7 +106,7 @@ function rotate(f: ReturnType<typeof setup>, changeCatalog = false): void {
       ? {
           ...provider,
           credential_revision: "credential-2",
-          credential: { method: "api_key", secret: rotatedSecret },
+          credential: { method: "api_key" as const, secret: rotatedSecret },
         }
       : provider,
   );

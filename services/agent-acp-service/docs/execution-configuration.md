@@ -532,3 +532,62 @@ browser consumer migration to Agent UI and renewed cross-service acceptance
 remain pending after retirement of the old direct Gateway entry.
 Historical queries use immutable Session organization ownership, not live
 execution grants. Normal execution is locally assembled without Controller calls.
+
+## Execution publication v2 (issue #43, consumer side)
+
+ACP accepts both the legacy full snapshot and the versioned v2 contract
+(`schema_version: 2`) on the Controller-authenticated control listener:
+
+- `POST /rpc/agent-acp/apply-execution-snapshot` — legacy and v1/v2 full
+  authorities (absent `schema_version` parses as legacy; only `2` enables the
+  strict v2 schema). v2 Providers carry a credential **reference**
+  `{ref, version}` instead of plaintext `{method, secret}`; `ref` must equal
+  `connection_id` and `version` must equal `credential_revision`. Duplicate IDs
+  and dangling model/Agent references are rejected before persistence. The
+  durable private authority keeps `schema_version` and the references; the
+  public projection is version-neutral (no `schema_version`, no Provider
+  credential — references are never exposed publicly, no Runtime tokens).
+- `POST /rpc/agent-acp/apply-execution-delta` — atomic delta on a v2 base.
+  The delta is strictly parsed before authorization; the durable authority
+  must be schema 2 at exactly `base_revision`, otherwise
+  `configuration_base_mismatch` (HTTP 409) and the Controller falls back to a
+  full snapshot. Retained/upserted/deleted collections are reconstructed and
+  committed atomically; `organization_budget: null` deletes the budget.
+  Duplicate upsert/delete IDs and overlaps reject `invalid_execution_configuration`.
+- `POST /rpc/agent-acp/get-execution-digest` — digests of the currently
+  captured authority (or storage-restored cold authority) with
+  `organization_budget_digest`, sorted `{id, digest}` entries over the public
+  projection, hashed under canonical JSON (sorted keys, U+2028/U+2029
+  escaped). Absent organization returns the `schema_version: 0` shape;
+  proof/ACK barriers (`beforeAck`, `beforePeerAck`, `assertCurrent`) run on
+  every digest so a lost owner or failed proof fails closed.
+
+Equal-revision one-way upgrade: a sealed v1 authority may be replaced by an
+equivalent v2 authority at the same revision only when the public projection,
+Provider credential revisions and the exact Runtime private authority
+(including tokens) are unchanged. Downgrades and any other same-revision
+change are rejected; higher revisions remain ordinary N-1 replacements.
+
+Credential resolution: `ProviderClients` resolves reference credentials
+lazily at dispatch — never at apply, validate, acquire, prepare or restore —
+through the injected `ExecutionCredentialResolver`. The production resolver
+is `ControllerExecutionCredentialsClient`
+(`ANTNEST_ACP_EXECUTION_CONTROLLER_URL`, a bare HTTP(S) origin; when Skill
+learning is also configured both Controller origins must match exactly — the
+execution origin may be configured independently with learning off): POST
+`/internal/execution-credentials/resolve` with a 5 s timeout, 64 KiB bound,
+strict JSON, scope/method/non-empty-secret validation and uniform
+`provider_unavailable` sanitization. Resolved secrets are cached in-memory
+only, keyed `[organization, connection, version]`, TTL 60 s, hard cap 1024
+with oldest-first eviction, and invalidated on rotation, mode change, disable
+or removal. Late in-flight resolutions are fenced by a monotonic client
+generation (plus mode/version/bound checks after the await and in the
+credential getter), so a stale response can neither dispatch nor repopulate
+the cache. Reference-mode Provider clients keep no secret in client state (legacy v1
+clients still retain their plaintext credentials unchanged); the bounded
+ephemeral cache holds resolved secrets in memory only. Only the Runtime private
+authority retains unavoidable tokens.
+
+Deployment order is consumer-first: ACP v2 consumers deploy before Controller
+produces v2 (legacy snapshots carry no `schema_version` and remain the default). Main-system and
+PostgreSQL integration acceptance of the full workflow remain pending.

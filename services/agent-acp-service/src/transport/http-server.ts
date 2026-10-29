@@ -81,7 +81,11 @@ import { AGENT_SETTLEMENT_PATH, settleAgent } from "./agent-settlement.js";
 import { RUNTIME_BARRIER_QUERY_PATH, serveRuntimeBarrierQuery } from "./runtime-barrier-query.js";
 import {
   applyExecutionConfiguration,
+  applyExecutionDelta,
+  getExecutionDigest,
   EXECUTION_CONFIGURATION_PATH,
+  EXECUTION_DELTA_PATH,
+  EXECUTION_DIGEST_PATH,
 } from "./execution-configuration.js";
 
 // This route belongs only to the independent, early owner listener.
@@ -448,6 +452,8 @@ export class AgentAcpHttpServer {
     const control =
       path === AGENT_SETTLEMENT_PATH ||
       path === EXECUTION_CONFIGURATION_PATH ||
+      path === EXECUTION_DELTA_PATH ||
+      path === EXECUTION_DIGEST_PATH ||
       path === RUNTIME_BARRIER_QUERY_PATH;
     if (
       path === OWNER_PROBE_PATH ||
@@ -595,6 +601,24 @@ export class AgentAcpHttpServer {
     }
     if (request.url === EXECUTION_CONFIGURATION_PATH) {
       await applyExecutionConfiguration(
+        request,
+        response,
+        this.options.executionConfiguration,
+        this.options.maxConfigurationBytes ?? 16 * 1024 * 1024,
+      );
+      return;
+    }
+    if (request.url === EXECUTION_DELTA_PATH) {
+      await applyExecutionDelta(
+        request,
+        response,
+        this.options.executionConfiguration,
+        this.options.maxConfigurationBytes ?? 16 * 1024 * 1024,
+      );
+      return;
+    }
+    if (request.url === EXECUTION_DIGEST_PATH) {
+      await getExecutionDigest(
         request,
         response,
         this.options.executionConfiguration,

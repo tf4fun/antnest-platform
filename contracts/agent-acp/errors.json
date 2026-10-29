@@ -675,6 +675,15 @@
       "recovery": "retry_read",
       "message": "Skill source is unavailable",
       "surfaces": ["skill_source"]
+    },
+    "configuration_base_mismatch": {
+      "class": "conflict",
+      "json_rpc_code": -32050,
+      "http_status": 409,
+      "retryable": false,
+      "recovery": "refresh",
+      "message": "Execution authority base revision changed",
+      "surfaces": ["admission", "http"]
     }
   },
   "terminal_outcomes": {

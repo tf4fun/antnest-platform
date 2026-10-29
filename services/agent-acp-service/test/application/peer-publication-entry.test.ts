@@ -70,7 +70,8 @@ describe("production peer publication entry", () => {
     expect(confirmation).toHaveBeenCalledOnce();
     original.providers[0]!.credential.secret += "-caller-mutation";
     const provider = confirmation.mock.calls[0]![0].authority.providers[0]!;
-    if (!("credential" in provider)) throw new Error("Expected provider credential");
+    if (!("credential" in provider) || !("secret" in provider.credential))
+      throw new Error("Expected provider credential");
     expect(provider.credential.secret).not.toBe(original.providers[0]!.credential.secret);
   });
 

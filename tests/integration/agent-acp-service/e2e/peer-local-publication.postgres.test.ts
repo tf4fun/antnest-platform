@@ -218,7 +218,7 @@ describe.skipIf(process.env.ANTNEST_ACP_TEST_DATABASE_URL === undefined)(
           aad,
         );
         const provider = envelope.configuration.providers[0]!;
-        if (!("credential" in provider))
+        if (!("credential" in provider) || !("secret" in provider.credential))
           throw new Error("Expected provider credential");
         provider.credential.secret += "-changed";
         envelope.identities.providers[0]!.credentials.find(

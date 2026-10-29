@@ -1,9 +1,10 @@
 import type {
   ExecutionConfiguration,
+  ExecutionConfigurationV1,
   ProviderConfiguration,
 } from "../../src/domain/execution-configuration.js";
 
-export function executionConfiguration(): Omit<ExecutionConfiguration, "providers"> & {
+export function executionConfiguration(): Omit<ExecutionConfigurationV1, "providers"> & {
   providers: Extract<ProviderConfiguration, { enabled: true }>[];
 } {
   return {

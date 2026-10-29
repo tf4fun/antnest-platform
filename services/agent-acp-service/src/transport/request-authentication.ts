@@ -11,6 +11,8 @@ import { bindAuthenticatedRequest } from "./trusted-identity.js";
 const workspace = ["agent-ui"];
 const operationPaths = new Map([
   ["/rpc/agent-acp/apply-execution-snapshot", ["agent-controller"]],
+  ["/rpc/agent-acp/apply-execution-delta", ["agent-controller"]],
+  ["/rpc/agent-acp/get-execution-digest", ["agent-controller"]],
   ["/rpc/agent-acp/settle-agent", ["agent-controller"]],
   ["/rpc/agent-acp/get-runtime-barrier", ["agent-controller"]],
   ["/internal/skill-sources/inspect", ["skill-registry"]],

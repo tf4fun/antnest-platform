@@ -1,4 +1,5 @@
 import { z } from "zod";
+import type { ExecutionConfigurationV2 } from "./execution-publication-v2.js";
 import { providerTokenLimitsSchema } from "./provider-token-limits.js";
 import { modelFailoverSchema, modelRetryConfigurationSchema } from "./model-call-policy.js";
 import { organizationBudgetSchema, runBudgetSchema } from "./model-budget.js";
@@ -34,7 +35,7 @@ const endpoint = z.url().refine((value) => {
   );
 }, "Expected an HTTP endpoint without embedded credentials or fragment");
 
-const providerFields = {
+export const providerFieldsSchema = {
   connection_id: identifier,
   provider_key: z.enum(["deepseek", "openrouter"]),
   request_protocol: z.literal("openai_chat_completions"),
@@ -48,12 +49,12 @@ const credentialFields = {
 
 export const providerConfigurationSchema = z.union([
   z.strictObject({
-    ...providerFields,
+    ...providerFieldsSchema,
     enabled: z.literal(true),
     ...credentialFields,
   }),
-  z.strictObject({ ...providerFields, enabled: z.literal(false), ...credentialFields }),
-  z.strictObject({ ...providerFields, enabled: z.literal(false) }),
+  z.strictObject({ ...providerFieldsSchema, enabled: z.literal(false), ...credentialFields }),
+  z.strictObject({ ...providerFieldsSchema, enabled: z.literal(false) }),
 ]);
 
 const pricingSchema = z.strictObject({
@@ -96,7 +97,7 @@ const publicRuntimeSchema = z.strictObject({
   mcp_endpoint: endpoint,
   connection_id: runtimeConnectionIdSchema.optional(),
 });
-const privateRuntimeSchema = publicRuntimeSchema.extend({
+export const privateRuntimeSchema = publicRuntimeSchema.extend({
   credential: z
     .strictObject({
       caller: z.literal("agent-acp-service"),
@@ -105,7 +106,7 @@ const privateRuntimeSchema = publicRuntimeSchema.extend({
     .optional(),
 });
 
-const agentFieldsSchema = z.strictObject({
+export const agentFieldsSchema = z.strictObject({
   agent_id: identifier,
   principal_ids: z.array(identifier),
   access_revision: identifier,
@@ -145,7 +146,7 @@ const agentFieldsSchema = z.strictObject({
 export const agentConfigurationSchema = agentFieldsSchema.superRefine((agent, ctx) => {
   validateExecutableRuntime(agent, ctx);
 });
-const privateAgentConfigurationSchema = agentFieldsSchema
+export const privateAgentConfigurationSchema = agentFieldsSchema
   .extend({
     runtime: privateRuntimeSchema.nullable(),
   })
@@ -224,13 +225,18 @@ export const executionConfigurationSchema = z.strictObject({
 });
 
 export type ProviderConfiguration = z.infer<typeof providerConfigurationSchema>;
+export type ExecutionConfigurationV1 = z.infer<typeof executionConfigurationSchema>;
 export type ExecutionModel = z.infer<typeof executionModelSchema>;
 export type AgentConfiguration = z.infer<typeof agentConfigurationSchema>;
-export type ExecutionConfiguration = z.infer<typeof executionConfigurationSchema>;
+export type ExecutionConfiguration = ExecutionConfigurationV1 | ExecutionConfigurationV2;
 export const publicProviderConfigurationSchema = z.discriminatedUnion("enabled", [
-  z.strictObject({ ...providerFields, enabled: z.literal(true), credential_revision: identifier }),
   z.strictObject({
-    ...providerFields,
+    ...providerFieldsSchema,
+    enabled: z.literal(true),
+    credential_revision: identifier,
+  }),
+  z.strictObject({
+    ...providerFieldsSchema,
     enabled: z.literal(false),
     credential_revision: identifier.optional(),
   }),
@@ -315,7 +321,7 @@ export function isExecutionAccessRevoked(
   );
 }
 
-export function parseExecutionConfiguration(input: unknown): ExecutionConfiguration {
+export function parseExecutionConfiguration(input: unknown): ExecutionConfigurationV1 {
   const parsed = executionConfigurationSchema.safeParse(input);
   if (!parsed.success) {
     throw new DomainError("invalid_execution_configuration", "Invalid execution configuration");
@@ -334,7 +340,13 @@ export function parsePublicExecutionConfiguration(input: unknown): PublicExecuti
   return validateConfiguration(parsed.data);
 }
 
-function validateConfiguration<T extends PublicExecutionConfiguration>(snapshot: T): T {
+export function validateConfiguration<
+  T extends {
+    providers: { connection_id: string }[];
+    models: { model_profile_id: string; connection_id: string }[];
+    agents: AgentConfiguration[];
+  },
+>(snapshot: T): T {
   const providers = indexUnique(snapshot.providers, (item) => item.connection_id);
   const models = indexUnique(snapshot.models, (item) => item.model_profile_id);
   indexUnique(snapshot.agents, (item) => item.agent_id);
@@ -398,6 +410,7 @@ export function publicExecutionConfiguration(
     };
   });
   const configuration = structuredClone({ ...snapshot, providers, agents });
+  delete (configuration as Record<string, unknown>).schema_version;
   configuration.providers.sort((a, b) => compare(a.connection_id, b.connection_id));
   configuration.models.sort((a, b) => compare(a.model_profile_id, b.model_profile_id));
   configuration.agents.sort((a, b) => compare(a.agent_id, b.agent_id));

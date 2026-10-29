@@ -275,6 +275,22 @@
       },
       "request_body": "json",
       "notes": "Directional member credentials authenticate the fixed peer listener. Reapply the original skill-registry policy without a user CCT. Validate the body digest, actor/Agent scope, full registrations, private publication, original live epoch and shared 8.5-second deadline. The original owner retains its source-read gate and Runtime authority; cancellation joins original work and independent cleanup failures prevent retirement ACK."
+    },
+    "POST /rpc/agent-acp/apply-execution-delta": {
+      "callers": ["agent-controller"],
+      "authentication": "workload",
+      "caller_context": {
+        "agent-controller": "operation"
+      },
+      "request_body": "json"
+    },
+    "POST /rpc/agent-acp/get-execution-digest": {
+      "callers": ["agent-controller"],
+      "authentication": "workload",
+      "caller_context": {
+        "agent-controller": "operation"
+      },
+      "request_body": "json"
     }
   },
   "guarded_sources": {
@@ -309,11 +325,15 @@
       ]
     },
     "services/agent-acp-service/src/transport/execution-configuration.ts": {
-      "sha256": "95d76a7cd153106eedf2828e698356b905deffa8a5b874ff82d2ece9b68e80ca",
-      "routes": ["POST /rpc/agent-acp/apply-execution-snapshot"]
+      "sha256": "9108b93f64ebc42143a38c43b15d03129176f89cb5ad7323b2b119a5adf6b6ac",
+      "routes": [
+        "POST /rpc/agent-acp/apply-execution-delta",
+        "POST /rpc/agent-acp/apply-execution-snapshot",
+        "POST /rpc/agent-acp/get-execution-digest"
+      ]
     },
     "services/agent-acp-service/src/transport/http-server.ts": {
-      "sha256": "720ba17de3fd384571a1709e96ce88f5e46f9f2db60ffb75c6a40bf9734db5fa",
+      "sha256": "cbcdd1b9a83b1e96f57e08aef7b1e7267dcde333e4e9c3a2910863fafb0b7d69",
       "routes": ["GET /status", "UPGRADE /v1/acp", "UPGRADE /v2/acp"]
     },
     "services/agent-acp-service/src/transport/learning-changes.ts": {
@@ -340,7 +360,7 @@
       ]
     },
     "services/agent-acp-service/src/transport/request-authentication.ts": {
-      "sha256": "cf3c29cd381a75f9b001245a91a86af78ed097645f90aba7ce69c107d6e11a11",
+      "sha256": "e740f46f8bb175df2602dfcd2137da5a7d8bb09eef56b1b1d9520c7706ebb7e9",
       "routes": [
         "DELETE /v1/acp",
         "GET /rpc/agent-acp/workspace/agents/{agent_id}/learning-changes",
@@ -351,9 +371,11 @@
         "GET /v1/acp",
         "POST /internal/skill-sources/artifact",
         "POST /internal/skill-sources/inspect",
+        "POST /rpc/agent-acp/apply-execution-delta",
         "POST /rpc/agent-acp/apply-execution-snapshot",
         "POST /rpc/agent-acp/get-agent-execution-state",
         "POST /rpc/agent-acp/get-execution-audit",
+        "POST /rpc/agent-acp/get-execution-digest",
         "POST /rpc/agent-acp/get-runtime-barrier",
         "POST /rpc/agent-acp/list-execution-audits",
         "POST /rpc/agent-acp/list-execution-events",
