@@ -319,3 +319,26 @@ test("reused unit workflows isolate concurrency and skip direct pull requests", 
     }
   }
 });
+
+test("setup-go restores the Go caches that the suite commands actually use", () => {
+  // dependencies.mjs and the Makefile pin the repository caches; setup-go
+  // saves and restores whatever `go env` reports when it runs.
+  const dependencies = readFileSync(
+    resolve(root, "tests/support/dependencies.mjs"),
+    "utf8",
+  );
+  for (const [variable, directory] of [
+    ["GOCACHE", ".cache/go-build"],
+    ["GOMODCACHE", ".cache/go-mod"],
+  ]) {
+    assert.match(
+      dependencies,
+      new RegExp(`${variable}: resolve\\(root, "${directory}"\\)`, "u"),
+    );
+    assert.equal(
+      suite.jobs.run.env?.[variable],
+      `\${{ github.workspace }}/${directory}`,
+      variable,
+    );
+  }
+});

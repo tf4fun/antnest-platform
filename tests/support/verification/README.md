@@ -53,9 +53,21 @@ validate it.
 The runner always uses `go test -json -race -p=1`, no test-result cache and a
 ten-minute package timeout. It preserves Go's exit code, prints failure
 diagnostics and emits compact package, test, subtest and skip counts. A skip is
-reported and never counted as a pass. A twelve-minute outer watchdog kills the
-test process group; interrupted or timed-out results are incomplete. Check for
-leftover processes before retrying.
+reported and never counted as a pass. Each failed top-level test is also
+printed as an output-free `{"Action":"fail","Package":...,"Test":...}` line so
+CI resolves it to a source-known test identity.
+
+A twelve-minute outer watchdog covers compilation and the test run and kills
+the test process group. `--deadline-ms` may only shorten it. Interrupted
+or timed-out results are incomplete and their partial counts are discarded; the
+summary instead names the `reason`, the `phase` (`build` while no test binary
+runs, including the per-package link under `-p=1`; or `test`) and
+the in-flight packages and top-level tests with their elapsed time, and each
+in-flight test is reported as a failure identity. Every run, passing
+or not, writes `artifacts/verification/go-integration/go-progress-*.json` with
+the per-package results and durations, in-flight tests and
+the ten slowest top-level tests. It contains no test output, subtest names or
+database configuration. Check for leftover processes before retrying.
 
 This runner is a convenience wrapper, not a replacement for `make fmt-check`,
 `make lint` and the applicable contract and E2E tests.
