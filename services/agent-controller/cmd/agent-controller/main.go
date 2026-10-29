@@ -279,6 +279,10 @@ func run(ctx context.Context, environment serviceauth.LookupEnv) (resultErr erro
 	if err != nil {
 		return classifyFailure("service_composition", err)
 	}
+	handler, err = server.WithModelCallPolicyRoutes(handler, application.NewModelCallPolicyService(repository), security)
+	if err != nil {
+		return classifyFailure("service_composition", err)
+	}
 	httpServer := &http.Server{
 		Addr: cfg.ListenAddress, Handler: telemetry.HTTPHandler(handler, logger),
 		ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 30 * time.Second,

@@ -131,6 +131,14 @@
       },
       "request_body": "none"
     },
+    "GET /internal/model-call-policy": {
+      "callers": ["admin-console"],
+      "authentication": "workload",
+      "caller_context": {
+        "admin-console": "required"
+      },
+      "request_body": "none"
+    },
     "GET /internal/model-profiles": {
       "callers": ["admin-console"],
       "authentication": "workload",
@@ -330,6 +338,14 @@
       "request_body": "json"
     },
     "PUT /internal/agents/{agent_id}/skill-learning-policy": {
+      "callers": ["admin-console"],
+      "authentication": "workload",
+      "caller_context": {
+        "admin-console": "required"
+      },
+      "request_body": "json"
+    },
+    "PUT /internal/model-call-policy": {
       "callers": ["admin-console"],
       "authentication": "workload",
       "caller_context": {

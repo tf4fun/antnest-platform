@@ -141,10 +141,27 @@ func (s *scanner) evaluate(expression ast.Expr, env environment) values {
 	case *ast.CallExpr:
 		// The Controller stores routes in a literal-returning routes() method.
 		name := functionName(value.Fun)
+		receiver := ""
+		_, isSelector := value.Fun.(*ast.SelectorExpr)
+		if isSelector {
+			receiver = localReceiverType(value.Fun.(*ast.SelectorExpr).X, 0)
+			if receiver == "" {
+				// An unresolvable receiver must never borrow a same-named
+				// method from another type.
+				return nil
+			}
+		}
 		for _, file := range s.files {
 			for _, declaration := range file.Decls {
 				fn, ok := declaration.(*ast.FuncDecl)
 				if !ok || fn.Name.Name != name || len(value.Args) != 0 || fn.Body == nil {
+					continue
+				}
+				if isSelector {
+					if fn.Recv == nil || len(fn.Recv.List) != 1 || localTypeName(fn.Recv.List[0].Type) != receiver {
+						continue
+					}
+				} else if fn.Recv != nil {
 					continue
 				}
 				for _, statement := range fn.Body.List {
@@ -159,6 +176,61 @@ func (s *scanner) evaluate(expression ast.Expr, env environment) values {
 		}
 	}
 	return nil
+}
+
+func localTypeName(expression ast.Expr) string {
+	if star, ok := expression.(*ast.StarExpr); ok {
+		expression = star.X
+	}
+	if ident, ok := expression.(*ast.Ident); ok {
+		return ident.Name
+	}
+	return ""
+}
+
+// localReceiverType resolves the local type a selector receiver expression
+// refers to by following declaration bindings only. Imported or otherwise
+// dynamic receivers fail closed.
+func localReceiverType(expression ast.Expr, depth int) string {
+	if expression == nil || depth > 16 {
+		return ""
+	}
+	switch value := expression.(type) {
+	case *ast.ParenExpr:
+		return localReceiverType(value.X, depth+1)
+	case *ast.UnaryExpr:
+		if value.Op == token.AND {
+			return localReceiverType(value.X, depth+1)
+		}
+	case *ast.StarExpr:
+		return localReceiverType(value.X, depth+1)
+	case *ast.CompositeLit:
+		return localTypeName(value.Type)
+	case *ast.Ident:
+		if value.Obj == nil {
+			return ""
+		}
+		switch declaration := value.Obj.Decl.(type) {
+		case *ast.Field:
+			return localTypeName(declaration.Type)
+		case *ast.ValueSpec:
+			if declaration.Type != nil {
+				return localTypeName(declaration.Type)
+			}
+			for index, name := range declaration.Names {
+				if name.Name == value.Name && index < len(declaration.Values) {
+					return localReceiverType(declaration.Values[index], depth+1)
+				}
+			}
+		case *ast.AssignStmt:
+			for index, left := range declaration.Lhs {
+				if left, ok := left.(*ast.Ident); ok && left.Name == value.Name && index < len(declaration.Rhs) {
+					return localReceiverType(declaration.Rhs[index], depth+1)
+				}
+			}
+		}
+	}
+	return ""
 }
 
 type visitor struct {

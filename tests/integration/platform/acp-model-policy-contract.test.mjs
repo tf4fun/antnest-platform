@@ -115,10 +115,10 @@ test("shape acceptance cannot substitute for policy ordering or candidate semant
   ]);
 });
 
-test("the planned boundary reuses budget_exceeded and does not advertise live routes", () => {
+test("the implemented boundary advertises organization policy GET/PUT with exact administrator grants", () => {
   const contract = read("agent-controller/model-call-policy.json");
-  assert.equal(contract.status, "planned");
-  assert.equal(contract.revision, 1);
+  assert.equal(contract.status, "implemented");
+  assert.equal(contract.revision, 2);
   assert.deepEqual(contract.amount, {
     currency: "USD",
     wire_unit: "integer_microdollars",
@@ -139,9 +139,49 @@ test("the planned boundary reuses budget_exceeded and does not advertise live ro
   });
   assert.equal(contract.delivery_defaults.failover, "before_output");
   const active = read("agent-controller/control-contract.json");
-  for (const operations of Object.values(active.resources))
-    for (const route of Object.values(operations))
-      assert.notEqual(route.path, contract.policy_path);
+  assert.equal(active.revision, 45);
+  const expected = {
+    get: {
+      method: "GET",
+      path: contract.policy_path,
+      query: ["organization_id"],
+      success_status: 200,
+      response: "control-api.schema.json#/$defs/model_call_policy",
+    },
+    replace: {
+      method: "PUT",
+      path: contract.policy_path,
+      success_status: 200,
+      request: "control-api.schema.json#/$defs/set_model_call_policy_request",
+      response: "control-api.schema.json#/$defs/model_call_policy",
+    },
+  };
+  assert.deepEqual(active.resources.model_call_policy, expected);
+  const routes = Object.values(active.resources)
+    .flatMap(Object.values)
+    .filter((route) => route.path.startsWith(contract.policy_path))
+    .sort((a, b) => a.method.localeCompare(b.method));
+  assert.deepEqual(routes, [expected.get, expected.replace]);
+  const callers = read("agent-controller/callers.json");
+  const grants = Object.fromEntries(
+    Object.entries(callers.routes).filter(([route]) =>
+      route.slice(route.indexOf(" ") + 1).startsWith(contract.policy_path),
+    ),
+  );
+  assert.deepEqual(grants, {
+    [`GET ${contract.policy_path}`]: {
+      callers: ["admin-console"],
+      authentication: "workload",
+      caller_context: { "admin-console": "required" },
+      request_body: "none",
+    },
+    [`PUT ${contract.policy_path}`]: {
+      callers: ["admin-console"],
+      authentication: "workload",
+      caller_context: { "admin-console": "required" },
+      request_body: "json",
+    },
+  });
   const errors = read("agent-acp/errors.json");
   assert.equal(contract.budget_error.code, "budget_exceeded");
   const row = errors.errors.budget_exceeded;

@@ -57,6 +57,7 @@ var (
 		{version: 31, name: "agent_runtime_readiness", sql: mustMigration("migrations/0031_agent_runtime_readiness.sql")},
 		{version: 32, name: "model_call_policy", sql: mustMigration("migrations/0032_model_call_policy.sql")},
 		{version: 33, name: "provider_observations", sql: mustMigration("migrations/0033_provider_observations.sql")},
+		{version: 34, name: "model_call_policy_management", sql: mustMigration("migrations/0034_model_call_policy.sql")},
 	}
 )
 

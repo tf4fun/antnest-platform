@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/domain"
 	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/ports"
 )
 
@@ -27,7 +28,22 @@ func readExecutionSource(ctx context.Context, tx *databaseTransaction, organizat
 	if err != nil {
 		return ports.ExecutionSource{}, err
 	}
+	source.OrganizationBudget, err = readExecutionOrganizationBudget(ctx, tx, organizationID)
+	if err != nil {
+		return ports.ExecutionSource{}, err
+	}
 	return source, nil
+}
+
+func readExecutionOrganizationBudget(ctx context.Context, tx *databaseTransaction, organizationID string) (*domain.OrganizationBudget, error) {
+	stored, err := readStoredModelCallPolicy(tx.QueryRow(ctx, modelCallPolicySelect, organizationID), organizationID)
+	if err != nil {
+		return nil, err
+	}
+	if stored == nil {
+		return nil, nil
+	}
+	return stored.Clone(), nil
 }
 
 func readExecutionProviders(ctx context.Context, tx *databaseTransaction, organizationID string) ([]ports.ProviderConnectionRecord, error) {

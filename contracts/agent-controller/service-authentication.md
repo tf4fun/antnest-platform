@@ -79,6 +79,17 @@ may POST `/internal/managed-mcp-secrets/resolve` without an end-user CCT. It res
 an exact immutable Template source, never its current head. No Console, ACP,
 Gateway or Agent UI route delegates this capability.
 
+## Organization model-call policy (#52)
+
+Revision 45 activates the
+[Controller policy GET/PUT](control-api.md#organization-model-call-policy)
+at `/internal/model-call-policy`. Both routes share the Runtime barrier policy
+grants: the `admin-console` workload and the existing system/Organization
+administrator CCT for `agent-controller`, with the requested Organization
+matching signed `org` and the PUT actor matching signed `sub`. Their exact
+grants are in `callers.json`. A durable idempotency receipt never replaces
+current workload or caller-context verification on any attempt.
+
 ## Runtime barrier policy management and pending recovery (#50)
 
 Revision 42 activates only the

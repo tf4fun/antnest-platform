@@ -82,7 +82,7 @@ func TestMachineControlContractMatchesRegisteredBoundary(t *testing.T) {
 	readStrictContractJSON(t, filepath.Join(root, "contracts/agent-controller/control-contract.json"), &contract)
 	var schema machineControlSchema
 	readContractJSON(t, filepath.Join(root, "contracts/agent-controller/control-api.schema.json"), &schema)
-	if contract.Revision != 44 || contract.Trust != "verified-workload-and-caller-context" || contract.Authentication != "service-authentication.md" {
+	if contract.Revision != 45 || contract.Trust != "verified-workload-and-caller-context" || contract.Authentication != "service-authentication.md" {
 		t.Fatalf("control contract revision = %d", contract.Revision)
 	}
 	if contract.MediaTypes.Request != "application/json" ||
@@ -102,6 +102,7 @@ func TestMachineControlContractMatchesRegisteredBoundary(t *testing.T) {
 
 	expected := make(map[string]struct{})
 	routes := append((&handler{}).routes(), (&runtimeBarrierRecoveryPolicyHandler{}).policyRoutes()...)
+	routes = append(routes, (&modelCallPolicyHandler{}).policyRoutes()...)
 	for _, route := range routes {
 		if strings.Contains(route.pattern, " /internal/") || strings.HasPrefix(route.pattern, "POST /rpc/agent-controller/") {
 			expected[route.pattern] = struct{}{}
@@ -226,6 +227,8 @@ func TestMachineControlSchemaMatchesGoWireTypes(t *testing.T) {
 		"provider_credential_input":                   application.ProviderCredentialInput{Method: "api_key", APIKey: "synthetic"},
 		"runtime_barrier_recovery_policy":             domain.DefaultRuntimeBarrierRecoveryPolicy("org-1"),
 		"set_runtime_barrier_recovery_policy_request": sampleRuntimeBarrierRecoveryPolicyInput(),
+		"model_call_policy":                           sampleModelCallPolicy(),
+		"set_model_call_policy_request":               sampleModelCallPolicyInput(),
 		"provider_model_input":                        application.ProviderModelInput{ProfileKey: "model", DisplayName: "Model", Model: model.Parameters()},
 		"set_agent_authorization_request":             application.SetAgentAuthorizationInput{RequestID: "defaults", AgentID: "agent", PrincipalID: "owner", ExpectedAccessRevision: "access", ExpectedAuthorizationRevision: 1, Authorization: domain.Authorization{Mode: domain.AuthorizationAuto, ToolRules: []domain.ToolRule{}}},
 		"set_agent_authorization_response":            map[string]int64{"authorization_revision": 2},
@@ -390,6 +393,7 @@ func TestMachineControlContractValidatesSuccessfulHTTPBoundary(t *testing.T) {
 	runtimeInput := sampleTemplateView().Runtime
 	requestBodies := map[string]any{
 		"PUT /internal/runtime-barrier-recovery-policy":                       sampleRuntimeBarrierRecoveryPolicyInput(),
+		"PUT /internal/model-call-policy":                                     sampleModelCallPolicyInput(),
 		"POST /internal/managed-mcp-secrets/resolve":                          ports.MCPTemplateSource{OrganizationID: "org-1", TemplateID: "template-1", Revision: 1},
 		"POST /internal/provider-connections/{connection_id}/discover-models": discoverProviderModelsRequest{OrganizationID: "org-1"},
 		"POST /internal/provider-discovery/draft":                             application.DraftProviderDiscoveryInput{OrganizationID: "org-1", ProviderKey: "deepseek", BaseURL: "https://api.deepseek.com", Credential: application.ProviderCredentialInput{Method: "api_key", APIKey: "synthetic"}},
@@ -1026,6 +1030,25 @@ func sampleRuntimeBarrierRecoveryPolicyInput() application.SetRuntimeBarrierReco
 	return application.SetRuntimeBarrierRecoveryPolicyInput{RequestID: "policy-1", OrganizationID: "org-1", ActorPrincipalID: "admin-1", ExpectedRevision: &revision, Mode: "manual", CooldownMS: 300000}
 }
 
+func sampleModelCallPolicy() domain.ModelCallPolicy {
+	return domain.ModelCallPolicy{OrganizationID: "org-1", OrganizationBudget: domain.OrganizationBudget{
+		Revision: 1, UnknownCost: "deny",
+		RunCaps: domain.RunBudget{MaxInputTokens: modelCallPolicyInt64Test(1000)},
+		Daily:   domain.PeriodCaps{SoftCostUSDMicros: modelCallPolicyInt64Test(40), HardCostUSDMicros: modelCallPolicyInt64Test(60)},
+		Monthly: domain.PeriodCaps{HardCostUSDMicros: modelCallPolicyInt64Test(900)},
+	}}
+}
+
+func sampleModelCallPolicyInput() application.SetModelCallPolicyInput {
+	revision := int64(0)
+	return application.SetModelCallPolicyInput{RequestID: "policy-1", OrganizationID: "org-1", ActorPrincipalID: "admin-1",
+		ExpectedRevision: &revision, UnknownCost: "deny",
+		RunCaps: &domain.RunBudget{MaxInputTokens: modelCallPolicyInt64Test(1000)},
+		Daily:   &domain.PeriodCaps{SoftCostUSDMicros: modelCallPolicyInt64Test(40), HardCostUSDMicros: modelCallPolicyInt64Test(60)},
+		Monthly: &domain.PeriodCaps{},
+	}
+}
+
 // Compose the same wrappers as main, including the separately contracted Skill
 // routes, so the manifest is checked against the handler actually served.
 func composeControlPolicyFixture(t *testing.T, endpoint http.Handler) *businessFixture {
@@ -1041,6 +1064,11 @@ func composeControlPolicyFixture(t *testing.T, endpoint http.Handler) *businessF
 	}
 	fixture.raw, err = WithRuntimeBarrierRecoveryPolicyRoutes(fixture.raw,
 		&runtimeBarrierRecoveryPolicyServiceStub{policy: domain.RuntimeBarrierRecoveryPolicy{OrganizationID: "org-1", Revision: 1, Mode: "manual", CooldownMS: 300000}}, fixture.security)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fixture.raw, err = WithModelCallPolicyRoutes(fixture.raw,
+		&modelCallPolicyServiceStub{policy: sampleModelCallPolicy()}, fixture.security)
 	if err != nil {
 		t.Fatal(err)
 	}

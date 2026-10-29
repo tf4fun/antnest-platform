@@ -15,6 +15,12 @@ func BuildExecutionSnapshot(ctx context.Context, source ports.ExecutionSource, o
 	}
 	result := ports.ExecutionSnapshot{OrganizationID: source.OrganizationID, Revision: source.Revision,
 		Providers: make([]ports.ExecutionProvider, 0, len(source.Providers)), Models: make([]ports.ExecutionModel, 0, len(source.Models)), Agents: make([]ports.ExecutionAgent, 0, len(source.Agents))}
+	if source.OrganizationBudget != nil {
+		if err := source.OrganizationBudget.Validate(); err != nil {
+			return ports.ExecutionSnapshot{}, ports.ErrInvalidExecutionConfiguration
+		}
+		result.OrganizationBudget = source.OrganizationBudget.Clone()
+	}
 	for _, provider := range source.Providers {
 		if provider.OrganizationID != source.OrganizationID {
 			return ports.ExecutionSnapshot{}, ports.ErrInvalidExecutionConfiguration

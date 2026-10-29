@@ -91,11 +91,13 @@ DROP COLUMN model_retry, DROP COLUMN failover, DROP COLUMN run_budget`)
 	var storedObservations int64
 	require.NoError(t, tx.QueryRow(ctx, `SELECT count(*) FROM agent_controller.provider_observations`).Scan(&storedObservations))
 	require.Zero(t, storedObservations, "historical rollback fixture must not inherit observation facts")
-	_, err = tx.Exec(ctx, `DROP TABLE agent_controller.provider_observations`)
+	_, err = tx.Exec(ctx, `DROP TABLE agent_controller.provider_observations;
+DROP TABLE agent_controller.model_call_policy_requests;
+DROP TABLE agent_controller.model_call_policies`)
 	require.NoError(t, err)
-	removed, err := tx.Exec(ctx, `DELETE FROM agent_controller.schema_migrations WHERE version IN (29,30,31,32,33)`)
+	removed, err := tx.Exec(ctx, `DELETE FROM agent_controller.schema_migrations WHERE version IN (29,30,31,32,33,34)`)
 	require.NoError(t, err)
-	require.EqualValues(t, 5, removed.RowsAffected())
+	require.EqualValues(t, 6, removed.RowsAffected())
 	require.NoError(t, tx.Commit(ctx))
 
 	var version int64
@@ -118,7 +120,7 @@ FROM agent_controller.runtime_barrier_recovery_receipts WHERE request_id=$1`, or
 	require.NoError(t, fixture.store.Migrate(ctx))
 	require.NoError(t, fixture.store.pool.QueryRow(ctx, `SELECT max(version)
 FROM agent_controller.schema_migrations`).Scan(&version))
-	require.EqualValues(t, 33, version)
+	require.EqualValues(t, 34, version)
 	assertModelPolicyLegacyColumnsNull(t, ctx, fixture.store)
 	assertRuntimeBarrierManualTestRow(t, ctx, fixture.store, original.Command.RequestID, false)
 	require.Equal(t, original, runtimeBarrierAdmissionReceipt(t, ctx, fixture.store, fixture.begin))

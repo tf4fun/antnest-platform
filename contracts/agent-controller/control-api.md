@@ -757,6 +757,42 @@ omitted in immutable Template and AgentSpec history and legacy request fingerpri
 Current execution publication fills missing retry/failover values for existing
 Agents as well as new ones, without modifying accepted Runs. See the Controller
 [policy and migration guide](../../services/agent-controller/docs/model-call-policy.md).
-This revision adds no organization policy route or caller grant. Provider
-observations, organization budgets and Console controls have separate delivery
-batches.
+
+## Organization model-call policy
+
+Control contract revision 45 activates the organization budget management wire
+from the [model-call policy contract](model-call-policy.md). The control schema
+carries local `model_call_policy` and `set_model_call_policy_request` copies of
+the shared `policy` and `policy_update_request` definitions, referencing the
+shared `run_budget` and `period_caps` shapes.
+
+| Operation | Request definition | Successful response |
+| --- | --- | --- |
+| `GET /internal/model-call-policy` | `policy_query`, exactly one `organization_id` query value | `200 model_call_policy` |
+| `PUT /internal/model-call-policy` | `set_model_call_policy_request`, a complete JSON replacement | `200 model_call_policy` |
+
+Both operations reuse the verified `admin-console` workload and the existing
+system/Organization administrator CCT for `agent-controller`. The requested
+Organization must match signed `org`; the PUT's `actor_principal_id` must match
+signed `sub`. GET accepts no body or unknown/duplicate query fields; PUT accepts
+strict JSON only and no query fields. Responses carry `Cache-Control: no-store`.
+
+GET and PUT return the flattened six-field policy (`organization_id`,
+`revision`, `unknown_cost`, `run_caps`, `daily`, `monthly`). An organization
+with no persisted policy reads as revision 0, `unknown_cost=allow` and empty
+cap objects; GET creates no record and changes no execution head. PUT requires
+all eight input fields — missing or null members are invalid, including
+`expected_revision` where explicit 0 is accepted. `unknown_cost` is `allow` or
+`deny`; every cap is an optional nonnegative safe integer and a configured soft
+cap must not exceed its hard cap. Reusing `(organization_id, request_id)` with
+different intent returns `409 request_id_conflict`; a stale expected revision
+returns `409 resource_version_conflict`; an identical replay returns its
+original receipt.
+
+A committed replacement increments both the policy revision and the
+organization's normal execution publication head atomically with the durable
+replay receipt; old acknowledgements do not cover the new head. The persisted
+policy then appears as the execution snapshot's `organization_budget`
+(`revision`, `unknown_cost`, `run_caps`, `daily`, `monthly`; no embedded
+organization) through the ordinary ACP Apply/ACK path. Console controls and the
+cross-service consumer/integration batches remain pending.

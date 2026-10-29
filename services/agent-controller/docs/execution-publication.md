@@ -21,7 +21,11 @@ worker and the lifecycle service. It follows these rules:
 2. A consistent private PostgreSQL source keeps one current synchronization row
    per organization. The revision advances in the same transaction as effective
    configuration changes. Acknowledgements are kept separate from the desired
-   revision.
+   revision. The same consistent read loads the persisted organization
+   model-call policy, published as the snapshot's optional
+   `organization_budget` (`revision`, `unknown_cost`, `run_caps`, `daily`,
+   `monthly`); absent policy rows emit no field and never move the head. See the
+   [model-call policy guide](model-call-policy.md).
 3. The shared publisher runs after commits and periodically resends the current
    snapshot. Equal revisions are not skipped, because an ACP restart loses
    volatile credentials. Network waits stay outside database transactions and
