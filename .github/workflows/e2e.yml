@@ -275,7 +275,7 @@ jobs:
             jobs: Object.fromEntries(Object.entries(jobs).map(([key, value]) => [key, value.result])),
           };
           writeFileSync("result.json", JSON.stringify(result, null, 2) + "\n");
-          appendFileSync(process.env.GITHUB_OUTPUT, `passed=${passed}\n`);
+          appendFileSync(process.env.GITHUB_OUTPUT, `passed=${passed}\nconclusion=${result.conclusion}\n`);
           appendFileSync(process.env.GITHUB_STEP_SUMMARY,
             `${result.kind === "stress" ? "Stress" : "System integration"}: **${result.conclusion}** (${result.scope})\n\n` +
             `Revision: \`${result.revision}\`\n\n` +
@@ -295,33 +295,69 @@ jobs:
             version-set/manifest.json
           retention-days: 90
           if-no-files-found: error
-      - name: Track main integration failure
+      # One tracking issue per kind holds only the latest state: a failure
+      # rewrites its body (no comments) and reopens it, a full pass closes it.
+      # Cancelled (superseded) runs, partial runs, pull requests and manifest
+      # replays never touch it.
+      - name: Track main integration state
         if: >-
-          !cancelled() && steps.result.outputs.passed == 'false' &&
-          github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+          (steps.result.outputs.conclusion == 'failed' || steps.result.outputs.conclusion == 'passed') &&
+          (github.event_name == 'push' || github.event_name == 'schedule') &&
+          github.ref == 'refs/heads/main'
         uses: actions/github-script@v8
         env:
           REVISION: ${{ needs.plan.outputs.revision }}
-          SCOPE: ${{ github.event_name == 'schedule' && 'stress' || inputs.scope || 'system' }}
+          SCOPE: ${{ github.event_name == 'schedule' && 'stress' || 'system' }}
+          CONCLUSION: ${{ steps.result.outputs.conclusion }}
         with:
           script: |
             const stress = process.env.SCOPE === "stress";
+            const kind = stress ? "Stress" : "System integration";
             const marker = stress ? "<!-- antnest-stress-failure -->" : "<!-- antnest-system-e2e-failure -->";
+            const revision = process.env.REVISION || context.sha;
             const url = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
-            const body = `${marker}\n${stress ? "Stress" : "System integration"} failed for ${process.env.REVISION || context.sha}.\n\nRun and version-set evidence: ${url}\n\nFix forward on main. This is post-merge feedback, not a PR merge gate. See #361.`;
             const issues = await github.paginate(github.rest.issues.listForRepo, {
-              ...context.repo, state: "open", creator: "github-actions[bot]", per_page: 100
+              ...context.repo, state: "all", creator: "github-actions[bot]", per_page: 100
             });
-            const existing = issues.find(issue => !issue.pull_request && issue.body?.includes(marker));
-            if (existing) {
-              await github.rest.issues.createComment({ ...context.repo, issue_number: existing.number, body });
-            } else {
+            const existing = issues
+              .filter(issue => !issue.pull_request && issue.body?.includes(marker))
+              .sort((a, b) => b.number - a.number)[0];
+            if (process.env.CONCLUSION === "passed") {
+              if (existing?.state === "open")
+                await github.rest.issues.update({
+                  ...context.repo, issue_number: existing.number, state: "closed", state_reason: "completed",
+                  body: `${marker}\n${kind} passed again on main at ${revision}.\n\nRun: ${url}`
+                });
+              return;
+            }
+            const jobs = await github.paginate(github.rest.actions.listJobsForWorkflowRun, {
+              ...context.repo, run_id: context.runId, filter: "latest", per_page: 100
+            });
+            const failed = jobs
+              .filter(job => ["failure", "timed_out"].includes(job.conclusion) && job.name !== "System E2E result")
+              .map(job => `- [${job.name}](${job.html_url})`);
+            const body = [
+              marker,
+              `Latest ${kind.toLowerCase()} failure on main: ${revision}.`,
+              "",
+              `Run and version-set evidence: ${url}`,
+              "",
+              "Failed jobs:",
+              ...(failed.length ? failed : ["- (no job-level failure recorded; see the run)"]),
+              "",
+              "This body is replaced by each failing main run and the issue closes when main passes again.",
+              "Fix forward on main. This is post-merge feedback, not a PR merge gate. See #361.",
+            ].join("\n");
+            if (existing)
+              await github.rest.issues.update({
+                ...context.repo, issue_number: existing.number, state: "open", body
+              });
+            else
               await github.rest.issues.create({
                 ...context.repo,
                 title: stress ? "Nightly stress failures on main" : "System integration E2E failures on main",
                 body
               });
-            }
       - name: Report failed system integration
         if: steps.result.outputs.passed != 'true'
         run: exit 1

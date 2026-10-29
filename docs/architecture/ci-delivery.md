@@ -10,7 +10,12 @@
   system workflow; failures feed fix-forward work without freezing other PR
   merges. A newer main push cancels the superseded in-progress system run,
   because stacked PRs for one issue often merge together; a cancelled run
-  records `conclusion: "cancelled"` and opens no tracking issue. Nightly and
+  records `conclusion: "cancelled"` and never touches the tracking issue.
+  Each kind (system, stress) has one tracking issue that holds only the
+  latest state: a failing main push or nightly run rewrites its body with
+  the revision, run and failed jobs (no comments) and reopens it, and the
+  next full pass closes it. Pull requests, dispatch and manifest replays
+  never touch it. Nightly and
   manifest replays run to completion. An `e2e` PR label or
   `workflow_dispatch` runs the same E2E on demand.
 - **Nightly stress**: the schedule (or a dispatch with `scope: stress`) runs
