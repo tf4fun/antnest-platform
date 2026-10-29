@@ -19,6 +19,7 @@ Issue 状态最后核对于 2026-10-28：141 个 issue，87 个已关闭，54 �
 
 ## 当前批次
 
+- **#43 共享契约批次（2026-10-29，最新）**：交付 v2 执行发布共享契约——`contracts/agent-acp/execution-publication-v2.schema.json`（snapshot/delta/digest $defs，Provider credential 改为 `{ref, version}` 引用、无明文，模型/Agent/budget 经外部 $ref 复用 legacy 约束）、`contracts/agent-controller/execution-credentials.schema.json`（resolve 请求/响应）、`execution-api.md` 的 #43 pending 小节（delta 应用、digest 语义、凭据 resolve 路由与 N-1 上线规则）及平台契约测试 `tests/integration/platform/execution-publication-v2-contract.test.mjs`（先红后绿）。legacy snapshot schema 与生成器不变作 N-1。ACP/Controller 服务实现与跨服务 delta/digest 集成为后续独立批次，本批次不改任何服务逻辑，不宣称业务工作流完成。
 - **#390 冲突处理（2026-10-29，第二次同步，最新）**：按用户要求再次同步 main `ecb6739b`（期间并入 #393 真实协议验收与 #394 E2E fixture 修复），冲突仍仅为本文件当前批次记录的并发追加；保留双方全部条目和 `READY_PATH` 安全修复，不修改测试源码或服务逻辑。合并候选须重新核对精确候选的远程 Repository／Integration checks 与 CodeQL，旧候选通过不替代新候选证据。
 - **#390 冲突处理（2026-10-29）**：按用户要求同步 main `3b4bd17e`，冲突仅为本文件当前批次记录的并发追加；保留双方历史记录和 `READY_PATH` 安全修复，不修改测试源码或服务逻辑。合并候选须重新核对远程 Repository／Integration checks 与 CodeQL，旧候选通过不替代新候选证据。
 - **#390 CI 格式修复（2026-10-29）**：用户通知后核对独立 code-scanning PR 候选 `7b2eaf72`；Repository run `40831966513` 失败于 `go-service.test.mjs` 的 Prettier 检查。仅调整 fixture callback 的换行／缩进，保留 `READY_PATH` 环境传递、字符串内容与其他全部逻辑；受影响文件 Prettier 检查及 7 项 Go runner fixture 测试通过。未混入 #51 ACP／集成改动，未声称远程完整门或 code-scanning 已通过；推送后不等待或轮询新 CI。

@@ -1,0 +1,450 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://antnest.local/contracts/agent-acp/execution-publication-v2.schema.json",
+  "title": "Organization execution publication v2",
+  "description": "Secret-free snapshot, ordered delta and digest wire shapes. Ordering, identity equality, reference and duplicate rules beyond this structure are enforced by the owning services; see execution-api.md.",
+  "$ref": "#/$defs/snapshot",
+  "$defs": {
+    "organization_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200
+    },
+    "document_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200
+    },
+    "sha256_digest": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "credential_reference": {
+      "type": "object",
+      "properties": {
+        "ref": {
+          "$ref": "execution-snapshot.schema.json#/properties/providers/items/anyOf/0/properties/connection_id"
+        },
+        "version": {
+          "$ref": "execution-snapshot.schema.json#/properties/providers/items/anyOf/0/properties/credential_revision"
+        }
+      },
+      "required": ["ref", "version"],
+      "additionalProperties": false
+    },
+    "provider": {
+      "anyOf": [
+        {
+          "type": "object",
+          "properties": {
+            "connection_id": {
+              "$ref": "execution-snapshot.schema.json#/properties/providers/items/anyOf/0/properties/connection_id"
+            },
+            "provider_key": {
+              "$ref": "execution-snapshot.schema.json#/properties/providers/items/anyOf/0/properties/provider_key"
+            },
+            "request_protocol": {
+              "$ref": "execution-snapshot.schema.json#/properties/providers/items/anyOf/0/properties/request_protocol"
+            },
+            "base_url": {
+              "$ref": "execution-snapshot.schema.json#/properties/providers/items/anyOf/0/properties/base_url"
+            },
+            "enabled": {
+              "type": "boolean",
+              "const": true
+            },
+            "credential_revision": {
+              "$ref": "execution-snapshot.schema.json#/properties/providers/items/anyOf/0/properties/credential_revision"
+            },
+            "credential": {
+              "$ref": "#/$defs/credential_reference"
+            }
+          },
+          "required": [
+            "connection_id",
+            "provider_key",
+            "request_protocol",
+            "base_url",
+            "enabled",
+            "credential_revision",
+            "credential"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "connection_id": {
+              "$ref": "execution-snapshot.schema.json#/properties/providers/items/anyOf/0/properties/connection_id"
+            },
+            "provider_key": {
+              "$ref": "execution-snapshot.schema.json#/properties/providers/items/anyOf/0/properties/provider_key"
+            },
+            "request_protocol": {
+              "$ref": "execution-snapshot.schema.json#/properties/providers/items/anyOf/0/properties/request_protocol"
+            },
+            "base_url": {
+              "$ref": "execution-snapshot.schema.json#/properties/providers/items/anyOf/0/properties/base_url"
+            },
+            "enabled": {
+              "type": "boolean",
+              "const": false
+            },
+            "credential_revision": {
+              "$ref": "execution-snapshot.schema.json#/properties/providers/items/anyOf/0/properties/credential_revision"
+            },
+            "credential": {
+              "$ref": "#/$defs/credential_reference"
+            }
+          },
+          "required": [
+            "connection_id",
+            "provider_key",
+            "request_protocol",
+            "base_url",
+            "enabled",
+            "credential_revision",
+            "credential"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "connection_id": {
+              "$ref": "execution-snapshot.schema.json#/properties/providers/items/anyOf/0/properties/connection_id"
+            },
+            "provider_key": {
+              "$ref": "execution-snapshot.schema.json#/properties/providers/items/anyOf/0/properties/provider_key"
+            },
+            "request_protocol": {
+              "$ref": "execution-snapshot.schema.json#/properties/providers/items/anyOf/0/properties/request_protocol"
+            },
+            "base_url": {
+              "$ref": "execution-snapshot.schema.json#/properties/providers/items/anyOf/0/properties/base_url"
+            },
+            "enabled": {
+              "type": "boolean",
+              "const": false
+            }
+          },
+          "required": [
+            "connection_id",
+            "provider_key",
+            "request_protocol",
+            "base_url",
+            "enabled"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "snapshot": {
+      "type": "object",
+      "properties": {
+        "organization_id": {
+          "$ref": "#/$defs/organization_id"
+        },
+        "schema_version": {
+          "type": "integer",
+          "const": 2
+        },
+        "revision": {
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991
+        },
+        "providers": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/provider"
+          }
+        },
+        "models": {
+          "type": "array",
+          "items": {
+            "$ref": "execution-snapshot.schema.json#/properties/models/items"
+          }
+        },
+        "agents": {
+          "type": "array",
+          "items": {
+            "$ref": "execution-snapshot.schema.json#/properties/agents/items"
+          }
+        },
+        "organization_budget": {
+          "$ref": "execution-snapshot.schema.json#/properties/organization_budget"
+        }
+      },
+      "required": [
+        "organization_id",
+        "schema_version",
+        "revision",
+        "providers",
+        "models",
+        "agents"
+      ],
+      "additionalProperties": false
+    },
+    "providers_delta": {
+      "type": "object",
+      "properties": {
+        "upserts": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/provider"
+          }
+        },
+        "deletes": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/document_id"
+          },
+          "uniqueItems": true
+        }
+      },
+      "required": ["upserts", "deletes"],
+      "additionalProperties": false
+    },
+    "models_delta": {
+      "type": "object",
+      "properties": {
+        "upserts": {
+          "type": "array",
+          "items": {
+            "$ref": "execution-snapshot.schema.json#/properties/models/items"
+          }
+        },
+        "deletes": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/document_id"
+          },
+          "uniqueItems": true
+        }
+      },
+      "required": ["upserts", "deletes"],
+      "additionalProperties": false
+    },
+    "agents_delta": {
+      "type": "object",
+      "properties": {
+        "upserts": {
+          "type": "array",
+          "items": {
+            "$ref": "execution-snapshot.schema.json#/properties/agents/items"
+          }
+        },
+        "deletes": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/document_id"
+          },
+          "uniqueItems": true
+        }
+      },
+      "required": ["upserts", "deletes"],
+      "additionalProperties": false
+    },
+    "delta": {
+      "type": "object",
+      "properties": {
+        "schema_version": {
+          "type": "integer",
+          "const": 2
+        },
+        "organization_id": {
+          "$ref": "#/$defs/organization_id"
+        },
+        "base_revision": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 2,
+          "maximum": 9007199254740991
+        },
+        "providers": {
+          "$ref": "#/$defs/providers_delta"
+        },
+        "models": {
+          "$ref": "#/$defs/models_delta"
+        },
+        "agents": {
+          "$ref": "#/$defs/agents_delta"
+        },
+        "organization_budget": {
+          "anyOf": [
+            {
+              "$ref": "execution-snapshot.schema.json#/properties/organization_budget"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "schema_version",
+        "organization_id",
+        "base_revision",
+        "revision",
+        "providers",
+        "models",
+        "agents",
+        "organization_budget"
+      ],
+      "additionalProperties": false
+    },
+    "digest_entry": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/document_id"
+        },
+        "digest": {
+          "$ref": "#/$defs/sha256_digest"
+        }
+      },
+      "required": ["id", "digest"],
+      "additionalProperties": false
+    },
+    "digest_request": {
+      "type": "object",
+      "properties": {
+        "organization_id": {
+          "$ref": "#/$defs/organization_id"
+        }
+      },
+      "required": ["organization_id"],
+      "additionalProperties": false
+    },
+    "digest_response": {
+      "type": "object",
+      "properties": {
+        "organization_id": {
+          "$ref": "#/$defs/organization_id"
+        },
+        "schema_version": {
+          "type": "integer",
+          "enum": [0, 1, 2]
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "digest": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/sha256_digest"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "providers": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/digest_entry"
+          }
+        },
+        "models": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/digest_entry"
+          }
+        },
+        "agents": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/digest_entry"
+          }
+        },
+        "organization_budget_digest": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/sha256_digest"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "organization_id",
+        "schema_version",
+        "revision",
+        "digest",
+        "providers",
+        "models",
+        "agents",
+        "organization_budget_digest"
+      ],
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "schema_version": {
+                "const": 0
+              }
+            },
+            "required": ["schema_version"]
+          },
+          "then": {
+            "properties": {
+              "revision": {
+                "const": 0
+              },
+              "digest": {
+                "const": null
+              },
+              "providers": {
+                "type": "array",
+                "maxItems": 0
+              },
+              "models": {
+                "type": "array",
+                "maxItems": 0
+              },
+              "agents": {
+                "type": "array",
+                "maxItems": 0
+              },
+              "organization_budget_digest": {
+                "const": null
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "schema_version": {
+                "enum": [1, 2]
+              }
+            },
+            "required": ["schema_version"]
+          },
+          "then": {
+            "properties": {
+              "revision": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 9007199254740991
+              },
+              "digest": {
+                "$ref": "#/$defs/sha256_digest"
+              }
+            }
+          }
+        }
+      ]
+    }
+  }
+}
