@@ -83,7 +83,9 @@ startup recovery and stops before the worker lock is released.
   usage. A model-call ledger reserves each request before dispatch, returns
   `dispatch=false` on replay and records actual usage idempotently. Current
   model-profile authority rejects disabled or drifted Agent, model or Provider
-  configuration before reservation and after dispatch.
+  configuration before reservation and after dispatch. The comparison covers the
+  same model spec the Run froze, including published Provider token limits and
+  Tool support; unchanged facts pass, changed or removed facts are drift.
 - Inference stops waiting when its cancellation signal fires, even if an adapter
   ignores cancellation. Late responses cannot persist proposals; missing final
   usage keeps the reservation unknown. Model usage uncertainty does not hold the

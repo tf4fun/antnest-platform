@@ -20,6 +20,9 @@ Issue 状态最后核对于 2026-10-28：141 个 issue，87 个已关闭，54 �
 ## 当前批次
 
 - **#51 上下文管理（2026-10-29）**：按 Controller → ACP → Admin Console → 独立集成批次交付，每个服务独立 PR，不等待 CI、不自动合并或关闭父 issue。Controller 批次已定义可选 `tokenizer`（`o200k`／`cl100k`／`none`）与 `compaction_model_profile_id`，通过现有模型 JSON 持久化及 execution snapshot 透传；domain／application 定向测试已先红（unknown field）后绿。ACP 估算、校准、模型摘要、首任务 pinning、溢出重试，Console 配置和系统验收均待交付；远程完整门禁待 PR CI，不以定向本地结果代替。
+- **ACP 学习恢复 Provider 观测漂移修复（2026-10-29）**：main system-e2e 自 `a2c1d24`（#372）起连续失败（#377 跟踪），`Skill discovery and deployment` 的 `service-authentication-integration`／`encryption-key-rotation` 均为 `automatic Skill creation notice: deadline exceeded`，任务停在 `paused / runtime_unavailable`，ACP 每 2s 记录 `skill_learning_recovery_failed`（脱敏为 `unregistered message omitted`）。根因：#372 使 Controller 在执行模型上发布 `provider_token_limits`／`supports_tools`，ACP Run 快照的 ModelSpec 已含二者，但 `LearningModelAuthority.currentModelSpec` 重建当前规格时遗漏，深比较必然不等而抛出 `Learning model or Provider authorization changed`。修复仅限 ACP：当前规格补齐两字段；先写回归（不变事实通过，移除／变更上限、凭据版本、Tool 支持均判漂移）。按用户约束未在本地运行测试，待远程 CI；修复不等于 main system-e2e 已恢复。
+
+- **PR #381 zip 9 兼容修复（2026-10-29）**：远程 Integration run `40805728569` 的 Runtime 编译因 `ZipFile::name()`／`extra_data()` 返回类型变化失败。现保留 zip `9.0.5`，将名称解码错误映射为 `invalid_package`，并在已有中央目录边界检查中校验原始 extra 字节，避免重新序列化省略 NTFS／重复时间戳而放宽白名单。新增无效 UTF-8、允许时间戳、未知／NTFS／重复／截断 extra 回归；先复现编译失败及类型适配后的语义反例，再通过 7 项 ZIP 测试、fmt 和 all-targets clippy。原始日志临时保留于 `artifacts/verification/pr-381/`；修复已审查，待推送候选的远程 CI，不代表系统 E2E 或合并。
 
 当前状态（2026-10-28，北京时间）。2026-10-28 之前的检查点日志已移出本文件：已提交部分见 Git 历史，未提交的 2026-10-22 至 10-25 检查点见 `artifacts/verification/issue-triage-20261028/TODO-current-batch-history.md`。
 
@@ -52,7 +55,7 @@ Issue 状态最后核对于 2026-10-28：141 个 issue，87 个已关闭，54 �
 - [x] [#233](https://github.com/tf4fun/antnest-platform/issues/233) test(runtime-egress): scoped privilege logging intermittently captures no event during image builds
 - [ ] [#247](https://github.com/tf4fun/antnest-platform/issues/247) Skill discovery trace collection admits traces with missing Gateway parent spans
 - [ ] [#361](https://github.com/tf4fun/antnest-platform/issues/361) CI: PR runs component CI only; main is the system integration branch that triggers E2E — #362、#378、#379、#380、#382 已合并；验收证据由用户跟踪，是否关闭待结论
-- [ ] [#355](https://github.com/tf4fun/antnest-platform/issues/355) Identity PostgreSQL verification exits after ~720s without an actionable failure record
+- [x] [#355](https://github.com/tf4fun/antnest-platform/issues/355) Identity PostgreSQL verification exits after ~720s without an actionable failure record — 已关闭（2026-10-29）：根因为 720s 预算耗尽（非挂死），主要成本是 fixture 在 `-race` 下逐个使用生产 Argon2。#384（`cf9eac9`）改用廉价 fixture 策略；#386（`fccb18f`）超时输出原因／阶段／在途测试身份、写入 `go-progress-*.json` 耗时记录，并将 CI Go 缓存对齐到仓库 `.cache`。Identity Go 命令 359.7s → 278.3s（历史 520–716s），720s 预算与业务断言未改
 - [ ] [#357](https://github.com/tf4fun/antnest-platform/issues/357) Lifecycle restore verification exits 1 without an independent cleanup result
 
 ### 2 共享契约与依赖清单

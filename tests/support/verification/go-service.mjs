@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { randomUUID } from "node:crypto";
+import { readFileSync, writeFileSync } from "node:fs";
 import { createInterface } from "node:readline";
 import { parseArgs, parseEnv } from "node:util";
 import { resolve } from "node:path";
@@ -13,6 +14,7 @@ const { positionals, values } = parseArgs({
     "env-file": { type: "string", default: ".env" },
     "test-database": { type: "string" },
     profile: { type: "string", default: "integration" },
+    "deadline-ms": { type: "string", default: "720000" },
   },
 });
 values["env-file"] = durablePath(values["env-file"]);
@@ -47,71 +49,110 @@ if (values["test-database"]) {
 }
 if (!databaseURL || !new URL(databaseURL).pathname.endsWith("_test"))
   throw new Error("an explicit isolated test database is required");
+// One outer budget covers compilation and execution. It may be shortened for
+// tests, never raised.
+const deadlineMs = Number(values["deadline-ms"]);
+if (!Number.isSafeInteger(deadlineMs) || deadlineMs <= 0 || deadlineMs > 720000)
+  throw new Error("deadline must be 1..720000 milliseconds");
+const output = durablePath(resolve("artifacts/verification/go-integration"));
 const overlay = writeGoOverlay({
   root: process.cwd(),
   service,
-  output: resolve("artifacts/verification/go-integration"),
+  output,
   profile: values.profile,
 });
-const child = spawn(
-  "go",
-  [
-    "test",
-    "-json",
-    "-overlay",
-    overlay,
-    "-race",
-    "-p=1",
-    `./services/${service}/...`,
-    "-count=1",
-    "-timeout=10m",
-  ],
-  {
-    detached: true,
-    env: { ...process.env, [variable]: databaseURL },
-    stdio: ["ignore", "pipe", "pipe"],
-  },
-);
+const packages = `./services/${service}/...`;
+const env = { ...process.env, [variable]: databaseURL };
+const started = Date.now();
 const results = new GoResults();
+let child;
+let reason;
 function terminate(signal) {
-  if (!child.pid) return;
+  if (!child?.pid) return;
   try {
     process.kill(-child.pid, signal);
   } catch (error) {
-    if (error.code !== "ESRCH") throw error;
+    // macOS reports EPERM once only exited members of the killed group remain.
+    if (!["ESRCH", "EPERM"].includes(error.code)) throw error;
   }
 }
-let interrupted = false;
-const stop = () => {
-  interrupted = true;
+const stop = (value) => {
+  reason ??= value;
   terminate("SIGKILL");
 };
-for (const signal of ["SIGINT", "SIGTERM"]) process.on(signal, stop);
-const timer = setTimeout(stop, 720000);
-const completion = new Promise((resolve) => {
-  child.on("error", () => {
-    console.error("could not start Go tests");
-    resolve(1);
+for (const signal of ["SIGINT", "SIGTERM"])
+  process.on(signal, () => stop("interrupted"));
+const timer = setTimeout(() => stop("deadline_exceeded"), deadlineMs);
+function launch(args) {
+  child = spawn("go", args, {
+    detached: true,
+    env,
+    stdio: ["ignore", "pipe", "pipe"],
   });
-  child.on("close", (code) => resolve(code ?? 1));
-});
+  return new Promise((resolve) => {
+    child.on("error", () => {
+      console.error("could not start Go tests");
+      resolve(1);
+    });
+    child.on("close", (code) => resolve(code ?? 1));
+  });
+}
+const identify = (row) => console.log(JSON.stringify(row));
+const completion = launch([
+  "test",
+  "-json",
+  "-overlay",
+  overlay,
+  "-race",
+  "-p=1",
+  packages,
+  "-count=1",
+  "-timeout=10m",
+]);
 child.stderr.on("data", (data) => process.stderr.write(data));
 try {
-  for await (const line of createInterface({ input: child.stdout })) {
-    const event = JSON.parse(line);
-    results.accept(event, console.error);
-  }
+  for await (const line of createInterface({ input: child.stdout }))
+    results.accept(JSON.parse(line), console.error, identify);
 } catch {
-  stop();
+  stop("invalid_event_stream");
   console.error("invalid Go test event stream; partial results discarded");
 }
 const code = await completion;
 clearTimeout(timer);
 terminate("SIGKILL");
+const progress = results.progress();
+if (!reason) progress.phase = "finished";
+if (reason) results.identifyRunning(identify);
+// Sanitized timing evidence: package paths, top-level test names and
+// durations only. It is retained for every run, including passing ones.
+writeFileSync(
+  resolve(output, `go-progress-${service}-${randomUUID()}.json`),
+  `${JSON.stringify(
+    {
+      version: 1,
+      service,
+      complete: !reason && code === 0,
+      ...(reason ? { reason } : {}),
+      deadline_ms: deadlineMs,
+      elapsed_ms: Date.now() - started,
+      ...progress,
+    },
+    null,
+    2,
+  )}\n`,
+  { flag: "wx", mode: 0o600 },
+);
 console.log(
   JSON.stringify(
-    interrupted
-      ? { service, complete: false, partial_results_discarded: true }
+    reason
+      ? {
+          service,
+          complete: false,
+          partial_results_discarded: true,
+          reason,
+          phase: progress.phase,
+          running: progress.running,
+        }
       : {
           service,
           ...results.summary,
@@ -120,4 +161,4 @@ console.log(
         },
   ),
 );
-process.exitCode = interrupted ? 1 : code;
+process.exitCode = reason ? 1 : code;
