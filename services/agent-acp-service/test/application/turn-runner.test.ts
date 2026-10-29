@@ -715,12 +715,25 @@ describe("TurnRunner", () => {
     },
   );
 
-  it("stops before a subsequent model call when tool results exhaust the budget", async () => {
-    const complete = vi.fn<ModelPort["complete"]>().mockResolvedValueOnce({
-      kind: "tool_calls",
-      content: [],
-      calls: [{ id: "call-1", name: "read", arguments: {} }],
-      usage: { inputTokens: 1, outputTokens: 1 },
+  it("recovers oversized Tool feedback without an unnecessary summary", async () => {
+    const complete = vi
+      .fn<ModelPort["complete"]>()
+      .mockResolvedValueOnce({
+        kind: "tool_calls",
+        content: [],
+        calls: [{ id: "call-1", name: "read", arguments: {} }],
+        usage: { inputTokens: 1, outputTokens: 1 },
+      })
+      .mockResolvedValueOnce({
+        kind: "message",
+        content: [{ type: "text", text: "done" }],
+        usage: { inputTokens: 1, outputTokens: 1 },
+        stopReason: "end_turn",
+      });
+    const call = vi.fn().mockResolvedValue({
+      content: [{ type: "text", text: "x".repeat(8000) }],
+      isError: false,
+      toolEffectState: "settled",
     });
     const runner = new TurnRunner({
       model: { complete },
@@ -734,13 +747,7 @@ describe("TurnRunner", () => {
           description: "Read",
         },
       ],
-      tools: {
-        call: vi.fn().mockResolvedValue({
-          content: [{ type: "text", text: "x".repeat(8000) }],
-          isError: false,
-          toolEffectState: "settled",
-        }),
-      },
+      tools: { call },
     });
     const small = structuredClone(snapshot);
     small.executionSpec.model.contextWindow = 2048;
@@ -755,11 +762,47 @@ describe("TurnRunner", () => {
         authoritySignal: new AbortController().signal,
       }),
     ).resolves.toMatchObject({
-      terminalClass: "failed",
-      errorClass: "context_budget_exhausted",
+      terminalClass: "completed",
       toolEffectState: "settled",
     });
-    expect(complete).toHaveBeenCalledOnce();
+    expect(complete).toHaveBeenCalledTimes(2);
+    expect(call).toHaveBeenCalledTimes(1);
+    const requests = complete.mock.calls.map(([request]) => request);
+    for (const request of requests) expect(request.purpose).not.toBe("compaction");
+    const rendered = JSON.stringify(requests[1]!.messages);
+    expect(rendered).toContain("sha256:");
+    expect(rendered).toContain("chars elided");
+    expect(rendered).toContain("x".repeat(64));
+    expect(rendered).not.toContain("x".repeat(8000));
+  });
+
+  it("exhausts the context budget when the pinned first task cannot fit", async () => {
+    const complete = vi.fn<ModelPort["complete"]>();
+    const call = vi.fn();
+    const runner = new TurnRunner({
+      model: { complete },
+      events: createEvents().port,
+      catalog: [],
+      tools: { call },
+    });
+    const small = structuredClone(snapshot);
+    small.executionSpec.model.contextWindow = 2048;
+    small.executionSpec.model.maxOutputTokens = 256;
+    await expect(
+      runner.run({
+        runId: "run-pinned",
+        sessionId: "session",
+        snapshot: small,
+        context: [{ role: "user", content: [{ type: "text", text: "y".repeat(8000) }] }],
+        signal: new AbortController().signal,
+        authoritySignal: new AbortController().signal,
+      }),
+    ).resolves.toMatchObject({
+      terminalClass: "failed",
+      errorClass: "context_budget_exhausted",
+    });
+    expect(complete).not.toHaveBeenCalled();
+    expect(call).not.toHaveBeenCalled();
   });
   it("feeds one Tool result back to the model and completes without replay", async () => {
     const complete = vi.fn<ModelPort["complete"]>();
@@ -1251,7 +1294,12 @@ describe("TurnRunner", () => {
     expect(Buffer.byteLength(JSON.stringify(persisted), "utf8")).toBeLessThanOrEqual(
       MAX_TOOL_RESULT_BYTES,
     );
-    expect(JSON.stringify(complete.mock.calls[1]?.[0].messages)).toContain("Tool result truncated");
+    expect(complete).toHaveBeenCalledTimes(2);
+    for (const [request] of complete.mock.calls) expect(request.purpose).not.toBe("compaction");
+    const feedback = JSON.stringify(complete.mock.calls[1]?.[0].messages);
+    expect(feedback).toContain("sha256:");
+    expect(feedback).toContain("chars elided");
+    expect(feedback).not.toContain("Tool result truncated");
   });
 });
 

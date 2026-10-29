@@ -31,6 +31,8 @@ export type OpenAICompatibleModelOptions = {
   destination?: ProviderDestinationOptions;
 };
 
+const MAX_RESPONSE_BYTES = 4 * 1024 * 1024;
+
 const functionCallSchema = z.object({
   id: z.string().min(1),
   type: z.literal("function"),
@@ -197,7 +199,7 @@ export class OpenAICompatibleModel implements AuthenticatedModelTransport {
         const delay = retryAfterDelay(response.headers.get("retry-after"), Date.now());
         if (delay !== undefined) failure.retryAfterMs = delay;
         if (response.status === 400 || response.status === 413 || response.status === 422) {
-          const overflowPayload = await readPayload(response);
+          const overflowPayload = await readErrorPayload(response, failure);
           if (contextOverflow(overflowPayload))
             throw new OpenAICompatibleModelError(
               "context_overflow",
@@ -426,13 +428,62 @@ function isRecord(value: unknown): value is { [key: string]: JsonValue } {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-async function readPayload(response: Response): Promise<unknown> {
-  const maxResponseBytes = 4 * 1024 * 1024;
+async function cancelErrorBody(
+  body: { cancel(): Promise<void> },
+  failure: ModelError,
+): Promise<void> {
+  try {
+    await body.cancel();
+  } catch (cleanupError) {
+    throw new ModelTransportCleanupError(
+      new AggregateError([failure, cleanupError], "Model response cleanup failed"),
+    );
+  }
+}
+
+async function readErrorPayload(response: Response, failure: ModelError): Promise<unknown> {
   const declaredLength = response.headers.get("content-length");
   if (
     declaredLength !== null &&
     /^\d+$/u.test(declaredLength) &&
-    Number(declaredLength) > maxResponseBytes
+    Number(declaredLength) > MAX_RESPONSE_BYTES
+  ) {
+    if (response.body !== null) await cancelErrorBody(response.body, failure);
+    return undefined;
+  }
+  if (response.body === null) return undefined;
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let bytes = 0;
+  try {
+    for (let next = await reader.read(); !next.done; next = await reader.read()) {
+      const value = next.value;
+      bytes += value.byteLength;
+      if (bytes > MAX_RESPONSE_BYTES) {
+        await cancelErrorBody(reader, failure);
+        return undefined;
+      }
+      chunks.push(value);
+    }
+  } catch (error) {
+    if (error instanceof ModelTransportCleanupError) throw error;
+    return undefined;
+  } finally {
+    reader.releaseLock();
+  }
+  try {
+    return JSON.parse(Buffer.concat(chunks, bytes).toString("utf8")) as unknown;
+  } catch {
+    return undefined;
+  }
+}
+
+async function readPayload(response: Response): Promise<unknown> {
+  const declaredLength = response.headers.get("content-length");
+  if (
+    declaredLength !== null &&
+    /^\d+$/u.test(declaredLength) &&
+    Number(declaredLength) > MAX_RESPONSE_BYTES
   ) {
     await response.body?.cancel();
     throw invalidResponse("Model response exceeded the size limit");
@@ -445,7 +496,7 @@ async function readPayload(response: Response): Promise<unknown> {
     for (let next = await reader.read(); !next.done; next = await reader.read()) {
       const value = next.value;
       bytes += value.byteLength;
-      if (bytes > maxResponseBytes) {
+      if (bytes > MAX_RESPONSE_BYTES) {
         await reader.cancel();
         throw invalidResponse("Model response exceeded the size limit");
       }

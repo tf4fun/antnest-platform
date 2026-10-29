@@ -42,6 +42,9 @@ Every admitted Run prepares one model input from its frozen Runtime binding:
    mandatory guidance locators remain protected. Compaction
    pins system instructions, the persisted original task (`source.pinned` IDs
    recorded in checkpoint metadata) and the newest complete Tool exchange,
+   while Plan snapshots remain assistant messages with internal pin metadata
+   excluded from the Provider request. If bounded Tool excerpts already fit,
+   no summarizer request is spent. Otherwise compaction
    summarizes the dropped middle through a bounded prompt (`context-summary-v1`)
    on the frozen compaction or primary Model, and falls back to a deterministic
    previous-summary-first mechanical summary only on ordinary provider failure.

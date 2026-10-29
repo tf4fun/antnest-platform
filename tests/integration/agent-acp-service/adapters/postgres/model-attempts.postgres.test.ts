@@ -429,7 +429,19 @@ describe.skipIf(databaseUrl === undefined)(
             (row) => row.kind === "model_attempt",
           ),
         ).toEqual([]);
-        expect(await run.contexts.load(forkId)).toEqual(originalContext);
+        const forkMessages = await messages(fixture, forkId);
+        const forkFirstUser = forkMessages.find(
+          (row) => row.kind === "user_message",
+        );
+        expect(forkFirstUser).toBeDefined();
+        expect(forkFirstUser!.id).not.toBe(originalContext.pinned?.[0]?.id);
+        expect(await run.contexts.load(forkId)).toEqual({
+          ...originalContext,
+          pinned: originalContext.pinned?.map((entry) => ({
+            ...entry,
+            id: forkFirstUser!.id,
+          })),
+        });
         expect(JSON.stringify(await sessions.replay(forkId))).not.toContain(
           "model_attempt",
         );

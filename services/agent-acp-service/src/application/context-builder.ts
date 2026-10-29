@@ -160,7 +160,8 @@ export class ContextBuilder {
     const prefix: ModelMessage[] = [system];
     if (source.plan !== undefined)
       prefix.push({
-        role: "system",
+        role: "assistant",
+        pinned: true,
         content: [
           {
             type: "text",

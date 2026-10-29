@@ -171,6 +171,7 @@ export type ModelMessage =
     }
   | {
       role: "assistant";
+      pinned?: true;
       content: ContentBlock[];
       thought?: ContentBlock[];
       toolCalls?: Array<{
