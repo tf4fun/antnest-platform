@@ -829,7 +829,8 @@ function configuration(): ExecutionConfiguration {
 
 function provider(input: ExecutionConfiguration) {
   const value = input.providers[0];
-  const credential = value !== undefined && "credential" in value ? value.credential : undefined;
+  const credential =
+    value !== undefined && "credential" in value ? value.credential : undefined;
   if (
     value === undefined ||
     credential === undefined ||

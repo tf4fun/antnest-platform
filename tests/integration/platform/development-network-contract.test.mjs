@@ -79,7 +79,9 @@ test("every current workload pair shares the receiver's explicitly bound purpose
   assert.equal(pairs.size, 25);
   assert.deepEqual(contract.control_routes, {
     "agent-acp-service": [
+      "POST /rpc/agent-acp/apply-execution-delta",
       "POST /rpc/agent-acp/apply-execution-snapshot",
+      "POST /rpc/agent-acp/get-execution-digest",
       "POST /rpc/agent-acp/get-runtime-barrier",
       "POST /rpc/agent-acp/settle-agent",
     ],

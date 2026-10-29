@@ -681,7 +681,7 @@
       "json_rpc_code": -32050,
       "http_status": 409,
       "retryable": false,
-      "recovery": "full_snapshot",
+      "recovery": "refresh",
       "message": "Execution authority base revision changed",
       "surfaces": ["admission", "http"]
     }

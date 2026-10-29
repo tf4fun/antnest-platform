@@ -275,7 +275,7 @@ describe("Run model candidate clients", () => {
             credential: { method: "api_key", secret: newSecret },
           }
         : provider,
-    ) as typeof restored.providers;
+    );
     f.providers.apply(parseExecutionConfiguration(restored));
     const request = requestFor(f, f.fallback);
     expect(request.snapshot.executionSpec.model.baseUrl).toBe(f.fallback.model.baseUrl);

@@ -135,6 +135,18 @@ test("connection quota rejection is an HTTP-only retryable handshake error", () 
   });
 });
 
+test("configuration_base_mismatch is a non-retryable conflict recovering by refresh", () => {
+  assert.deepEqual(catalog.errors.configuration_base_mismatch, {
+    class: "conflict",
+    json_rpc_code: -32050,
+    http_status: 409,
+    retryable: false,
+    recovery: "refresh",
+    message: "Execution authority base revision changed",
+    surfaces: ["admission", "http"],
+  });
+});
+
 test("not_found is a generic HTTP and Skill-source resource error without admission semantics", () => {
   const definition = catalog.errors.not_found;
   assert.deepEqual(
