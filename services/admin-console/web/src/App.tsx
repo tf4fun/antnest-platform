@@ -40,6 +40,7 @@ import { listenForSessionActivity } from "./lib/session-activity";
 import type { CurrentAccount, Session } from "./lib/types";
 import { cn } from "./lib/utils";
 import { AgentsPage } from "./pages/agents";
+import { ModelCallPolicyPage } from "./pages/model-call-policy";
 import { DashboardPage } from "./pages/dashboard";
 import { DirectoryPage } from "./pages/directory";
 import { LoginPage } from "./pages/login";
@@ -74,6 +75,7 @@ const navigation: NavigationGroup[] = [
     items: [
       { page: "directory", label: "Directory", icon: Users },
       { page: "provisioning", label: "Provisioning", icon: Waypoints },
+      { page: "model-call-policy", label: "Model budgets", icon: Waypoints },
     ],
   },
 ];
@@ -87,6 +89,7 @@ const pageLabels: Record<Page, string> = {
   skills: "Skills",
   agents: "Agents",
   audits: "Execution history",
+  "model-call-policy": "Model budgets",
 };
 
 function Navigation({ route, onNavigate }: { route: Route; onNavigate: () => void }) {
@@ -541,7 +544,7 @@ export default function App() {
           tabIndex={-1}
         >
           <SelfExternalIdentities key={`external-identities:${generation}`} open={externalIdentitiesOpen} onOpenChange={setExternalIdentitiesOpen} />
-          {["models", "templates", "agents"].includes(route.page) ? <ConfigurationSynchronization key={JSON.stringify([session.principal.organization_id, session.principal.user_id])} /> : null}
+          {["models", "templates", "agents", "model-call-policy"].includes(route.page) ? <ConfigurationSynchronization key={JSON.stringify([session.principal.organization_id, session.principal.user_id])} /> : null}
           {route.page === "overview" ? <DashboardPage /> : null}
           {route.page === "directory" ? (
             <DirectoryPage
@@ -557,6 +560,12 @@ export default function App() {
           {route.page === "templates" ? <TemplatesPage templateID={route.resourceID} revisionID={route.revisionID} /> : null}
           {route.page === "skills" ? <SkillsPage skillID={route.resourceID} /> : null}
           {route.page === "agents" ? <AgentsPage agentID={route.resourceID} networkScope={JSON.stringify([session.principal.organization_id, session.principal.user_id])} /> : null}
+          {route.page === "model-call-policy" ? (
+            <ModelCallPolicyPage
+              key={JSON.stringify([session.principal.organization_id, session.principal.user_id, session.principal.membership_id])}
+              expectedPrincipal={[session.principal.organization_id, session.principal.user_id]}
+            />
+          ) : null}
           {route.page === "audits" ? <ExecutionAuditsPage runID={route.resourceID} agentID={route.agentID} /> : null}
         </main>
       </div>

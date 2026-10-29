@@ -217,6 +217,17 @@ Known presets use Controller metadata; custom model input capabilities are
 administrator-configured. No converter or additional credential is inferred.
 See [native input configuration](../../services/admin-console/docs/multimodal-models.md).
 
+## Organization model-call policy
+
+Version 58 adds `GET`/`PUT /api/admin/model-call-policy` for the organization
+budget, plus the optional Template `model_retry`/`failover`/`run_budget`
+members. Both routes require the `edge-gateway` workload and a verified
+caller context; the signed account is the only authority and
+`expected_principal` is a non-authoritative stale-account precondition. Wire
+shapes, exact microdollar bounds and retry/failover semantics are in
+[model-call-policy.schema.json](model-call-policy.schema.json) and
+[model-call-policy.md](model-call-policy.md).
+
 Optional model pricing is part of the read allowlist, including Agent lineage
 and Overview. Invalid, incomplete or null upstream prices fail projection
 instead of becoming zero; private nested fields remain excluded. Create/revise

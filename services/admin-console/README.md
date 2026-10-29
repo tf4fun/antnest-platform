@@ -198,6 +198,7 @@ the web application; `make test-integration-node` runs the browser tests;
 - [Skills](docs/skills.md) - Skill Registry inventory, publication, discovery and promotion.
 - [Agent state](docs/agent-state.md) - lifecycle, activation and Runtime condition presentation.
 - [Network policy](docs/network-policy.md) - Agent public-network policy and recovery.
+- [Model budgets and Template model policy](docs/model-call-policy.md) - Organization budget CAS, exact USD caps and Template retry/failover/run budget.
 - [Execution audit](docs/execution-audit.md) - ACP audit reads and synchronization status.
 - [Agent workspace navigation](docs/agent-workspace-navigation.md) - links into Agent UI.
 - [Admin contract](../../contracts/admin-console/README.md) and [skill discovery contract](../../contracts/admin-console/skill-discovery.md).

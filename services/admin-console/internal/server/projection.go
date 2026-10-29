@@ -6,6 +6,8 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	"github.com/tf4fun/antnest-platform/modules/service-authentication/serviceauth"
 )
 
 // Browser projections are allowlists. Adding a field to an internal RPC
@@ -174,6 +176,25 @@ type templateSource struct {
 	Enabled                 bool                               `json:"enabled"`
 	CreatedAt               string                             `json:"created_at"`
 	UpdatedAt               string                             `json:"updated_at"`
+	ModelRetry              *templateModelRetry                `json:"model_retry,omitempty"`
+	Failover                *string                            `json:"failover,omitempty"`
+	RunBudget               *browserRunBudget                  `json:"run_budget,omitempty"`
+}
+
+func (source *templateSource) UnmarshalJSON(raw []byte) error {
+	var fields map[string]json.RawMessage
+	if err := serviceauth.DecodeObject(raw, &fields); err != nil {
+		return err
+	}
+	type wire templateSource
+	var decoded wire
+	if err := json.Unmarshal(raw, &decoded); err != nil {
+		return err
+	}
+	*source = templateSource(decoded)
+	return validateTemplatePolicyFields(fields, &templateModelPolicyInput{
+		ModelRetry: source.ModelRetry, Failover: source.Failover, RunBudget: source.RunBudget,
+	})
 }
 
 type templateListSource struct {

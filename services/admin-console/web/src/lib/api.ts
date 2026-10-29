@@ -1,6 +1,7 @@
 import { csrfFromCookie } from "./forms";
 import type { AvailabilityChange, AvailabilityReceipt, CatalogKind, ExecutionSynchronization } from "./catalog-availability";
 import { decodeNetworkAssignment, decodeNetworkPolicy, type PendingNetwork } from "./network-policy";
+import { decodeModelCallPolicy, sameModelCallPolicyIntent, type ModelCallPolicy, type ModelCallPolicyUpdate, type TemplateModelPolicy } from "./model-call-policy";
 import { invalidatesBrowserSession } from "./session-errors";
 import type { SkillPage, SkillReference, SkillVersion, SkillVersionPage, SkillSourcePage, SkillSourcePreview, SkillSourceSelection, SkillSourcePromotion } from "./skills";
 import { auditQuery, type AuditFilters, type AuditPage, type ExecutionAuditSummary, type ExecutionAuditDetail, type ExecutionAuditEvent, type ExecutionAuditPermission } from "./execution-audit";
@@ -253,7 +254,7 @@ function intentStorageKey(scope: string, input: unknown): string {
   return `antnest:lifecycle:${scope}:${(hash >>> 0).toString(16)}`;
 }
 
-async function idempotentRequest<T>(scope: string, path: string, input: unknown, method: "POST" | "PUT" = "POST"): Promise<T> {
+async function idempotentRequest<T>(scope: string, path: string, input: unknown, method: "POST" | "PUT" = "POST", validate?: (body: unknown) => T): Promise<T> {
   const requestSession = browserSession;
   const scopedIntent = `${commandPrincipal}:${scope}`;
   const storageKey = intentStorageKey(scopedIntent, input);
@@ -268,11 +269,14 @@ async function idempotentRequest<T>(scope: string, path: string, input: unknown,
     sessionStorage.setItem(storageKey, idempotencyKey);
   }
   try {
-    const result = await request<T>(path, {
+    const body = await request<unknown>(path, {
       method,
       headers: { "Idempotency-Key": idempotencyKey },
       body: json(input),
     });
+    // Validation happens while the request identity is still stored, so a
+    // malformed success keeps the exact retry intent for a later attempt.
+    const result = validate ? validate(body) : (body as T);
     if (browserSession === requestSession && sessionStorage.getItem(storageKey) === idempotencyKey) sessionStorage.removeItem(storageKey);
     return result;
   } catch (error) {
@@ -400,6 +404,30 @@ export const api = {
     method: "PUT", headers: { "Idempotency-Key": intent.idempotency_key, "X-Antnest-Expected-Principal": encodeURIComponent(scope) },
     body: json({ action: intent.action, expected_resource_version: intent.expected_resource_version }),
   }), agentID, intent),
+  modelCallPolicy: async (signal?: AbortSignal) => {
+    try {
+      return decodeModelCallPolicy(await request<unknown>("/api/admin/model-call-policy", { signal }));
+    } catch (error) {
+      if (error instanceof APIError) throw error;
+      throw new APIError(502, "invalid_response", "The server returned an invalid model policy.");
+    }
+  },
+  setModelCallPolicy: (input: ModelCallPolicyUpdate) =>
+    idempotentRequest<ModelCallPolicy>("model-call-policy", "/api/admin/model-call-policy", input, "PUT", (body) => {
+      let policy: ModelCallPolicy;
+      try {
+        policy = decodeModelCallPolicy(body);
+      } catch {
+        throw new APIError(502, "invalid_response", "The server returned an invalid model policy.");
+      }
+      if (policy.revision !== input.expected_revision + 1 || !sameModelCallPolicyIntent(policy, input)) {
+        throw new APIError(502, "invalid_response", "The server returned an unexpected model policy.");
+      }
+      // The committed policy participates in normal execution publication, so
+      // the shared pending indicator follows a validated save only.
+      window.dispatchEvent(new Event("antnest:configuration-changed"));
+      return policy;
+    }),
   session: readSession,
   loginMethods: (organization_slug: string, signal?: AbortSignal) => request<LoginMethodList>("/api/session/login-methods", {
     method: "POST",
@@ -539,7 +567,7 @@ export const api = {
     max_model_requests: number;
     skill_refs?: SkillReference[];
     runtime?: { image_ref?: string; mcp_servers?: ManagedMCPServerWrite[] };
-  }) => idempotentRequest<AgentTemplate>("create-template", "/api/admin/templates", input),
+  } & TemplateModelPolicy) => idempotentRequest<AgentTemplate>("create-template", "/api/admin/templates", input),
   reviseTemplate: (templateID: string, input: {
     fallback_model_profile_ids?: string[];
     name: string;
@@ -552,7 +580,7 @@ export const api = {
       resources: { memory_bytes: number; pids_limit: number; tmpfs_bytes: number };
       mcp_servers?: ManagedMCPServerWrite[];
     };
-  }) => idempotentRequest<AgentTemplate>(
+  } & TemplateModelPolicy) => idempotentRequest<AgentTemplate>(
     `revise-template:${templateID}`,
     `/api/admin/templates/${encodeURIComponent(templateID)}/revisions`,
     input,

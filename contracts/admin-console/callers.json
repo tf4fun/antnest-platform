@@ -159,6 +159,14 @@
       },
       "request_body": "none"
     },
+    "GET /api/admin/model-call-policy": {
+      "callers": ["edge-gateway"],
+      "authentication": "workload",
+      "caller_context": {
+        "edge-gateway": "required"
+      },
+      "request_body": "none"
+    },
     "GET /api/admin/model-profiles": {
       "callers": ["edge-gateway"],
       "authentication": "workload",
@@ -494,6 +502,14 @@
       "request_body": "json"
     },
     "PUT /api/admin/agents/{agent_id}/network-policy": {
+      "callers": ["edge-gateway"],
+      "authentication": "workload",
+      "caller_context": {
+        "edge-gateway": "required"
+      },
+      "request_body": "json"
+    },
+    "PUT /api/admin/model-call-policy": {
       "callers": ["edge-gateway"],
       "authentication": "workload",
       "caller_context": {

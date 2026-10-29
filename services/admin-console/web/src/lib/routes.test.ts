@@ -37,6 +37,11 @@ test("unknown and empty routes fail closed to overview", () => {
   assert.deepEqual(parseConsoleRoute(""), { page: "overview" });
 });
 
+test("model-call-policy is a first-class organization route", () => {
+  assert.deepEqual(parseConsoleRoute("#model-call-policy"), { page: "model-call-policy" });
+  assert.deepEqual(parseConsoleRoute("#model-call-policy/extra"), { page: "overview" });
+});
+
 test("provisioning is a first-class organization route", () => {
   assert.deepEqual(parseConsoleRoute("#provisioning"), { page: "provisioning" });
 });

@@ -1,4 +1,4 @@
-export type ConsolePage = "overview" | "directory" | "provisioning" | "models" | "templates" | "skills" | "agents" | "audits";
+export type ConsolePage = "overview" | "directory" | "provisioning" | "models" | "templates" | "skills" | "agents" | "audits" | "model-call-policy";
 
 export type ConsoleRoute = { page: ConsolePage; resourceID?: string; revisionID?: string; agentID?: string };
 
@@ -8,7 +8,7 @@ export function parseConsoleRoute(hash: string): ConsoleRoute {
   const page = parts[0];
   const resourceID = decodeResourceID(parts[1]);
   if (parts.length > 1 && !resourceID) return { page: "overview" };
-  if ((page === "directory" || page === "provisioning") && parts.length === 1) return { page };
+  if ((page === "directory" || page === "provisioning" || page === "model-call-policy") && parts.length === 1) return { page };
   if (page === "models" || page === "templates" || page === "skills") {
     if (parts.length === 1) return { page };
     if (parts.length === 2) return { page, resourceID };
