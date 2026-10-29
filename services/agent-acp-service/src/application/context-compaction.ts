@@ -80,17 +80,29 @@ export async function compactModelContext(
     };
   }
 
+  const boundedMessages = input.messages.map(boundToolResult);
+  if (input.force !== true && estimator.estimateMessages(boundedMessages) <= budget)
+    return {
+      messages: boundedMessages,
+      summary: "",
+      promptVersion: COMPACTION_PROMPT_VERSION,
+      fallback: false,
+      droppedCount: 0,
+      droppedIndexes: [],
+    };
+
   let previousSummary = "";
   const systems: Entry[] = [];
   const entries: Entry[] = [];
-  input.messages.forEach((message, index) => {
+  boundedMessages.forEach((message, index) => {
     const summaryText = message.role === "system" ? priorSummaryText(message.content) : undefined;
     if (summaryText !== undefined) {
       if (previousSummary === "") previousSummary = summaryText;
       return;
     }
-    if (message.role === "system") systems.push({ message, index });
-    else entries.push({ message: boundToolResult(message), index });
+    if (message.role === "system" || (message.role === "assistant" && message.pinned === true))
+      systems.push({ message, index });
+    else entries.push({ message, index });
   });
   const firstUserPos = entries.findIndex((entry) => entry.message.role === "user");
   const newestUserPos = entries.findLastIndex((entry) => entry.message.role === "user");

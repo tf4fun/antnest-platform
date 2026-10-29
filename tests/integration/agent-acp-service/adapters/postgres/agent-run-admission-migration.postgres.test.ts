@@ -373,6 +373,8 @@ describe.skipIf(databaseUrl === undefined)(
           "0030_peer_membership.sql",
           "0031_peer_participation.sql",
           "0032_model_budget_ledger.sql",
+          "0033_context_compaction.sql",
+          "0034_model_token_calibration.sql",
         ]);
         const index = await pool.query<{ indexdef: string }>(
           "SELECT indexdef FROM pg_indexes WHERE schemaname='public' AND indexname='runs_agent_nonterminal_unique'",

@@ -219,6 +219,40 @@ describe("compactModelContext", () => {
     expect(rendered).toContain(digest);
     expect(rendered).toContain(big.slice(0, 64));
     expect(rendered).toContain(big.slice(-64));
+    expect(rendered).toContain("chars elided");
+    expect(rendered).not.toContain("Tool result truncated");
+  });
+
+  it("bounds a fitting Tool result without summarization or drops", async () => {
+    const big = `RESULT-${"DATA".repeat(600)}-END`;
+    const digest = createHash("sha256").update(big).digest("hex");
+    const messages: ModelMessage[] = [
+      textMessage("system", "You are useful."),
+      textMessage("user", "Original task"),
+      {
+        role: "assistant",
+        content: [{ type: "text", text: "I will read the file." }],
+        toolCalls: [{ id: "call-1", name: "read", arguments: { path: "big.log" } }],
+      },
+      { role: "tool", toolCallId: "call-1", content: [{ type: "text", text: big }] },
+      textMessage("user", "Latest question"),
+    ];
+    const complete = vi.fn<CompactionComplete>();
+    const result = await compactModelContext({
+      snapshot: runSnapshot(),
+      messages,
+      tools: [],
+      signal: new AbortController().signal,
+      complete,
+    });
+    expect(complete).not.toHaveBeenCalled();
+    expect(result.summary).toBe("");
+    expect(result.droppedIndexes).toEqual([]);
+    const rendered = JSON.stringify(result.messages);
+    expect(rendered).not.toContain(big);
+    expect(rendered).toContain(digest);
+    expect(rendered).toContain("call-1");
+    expect(rendered).toContain("Latest question");
   });
 
   it("keeps complete Tool exchanges atomic instead of splitting calls from results", async () => {

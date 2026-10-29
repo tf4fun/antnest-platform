@@ -1,5 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { ContextBuilder } from "../../src/application/context-builder.js";
+import { compactModelContext } from "../../src/application/context-compaction.js";
+import { toOpenAIMessages } from "../../src/adapters/model/openai-content.js";
 import { emptyRuntimePreparation } from "../fixtures/runtime-information.js";
 import { snapshot } from "../support/fixtures.js";
 
@@ -24,10 +26,15 @@ describe("Plan context", () => {
                 {
                   sequence: 1,
                   kind: "user_message" as const,
-                  content: [{ type: "text", text: "old ".repeat(3000) }],
+                  content: [{ type: "text", text: "Original task" }],
                 },
                 {
                   sequence: 2,
+                  kind: "agent_message" as const,
+                  content: [{ type: "text", text: "old history ".repeat(500) }],
+                },
+                {
+                  sequence: 3,
                   kind: "user_message" as const,
                   content: [{ type: "text", text: "latest" }],
                 },
@@ -37,7 +44,7 @@ describe("Plan context", () => {
         },
       });
       const execution = snapshot();
-      execution.executionSpec.model.contextWindow = 2048;
+      execution.executionSpec.model.contextWindow = 4096;
       execution.executionSpec.model.maxOutputTokens = 128;
       const context = await builder.build(
         "session",
@@ -55,6 +62,21 @@ describe("Plan context", () => {
       );
       expect(JSON.stringify(context.messages[0])).not.toContain("private plan");
       expect(JSON.stringify(context.messages.at(-1))).toContain("latest");
+      expect(
+        JSON.stringify(toOpenAIMessages(context.messages, execution.executionSpec.model)),
+      ).not.toContain('"pinned"');
+      const recompacted = await compactModelContext({
+        snapshot: execution,
+        messages: context.messages,
+        tools: context.tools,
+        signal: new AbortController().signal,
+        force: true,
+      });
+      const pinnedPlan = recompacted.messages.find((message) =>
+        JSON.stringify(message).includes("plan at Run start"),
+      );
+      expect(pinnedPlan?.role).toBe("assistant");
+      expect(JSON.stringify(recompacted.messages)).toContain("later successful update_plan");
     },
   );
 });
