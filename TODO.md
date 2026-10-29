@@ -19,6 +19,8 @@ Issue 状态最后核对于 2026-10-28：141 个 issue，87 个已关闭，54 �
 
 ## 当前批次
 
+- **#355 Identity PostgreSQL 720s 定位与修复（2026-10-29，分支 `fix/issue-355-go-service-deadline`）**：定位结论：并非挂死，而是预算耗尽。26 个带产物的远程 run 中 21 次通过、耗时 520–716s（外层 720000ms），5 次失败（`4f1e3acb`、`eb9532ae`、`fd77a234`、`4be33db8`、`8771abd2`）均在 720080–720089ms 被 `go-service.mjs` 看门狗 SIGKILL，且看门狗丢弃全部部分结果、不输出在途包／测试。本地以固定 `postgres:17.11-bookworm` 复现完整套件 712.6s、0 失败：`internal/e2e` 465s（185 个顶层串行测试）、`cmd/identity-service` 66s（其中按设计等待真实生产清理定时器的 `TestCredentialCleanupRunCancelsBlockedSQLBeforeClosingPool` 60s）。`-p=1` 同时串行化了编译：冷缓存仅构建 108s，并行构建 29s＋串行复用约 2s。修复只改共享工具 `go-service.mjs`／`go-results.mjs`：先并行预编译（`-run '^$' -exec true`），再以原 `-p=1` 串行运行；720s 预算覆盖两段且 `--deadline-ms` 只能缩短；超时／中断输出 `reason`、`phase`（prebuild／build／test）与在途包和顶层测试，在途测试与失败测试都以不含输出的 `{"Action":"fail",...}` 行解析为源码身份；每次运行写入上传的 `go-integration/go-progress-*.json`（预编译耗时、各包耗时、最慢 10 个测试，不含输出／子测试名／数据库配置）；修复 macOS 杀进程组的 EPERM 崩溃。聚焦 13 项测试通过（含先红后绿）；真实 ci-shard 全量通过 619s（cleanup 通过）；强制 100s 截止的真实 ci-shard 在 `results.json` 中给出 `services/identity-service/internal/credentials/engine_test.go:255` 身份。未加长截止、未改测试内容。未完成：远程 CI 证据；后续可选提速——CI 未恢复 `.cache/go-build`（setup-go 缓存的是 `~/.cache/go-build`，而依赖运行器强制使用 `.cache`）、`internal/e2e` 串行 465s。原始日志临时保留于 `artifacts/verification/issue-355/`。
+
 当前状态（2026-10-28，北京时间）。2026-10-28 之前的检查点日志已移出本文件：已提交部分见 Git 历史，未提交的 2026-10-22 至 10-25 检查点见 `artifacts/verification/issue-triage-20261028/TODO-current-batch-history.md`。
 
 - **主线 #82 → #52**：#82 结构化子项 8/21 关闭（新挂入 #252、#356）；#52 原验收 1/5。#342 契约、#343 重试、#344 fallback、#345 熔断、#347 ACP 预算记账与执行（`6330f84b`）已合并；#347 只交付 ACP 生产方。
@@ -50,7 +52,7 @@ Issue 状态最后核对于 2026-10-28：141 个 issue，87 个已关闭，54 �
 - [x] [#233](https://github.com/tf4fun/antnest-platform/issues/233) test(runtime-egress): scoped privilege logging intermittently captures no event during image builds
 - [ ] [#247](https://github.com/tf4fun/antnest-platform/issues/247) Skill discovery trace collection admits traces with missing Gateway parent spans
 - [ ] [#361](https://github.com/tf4fun/antnest-platform/issues/361) CI: PR runs component CI only; main is the system integration branch that triggers E2E — 第 1 批 #362 已合并；第 2 批（测试镜像不入 GHCR、main 取消旧 run、发布能力标记）待远程 CI；第 3 批（suite 分类 component／system／stress、压力测试仅 nightly）待远程 CI；第 4 批（Makefile 按 target 选择）待远程 CI；≤15 分钟实测与 suite paths 审计待做
-- [ ] [#355](https://github.com/tf4fun/antnest-platform/issues/355) Identity PostgreSQL verification exits after ~720s without an actionable failure record
+- [ ] [#355](https://github.com/tf4fun/antnest-platform/issues/355) Identity PostgreSQL verification exits after ~720s without an actionable failure record — 已定位为 720s 预算耗尽（非挂死），共享 Go 运行器修复待远程 CI
 - [ ] [#357](https://github.com/tf4fun/antnest-platform/issues/357) Lifecycle restore verification exits 1 without an independent cleanup result
 
 ### 2 共享契约与依赖清单
