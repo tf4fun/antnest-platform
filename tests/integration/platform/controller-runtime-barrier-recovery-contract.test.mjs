@@ -283,10 +283,10 @@ test("pending manual recovery and notifications reuse existing lifecycle and eve
   });
 });
 
-test("revision 45 preserves policy GET and PUT and their exact administrator grants", () => {
+test("revision 46 preserves policy GET and PUT and their exact administrator grants", () => {
   const active = read("agent-controller/control-contract.json");
   const callers = read("agent-controller/callers.json");
-  assert.equal(active.revision, 45);
+  assert.equal(active.revision, 46);
   const expected = {
     get: {
       method: "GET",
