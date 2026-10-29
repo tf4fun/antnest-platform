@@ -302,8 +302,14 @@ test("the Makefile graph follows prerequisites and recursive make calls", () => 
   assert.deepEqual(makeTargetsRun(["node x.mjs"], [graph]), new Set());
 });
 
-test("a Makefile change selects no service unit job", () => {
+test("Makefile and system workflow changes select no service unit job", () => {
   assert.deepEqual(selectComponents(["Makefile"]), []);
+  assert.deepEqual(selectComponents([".github/workflows/e2e.yml"]), []);
+  assert.deepEqual(
+    selectComponents([".github/workflows/integration.yml"]).length,
+    selectComponents([], { all: true }).length,
+    "the PR gate workflow still selects every unit job",
+  );
 });
 
 test("the ownership check runs as a CI gate on this checkout", () => {

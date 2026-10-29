@@ -49,6 +49,9 @@
   (blank, comment and `.PHONY` lines change no target); a change outside
   named targets, such as a variable, still selects every suite. Service unit
   workflows never run the root `Makefile`, so it selects no unit job.
+  A change only to the system workflow (`e2e.yml`) selects no component suite
+  and no unit job: it never runs the PR gate, and its own tests run in
+  `Repository checks`.
 - Integration required `needs` includes all ten `unit-<service>` reusable
   jobs; `SERVICES` from the selector drives each job's condition and the
   gate validates results (selected→success, unselected→skipped).
