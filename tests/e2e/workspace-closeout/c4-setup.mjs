@@ -24,7 +24,9 @@ export async function setup(
   config,
   signal,
   {
-    contextWindow = 8192,
+    // ACP budgets one token per UTF-8 byte without a tokenizer; leave room
+    // for Runtime tool schemas and guidance in every Agent Run.
+    contextWindow = 65536,
     // Container clients also import this module for member/until. Load the
     // host-only Docker adapter only when setup actually needs a state read.
     stateReader = async (options) =>

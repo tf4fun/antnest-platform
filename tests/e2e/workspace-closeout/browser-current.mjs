@@ -16,7 +16,7 @@ export async function createBrowserTemplate(json, image) {
           display_name: "Browser vision",
           model: {
             model: "stage3-model",
-            context_window: 8192,
+            context_window: 65536,
             max_output_tokens: 1024,
             supports_images: true,
           },

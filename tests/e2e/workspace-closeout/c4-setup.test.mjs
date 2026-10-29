@@ -122,6 +122,13 @@ test("C4 state reads retain the original member session, Principal and complete 
     1,
   );
   assert(!wire.some((row) => row.path.includes("/api/app/")));
+  // Without a tokenizer ACP budgets one token per UTF-8 byte, so the default
+  // window must hold Runtime tool schemas and guidance with margin.
+  const [provider] = wire.filter(
+    (row) => row.path === "/api/admin/provider-connections",
+  );
+  assert.equal(provider.body.models[0].model.context_window, 65536);
+  assert.equal(provider.body.models[0].model.tokenizer, undefined);
   assert.deepEqual(fixture.adminPrincipal, { ...principal, user_id: "admin" });
   const changed = await fixture.request(
     "/api/admin/directory/users/member/active",
