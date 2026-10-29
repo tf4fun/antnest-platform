@@ -1,8 +1,8 @@
-import type { ContentBlock } from "../domain/types.js";
+import type { ContentBlock, RunExecutionSnapshot } from "../domain/types.js";
 import type { PlanEntry } from "../domain/plan.js";
 import type { ModelToolCall } from "./model.js";
 
-export type StoredContextMessage =
+export type StoredContextMessage = (
   | {
       sequence: number;
       endSequence?: number;
@@ -26,17 +26,21 @@ export type StoredContextMessage =
         toolCalls: ModelToolCall[];
       };
       results: Array<{ toolCallId: string; content: ContentBlock[] }>;
-    };
+    }
+) & { id?: string };
 
 export type ContextCheckpoint = {
   throughSequence: number;
   summary: string;
+  compactionPromptVersion?: string;
+  pinnedMessageIds?: string[];
 };
 
 export type ContextSource = {
   plan?: PlanEntry[];
   checkpoint: ContextCheckpoint | null;
   messages: StoredContextMessage[];
+  pinned?: StoredContextMessage[];
 };
 
 export type SaveCheckpointInput = ContextCheckpoint & {
@@ -48,6 +52,7 @@ export type SaveCheckpointInput = ContextCheckpoint & {
 };
 
 export interface ContextRepository {
+  loadCalibration?(snapshot: RunExecutionSnapshot): Promise<number>;
   load(sessionId: string): Promise<ContextSource>;
   saveCheckpoint(input: SaveCheckpointInput): Promise<void>;
 }

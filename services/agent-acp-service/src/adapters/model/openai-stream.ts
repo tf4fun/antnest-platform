@@ -7,7 +7,7 @@ import {
   type ModelDelta,
   type ModelRequest,
 } from "../../ports/model.js";
-import { invalidResponse } from "./errors.js";
+import { contextOverflow, invalidResponse } from "./errors.js";
 import { extractUsage, mergeUsage, modelUsage } from "./openai-usage.js";
 import type { ModelPricing, ModelUsage } from "../../domain/usage.js";
 
@@ -62,6 +62,12 @@ class CompletionAssembly {
     } catch (error) {
       throw invalidResponse("Model stream returned invalid JSON", error);
     }
+    if (contextOverflow(value))
+      throw new ModelError(
+        "context_overflow",
+        "Model stream returned a context overflow error",
+        false,
+      );
     const usage = extractUsage(value);
     if (usage !== undefined) this.usage = mergeUsage(this.usage, usage);
     const parsed = chunkSchema.safeParse(value);

@@ -233,7 +233,9 @@ async function facts(pool: Pool) {
     const expression =
       table === "runs"
         ? "('{\"budget_reason\":null}'::jsonb || to_jsonb(stored)) - 'organization_id' - 'agent_id' - 'execution_owner_registration_id' - 'execution_owner_member_id' - 'execution_owner_incarnation_id' - 'execution_owner_epoch'"
-        : "to_jsonb(stored)";
+        : table === "context_checkpoints"
+          ? '\'{"compaction_prompt_version":null,"pinned_message_ids":[]}\'::jsonb || to_jsonb(stored)'
+          : "to_jsonb(stored)";
     result[table] = (
       await pool.query<{ value: unknown }>(
         `SELECT ${expression} AS value FROM ${table} AS stored ORDER BY id`,
@@ -373,6 +375,8 @@ describe.skipIf(databaseUrl === undefined)(
           "0030_peer_membership.sql",
           "0031_peer_participation.sql",
           "0032_model_budget_ledger.sql",
+          "0033_context_compaction.sql",
+          "0034_model_token_calibration.sql",
         ]);
         const index = await pool.query<{ indexdef: string }>(
           "SELECT indexdef FROM pg_indexes WHERE schemaname='public' AND indexname='runs_agent_nonterminal_unique'",

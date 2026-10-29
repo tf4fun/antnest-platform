@@ -35,8 +35,23 @@ Every admitted Run prepares one model input from its frozen Runtime binding:
    notices; history compaction remains atomic by complete Tool exchanges. Check
    the full model input before each subsequent model request as results grow.
    Retain the workspace guidance locator before budgeting Skill entries, and
-   omit metadata only at complete-entry boundaries. Token cost remains the
-   existing approximate character estimate, not an exact model tokenizer.
+   omit metadata only at complete-entry boundaries. Token cost uses the Model
+   tokenizer (128-unit chunked exact encodings or the UTF-8 byte bound), scaled
+   by the seeded p95 calibration ratio with a 1.05 safety margin. Optional Runtime
+   guidance receives a quarter of the raw input budget in the same token units;
+   mandatory guidance locators remain protected. Compaction
+   pins system instructions, the persisted original task (`source.pinned` IDs
+   recorded in checkpoint metadata) and the newest complete Tool exchange,
+   while Plan snapshots remain assistant messages with internal pin metadata
+   excluded from the Provider request. If bounded Tool excerpts already fit,
+   no summarizer request is spent. Otherwise compaction
+   summarizes the dropped middle through a bounded prompt (`context-summary-v1`)
+   on the frozen compaction or primary Model, and falls back to a deterministic
+   previous-summary-first mechanical summary only on ordinary provider failure.
+   Both generated and fallback summaries occupy at most 15% of the input budget.
+   Cancellation, budget and persistence errors are never swallowed. Compaction
+   and foreground calls share the Run request budget and deadline, and a
+   `context_overflow` with no emitted output retries exactly once.
 6. Call selected Runtime tools through the same bound endpoint and original MCP name.
    Structured results remain available to the model. An ordinary MCP error
    result is a returned outcome; a transport timeout/cancellation does not prove

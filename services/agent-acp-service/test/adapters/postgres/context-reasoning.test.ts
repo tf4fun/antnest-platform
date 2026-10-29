@@ -49,7 +49,7 @@ describe("Context reasoning projection", () => {
     ];
     const pool = new Pool();
     const kernel = new PostgresKernel(pool);
-    const result = (data: typeof rows) => ({
+    const result = <Row>(data: Row[]) => ({
       rows: data,
       rowCount: data.length,
       command: "SELECT",
@@ -58,7 +58,26 @@ describe("Context reasoning projection", () => {
     });
     const query = vi
       .spyOn(kernel, "query")
-      .mockResolvedValueOnce(result([]))
+      .mockResolvedValueOnce(
+        result([
+          {
+            through_sequence: "0",
+            summary: "prior",
+            compaction_prompt_version: "context-summary-v1",
+            pinned_message_ids: ["msg-1"],
+          },
+        ]),
+      )
+      .mockResolvedValueOnce(
+        result([
+          {
+            id: "msg-1",
+            sequence: "1",
+            kind: "user_message",
+            payload: { content: [{ type: "text", text: "oldest task" }] },
+          },
+        ]),
+      )
       .mockResolvedValueOnce(result(rows))
       .mockResolvedValueOnce(result([]));
     try {
@@ -66,7 +85,21 @@ describe("Context reasoning projection", () => {
         kernel,
         new AbortController().signal,
       ).contexts.load("session");
-      expect(query.mock.calls[1]?.[0]).toContain("'agent_thought'");
+      expect(query.mock.calls[2]?.[0]).toContain("'agent_thought'");
+      expect(context.checkpoint).toMatchObject({
+        throughSequence: 0,
+        summary: "prior",
+        compactionPromptVersion: "context-summary-v1",
+        pinnedMessageIds: ["msg-1"],
+      });
+      expect(context.pinned).toMatchObject([
+        {
+          id: "msg-1",
+          sequence: 1,
+          kind: "user_message",
+          content: [{ type: "text", text: "oldest task" }],
+        },
+      ]);
       expect(context.messages).toHaveLength(4);
       expect(context.messages[1]).toMatchObject({
         sequence: 2,

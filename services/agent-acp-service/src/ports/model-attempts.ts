@@ -6,8 +6,10 @@ export type ModelAttemptStarted = {
   modelProfileId: string;
   providerConnectionId: string;
   model: string;
-  purpose: "foreground" | "permission_judge" | "skill_learning";
+  purpose: "foreground" | "permission_judge" | "skill_learning" | "compaction";
   startedAt: Date;
+  estimatedInputTokens?: number;
+  tokenizer?: string;
   reservation?: ModelReservation;
 };
 

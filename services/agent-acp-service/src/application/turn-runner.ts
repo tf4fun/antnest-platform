@@ -27,8 +27,14 @@ import {
 import type { ToolPermissionPort } from "../ports/tool-permissions.js";
 import type { ProviderCircuitPort } from "../ports/provider-circuit.js";
 import { planResult, type PlanEntry } from "../domain/plan.js";
-import { assertModelInputBudget } from "./context-budget.js";
-import { ModelError, ModelTransportCleanupError, type ModelPort } from "../ports/model.js";
+import { assertModelInputBudget, estimateMessages, inputBudget } from "./context-budget.js";
+import { compactModelContext } from "./context-compaction.js";
+import {
+  ModelError,
+  ModelTransportCleanupError,
+  type ModelPort,
+  type ModelResult,
+} from "../ports/model.js";
 import type { RunEventPort } from "../ports/run-events.js";
 import type { ToolCatalogPort } from "../ports/tools.js";
 import { RunEventPersistenceError } from "./durable-run-events.js";
@@ -44,6 +50,7 @@ export type TurnRunnerDependencies = {
   catalog: ModelToolDefinition[];
   events: RunEventPort;
   now?: () => Date;
+  budget?: ModelRequestBudget;
 };
 
 export type RunTurnInput = {
@@ -64,7 +71,9 @@ export class TurnRunner {
     const messages = [...input.context];
     let effectState: ToolEffectState = "none";
     const preflight = new ToolPreflight();
-    const budget = new ModelRequestBudget(input.snapshot.executionSpec.maxModelRequests);
+    const budget =
+      this.dependencies.budget ??
+      new ModelRequestBudget(input.snapshot.executionSpec.maxModelRequests);
     const model = new ModelCallPolicy({
       model: this.dependencies.model,
       budget,
@@ -84,19 +93,57 @@ export class TurnRunner {
     try {
       const tools = this.dependencies.catalog;
       assertAuthority(input.authoritySignal);
+      let overflowRetried = false;
       for (let request = 0; budget.canTake(); request += 1) {
+        assertAuthority(input.authoritySignal);
         input.signal.throwIfAborted();
+        if (
+          estimateMessages(messages, input.snapshot.executionSpec.model) >
+          inputBudget(input.snapshot, tools)
+        ) {
+          const compacted = await compactModelContext({
+            snapshot: input.snapshot,
+            messages,
+            tools,
+            signal: input.signal,
+            complete: (compactionRequest) =>
+              model.complete({ runId: input.runId, request: compactionRequest }),
+          });
+          messages.length = 0;
+          messages.push(...compacted.messages);
+        }
         assertModelInputBudget(input.snapshot, tools, messages);
         const responseId = createHash("sha256")
           .update(JSON.stringify([input.runId, request]))
           .digest("hex");
-        const { response, output } = await this.completeModel(
-          input,
-          messages,
-          responseId,
-          model,
-          request,
-        );
+        let attempt: { response: ModelResult; output: ModelOutput };
+        try {
+          attempt = await this.completeModel(input, messages, responseId, model, request);
+        } catch (error) {
+          if (error instanceof RunEventPersistenceError) throw error;
+          assertAuthority(input.authoritySignal);
+          const overflow = contextOverflowError(error);
+          const outputStarted =
+            overflow?.outputStarted === true ||
+            (error instanceof ModelError && error.outputStarted);
+          if (overflow === undefined || outputStarted || overflowRetried) throw error;
+          if (!budget.canTake(1)) throw new ModelRequestLimitError();
+          overflowRetried = true;
+          const compacted = await compactModelContext({
+            snapshot: input.snapshot,
+            messages,
+            tools,
+            signal: input.signal,
+            complete: (compactionRequest) =>
+              model.complete({ runId: input.runId, request: compactionRequest }),
+            force: true,
+          });
+          messages.length = 0;
+          messages.push(...compacted.messages);
+          assertModelInputBudget(input.snapshot, tools, messages);
+          attempt = await this.completeModel(input, messages, responseId, model, request);
+        }
+        const { response, output } = attempt;
         assertAuthority(input.authoritySignal);
         if (response.thought !== undefined && !output.kinds.has("thought")) {
           await this.dependencies.events.agentThought(input.runId, response.thought);
@@ -184,6 +231,8 @@ export class TurnRunner {
         });
       if (error instanceof ModelRequestLimitError)
         return completed(effectState, "max_turn_requests");
+      if (contextOverflowError(error) !== undefined)
+        return failure(effectState, "context_overflow", unknownSourceFromError(error));
       if (error instanceof ModelCallInterruptedError && error.deadlineExceeded)
         return failure(effectState, "run_deadline_exceeded", unknownSourceFromError(error));
       return failure(effectState, errorClass(error), unknownSourceFromError(error));
@@ -652,6 +701,23 @@ function completed(
     toolEffectState: effect,
     stopReason,
   };
+}
+
+function contextOverflowError(error: unknown): ModelError | undefined {
+  let current: unknown = error;
+  while (current instanceof Error) {
+    if (
+      current instanceof ModelTransportCleanupError ||
+      current instanceof ModelCallInterruptedError ||
+      current instanceof RunEventPersistenceError ||
+      current instanceof ModelBudgetExceededError ||
+      current instanceof ModelRequestLimitError
+    )
+      return undefined;
+    if (current instanceof ModelError && current.code === "context_overflow") return current;
+    current = current.cause;
+  }
+  return undefined;
 }
 
 function errorClass(error: unknown): string {

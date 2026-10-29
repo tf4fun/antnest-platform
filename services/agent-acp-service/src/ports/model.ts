@@ -34,7 +34,7 @@ export type ModelResult = (
 export type ModelDelta = { kind: "message" | "thought"; text: string };
 
 export type ModelRequest = {
-  purpose?: "permission_judge" | "skill_learning";
+  purpose?: "permission_judge" | "skill_learning" | "compaction";
   snapshot: RunExecutionSnapshot;
   messages: ModelMessage[];
   tools: ModelToolDefinition[];
@@ -81,6 +81,7 @@ export class ModelError extends Error {
     public readonly code:
       | "model_unsupported_content"
       | "model_unavailable"
+      | "context_overflow"
       | "model_http_error"
       | "model_invalid_response"
       | "provider_unavailable"

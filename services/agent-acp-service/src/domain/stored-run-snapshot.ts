@@ -26,6 +26,8 @@ const modelSchema = z.strictObject({
   supportsAudio: z.boolean().optional(),
   supportsPdf: z.boolean().optional(),
   supportsTools: z.boolean().optional(),
+  tokenizer: z.enum(["o200k", "cl100k", "none"]).optional(),
+  compactionModelProfileId: id.optional(),
   pricing: modelPricingSchema.optional(),
 });
 
@@ -69,6 +71,13 @@ const schema = z
         )
         .max(31)
         .optional(),
+      compactionModel: z
+        .strictObject({
+          modelProfileId: id,
+          providerConnectionId: id,
+          model: modelSchema,
+        })
+        .optional(),
     }),
     clientMcpRevisionId: id,
   })
@@ -103,8 +112,15 @@ const schema = z
 
 export function parseStoredRunSnapshot(value: unknown): RunExecutionSnapshot {
   const parsed = schema.parse(value);
-  const { configuration, modelRetry, runBudget, modelFailover, fallbackModels, ...executionSpec } =
-    parsed.executionSpec;
+  const {
+    configuration,
+    modelRetry,
+    runBudget,
+    modelFailover,
+    fallbackModels,
+    compactionModel,
+    ...executionSpec
+  } = parsed.executionSpec;
   return {
     ...parsed,
     executionSpec: {
@@ -123,6 +139,15 @@ export function parseStoredRunSnapshot(value: unknown): RunExecutionSnapshot {
               model: normalizedModel(candidate.model),
             })),
           }),
+      ...(compactionModel === undefined
+        ? {}
+        : {
+            compactionModel: {
+              modelProfileId: compactionModel.modelProfileId,
+              providerConnectionId: compactionModel.providerConnectionId,
+              model: normalizedModel(compactionModel.model),
+            },
+          }),
     },
   };
 }
@@ -134,6 +159,8 @@ function normalizedModel(value: z.infer<typeof modelSchema>): ModelSpec {
     supportsAudio,
     supportsPdf,
     supportsTools,
+    tokenizer,
+    compactionModelProfileId,
     pricing,
     providerTokenLimits,
     ...model
@@ -159,6 +186,8 @@ function normalizedModel(value: z.infer<typeof modelSchema>): ModelSpec {
     ...(supportsAudio === undefined ? {} : { supportsAudio }),
     ...(supportsPdf === undefined ? {} : { supportsPdf }),
     ...(supportsTools === undefined ? {} : { supportsTools }),
+    ...(tokenizer === undefined ? {} : { tokenizer }),
+    ...(compactionModelProfileId === undefined ? {} : { compactionModelProfileId }),
     ...(normalizedPricing === undefined ? {} : { pricing: normalizedPricing }),
     ...(providerTokenLimits === undefined ? {} : { providerTokenLimits }),
   };

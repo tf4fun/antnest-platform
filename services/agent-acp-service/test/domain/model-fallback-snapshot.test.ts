@@ -356,4 +356,41 @@ describe("model fallback publication and immutable Run plan", () => {
     const record: unknown = JSON.parse(JSON.stringify(separate));
     expect(parseStoredRunSnapshot(record)).toStrictEqual(original);
   });
+
+  it("freezes the primary tokenizer and resolved compaction model into the Run snapshot and replay", () => {
+    const inputs = configurations();
+    Reflect.set(inputs.private.models[0]!, "tokenizer", "o200k");
+    Reflect.set(inputs.private.models[0]!, "compaction_model_profile_id", "model-2");
+    Reflect.set(inputs.private.models[1]!, "tokenizer", "cl100k");
+    const configuration = publicExecutionConfiguration(parseExecutionConfiguration(inputs.private));
+    const run = capture(configuration);
+    expect(run.executionSpec.model).toHaveProperty("tokenizer", "o200k");
+    expect(run.executionSpec).toHaveProperty("compactionModel", {
+      ...expectedCandidate(2),
+      model: { ...expectedCandidate(2).model, tokenizer: "cl100k" },
+    });
+    const record: unknown = JSON.parse(JSON.stringify(run));
+    expect(parseStoredRunSnapshot(record)).toStrictEqual(run);
+  });
+
+  it("replays stored compaction and tokenizer fields while older snapshots without them stay valid", () => {
+    const stored = legacySnapshot();
+    Reflect.set(stored.executionSpec.model, "tokenizer", "o200k");
+    const compactionModel = {
+      modelProfileId: "model-compaction",
+      providerConnectionId: "provider-compaction",
+      model: {
+        ...structuredClone(stored.executionSpec.model),
+        model: "compaction-model",
+        tokenizer: "cl100k",
+      },
+    };
+    Reflect.set(stored.executionSpec, "compactionModel", compactionModel);
+    const replayed = parseStoredRunSnapshot(JSON.parse(JSON.stringify(stored)) as unknown);
+    expect(replayed.executionSpec.model).toHaveProperty("tokenizer", "o200k");
+    expect(replayed.executionSpec).toHaveProperty("compactionModel", compactionModel);
+    const legacy = parseStoredRunSnapshot(JSON.parse(JSON.stringify(legacySnapshot())) as unknown);
+    expect(legacy.executionSpec.model).not.toHaveProperty("tokenizer");
+    expect(legacy.executionSpec).not.toHaveProperty("compactionModel");
+  });
 });
