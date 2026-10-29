@@ -187,17 +187,27 @@ test("the controlled model context admits the actual near-limit input through th
   ];
   const snapshot = {
     executionSpec: {
-      model: { contextWindow: capacityContextWindow, maxOutputTokens: 1024 },
+      model: {
+        model: "stage3-model",
+        tokenizer: "none",
+        contextWindow: capacityContextWindow,
+        maxOutputTokens: 1024,
+      },
     },
   };
-  assert(estimateMessages(messages) > 8192);
+  // Wire-sized images have a media reserve, not a base64-length token cost.
+  assert(estimateMessages(messages) > 4096);
+  assert(estimateMessages(messages) < 8192);
   assert.doesNotThrow(() => assertModelInputBudget(snapshot, [], messages));
   assert.throws(
     () =>
       assertModelInputBudget(
         {
           executionSpec: {
-            model: { contextWindow: 8192, maxOutputTokens: 1024 },
+            model: {
+              ...snapshot.executionSpec.model,
+              contextWindow: 4096,
+            },
           },
         },
         [],

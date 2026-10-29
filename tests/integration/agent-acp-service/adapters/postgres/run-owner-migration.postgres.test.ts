@@ -263,7 +263,9 @@ async function facts(pool: Pool): Promise<Record<string, string[]>> {
     const expression =
       table === "runs"
         ? "('{\"budget_reason\":null}'::jsonb || to_jsonb(stored)) - $1::text[]"
-        : "to_jsonb(stored)";
+        : table === "context_checkpoints"
+          ? '\'{"compaction_prompt_version":null,"pinned_message_ids":[]}\'::jsonb || to_jsonb(stored)'
+          : "to_jsonb(stored)";
     const order = table === "agent_leases" ? "organization_id, agent_id" : "id";
     const rows = await pool.query<{ value: string }>(
       `SELECT (${expression})::text AS value FROM ${table} AS stored ORDER BY ${order}`,
