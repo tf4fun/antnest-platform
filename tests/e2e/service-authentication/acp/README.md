@@ -9,8 +9,8 @@ docker pull node:24.21.0-bookworm-slim
 make e2e-acp-authentication
 ```
 
-Tier B suite `auth-acp` in shard `b-auth` runs this target and blocks the required
-`Integration checks` status. CI provides the current checkout's ACP production
+The system suite `auth-acp` in shard `b-auth` runs this target in the main
+system E2E workflow; it does not block pull request merging. CI provides the current checkout's ACP production
 image as `antnest/agent-acp-service:local`. The Make target passes it through
 `ANTNEST_ACP_AUDIT_IMAGE` to `sdk-regressions-docker.mjs`, with the TSX loader from
 the locked ACP installation; CI never uses the script's `sdk-fixes` fallback.

@@ -5,16 +5,13 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { isPublishable, selectSuites, suiteImages } from "./ci-changes.mjs";
+import { isPublishable, suiteImages } from "./ci-changes.mjs";
 import { cli, freezeManifest, validateManifest } from "./ci-manifest.mjs";
 
 const root = fileURLToPath(new URL("../../", import.meta.url));
 const revision = "a".repeat(40);
 const digest = "b".repeat(64);
-const mainImages = () =>
-  suiteImages(selectSuites([], { all: true, scope: "e2e" }), {
-    allImages: true,
-  });
+const mainImages = () => suiteImages([], { allImages: true });
 const frozen = (name) => ({
   ref: `ghcr.io/tf4fun/${
     name.startsWith("antnest-") ? name : `antnest-${name}`

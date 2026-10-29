@@ -1,14 +1,15 @@
 # Cross-service authentication matrix and integration
 
 Run `make test-service-authentication-integration` before either Docker gate.
-The blocking security gate is `make e2e-service-authentication-matrix`, Tier B
-suite `auth-network-matrix` in shard `b-auth-matrix`. It boots the same production
+The security system suite is `make e2e-service-authentication-matrix`, suite
+`auth-network-matrix` in shard `b-auth-matrix`. It boots the same production
 stack as the full integration flow, runs `runNetworkMatrix`, creates one Agent
 and native Runtime through the shared workspace setup, and runs
 `runAuthenticatedPeer` in admission mode. It needs no browser or Skill workflow
-flags. Failures block the required `Integration checks` status.
+flags. It runs in the main system E2E workflow; failures open fix-forward work
+and do not block pull request merging.
 
-The additional Tier B suite `acp-owner-bootstrap` runs
+The additional system suite `acp-owner-bootstrap` runs
 `node tests/e2e/security/owner-run.mjs` in the same shard. It keeps the default
 matrix gate and adds a separate disposable deployment with the optional owner
 listener enabled. It uses the same selected service images and does not create a
@@ -85,9 +86,9 @@ and uses the existing ownership-checked cleanup on success, failure and normal
 interruption. It also compares retained container, running-container, network
 and volume IDs before and after cleanup.
 
-`make e2e-service-authentication-integration` remains the full Tier C suite
-`c-service-authentication-integration` in `c-skill-discovery`; selected Tier C
-shards also block the required `Integration checks`. The separate
+`make e2e-service-authentication-integration` remains the full platform
+scenario `c-service-authentication-integration` in `c-skill-discovery`, also a
+system suite. The separate
 `c-encryption-key-rotation` suite runs the same journey with actual platform
 key rotation enabled. Both Docker gates use all current
 production service images, the purpose networks in

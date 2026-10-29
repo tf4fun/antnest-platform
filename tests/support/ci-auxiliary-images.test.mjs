@@ -70,7 +70,7 @@ function example(id, pull) {
   return {
     id,
     name: `Fixture ${id}`,
-    tier: "c",
+    kind: "system",
     setup: ["go", "chromium"],
     images: ["agent-ui"],
     paths: ["tests/support/**"],
@@ -155,7 +155,7 @@ test("suite transport gains one scalar field while all other flags and unrelated
   assert.deepEqual(entry, {
     id: suite.id,
     name: suite.name,
-    tier: "C",
+    kind: "system",
     run: suite.run.join("\n"),
     images: "agent-ui",
     pull: [inventory[0], ...unknown].join(" "),
@@ -257,12 +257,8 @@ test("all emitted matrices preserve selected suite coverage, original shard inve
   const before = structuredClone(selected);
   const expectedById = new Map(before.map((suite) => [suite.id, suite]));
   const result = matrices(selected);
-  assert.deepEqual(Object.keys(result).sort(), ["imaged", "optional", "plain"]);
-  const rows = [
-    ...result.plain.include,
-    ...result.imaged.include,
-    ...result.optional.include,
-  ];
+  assert.deepEqual(Object.keys(result).sort(), ["imaged", "plain"]);
+  const rows = [...result.plain.include, ...result.imaged.include];
   const emitted = [];
   for (const entry of rows) {
     const shard = shards.find((row) => row.id === entry.id);
@@ -302,10 +298,9 @@ test("all emitted matrices preserve selected suite coverage, original shard inve
   assert.deepEqual(selected, before);
 });
 
-test("empty selection retains the original three empty matrix envelopes", () => {
+test("empty selection retains both empty matrix envelopes", () => {
   assert.deepEqual(matrices([]), {
     plain: { include: [] },
     imaged: { include: [] },
-    optional: { include: [] },
   });
 });

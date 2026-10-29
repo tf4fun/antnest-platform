@@ -10,7 +10,6 @@ import {
   imageSpec,
   isPublishable,
   packageName,
-  selectSuites,
   suiteImages,
 } from "./ci-changes.mjs";
 
@@ -19,10 +18,8 @@ const packageOf = (name) => `${registry}/${packageName(name)}`;
 const immutable = /^(?<ref>.+)@sha256:(?<digest>[0-9a-f]{64})$/u;
 const inputs = /^(?<ref>.+):inputs-[0-9a-f]{32}$/u;
 
-const e2eImageSet = () =>
-  suiteImages(selectSuites([], { all: true, scope: "e2e" }), {
-    allImages: true,
-  });
+// A main version set covers every image (ci-changes.mjs suiteImages).
+const versionSet = () => suiteImages([], { allImages: true });
 
 const fail = (message) => {
   throw new Error(`manifest: ${message}`);
@@ -143,7 +140,7 @@ export function cli(
   deps = {},
 ) {
   const [command, outputFile] = argv;
-  const requiredImages = deps.requiredImages ?? e2eImageSet;
+  const requiredImages = deps.requiredImages ?? versionSet;
   const append = (line) => {
     if (env.GITHUB_OUTPUT) appendFileSync(env.GITHUB_OUTPUT, `${line}\n`);
   };

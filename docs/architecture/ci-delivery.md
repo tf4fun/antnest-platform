@@ -12,9 +12,16 @@
   because stacked PRs for one issue often merge together; a cancelled run
   records `conclusion: "cancelled"` and opens no tracking issue. Nightly and
   manifest replays run to completion. An `e2e` PR label or
-  `workflow_dispatch` runs the same E2E on demand. Nightly retains 100 readiness rounds; normal runs use three
-  (`ANTNEST_E2E_READINESS_ROUNDS`).
-- **Release capability**: a full-scope, passed main run records
+  `workflow_dispatch` runs the same E2E on demand.
+- **Nightly stress**: the schedule (or a dispatch with `scope: stress`) runs
+  only the `stress` suites, currently `stress-agent-readiness` with 100
+  readiness rounds; main's system `c-agent-readiness` runs three. A stress run
+  is never release evidence, and its failures go to a separate tracking issue.
+- **Suite kinds**: every catalog suite has one `kind` — `component`,
+  `system` or `stress` — and jobs are named `Component / …`, `System / …` or
+  `Stress / …`. The former Tier A/B/C terms are retired; the `a-`/`b-`/`c-`
+  id prefixes are historical identifiers only.
+- **Release capability**: a full-scope, passed main system run records
   `e2e_passed=true` and `release_eligible=true` next to its
   `version-manifest`: that version set can be released from main. A full
   manual replay of a valid main manifest qualifies the same way;
