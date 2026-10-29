@@ -311,8 +311,7 @@ export function makefileGraph(text) {
       current = header[1];
       if (!graph.has(current)) graph.set(current, new Set());
       for (const prerequisite of header[2].split(/\s+/u))
-        if (targetName.test(prerequisite))
-          graph.get(current).add(prerequisite);
+        if (targetName.test(prerequisite)) graph.get(current).add(prerequisite);
       continue;
     }
     // Any other top-level line, .PHONY included, ends the recipe.
