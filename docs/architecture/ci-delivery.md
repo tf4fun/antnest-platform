@@ -39,8 +39,11 @@
 - Dependency-aware selection: contract changes expand to their owners,
   shared helpers expand through the static reverse reference closure, and
   unreferenced production helpers fall back to a conservative all-suite
-  selection. `Makefile` changes are conservatively global — proven
-  target narrowing is deferred until prerequisite ownership is handled.
+  selection. A `Makefile` change selects only the suites whose `make`
+  targets reach a changed target through prerequisites or `$(MAKE)` calls
+  (blank, comment and `.PHONY` lines change no target); a change outside
+  named targets, such as a variable, still selects every suite. Service unit
+  workflows never run the root `Makefile`, so it selects no unit job.
 - Integration required `needs` includes all ten `unit-<service>` reusable
   jobs; `SERVICES` from the selector drives each job's condition and the
   gate validates results (selected→success, unselected→skipped).

@@ -10,6 +10,9 @@ import {
   buildDependents,
   contractMarkers,
   impactedPaths,
+  makefileGraph,
+  makefileTargets,
+  makeTargetsRun,
   selectComponents,
 } from "./ci-impact.mjs";
 
@@ -1135,9 +1138,12 @@ function withRequirements(selected) {
 // ownership map to their owning services, and shared helpers expand
 // through the static reference closure. Unresolved production helpers select
 // everything as a safe fallback; unrelated test helpers select nothing.
+// A Makefile change selects the suites whose make targets reach a changed
+// target; `makefile` is { targets, texts } from makefileChange, and a change
+// it cannot attribute to targets selects everything.
 export function selectSuites(
   files,
-  { all = false, only, scope = "all", sources } = {},
+  { all = false, only, scope = "all", sources, makefile } = {},
 ) {
   const enabledSuites = () => suites.filter((suite) => !suite.disabled);
   const withinScope = (selected) => {
@@ -1160,12 +1166,20 @@ export function selectSuites(
     everySuite.some((glob) => matchesGlob(file, glob)),
   );
   if (all || global) return withinScope(withRequirements(enabledSuites()));
-  // Makefile diffs stay conservative until prerequisite ownership is proven.
-  if (changed.includes("Makefile"))
-    return withinScope(withRequirements(enabledSuites()));
   const selected = new Set();
+  if (changed.includes("Makefile")) {
+    if (!makefile?.targets)
+      return withinScope(withRequirements(enabledSuites()));
+    const graphs = makefile.texts.map(makefileGraph);
+    for (const suite of enabledSuites()) {
+      const reached = makeTargetsRun(suite.run, graphs);
+      if ([...makefile.targets].some((target) => reached.has(target)))
+        selected.add(suite);
+    }
+  }
   const helpers = [];
   for (const file of changed) {
+    if (file === "Makefile") continue;
     if (file.startsWith("contracts/")) {
       const markers = contractMarkers(file);
       if (markers === null)
@@ -1526,6 +1540,25 @@ export function workflowPlan(selected, resolved = []) {
 
 const zeroSha = /^0+$/u;
 
+// The changed Makefile targets and both Makefile revisions, or no targets
+// when the diff cannot be attributed (selection then stays conservative).
+export function makefileChange(base, head, git = execFileSync) {
+  try {
+    const show = (revision) =>
+      git("git", ["show", `${revision}:Makefile`], { encoding: "utf8" });
+    const texts = [];
+    for (const revision of [base, head])
+      try {
+        texts.push(show(revision));
+      } catch {
+        // An added or removed Makefile has no text at that revision.
+      }
+    return { targets: makefileTargets(base, head, git), texts };
+  } catch {
+    return { targets: null, texts: [] };
+  }
+}
+
 export function changedFiles(base, head, git = execFileSync) {
   const output = git(
     "git",
@@ -1560,6 +1593,9 @@ function main() {
     all,
     only: only?.length ? only : undefined,
     scope: values.scope,
+    makefile: files.includes("Makefile")
+      ? makefileChange(values.base, values.head)
+      : undefined,
   });
   const { plain, imaged } = matrices(selected);
   const system = matrix(selected);

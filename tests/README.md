@@ -885,8 +885,12 @@ so a run that does nothing would hide the full one.
 [`support/ci-changes.mjs`](support/ci-changes.mjs) holds the suite
 catalog: each suite lists its commands, host setup, prebuilt images and the
 paths it exercises. The workflow runs only the suites that match the changed
-files (prose-only changes select none). Changes to the workflow, `tests/support/`,
-`contracts/` or the `Makefile` select every suite.
+files (prose-only changes select none). Changes to the CI workflows, the
+selector itself, `.nvmrc` or `.dockerignore` select every suite. Contract
+changes select their declared owners, shared helpers select through their
+reverse references, and a `Makefile` change selects the suites whose `make`
+targets reach a changed target (a change outside named targets selects every
+suite).
 
 PostgreSQL components use service-owned isolated shards. Stage 2 keeps its live
 deployment, recovery and role/migration checks, and automatically requires the
