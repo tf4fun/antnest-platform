@@ -93,7 +93,7 @@ The dependency admission batch covers PostgreSQL, Temporal database/schema/serve
 entrypoints and Skill Registry database initialization, with shell unit/component
 checks, Compose wiring and isolated Docker startup/restart evidence. Disposable
 fixtures opt in for every dependency checker through their explicit override;
-Tier A dependencies retain private `integration-*` passwords without an opt-in.
+Component-suite dependencies retain private `integration-*` passwords without an opt-in.
 
 Stored-secret key rotation/versioning follows the implemented
 [#42 contract](encryption-key-rotation.md). Keep original keys and database

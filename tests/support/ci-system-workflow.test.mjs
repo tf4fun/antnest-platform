@@ -132,11 +132,7 @@ test("the suite harness checks out the exact revision with manifest images", () 
     "${{ needs.manifest.outputs.images }}",
     "suite images come from the frozen manifest",
   );
-  assert.match(
-    e2e.jobs.suite.with["readiness-rounds"],
-    /schedule' && '100' \|\| '3'/u,
-  );
-  for (const input of ["suite", "images", "revision", "readiness-rounds"])
+  for (const input of ["suite", "images", "revision"])
     assert(
       Object.hasOwn(suite.on.workflow_call.inputs, input),
       `_suite input ${input}`,
@@ -149,10 +145,34 @@ test("the suite harness checks out the exact revision with manifest images", () 
     /inputs\.revision/u,
     "the suite checks out the resolved revision",
   );
+  // Readiness rounds belong to the suite kind, not to the triggering event.
   const run = suite.jobs.run.steps.find((step) =>
     /ci-shard\.mjs/u.test(step.run ?? ""),
   );
-  assert.match(run.env.ANTNEST_E2E_READINESS_ROUNDS, /readiness-rounds/u);
+  assert(!Object.hasOwn(run.env, "ANTNEST_E2E_READINESS_ROUNDS"));
+  assert(!Object.hasOwn(suite.on.workflow_call.inputs, "readiness-rounds"));
+  assert(!Object.hasOwn(e2e.jobs.suite.with, "readiness-rounds"));
+});
+
+test("nightly runs the stress suites; other events run the system suites", () => {
+  const scope =
+    "${{ github.event_name == 'schedule' && 'stress' || inputs.scope || 'system' }}";
+  const plan = e2e.jobs.plan.steps.find((step) => step.id === "plan");
+  assert.equal(plan.env.SCOPE, scope);
+  assert.match(plan.run, /--scope "\$SCOPE"/u);
+  assert.deepEqual(e2e.on.workflow_dispatch.inputs.scope.options, [
+    "system",
+    "stress",
+  ]);
+  const record = e2e.jobs.result.steps.find((step) => step.id === "result");
+  assert.equal(record.env.SCOPE, scope);
+  assert.match(record.run, /process\.env\.SCOPE === "system"/u);
+  const track = e2e.jobs.result.steps.find((step) =>
+    /github-script/u.test(step.uses ?? ""),
+  );
+  assert.equal(track.env.SCOPE, scope);
+  assert.match(track.with.script, /antnest-stress-failure/u);
+  assert.match(e2e.jobs.suite.name, /matrix\.kind == 'stress'/u);
 });
 
 test("the component gate selects component scope only and keeps its required name", () => {
@@ -184,7 +204,7 @@ test("the component gate selects component scope only and keeps its required nam
   );
   assert.match(select.run, /--scope component/u);
   const e2ePlan = e2e.jobs.plan.steps.find((step) => step.id === "plan");
-  assert.match(e2ePlan.run, /--scope e2e/u);
+  assert.doesNotMatch(e2ePlan.run, /--scope component/u);
 });
 
 test("service workflows scope contract paths to declared consumers and guard image jobs", () => {

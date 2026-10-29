@@ -18,6 +18,10 @@ const step = (name, start, end) => ({
   started_at: at(start),
   completed_at: at(end),
 });
+// Component shards as the integration workflow names them; the controller
+// shard uses the Temporal image, the ACP shard uses none.
+const controller = "Component / Agent Controller PostgreSQL and Temporal / Run";
+const acp = "Component / Agent ACP PostgreSQL and audit / Run";
 const run = {
   id: 123,
   run_attempt: 1,
@@ -25,38 +29,32 @@ const run = {
   created_at: at(0),
 };
 
-test("priority readiness timing uses only its own image barrier", () => {
-  const readiness =
-    "Tier C / Acknowledged Agent readiness (100 first Prompts) / Run";
+test("only image-using component shards wait for the image builds", () => {
   const result = workflowTiming(run, [
     job("Select suites", 0, 10),
     job("Image / temporal", 10, 60),
-    job("Image / antnest-runtime-skill-gate", 10, 300),
-    { ...job(readiness, 63, 500), created_at: at(62) },
-    { ...job("Tier C / Agent lifecycle / Run", 303, 400), created_at: at(302) },
+    { ...job(controller, 63, 500), created_at: at(62) },
+    { ...job(acp, 13, 400), created_at: at(12) },
     job("Integration checks", 500, 505),
   ]);
-  assert.equal(result.jobs[3].dependencyReadyOffsetMs, 60000);
+  assert.equal(result.jobs[2].dependencyReadyOffsetMs, 60000);
+  assert.equal(result.jobs[2].preCreationSchedulingMs, 2000);
+  assert.equal(result.jobs[3].dependencyReadyOffsetMs, 10000);
   assert.equal(result.jobs[3].preCreationSchedulingMs, 2000);
-  assert.equal(result.jobs[4].dependencyReadyOffsetMs, 300000);
 });
 
 test("critical path uses elapsed wall time, not summed parallel runner time", () => {
   const result = workflowTiming(run, [
     job("Select suites", 0, 10),
     job("Image / antnest-runtime", 10, 60, [step("Build image", 20, 50)]),
-    job("Tier A / Agent ACP PostgreSQL and audit / Run", 10, 100, [
-      step("Run suites", 20, 90),
-    ]),
-    job("Tier C / Agent lifecycle / Run", 60, 110, [
-      step("Run suites", 65, 105),
-    ]),
+    job(acp, 10, 100, [step("Run suites", 20, 90)]),
+    job(controller, 60, 110, [step("Run suites", 65, 105)]),
     job("Integration checks", 110, 112),
     job("Report workflow timing", 112, 120),
   ]);
   assert.equal(result.integrationGateWallMs, 112000);
   assert.equal(result.totalRunnerMs, 202000);
-  assert.equal(result.lastSuite.name, "Tier C / Agent lifecycle / Run");
+  assert.equal(result.lastSuite.name, controller);
   assert.equal(result.lastSuite.testMs, 40000);
   assert.equal(result.lastSuite.setupMs, 5000);
   assert.equal(result.jobs[1].buildMs, 30000);
@@ -111,7 +109,7 @@ test("missing runner durations remain unavailable instead of reducing the total"
     const result = workflowTiming(run, [
       job("Select suites", 0, 1),
       {
-        ...job("Tier A / Agent ACP PostgreSQL and audit / Run", 1, 2),
+        ...job(acp, 1, 2),
         ...unavailable,
       },
       job("Integration checks", 3, 4),
@@ -135,12 +133,12 @@ test("reruns exclude time between attempts instead of presenting it as current g
   assert.equal(missing.complete, false);
 });
 
-test("Tier C separates pre-creation scheduling from post-creation dispatch", () => {
+test("component shards separate pre-creation scheduling from post-creation dispatch", () => {
   const result = workflowTiming(run, [
     job("Select suites", 0, 10),
     job("Image / antnest-runtime", 10, 60),
     {
-      ...job("Tier C / Agent lifecycle / Run", 90, 110),
+      ...job(controller, 90, 110),
       created_at: at(85),
     },
     job("Integration checks", 110, 112),
@@ -162,14 +160,14 @@ test("unavailable dependencies and inconsistent clocks do not fabricate scheduli
     const result = workflowTiming(run, [
       job("Select suites", 0, 10),
       image,
-      job("Tier C / Agent lifecycle / Run", 90, 110),
+      job(controller, 90, 110),
     ]);
     assert.equal(result.jobs[2].dependencyReadyOffsetMs, null);
     assert.equal(result.jobs[2].preCreationSchedulingMs, null);
   }
   const result = workflowTiming(run, [
     job("Select suites", 0, 10),
-    job("Tier C / Agent lifecycle / Run", 15, 20),
+    job(controller, 15, 20),
   ]);
   assert.equal(result.jobs[1].dependencyReadyOffsetMs, 10000);
   assert.equal(result.jobs[1].preCreationSchedulingMs, null);

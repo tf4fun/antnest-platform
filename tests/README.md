@@ -6,7 +6,8 @@ rules every test runner follows.
 
 ## Readiness phase measurements
 
-The acknowledged-readiness profile still runs 100 serial fresh-Agent rounds,
+The acknowledged-readiness profile runs 100 serial fresh-Agent rounds in the
+nightly stress suite (three in main's system suite),
 requires the publication proxy's two-second delay, admits only the original
 Controller ready event, sends one first Prompt without retry, and independently
 joins deleted Runtime resources. Timing never changes these checks.
@@ -48,10 +49,10 @@ Dependency secret admission has shell unit/drift tests in
 in `tests/support/storage-shell-entrypoints.test.mjs` and source/render wiring
 checks in `tests/integration/deployment/dependency-secrets.test.mjs`. The disposable
 override opts in PostgreSQL, Temporal database/schema/server and Skill Registry
-database initialization as well as the six platform owners. Tier A dependencies
+database initialization as well as the six platform owners. Component dependencies
 retain non-published `integration-*` passwords and use no container opt-in.
 
-Run the required Tier B dependency gate serially after rebuilding
+Run the system dependency suite serially after rebuilding
 `antnest/temporal:local` from `scripts/temporal/Dockerfile`:
 
 ```sh
@@ -131,8 +132,8 @@ attempt start timestamp so inter-attempt idle time is not counted. Pre-start
 queue time for reruns is unavailable rather than inferred.
 GitHub's jobs API cannot separate matrix-slot wait from runner queue time: both
 remain null, and created-to-start delay must not be attributed to runner shortage.
-For Tier C, the dependency-ready offset is the latest successful Select suites or
-image job finish. Pre-creation scheduling is the time from that barrier to job
+For each component shard, the dependency-ready offset is the latest successful
+Select suites finish, or image job finish for shards that use images. Pre-creation scheduling is the time from that barrier to job
 creation and includes matrix admission plus GitHub orchestration; it is null when
 a dependency is missing, unsuccessful or its clock is inconsistent.
 First actionable feedback is measured from suite start to observation at the shard;
@@ -279,7 +280,7 @@ an old activity report cannot renew the replacement session's idle budget.
 Password and revocation mutations still require current delivery, and the old
 confirmation must produce no mutation after replacement. Deterministic request
 pairing regressions run in `make test-repo`; the built browser scenarios run in
-the Tier A browser shard. Real Gateway/Identity HTTPS acceptance stays separate.
+the component browser shard. Real Gateway/Identity HTTPS acceptance stays separate.
 
 The Stage 3a profile runners start their client detached and read its result
 with `docker logs`. Docker splits output lines longer than 16 KiB, and the
@@ -894,7 +895,7 @@ complete ACP PostgreSQL suite instead of running it twice. See the
 isolation, focused commands and measurement limitations.
 
 Suites are grouped into shards by product area (`shards` in the catalog).
-Each shard is one CI job, `Tier <tier> / <shard>`: it installs the setup and
+Each shard is one CI job, `<Kind> / <shard>`: it installs the setup and
 images its selected suites need and runs them in order on one runner through
 [`support/ci-shard.mjs`](support/ci-shard.mjs). Every selected suite runs even
 after an earlier one fails, each in its own process group with a timeout, and
@@ -906,32 +907,40 @@ interruption have no execution timestamps. Destructive suites come last in
 their shard. Every suite starts and removes its own stack, so a shard reuses
 pulled images and host setup but no platform state.
 
-- **Tier A:** PostgreSQL and Temporal component suites, browser suites,
-  deployment render contracts and the Runtime SDK probe.
-- **Tier B:** service-owned Docker E2E runners and the protected-listener
-  network/credential matrix. Each starts an isolated stack; runners that start
+Every suite has exactly one `kind`, which decides where it runs. Shard and
+suite ids keep their historical `a-`/`b-`/`c-` prefixes; they are identifiers,
+not kinds.
+
+- **`component`** (job `Component / <shard>`): pull requests, through
+  `integration.yml`; blocks the required `Integration checks`. PostgreSQL and
+  Temporal component suites, browser suites, deployment render contracts and
+  the Runtime SDK probe.
+- **`system`** (job `System / <shard>`): main pushes, `e2e`-labelled pull
+  requests and dispatch, through `e2e.yml`; never blocks PR merging. At most
+  six system shards run at a time.
+- **`system` service suites:** service-owned Docker E2E runners and the
+  protected-listener network/credential matrix. Each starts an isolated stack; runners that start
   images with `--no-build` get `antnest/<image>:local` first. `b-auth` includes
   `auth-acp` (`make e2e-acp-authentication`) alongside the Console, Controller,
   Egress, Gateway, Identity, Runtime Controller and Runtime suites. The separate
   `b-auth-matrix` shard runs `auth-network-matrix`
   (`make e2e-service-authentication-matrix`) across every production purpose
   network, followed by real issuer/context/grant and native Runtime checks.
-  Both shards block `Integration checks` when selected. The full authentication
-  and Skill workflow remains Tier C `c-service-authentication-integration`.
+  The full authentication and Skill workflow remains the platform scenario
+  `c-service-authentication-integration`.
   `b-gateway` also checks Gateway SIGTERM/SIGINT, upstream cancellation and
   restart through `gateway-shutdown`. `b-skills` runs the Runtime Controller
   archive package with the `e2e` Go overlay and a real Runtime image; this does
   not include the separate control-process crash diagnostics.
-- **Tier C:** whole-platform scenarios whose rule spans services (stage 3a,
-  authenticated shell stage 2 and lifecycle, lifecycle and workspace closeout,
+- **`system` platform scenarios:** whole-platform scenarios whose rule spans
+  services (stage 3a, authenticated shell stage 2 and lifecycle, lifecycle and workspace closeout,
   skill learning). Platform targets that test one service's rule, or behavior
   that is not settled, stay out of CI; `outsideCI` in `ci-changes.mjs` names
-  the issue that moves each one to its service or re-admits it. At most six
-  tier C shards run at a time, and every selected Tier C shard blocks
-  `Integration checks`. The authenticated encryption-key rotation journey runs
+  the issue that moves each one to its service or re-admits it. The
+  authenticated encryption-key rotation journey runs
   last in `c-skill-discovery`, independently of its ordinary authentication
   journey. The 22 `outsideCI` targets remain unfinished work in #165–#169;
-  making the current catalog required does not deliver those replacements.
+  admitting the current catalog does not deliver those replacements.
   Lifecycle and
   workspace foundation runners and the Stage 3a identity, tool permission and
   tool progress profiles exit 2 when business and topology checks pass but
@@ -949,6 +958,11 @@ pulled images and host setup but no platform state.
   and official fixture carrier. CI supplies those source images; each owning
   deployment still performs the final fixture COPY and verifies the original
   production layers, configuration and source identities.
+- **`stress`** (job `Stress / <shard>`): the nightly schedule only, or a
+  dispatch with `scope: stress`. `stress-agent-readiness` runs the 100-round
+  acknowledged-readiness profile; main's system `c-agent-readiness` runs the
+  same profile for three rounds. A stress result is never release evidence and
+  its failures go to a separate tracking issue.
 
 Only the ten implemented service and Runtime images listed in
 [`docs/service-layout.md`](../docs/service-layout.md#current-state) are published
@@ -967,8 +981,8 @@ The local Temporal dependency image and three Runtime test variants
 `antnest-runtime-skill-gate`) are not release packages. Selected suites build
 them once per run with GitHub Actions build caches and load them from that
 run's image artifacts. They never query, pull or publish a GHCR package, even
-if an old package still exists. Unselected dependencies and variants are not
-built merely because a run is on `main`. Temporal remains a local build in
+if an old package still exists. A main system or stress run builds all of them,
+so its version manifest can replay any suite. Temporal remains a local build in
 the base Compose deployment; its entrypoint and readiness checks are unchanged.
 Image artifacts expire after one day; rerun the whole workflow if a shard's
 required artifact has expired.
@@ -995,12 +1009,12 @@ Each shard uploads `artifacts/verification/` (excluding fixture credentials,
 private key files, environment files and the deployment credential-generation
 log) as
 the `evidence-<shard>` artifact. The `Integration checks` job is the single
-required integration status; it fails if selection or any selected Tier A, B
-or C shard fails, is cancelled, or unexpectedly skips. A matrix may skip only
+required integration status; it fails if selection or any selected component
+shard fails, is cancelled, or unexpectedly skips. A matrix may skip only
 when its validated selection count is zero, so a docs-only run still passes.
 Workflow cancellation and invalid or missing selection counts fail the gate.
 Add a suite by extending the catalog and naming it in one shard of its
-tier; the catalog's unit tests check that every `make` target and runner it
+kind; the catalog's unit tests check that every `make` target and runner it
 names exists and that every suite belongs to exactly one shard. A suite with a `disabled` reason stays in the
 catalog but is never selected until its known breakage is fixed.
 

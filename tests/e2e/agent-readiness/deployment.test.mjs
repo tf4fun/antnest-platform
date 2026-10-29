@@ -92,12 +92,12 @@ test("Makefile exposes the opt-in readiness acceptance target", async () => {
   );
 });
 
-test("CI selects readiness sources into one independent Tier C shard", () => {
+test("CI selects readiness sources into independent system and stress shards", () => {
   const suite = suites.find(
     (candidate) => candidate.id === "c-agent-readiness",
   );
   assert(suite, "missing readiness CI suite");
-  assert.equal(suite.tier, "c");
+  assert.equal(suite.kind, "system");
   assert(
     suite.run.some(
       (command) =>
@@ -122,4 +122,16 @@ test("CI selects readiness sources into one independent Tier C shard", () => {
   assert.equal(owners.length, 1);
   assert.equal(owners[0].id, "c-agent-readiness");
   assert.deepEqual(owners[0].suites, [suite.id]);
+  // Main runs three functional rounds; only nightly stress runs a hundred.
+  const stress = suites.find(
+    (candidate) => candidate.id === "stress-agent-readiness",
+  );
+  assert.equal(stress.kind, "stress");
+  assert.deepEqual(stress.paths, suite.paths);
+  assert.match(suite.run.at(-1), /ANTNEST_E2E_READINESS_ROUNDS=3 /u);
+  assert.match(stress.run.at(-1), /ANTNEST_E2E_READINESS_ROUNDS=100 /u);
+  assert.deepEqual(
+    shards.find((shard) => shard.id === "stress-agent-readiness").suites,
+    [stress.id],
+  );
 });
