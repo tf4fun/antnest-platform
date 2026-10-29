@@ -8,18 +8,19 @@
 - **`main`** is the system integration branch, not a release branch. A main
   push builds a complete version set and runs the independent `e2e.yml`
   system workflow; failures feed fix-forward work without freezing other PR
-  merges. An `e2e` PR label or `workflow_dispatch` runs the same E2E on
-  demand. Nightly retains 100 readiness rounds; normal runs use three
+  merges. A newer main push cancels the superseded in-progress system run,
+  because stacked PRs for one issue often merge together; a cancelled run
+  records `conclusion: "cancelled"` and opens no tracking issue. Nightly and
+  manifest replays run to completion. An `e2e` PR label or
+  `workflow_dispatch` runs the same E2E on demand. Nightly retains 100 readiness rounds; normal runs use three
   (`ANTNEST_E2E_READINESS_ROUNDS`).
-- **Release**: a complete _passed_ `version-manifest` artifact with
-  `origin: "main"` and a full-scope `e2e_passed` result is _system
-  integration evidence only_ in this first rollout. Release certification
-  additionally requires the remaining legacy source-build runner migration
-  to be complete and `release_eligible=true`. A full manual replay of a
-  valid main manifest can also serve as system evidence; partial/PR results
-  never qualify. A release cut verifies full scope, passed status, main
-  origin, matching revision, then pins the manifest's exact
-  `package@sha256` digests. No release creation is performed by CI.
+- **Release capability**: a full-scope, passed main run records
+  `e2e_passed=true` and `release_eligible=true` next to its
+  `version-manifest`: that version set can be released from main. A full
+  manual replay of a valid main manifest qualifies the same way;
+  partial/PR results never do. A release uses the manifest's exact
+  `package@sha256` release image digests. CI does not create releases or
+  tags.
 
 ## Selection and ownership
 
@@ -39,20 +40,25 @@
 
 ## Images
 
-- Main builds publish every resolved image to GHCR (`--registry-images`
-  makes all image types registry-eligible; variants included). PR images
-  travel as `docker save` artifacts with `persist-credentials: false` —
-  an explicit exception; they never enter the trusted registry namespace
-  or qualify as release evidence. PR label state persists across pushes.
+- Only the ten service and Runtime release images are published to GHCR,
+  and only from main. Test images — the Temporal dependency and the Runtime
+  test variants — are never registry packages: every run that consumes a
+  manifest builds them from the manifest revision and loads them from that
+  run's `docker save` artifacts. The manifest records them as
+  `antnest/<name>:local` with `build: true`, and validation rejects any
+  registry reference for them. PR images also travel as artifacts with
+  `persist-credentials: false`; they never enter the trusted registry
+  namespace or qualify as release evidence. PR label state persists across
+  pushes.
 - `version-manifest` + `result.json` artifacts carry the frozen manifest
   and the `e2e_passed` scope; manifest `workflow_dispatch` accepts a JSON
   manifest only with main ancestry.
 
 ## Remaining follow-ups (#361 stays open)
 
-- Legacy auth runners still `docker compose up --build` from source
-  (controller/console/gateway/identity, runtime-controller fixture);
-  `candidate-images.mjs` derives others from provided images. Pure
-  manifest-only certification is not claimed until this migration finishes.
+- Legacy auth runners still `docker compose up --build` from the same
+  revision (controller/console/gateway/identity, runtime-controller
+  fixture) instead of the manifest's release digests; `candidate-images.mjs`
+  derives the others from provided images.
 - Root `Repository checks` still runs full tooling/fixture tests; the
   ≤15-minute target must be measured remotely — it is not promised.

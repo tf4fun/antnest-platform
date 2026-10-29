@@ -1506,44 +1506,15 @@ test("only service and Runtime release images receive GHCR references", () => {
   assert.throws(() => imageReference("unknown", "abc"), /unknown image/u);
 });
 
-test("registry image resolution publishes every image type only when asked", () => {
-  const head = tree({
-    "scripts/temporal/Dockerfile": "dockerfile-1",
-    "runtimes/antnest-runtime/Dockerfile": "dockerfile-1",
-  });
-  const checked = [];
-  const resolved = resolveImages(
-    ["temporal", "antnest-runtime-skill-gate", "runtime-egress"],
-    {
-      tree: head,
-      readBlob,
-      exists: (ref) => {
-        checked.push(ref);
-        return true;
-      },
-      registryImages: true,
-    },
+test("no option makes a test image registry-eligible", () => {
+  const result = spawnSync(
+    process.execPath,
+    ["tests/support/ci-changes.mjs", "--all", "--registry-images"],
+    { cwd: root, encoding: "utf8", timeout: 60_000 },
   );
-  assert.equal(checked.length, 3, "every image queries GHCR");
-  for (const image of resolved) {
-    assert.match(image.ref, /^ghcr\.io\/tf4fun\//u, image.name);
-    assert.equal(image.publish, true, image.name);
-    assert.equal(image.build, false, image.name);
-  }
-  assert.equal(
-    resolveImages(["temporal"], {
-      tree: head,
-      readBlob,
-      exists: () => false,
-      registryImages: true,
-    })[0].build,
-    true,
-  );
-  assert.equal(
-    imageReference("temporal", "abc", { registryImages: true }),
-    "ghcr.io/tf4fun/antnest-temporal:inputs-abc",
-  );
-  assert.equal(imageReference("temporal", "abc"), "antnest/temporal:local");
+  assert.notEqual(result.status, 0, "the registry-images option is gone");
+  for (const name of localOnlyImages)
+    assert.equal(imageReference(name, "abc"), `antnest/${name}:local`);
 });
 
 test("dependency and fixture images always use the current run's artifact, even if an old package exists", () => {
@@ -1859,7 +1830,6 @@ test("the CLI build inventory includes every resolved build, priority included",
       "--all",
       "--resolve-images",
       "--all-images",
-      "--registry-images",
     ],
     {
       cwd: root,

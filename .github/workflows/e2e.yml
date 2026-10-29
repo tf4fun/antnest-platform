@@ -23,12 +23,16 @@ on:
 permissions:
   contents: read
 
+# A newer main merge supersedes an older one (stacked PRs often land
+# together), so main pushes cancel the in-progress run. Nightly and manifest
+# replays run to completion.
 concurrency:
   group: system-e2e-${{ github.event_name }}-${{ github.ref }}
   cancel-in-progress: >-
-    ${{ github.event_name == 'pull_request' &&
-        contains(github.event.pull_request.labels.*.name, 'e2e') &&
-        (github.event.action != 'labeled' || github.event.label.name == 'e2e') }}
+    ${{ github.event_name == 'push' ||
+        (github.event_name == 'pull_request' &&
+         contains(github.event.pull_request.labels.*.name, 'e2e') &&
+         (github.event.action != 'labeled' || github.event.label.name == 'e2e')) }}
 
 jobs:
   plan:
@@ -78,11 +82,9 @@ jobs:
             revision="$(jq -er .revision "$RUNNER_TEMP/manifest.json")"
             git merge-base --is-ancestor "$revision" origin/main
             git -c advice.detachedHead=false checkout --detach "$revision"
-            echo 'builds={"include":[]}' >> "$GITHUB_OUTPUT"
-            echo 'building=0' >> "$GITHUB_OUTPUT"
           else
             set -- "$@" --resolve-images
-            [ "$EVENT" != pull_request ] && set -- "$@" --all-images --registry-images
+            [ "$EVENT" != pull_request ] && set -- "$@" --all-images
             echo "revision=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
           fi
           node tests/support/ci-changes.mjs "$@"
@@ -118,29 +120,30 @@ jobs:
           source: .
           files: ${{ runner.temp }}/image.docker-bake.json
           load: true
-      # Never publish PR images into the trusted input-hash namespace.
-      - name: Save PR image
-        if: github.event_name == 'pull_request'
+      # Never publish PR images into the trusted input-hash namespace. Test
+      # images (dependencies and Runtime variants) are never published at all.
+      - name: Save run image
+        if: github.event_name == 'pull_request' || !matrix.publish
         env:
           NAME: ${{ matrix.name }}
         run: |
           set -o pipefail
           docker save "antnest/$NAME:local" | zstd -T0 -3 -o "$RUNNER_TEMP/$NAME.tar.zst"
       - uses: actions/upload-artifact@v7
-        if: github.event_name == 'pull_request'
+        if: github.event_name == 'pull_request' || !matrix.publish
         with:
           name: image-${{ matrix.name }}
           path: ${{ runner.temp }}/${{ matrix.name }}.tar.zst
           compression-level: 0
           retention-days: 1
       - uses: docker/login-action@v4
-        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && matrix.publish
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - name: Publish system image
-        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+      - name: Publish release image
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && matrix.publish
         env:
           NAME: ${{ matrix.name }}
           REF: ${{ matrix.ref }}
@@ -243,17 +246,23 @@ jobs:
             validCount(count) && Number(count) > 0 && validCount(building) &&
             jobs.images.result === (building === "0" ? "skipped" : "success") &&
             jobs.manifest.result === "success" && jobs.suite.result === "success";
+          const e2ePassed = passed && !process.env.ONLY &&
+            process.env.EVENT !== "pull_request" && process.env.REF === "refs/heads/main";
           const result = {
             version: 1,
             revision: jobs.plan.outputs.revision || null,
             run: `${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID}`,
             scope: process.env.ONLY ? "partial" : "full",
             readiness_rounds: process.env.EVENT === "schedule" ? 100 : 3,
-            conclusion: passed ? "passed" : "failed",
-            e2e_passed: passed && !process.env.ONLY &&
-              process.env.EVENT !== "pull_request" && process.env.REF === "refs/heads/main",
-            image_mode: "manifest-plus-legacy-source-builds",
-            release_eligible: false,
+            // A newer main merge cancels a superseded run; that is not a failure.
+            conclusion: passed ? "passed" :
+              Object.values(jobs).some(job => job.result === "cancelled") ? "cancelled" : "failed",
+            e2e_passed: e2ePassed,
+            // Release images are pinned digests; test images are built from
+            // the same revision in this run and never published.
+            image_mode: "release-digests-with-run-built-test-images",
+            // A full passed main run proves its version set can be released.
+            release_eligible: e2ePassed,
             jobs: Object.fromEntries(Object.entries(jobs).map(([key, value]) => [key, value.result])),
           };
           writeFileSync("result.json", JSON.stringify(result, null, 2) + "\n");
@@ -261,8 +270,7 @@ jobs:
           appendFileSync(process.env.GITHUB_STEP_SUMMARY,
             `System integration: **${result.conclusion}** (${result.scope})\n\n` +
             `Revision: \`${result.revision}\`\n\n` +
-            `System evidence: ${result.e2e_passed ? "e2e-passed" : "not eligible"}\n\n` +
-            "Release certification: pending legacy runner image migration (#361).\n");
+            `Release capability: ${result.release_eligible ? "release-capable" : "not release-capable"}\n`);
           JS
       - uses: actions/download-artifact@v8
         if: needs.manifest.result == 'success'
