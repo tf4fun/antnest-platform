@@ -1613,16 +1613,19 @@ test("suite images are the sorted union of the selected suites' images", () => {
   );
 });
 
-test("main prebuilds release images and only the dependencies selected suites need", () => {
-  const releaseImages = Object.keys(images)
-    .filter((name) => !localOnlyImages.includes(name))
-    .sort();
-  assert.deepEqual(suiteImages([], { allImages: true }), releaseImages);
+test("a main version set covers every release and test image", () => {
+  const every = Object.keys(images).sort();
+  assert.deepEqual(suiteImages([], { allImages: true }), every);
   assert.deepEqual(
     suiteImages([{ images: ["temporal", "antnest-runtime-managed"] }], {
       allImages: true,
     }),
-    [...releaseImages, "temporal", "antnest-runtime-managed"].sort(),
+    every,
+  );
+  assert.deepEqual(
+    suiteImages([{ images: ["temporal", "antnest-runtime-managed"] }]),
+    ["antnest-runtime-managed", "temporal"],
+    "without --all-images only the selected suites' images resolve",
   );
 });
 
@@ -1693,11 +1696,10 @@ test("CLI outputs retain publication eligibility and artifact routing across reg
       assert(!localOnlyImages.some((name) => ref.includes(`${name}:`)), ref);
     }
     assert.equal(Number(lines.building), builds.length);
-    if (id === "no-dependencies") {
-      assert.deepEqual(Object.keys(resolved).sort(), releaseNames.sort());
-      assert.deepEqual(builds, []);
-      continue;
-    }
+    // A main run builds every test image even when no selected suite needs
+    // one, so its manifest can replay any suite; none is ever queried.
+    if (id === "no-dependencies")
+      assert.deepEqual(Object.keys(resolved).sort(), Object.keys(images).sort());
     assert.equal(builds.length, status === "0" ? 4 : 14, id);
     for (const name of localOnlyImages) {
       assert.deepEqual(resolved[name], {
