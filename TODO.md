@@ -19,6 +19,7 @@ Issue 状态最后核对于 2026-10-28：141 个 issue，87 个已关闭，54 �
 
 ## 当前批次
 
+- **#390 CI 格式修复（2026-10-29）**：用户通知后核对独立 code-scanning PR 候选 `7b2eaf72`；Repository run `40831966513` 失败于 `go-service.test.mjs` 的 Prettier 检查。仅调整 fixture callback 的换行／缩进，保留 `READY_PATH` 环境传递、字符串内容与其他全部逻辑；受影响文件 Prettier 检查及 7 项 Go runner fixture 测试通过。未混入 #51 ACP／集成改动，未声称远程完整门或 code-scanning 已通过；推送后不等待或轮询新 CI。
 - **PR #381 zip 9 兼容修复（2026-10-29）**：远程 Integration run `40805728569` 的 Runtime 编译因 `ZipFile::name()`／`extra_data()` 返回类型变化失败。现保留 zip `9.0.5`，将名称解码错误映射为 `invalid_package`，并在已有中央目录边界检查中校验原始 extra 字节，避免重新序列化省略 NTFS／重复时间戳而放宽白名单。新增无效 UTF-8、允许时间戳、未知／NTFS／重复／截断 extra 回归；先复现编译失败及类型适配后的语义反例，再通过 7 项 ZIP 测试、fmt 和 all-targets clippy。原始日志临时保留于 `artifacts/verification/pr-381/`；修复已审查，待推送候选的远程 CI，不代表系统 E2E 或合并。
 
 当前状态（2026-10-28，北京时间）。2026-10-28 之前的检查点日志已移出本文件：已提交部分见 Git 历史，未提交的 2026-10-22 至 10-25 检查点见 `artifacts/verification/issue-triage-20261028/TODO-current-batch-history.md`。
