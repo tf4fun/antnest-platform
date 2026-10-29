@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import { LearningModelAuthority } from "../../src/application/learning-model-authority.js";
 import type { LearningTaskClaim } from "../../src/domain/learning-scan.js";
+import type { ProviderTokenLimits } from "../../src/domain/provider-token-limits.js";
 import type { RunExecutionSnapshot } from "../../src/domain/types.js";
 
 const claim: LearningTaskClaim = {
@@ -72,6 +73,46 @@ const current = {
   },
 };
 
+const providerTokenLimits: ProviderTokenLimits = {
+  source: "models",
+  source_revision: 3,
+  binding: {
+    organization_id: "org-1",
+    connection_id: "provider-1",
+    provider_key: "openrouter",
+    request_protocol: "openai_chat_completions",
+    base_url: "https://model.example/v1",
+    model: "test-model",
+    credential_revision: "credential-1",
+  },
+  context_tokens: 128000,
+  max_output_tokens: 8192,
+};
+const observedSnapshot: RunExecutionSnapshot = {
+  ...snapshot,
+  executionSpec: {
+    ...snapshot.executionSpec,
+    model: {
+      ...snapshot.executionSpec.model,
+      providerTokenLimits: structuredClone(providerTokenLimits),
+      supportsTools: true,
+    },
+  },
+};
+const observedCurrent = {
+  ...current,
+  configuration: {
+    ...current.configuration,
+    models: [
+      {
+        ...current.configuration.models[0]!,
+        provider_token_limits: structuredClone(providerTokenLimits),
+        supports_tools: true,
+      },
+    ],
+  },
+};
+
 describe("learning review current model authority", () => {
   it("checks the current owner, Agent, selected model and Provider", () => {
     const directory = { inspect: vi.fn(() => current) };
@@ -128,5 +169,42 @@ describe("learning review current model authority", () => {
       expect(() =>
         new LearningModelAuthority({ inspect: () => changed }).assertCurrent(claim, snapshot),
       ).toThrow();
+  });
+
+  it("accepts unchanged published Provider observation facts", () => {
+    expect(() =>
+      new LearningModelAuthority({ inspect: () => observedCurrent }).assertCurrent(
+        claim,
+        observedSnapshot,
+      ),
+    ).not.toThrow();
+  });
+
+  it("rejects drifted Provider observation facts", () => {
+    const model = observedCurrent.configuration.models[0]!;
+    for (const changed of [
+      { ...model, provider_token_limits: undefined },
+      {
+        ...model,
+        provider_token_limits: { ...providerTokenLimits, context_tokens: 64000 },
+      },
+      {
+        ...model,
+        provider_token_limits: {
+          ...providerTokenLimits,
+          binding: { ...providerTokenLimits.binding, credential_revision: "credential-2" },
+        },
+      },
+      { ...model, supports_tools: false },
+      { ...model, supports_tools: undefined },
+    ])
+      expect(() =>
+        new LearningModelAuthority({
+          inspect: () => ({
+            ...observedCurrent,
+            configuration: { ...observedCurrent.configuration, models: [changed] },
+          }),
+        }).assertCurrent(claim, observedSnapshot),
+      ).toThrow("Learning model or Provider authorization changed");
   });
 });
