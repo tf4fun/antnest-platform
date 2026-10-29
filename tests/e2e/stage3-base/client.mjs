@@ -1470,11 +1470,28 @@ async function main() {
       new Set(journals.map((item) => item.target_revision)).size,
       offlineReuseMode ? 6 : 5,
     );
+    assert.equal(
+      edited.provider.connection_id,
+      original.provider.connection_id,
+    );
+    assert(edited.provider.credential_version.length > 0);
+    assert(original.provider.credential_version.length > 0);
+    assert.notEqual(
+      edited.provider.credential_version,
+      original.provider.credential_version,
+    );
     const business = {
       resource_id_contract: "passed",
       status: "business_passed",
       agent_id: agentId,
       deleted: true,
+      execution_credential_rotation: {
+        connection_id: original.provider.connection_id,
+        initial_version: original.provider.credential_version,
+        rotated_version: edited.provider.credential_version,
+        initial_phase: "v1-baseline",
+        next_phase: "v2-baseline",
+      },
       ...(fencedInvalidationEvidence
         ? { fenced_skill_invalidation: fencedInvalidationEvidence }
         : {}),

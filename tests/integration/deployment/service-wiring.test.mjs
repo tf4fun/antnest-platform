@@ -600,3 +600,41 @@ test("owner bootstrap is opt-in and inherits the credential UID without exposing
   );
   assert.equal(rc.networks.edge, undefined);
 });
+
+test("execution publication v2 is enabled between Controller producer and ACP consumer", () => {
+  const controller = original.services["agent-controller"].environment;
+  assert.equal(
+    controller.ANTNEST_AGENT_CONTROLLER_EXECUTION_WIRE_VERSION,
+    "${ANTNEST_AGENT_CONTROLLER_EXECUTION_WIRE_VERSION:-2}",
+  );
+  assert.equal(
+    controller.ANTNEST_AGENT_CONTROLLER_EXECUTION_RESYNC_INTERVAL,
+    "${ANTNEST_AGENT_CONTROLLER_EXECUTION_RESYNC_INTERVAL:-5m}",
+  );
+  const acp = original.services["agent-acp-service"].environment;
+  assert.equal(
+    acp.ANTNEST_ACP_EXECUTION_CONTROLLER_URL,
+    "${ANTNEST_ACP_EXECUTION_CONTROLLER_URL:-http://agent-controller:8080}",
+  );
+  const renderedController = base.services["agent-controller"].environment;
+  assert.equal(
+    renderedController.ANTNEST_AGENT_CONTROLLER_EXECUTION_WIRE_VERSION,
+    "2",
+  );
+  assert.equal(
+    renderedController.ANTNEST_AGENT_CONTROLLER_EXECUTION_RESYNC_INTERVAL,
+    "5m",
+  );
+  const renderedAcp = base.services["agent-acp-service"].environment;
+  assert.equal(
+    renderedAcp.ANTNEST_ACP_EXECUTION_CONTROLLER_URL,
+    "http://agent-controller:8080",
+  );
+  const env = readFileSync(new URL(".env.example", root), "utf8");
+  assert.match(env, /^ANTNEST_AGENT_CONTROLLER_EXECUTION_WIRE_VERSION=2$/m);
+  assert.match(env, /^ANTNEST_AGENT_CONTROLLER_EXECUTION_RESYNC_INTERVAL=5m$/m);
+  assert.match(
+    env,
+    /^ANTNEST_ACP_EXECUTION_CONTROLLER_URL=http:\/\/agent-controller:8080$/m,
+  );
+});

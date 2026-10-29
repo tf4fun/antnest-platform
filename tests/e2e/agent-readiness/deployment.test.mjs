@@ -135,3 +135,12 @@ test("CI selects readiness sources into independent system and stress shards", (
     [stress.id],
   );
 });
+
+test("readiness round asserts the consumed publication is wire version 2", async () => {
+  const runner = await source("run.mjs");
+  assert.match(
+    runner,
+    /round\.publication\.schemaVersion[\s\S]{0,80}2/,
+    "run.mjs must assert round.publication.schemaVersion === 2",
+  );
+});

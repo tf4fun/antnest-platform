@@ -5,6 +5,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import { pathToFileURL } from "node:url";
 
 const applyPath = "/rpc/agent-acp/apply-execution-snapshot";
+const deltaPath = "/rpc/agent-acp/apply-execution-delta";
 const now = () => performance.now();
 function endToEnd(headers) {
   const excluded = new Set([
@@ -82,6 +83,8 @@ export function createPublicationProxy({ upstream, delayMs = 2000 }) {
       revision: null,
       bindings: [],
       appliedRevision: null,
+      schemaVersion: null,
+      baseRevision: null,
       status: null,
     };
     attempts.push(attempt);
@@ -128,16 +131,34 @@ export function createPublicationProxy({ upstream, delayMs = 2000 }) {
       attempt.revision = Number.isSafeInteger(input?.revision)
         ? input.revision
         : null;
-      attempt.bindings = Array.isArray(input?.agents)
-        ? input.agents.map((agent) => ({
-            agent_id: agent?.agent_id,
-            agent_spec_revision: agent?.agent_spec_revision,
-            execution_revision: agent?.execution_revision,
-            runtime_revision: agent?.runtime?.runtime_revision ?? null,
-            accepting_runs: agent?.accepting_runs,
-          }))
-        : [];
-      if (request.method === "POST" && request.url === applyPath) {
+      attempt.schemaVersion =
+        input?.schema_version === 2
+          ? 2
+          : input?.schema_version === undefined
+            ? 1
+            : null;
+      attempt.baseRevision = Number.isSafeInteger(input?.base_revision)
+        ? input.base_revision
+        : null;
+      const agents =
+        request.url === deltaPath
+          ? Array.isArray(input?.agents?.upserts)
+            ? input.agents.upserts
+            : []
+          : Array.isArray(input?.agents)
+            ? input.agents
+            : [];
+      attempt.bindings = agents.map((agent) => ({
+        agent_id: agent?.agent_id,
+        agent_spec_revision: agent?.agent_spec_revision,
+        execution_revision: agent?.execution_revision,
+        runtime_revision: agent?.runtime?.runtime_revision ?? null,
+        accepting_runs: agent?.accepting_runs,
+      }));
+      if (
+        request.method === "POST" &&
+        (request.url === applyPath || request.url === deltaPath)
+      ) {
         attempt.delayStartedAt = now();
         while (now() - attempt.delayStartedAt < delayMs)
           await delay(

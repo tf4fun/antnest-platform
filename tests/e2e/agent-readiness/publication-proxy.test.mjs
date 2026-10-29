@@ -580,3 +580,122 @@ for (const entry of [
     },
   );
 }
+
+const deltaPath = "/rpc/agent-acp/apply-execution-delta";
+const digestPath = "/rpc/agent-acp/get-execution-digest";
+const delta = Buffer.from(
+  JSON.stringify({
+    schema_version: 2,
+    organization_id: "org-1",
+    base_revision: 6,
+    revision: 7,
+    providers: { upserts: [], deletes: [] },
+    models: { upserts: [], deletes: [] },
+    agents: {
+      upserts: [
+        {
+          agent_id: "agent-1",
+          agent_spec_revision: "spec-1",
+          execution_revision: "exec-1",
+          runtime: { runtime_revision: "rt-1" },
+          accepting_runs: true,
+        },
+      ],
+      deletes: [],
+    },
+    organization_budget: null,
+  }),
+);
+
+test("a v2 delta is delayed then forwarded byte-identically with auth", async () => {
+  await withProxy(
+    async ({ open, received, waitState }) => {
+      const call = open(deltaPath, {
+        body: delta,
+        headers: { authorization: "Bearer controller-token" },
+      });
+      const during = await waitState(
+        (status) => status.attempts.some((row) => row.delayStartedAt !== null),
+        "delta delay",
+      );
+      assert.equal(received.length, 0, "delta must be held during the delay");
+      const result = await call.done;
+      assert.equal(result.status, 200);
+      assert.equal(received.length, 1);
+      const [forwarded] = received;
+      assert.equal(forwarded.path, deltaPath);
+      assert.deepEqual(forwarded.body, delta);
+      assert.equal(forwarded.headers.authorization, "Bearer controller-token");
+      const [attempt] = during.attempts;
+      assert.equal(attempt.schemaVersion, 2);
+      assert.equal(attempt.baseRevision, 6);
+      assert.equal(attempt.revision, 7);
+      assert.equal(attempt.bindings.length, 1);
+      assert.equal(attempt.bindings[0].agent_id, "agent-1");
+      assert.equal(attempt.bindings[0].agent_spec_revision, "spec-1");
+      assert.equal(attempt.bindings[0].execution_revision, "exec-1");
+      assert.equal(attempt.bindings[0].runtime_revision, "rt-1");
+      assert.equal(attempt.bindings[0].accepting_runs, true);
+      const after = JSON.parse(
+        (
+          await open("/status", { method: "GET", body: undefined }).done
+        ).body.toString(),
+      ).attempts[0];
+      assertTerminal(after, false);
+      assert(
+        after.forwardedAt - after.delayStartedAt >= 2000,
+        "delta must wait the configured publication delay",
+      );
+    },
+    { delayMs: 2000 },
+  );
+});
+
+test("the digest path is never delayed and full snapshots expose null base", async () => {
+  await withProxy(
+    async ({ open, received }) => {
+      const digestResult = await open(digestPath, {
+        body: Buffer.from('{"organization_id":"org-1"}'),
+      }).done;
+      assert.equal(digestResult.status, 200);
+      await open(applyPath).done;
+      const status = await open("/status", { method: "GET", body: undefined })
+        .done;
+      const attempts = JSON.parse(status.body.toString()).attempts;
+      const digestAttempt = attempts.find((row) => row.path === digestPath);
+      assert.equal(digestAttempt.delayStartedAt, null);
+      assert.notEqual(digestAttempt.forwardedAt, null);
+      assert.equal(digestAttempt.cancelled, false);
+      assertTerminal(digestAttempt, false);
+      const snapshotAttempt = attempts.find((row) => row.path === applyPath);
+      assert.equal(snapshotAttempt.schemaVersion, 1);
+      assert.equal(snapshotAttempt.baseRevision, null);
+      assert.notEqual(snapshotAttempt.delayStartedAt, null);
+      assert.equal(received.length, 2);
+    },
+    { delayMs: 2000 },
+  );
+});
+
+test("a cancelled delta never forwards and joins with no upstream effects", async () => {
+  await withProxy(
+    async ({ open, received, waitState }) => {
+      const call = open(deltaPath, { body: delta });
+      await waitState(
+        (status) => status.attempts.some((row) => row.delayStartedAt !== null),
+        "delta delay",
+      );
+      call.destroy();
+      const result = await call.done;
+      assert.equal(received.length, 0);
+      assert.notEqual(result.status, 200);
+      const status = await open("/status", { method: "GET", body: undefined })
+        .done;
+      const [attempt] = JSON.parse(status.body.toString()).attempts;
+      assert.equal(attempt.cancelled, true);
+      assert.equal(attempt.forwardedAt, null);
+      assertTerminal(attempt, true);
+    },
+    { delayMs: 2000 },
+  );
+});
