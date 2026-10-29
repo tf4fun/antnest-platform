@@ -116,7 +116,12 @@ const acceptanceQueries = [
   "COMMIT",
 ];
 const contextReads = [
+  actualQuery(
+    "context-repository",
+    "SELECT ratio_p95 FROM model_token_calibration",
+  ),
   actualQuery("context-repository", "SELECT through_sequence, summary"),
+  actualQuery("context-repository", "SELECT id,sequence,kind,payload"),
   actualQuery("context-repository", "SELECT sequence, kind, payload"),
   actualQuery("context-repository", "SELECT payload FROM session_messages"),
 ];
@@ -206,7 +211,7 @@ export function costRunTraceFixture({
     sql(`context-${index}`, f.run, text, 8000 + index * 100),
   );
   const savedCheckpoint = checkpoint
-    ? sql("checkpoint", f.run, checkpointInsert, 8300)
+    ? sql("checkpoint", f.run, checkpointInsert, 8500)
     : undefined;
   const temporaryCleanupRead = sql(
     "temporary-run",

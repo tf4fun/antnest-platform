@@ -174,11 +174,13 @@ const acceptanceQueries = [
   "COMMIT",
 ].map(normalize);
 const contextQueries = [
-  `SELECT through_sequence, summary
+  "SELECT ratio_p95 FROM model_token_calibration WHERE organization_id=$1 AND model_profile_id=$2 AND model=$3 AND tokenizer=$4",
+  `SELECT through_sequence, summary, compaction_prompt_version, pinned_message_ids
          FROM context_checkpoints
         WHERE session_id = $1
         ORDER BY through_sequence DESC
         LIMIT 1`,
+  "SELECT id,sequence,kind,payload FROM session_messages WHERE session_id=$1 AND NOT context_excluded AND kind='user_message' ORDER BY sequence LIMIT 1",
   `SELECT sequence, kind, payload
          FROM session_messages
         WHERE session_id = $1
@@ -189,8 +191,9 @@ const contextQueries = [
   "SELECT payload FROM session_messages WHERE session_id = $1 AND kind = 'plan' AND NOT context_excluded ORDER BY sequence DESC LIMIT 1",
 ].map(normalize);
 const checkpointInsert = normalize(`INSERT INTO context_checkpoints(
-         id, session_id, through_sequence, summary, token_count, created_at
-       ) VALUES ($1, $2, $3, $4, $5, $6)
+         id, session_id, through_sequence, summary, token_count, created_at,
+         compaction_prompt_version, pinned_message_ids
+       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
        ON CONFLICT (session_id, through_sequence) DO NOTHING`);
 const unknownModel = new Set([
   "unpriced",

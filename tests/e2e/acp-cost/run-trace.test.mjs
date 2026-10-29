@@ -142,14 +142,33 @@ const mutations = [
     (f) => foreign(f, f.acceptance.queries[1]),
   ],
   ["duplicate environment fact", (f) => duplicate(f, f.acceptance.queries[4])],
-  ["context missing checkpoint read", (f) => remove(f, f.context[0])],
-  ["context missing history read", (f) => remove(f, f.context[1])],
-  ["context missing plan read", (f) => remove(f, f.context[2])],
+  ["context missing calibration read", (f) => remove(f, f.context[0])],
+  ["context missing checkpoint read", (f) => remove(f, f.context[1])],
+  ["context missing pinned task read", (f) => remove(f, f.context[2])],
+  ["context missing history read", (f) => remove(f, f.context[3])],
+  ["context missing plan read", (f) => remove(f, f.context[4])],
+  [
+    "context calibration loses organization scope",
+    (f) => corrupt(f, f.context[0], "organization_id=$1 AND "),
+  ],
+  [
+    "context checkpoint loses compaction metadata",
+    (f) =>
+      corrupt(
+        f,
+        f.context[1],
+        ", compaction_prompt_version, pinned_message_ids",
+      ),
+  ],
+  [
+    "context pinned task includes excluded history",
+    (f) => corrupt(f, f.context[2], "AND NOT context_excluded "),
+  ],
   ["context read detached", (f) => parent(f, f.context[0], f.request)],
   [
     "context history after model",
     (f) => {
-      f.context[1].startTime = 11000;
+      f.context[3].startTime = 11000;
     },
   ],
   [
