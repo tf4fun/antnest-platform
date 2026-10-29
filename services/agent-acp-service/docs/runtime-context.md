@@ -52,6 +52,9 @@ Every admitted Run prepares one model input from its frozen Runtime binding:
    Cancellation, budget and persistence errors are never swallowed. Compaction
    and foreground calls share the Run request budget and deadline, and a
    `context_overflow` with no emitted output retries exactly once.
+   The [context acceptance suite](../../../tests/integration/agent-acp-service/CONTEXT_ACCEPTANCE.md)
+   covers 200 Chinese turns over real ACP HTTP, Provider HTTP/SSE and PostgreSQL,
+   independently of container-deployment/system acceptance.
 6. Call selected Runtime tools through the same bound endpoint and original MCP name.
    Structured results remain available to the model. An ordinary MCP error
    result is a returned outcome; a transport timeout/cancellation does not prove
