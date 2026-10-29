@@ -91,7 +91,13 @@ A Provider connection belongs to one organization and owns its endpoint and
 independently versioned encrypted credential. It can contain multiple ModelProfiles.
 A current model record stores model name, context/output limits, multimodal capabilities,
 optional temperature/pricing and display name; it does not store credential versions
-or copy the endpoint. See [Provider management](provider-management.md).
+or copy the endpoint. Optional `tokenizer` and `compaction_model_profile_id`
+context metadata is profile-owned pass-through stored inside the model JSON with
+no migration: an omitted or `none` tokenizer keeps the conservative estimator,
+and an absent compaction reference means the selected Run model. A submitted
+reference names an enabled Model in the same organization that ACP resolves and
+freezes at Run acceptance; that consumer batch is pending. See
+[Provider management](provider-management.md).
 
 Controller publishes current Model parameters and independently versioned Provider
 credentials to ACP. ACP selects execution configuration locally. Templates retain

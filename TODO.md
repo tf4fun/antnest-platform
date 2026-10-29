@@ -19,6 +19,8 @@ Issue 状态最后核对于 2026-10-28：141 个 issue，87 个已关闭，54 �
 
 ## 当前批次
 
+- **#51 上下文管理（2026-10-29）**：按 Controller → ACP → Admin Console → 独立集成批次交付，每个服务独立 PR，不等待 CI、不自动合并或关闭父 issue。Controller 批次已定义可选 `tokenizer`（`o200k`／`cl100k`／`none`）与 `compaction_model_profile_id`，通过现有模型 JSON 持久化及 execution snapshot 透传；domain／application 定向测试已先红（unknown field）后绿。ACP 估算、校准、模型摘要、首任务 pinning、溢出重试，Console 配置和系统验收均待交付；远程完整门禁待 PR CI，不以定向本地结果代替。
+
 当前状态（2026-10-28，北京时间）。2026-10-28 之前的检查点日志已移出本文件：已提交部分见 Git 历史，未提交的 2026-10-22 至 10-25 检查点见 `artifacts/verification/issue-triage-20261028/TODO-current-batch-history.md`。
 
 - **主线 #82 → #52**：#82 结构化子项 8/21 关闭（新挂入 #252、#356）；#52 原验收 1/5。#342 契约、#343 重试、#344 fallback、#345 熔断、#347 ACP 预算记账与执行（`6330f84b`）已合并；#347 只交付 ACP 生产方。

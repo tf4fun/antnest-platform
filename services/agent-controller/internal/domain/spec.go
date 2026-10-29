@@ -10,6 +10,7 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"unicode"
 
 	"github.com/distribution/reference"
 )
@@ -27,15 +28,17 @@ const (
 )
 
 type ModelSpec struct {
-	Pricing         *ModelPricing `json:"pricing,omitempty"`
-	BaseURL         string        `json:"base_url"`
-	Model           string        `json:"model"`
-	ContextWindow   int           `json:"context_window"`
-	MaxOutputTokens int           `json:"max_output_tokens"`
-	Temperature     *float64      `json:"temperature,omitempty"`
-	SupportsImages  bool          `json:"supports_images"`
-	SupportsAudio   bool          `json:"supports_audio,omitempty"`
-	SupportsPDF     bool          `json:"supports_pdf,omitempty"`
+	Pricing                  *ModelPricing `json:"pricing,omitempty"`
+	BaseURL                  string        `json:"base_url"`
+	Model                    string        `json:"model"`
+	ContextWindow            int           `json:"context_window"`
+	MaxOutputTokens          int           `json:"max_output_tokens"`
+	Temperature              *float64      `json:"temperature,omitempty"`
+	SupportsImages           bool          `json:"supports_images"`
+	SupportsAudio            bool          `json:"supports_audio,omitempty"`
+	SupportsPDF              bool          `json:"supports_pdf,omitempty"`
+	Tokenizer                string        `json:"tokenizer,omitempty"`
+	CompactionModelProfileID string        `json:"compaction_model_profile_id,omitempty"`
 }
 
 type RuntimeResources struct {
@@ -355,6 +358,15 @@ func validateModel(model ModelSpec) error {
 	}
 	if model.Temperature != nil && (*model.Temperature < 0 || *model.Temperature > 2) {
 		return fmt.Errorf("temperature must be between 0 and 2")
+	}
+	switch model.Tokenizer {
+	case "", "o200k", "cl100k", "none":
+	default:
+		return fmt.Errorf("model tokenizer is unsupported")
+	}
+	if len(model.CompactionModelProfileID) > 200 ||
+		strings.IndexFunc(model.CompactionModelProfileID, unicode.IsSpace) >= 0 {
+		return fmt.Errorf("compaction model profile reference is invalid")
 	}
 	return model.Pricing.Validate()
 }
