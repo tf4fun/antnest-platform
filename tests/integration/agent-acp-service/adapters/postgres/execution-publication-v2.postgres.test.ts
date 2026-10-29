@@ -135,7 +135,12 @@ describe.skipIf(databaseUrl === undefined)(
       token.agents[0]!.runtime.credential.token = Buffer.alloc(32, 9).toString(
         "base64url",
       );
-      await expect(repository.save(token, 1)).rejects.toThrow("conflict");
+      await expect(repository.save(token, 1)).rejects.toMatchObject({
+        code: "configuration_conflict",
+      });
+      expect(await repository.loadAuthority(legacy.organization_id)).toEqual(
+        legacy,
+      );
       const rotated = structuredClone(incoming);
       const rotatedProvider = rotated.providers[0]!;
       if (
@@ -145,13 +150,26 @@ describe.skipIf(databaseUrl === undefined)(
         throw new Error("fixture requires an enabled Provider");
       rotatedProvider.credential_revision = "credential-rotated";
       rotatedProvider.credential.version = "credential-rotated";
-      await expect(repository.save(rotated, 1)).rejects.toThrow("conflict");
+      await expect(repository.save(rotated, 1)).rejects.toMatchObject({
+        code: "configuration_conflict",
+      });
+      expect(await repository.loadAuthority(legacy.organization_id)).toEqual(
+        legacy,
+      );
       const upgraded = v2(legacy);
       expect(await repository.save(upgraded, 1)).toBe(true);
+      expect(await repository.loadAuthority(legacy.organization_id)).toEqual(
+        upgraded,
+      );
       const downgraded = parseExecutionConfiguration(executionConfiguration());
       downgraded.organization_id = legacy.organization_id;
       organizations.push(downgraded.organization_id);
-      await expect(repository.save(downgraded, 1)).rejects.toThrow("conflict");
+      await expect(repository.save(downgraded, 1)).rejects.toMatchObject({
+        code: "configuration_conflict",
+      });
+      expect(await repository.loadAuthority(legacy.organization_id)).toEqual(
+        upgraded,
+      );
     });
 
     it("keeps ordinary higher-revision v1 publication unchanged", async () => {
