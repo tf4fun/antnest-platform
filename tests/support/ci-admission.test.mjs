@@ -84,7 +84,7 @@ test("all component tiers are dependencies of the required integration result", 
   for (const key of Object.keys(env))
     assert(
       !key.startsWith("OPTIONAL"),
-      `${key} is a Tier C variable; the component gate has none`,
+      `${key} is a system variable; the component gate has none`,
     );
 });
 
@@ -115,7 +115,7 @@ test("a component gate admits exactly the selected matrices and nothing else", (
   }
 });
 
-test("the component gate carries no Tier C or priority E2E variables", () => {
+test("the component gate carries no system or priority E2E variables", () => {
   for (const job of ["optional-suite", "priority-suite", "priority-images"])
     assert(!Object.hasOwn(workflow.jobs, job), `${job} left the gate`);
   const env = gate.steps[0].env;

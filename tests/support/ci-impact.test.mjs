@@ -11,7 +11,9 @@ import {
   contractMarkers,
   extractReferences,
   impactedPaths,
+  makefileGraph,
   makefileTargets,
+  makeTargetsRun,
   ownership,
   validateOwnership,
 } from "./ci-impact.mjs";
@@ -239,6 +241,74 @@ test("Makefile diffs name their changed targets or stay unproven", () => {
     ),
     null,
     "a change outside named targets cannot prove ownership",
+  );
+});
+
+test("blank, comment and .PHONY Makefile lines change no target", () => {
+  const base = [
+    "CACHE := .cache",
+    "",
+    ".PHONY: test-a",
+    "# Runs a.",
+    "test-a:",
+    "\tnode a.mjs",
+    "",
+  ].join("\n");
+  const head = base
+    .replace(".PHONY: test-a", ".PHONY: test-a test-b")
+    .replace("# Runs a.", "# Runs only a.");
+  const diff = [
+    "diff --git a/Makefile b/Makefile",
+    "@@ -3,2 +3,2 @@",
+    "-.PHONY: test-a",
+    "-# Runs a.",
+    "+.PHONY: test-a test-b",
+    "+# Runs only a.",
+    "",
+  ].join("\n");
+  const git = (command, args) => {
+    if (args[0] === "diff") return diff;
+    if (args[0] === "show") return args[1] === "base:Makefile" ? base : head;
+    throw new Error(`unexpected ${args}`);
+  };
+  assert.deepEqual(makefileTargets("base", "head", git), new Set());
+});
+
+test("the Makefile graph follows prerequisites and recursive make calls", () => {
+  const graph = makefileGraph(
+    [
+      "CACHE := .cache",
+      ".PHONY: e2e-a build-b",
+      "e2e-a: build-b $(CACHE)",
+      "\tFLAG=1 $(MAKE) e2e-c",
+      "\tnode a.mjs",
+      "build-b:",
+      "\tdocker build .",
+      "e2e-c:",
+      "\tmake build-d; node c.mjs",
+      "build-d:",
+      "\ttrue",
+      "",
+    ].join("\n"),
+  );
+  assert.deepEqual(graph.get("e2e-a"), new Set(["build-b", "e2e-c"]));
+  assert.deepEqual(graph.get("e2e-c"), new Set(["build-d"]));
+  assert.deepEqual(graph.get("build-b"), new Set());
+  assert(!graph.has(".PHONY"));
+  assert.deepEqual(
+    makeTargetsRun(["make e2e-a"], [graph]),
+    new Set(["e2e-a", "build-b", "e2e-c", "build-d"]),
+  );
+  assert.deepEqual(makeTargetsRun(["node x.mjs"], [graph]), new Set());
+});
+
+test("Makefile and system workflow changes select no service unit job", () => {
+  assert.deepEqual(selectComponents(["Makefile"]), []);
+  assert.deepEqual(selectComponents([".github/workflows/e2e.yml"]), []);
+  assert.deepEqual(
+    selectComponents([".github/workflows/integration.yml"]).length,
+    selectComponents([], { all: true }).length,
+    "the PR gate workflow still selects every unit job",
   );
 });
 

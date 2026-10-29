@@ -1,26 +1,28 @@
 import assert from "node:assert/strict";
 import { appendFileSync, mkdirSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { images, shards, suites, workflowPlan } from "./ci-changes.mjs";
+import { images, shards, suites } from "./ci-changes.mjs";
 import { markdownCell } from "./ci-failure.mjs";
 
+// The integration workflow runs only component shards; shards whose suites
+// use images also wait for the image jobs.
+const members = (shard) =>
+  shard.suites.map((id) => suites.find((suite) => suite.id === id));
+const componentShards = shards.filter((shard) =>
+  members(shard).every((suite) => suite.kind === "component"),
+);
+const jobName = (shard) => `Component / ${shard.name} / Run`;
+const imagedNames = new Set(
+  componentShards
+    .filter((shard) => members(shard).some((suite) => suite.images?.length))
+    .map(jobName),
+);
 const allowedNames = new Set([
   "Select suites",
   "Integration checks",
-  ...shards.map(
-    (shard) => `Tier ${shard.id[0].toUpperCase()} / ${shard.name} / Run`,
-  ),
+  ...componentShards.map(jobName),
   ...Object.keys(images).map((name) => `Image / ${name}`),
 ]);
-const priority = workflowPlan(suites).priority.include;
-const priorityNames = new Set(
-  priority.map((row) => `Tier ${row.tier} / ${row.name} / Run`),
-);
-const priorityImages = new Set(
-  priority.flatMap((row) =>
-    row.images.split(",").map((name) => `Image / ${name}`),
-  ),
-);
 const conclusions = new Set([
   "success",
   "failure",
@@ -74,13 +76,11 @@ export function workflowTiming(run, jobs) {
           : null,
       };
     });
-  for (const row of rows.filter((row) => row.name.startsWith("Tier C / "))) {
+  for (const row of rows.filter((row) => row.name.startsWith("Component / "))) {
     const predecessors = rows.filter(
       (dependency) =>
         dependency.name === "Select suites" ||
-        (dependency.name.startsWith("Image / ") &&
-          (!priorityNames.has(row.name) ||
-            priorityImages.has(dependency.name))),
+        (dependency.name.startsWith("Image / ") && imagedNames.has(row.name)),
     );
     if (
       predecessors.some((row) => row.name === "Select suites") &&
@@ -100,7 +100,7 @@ export function workflowTiming(run, jobs) {
   }
   const gate = rows.find((row) => row.name === "Integration checks");
   const suites = rows.filter(
-    (row) => row.name.startsWith("Tier ") && row.finishOffsetMs !== null,
+    (row) => row.name.startsWith("Component / ") && row.finishOffsetMs !== null,
   );
   const lastSuite =
     suites.sort((a, b) => b.finishOffsetMs - a.finishOffsetMs)[0] ?? null;
@@ -137,7 +137,7 @@ export function timingMarkdown(report) {
     `Candidate: ${report.candidate}; attempt: ${report.attempt}; gate: ${report.gateConclusion}.`,
     `Clock origin: ${report.clockOrigin}. Reruns exclude inter-attempt idle time; their pre-start queue time is unavailable.`,
     `Integration gate wall time: ${seconds(report.integrationGateWallMs)} s. Accumulated runner time: ${seconds(report.totalRunnerMs)} s (parallel, not wall time or savings).`,
-    "Other workflows, including Repository checks, are outside this measurement. Priority Tier C eligibility follows Select suites and its own image builds; other Tier C shards retain the full image barrier. Pre-creation scheduling includes matrix admission and GitHub orchestration; created-to-start includes dispatch/provisioning. Neither isolates matrix-slot acquisition or runner queueing; null is not zero.",
+    "Other workflows, including Repository checks, are outside this measurement. Component shards that use images wait for the image builds; the others wait only for Select suites. Pre-creation scheduling includes matrix admission and GitHub orchestration; created-to-start includes dispatch/provisioning. Neither isolates matrix-slot acquisition or runner queueing; null is not zero.",
     "",
     "| Job | Start (s) | Finish (s) | Dependency-ready (s) | Pre-creation scheduling (s) | Created-to-start (s) | Setup (s) | Build (s) | Test (s) | Finalization (s) |",
     "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |",

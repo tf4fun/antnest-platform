@@ -10,11 +10,23 @@
   system workflow; failures feed fix-forward work without freezing other PR
   merges. A newer main push cancels the superseded in-progress system run,
   because stacked PRs for one issue often merge together; a cancelled run
-  records `conclusion: "cancelled"` and opens no tracking issue. Nightly and
+  records `conclusion: "cancelled"` and never touches the tracking issue.
+  Each kind (system, stress) has one tracking issue that holds only the
+  latest state: a failing main push or nightly run rewrites its body with
+  the revision, run and failed jobs (no comments) and reopens it, and the
+  next full pass closes it. Pull requests, dispatch and manifest replays
+  never touch it. Nightly and
   manifest replays run to completion. An `e2e` PR label or
-  `workflow_dispatch` runs the same E2E on demand. Nightly retains 100 readiness rounds; normal runs use three
-  (`ANTNEST_E2E_READINESS_ROUNDS`).
-- **Release capability**: a full-scope, passed main run records
+  `workflow_dispatch` runs the same E2E on demand.
+- **Nightly stress**: the schedule (or a dispatch with `scope: stress`) runs
+  only the `stress` suites, currently `stress-agent-readiness` with 100
+  readiness rounds; main's system `c-agent-readiness` runs three. A stress run
+  is never release evidence, and its failures go to a separate tracking issue.
+- **Suite kinds**: every catalog suite has one `kind` — `component`,
+  `system` or `stress` — and jobs are named `Component / …`, `System / …` or
+  `Stress / …`. The former Tier A/B/C terms are retired; the `a-`/`b-`/`c-`
+  id prefixes are historical identifiers only.
+- **Release capability**: a full-scope, passed main system run records
   `e2e_passed=true` and `release_eligible=true` next to its
   `version-manifest`: that version set can be released from main. A full
   manual replay of a valid main manifest qualifies the same way;
@@ -32,8 +44,14 @@
 - Dependency-aware selection: contract changes expand to their owners,
   shared helpers expand through the static reverse reference closure, and
   unreferenced production helpers fall back to a conservative all-suite
-  selection. `Makefile` changes are conservatively global — proven
-  target narrowing is deferred until prerequisite ownership is handled.
+  selection. A `Makefile` change selects only the suites whose `make`
+  targets reach a changed target through prerequisites or `$(MAKE)` calls
+  (blank, comment and `.PHONY` lines change no target); a change outside
+  named targets, such as a variable, still selects every suite. Service unit
+  workflows never run the root `Makefile`, so it selects no unit job.
+  A change only to the system workflow (`e2e.yml`) selects no component suite
+  and no unit job: it never runs the PR gate, and its own tests run in
+  `Repository checks`.
 - Integration required `needs` includes all ten `unit-<service>` reusable
   jobs; `SERVICES` from the selector drives each job's condition and the
   gate validates results (selected→success, unselected→skipped).

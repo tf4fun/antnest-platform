@@ -159,7 +159,7 @@ test("Controller's isolated random-password fixture supplies admission scripts w
   assert.match(run, /CONTROLLER_TEST_TEMPORAL_PASSWORD: randomBytes/u);
 });
 
-test("Tier A dependency passwords are private and pass admission without container opt-in", () => {
+test("component dependency passwords are private and pass admission without container opt-in", () => {
   const plan = dependencyPlan("temporal", {});
   const { published_values: published } = JSON.parse(
     source("contracts/platform/development-secrets.json"),

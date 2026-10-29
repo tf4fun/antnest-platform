@@ -18,14 +18,21 @@ services' unit, contract and component checks. The required Integration
 checks status includes those selected service checks. Docker E2E is
 post-merge system integration evidence, not a PR merge gate.
 
+Every CI suite has one kind: `component` suites gate pull requests, `system`
+suites run on main, and `stress` suites run nightly. Do not use the retired
+Tier A/B/C terms.
+
 `main` is the system integration branch, not a release branch. A main push
-builds a version set and runs the independent system E2E workflow; failures
-remain failures and feed fix-forward work without automatically freezing
-other PR merges. Nightly retains 100 readiness rounds; normal system runs
-use three. An `e2e` label or explicit manifest dispatch runs independent
-E2E. PR artifacts never enter the trusted registry namespace or qualify as
-release evidence. A frozen release must use a complete passed main version
-manifest; partial/manual PR results do not establish a release.
+builds a version set and runs the independent system E2E workflow; a newer
+main push cancels the superseded run. Failures remain failures and feed
+fix-forward work without automatically freezing other PR merges. A full
+passed main system run means that version set is release-capable; CI does
+not tag or publish releases. Stress suites (such as 100 readiness rounds)
+run only nightly and are never release evidence. An `e2e` label or explicit
+manifest dispatch runs independent E2E. Only release images enter GHCR:
+test images are built in each run, and PR artifacts never enter the trusted
+registry namespace or qualify as release evidence. Partial/manual PR results
+do not establish release capability.
 
 Use remote CI as the complete merge gate. Local verification is for targeted
 failure reproduction and focused development feedback; do not duplicate the

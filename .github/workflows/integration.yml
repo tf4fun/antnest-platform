@@ -214,7 +214,7 @@ jobs:
 
   # Shards without images start at once; the others wait for the image job.
   suite:
-    name: Tier ${{ matrix.tier }} / ${{ matrix.name }}
+    name: Component / ${{ matrix.name }}
     needs: changes
     if: needs.changes.outputs.mode == 'component' && needs.changes.outputs.plain != '0'
     permissions:
@@ -229,7 +229,7 @@ jobs:
       suite: ${{ toJSON(matrix) }}
 
   image-suite:
-    name: Tier ${{ matrix.tier }} / ${{ matrix.name }}
+    name: Component / ${{ matrix.name }}
     needs: [changes, images]
     if: >-
       !cancelled() && needs.changes.result == 'success' &&

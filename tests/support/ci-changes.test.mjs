@@ -21,7 +21,9 @@ import {
   imageReference,
   images,
   imageSpec,
+  isPublishable,
   listTree,
+  makefileChange,
   matrices,
   matrix,
   matrixEntry,
@@ -35,7 +37,7 @@ import {
   workflowPlan,
 } from "./ci-changes.mjs";
 
-test("priority scheduling preserves every shard and build while reserving one of six Tier C slots", () => {
+test("the workflow plan preserves every shard and build exactly once", () => {
   const resolved = Object.keys(images).map((name) => ({
     name,
     ref: `test/${name}`,
@@ -43,17 +45,9 @@ test("priority scheduling preserves every shard and build while reserving one of
     publish: false,
   }));
   const plan = workflowPlan(suites, resolved);
-  assert.deepEqual(
-    plan.priority.include.map((row) => row.id),
-    ["c-agent-readiness"],
+  const planned = [plan.plain, plan.imaged].flatMap((group) =>
+    group.include.map((row) => row.id),
   );
-  assert.equal(plan.optionalParallel, 5);
-  const planned = [
-    plan.plain,
-    plan.imaged,
-    plan.optional,
-    plan.priority,
-  ].flatMap((group) => group.include.map((row) => row.id));
   assert.deepEqual(
     planned.sort(),
     matrix(suites)
@@ -61,31 +55,33 @@ test("priority scheduling preserves every shard and build while reserving one of
       .sort(),
   );
   assert.equal(new Set(planned).size, planned.length);
-  const needed = plan.priority.include[0].images.split(",");
-  assert.deepEqual(
-    plan.priorityBuilds.include.map((row) => row.name).sort(),
-    needed.sort(),
-  );
-  assert(plan.builds.include.every((row) => !needed.includes(row.name)));
-  assert.equal(
-    plan.builds.include.length + plan.priorityBuilds.include.length,
-    resolved.length,
-  );
+  assert.equal(plan.builds.include.length, resolved.length);
   const cached = workflowPlan(
     suites,
     resolved.map((row) => ({ ...row, build: false })),
   );
-  assert.deepEqual(cached.priorityBuilds.include, []);
   assert.deepEqual(cached.builds.include, []);
-  assert.equal(cached.priority.include.length, 1);
-  const ordinary = workflowPlan(
-    suites.filter((suite) => suite.id !== "c-agent-readiness"),
-    resolved,
-  );
-  assert.equal(ordinary.optionalParallel, 6);
-  assert.deepEqual(ordinary.priority.include, []);
-  assert.deepEqual(ordinary.priorityBuilds.include, []);
 });
+
+test("every suite has exactly one kind and readiness has a nightly stress variant", () => {
+  for (const suite of suites)
+    assert(["component", "system", "stress"].includes(suite.kind), suite.id);
+  const smoke = suites.find((suite) => suite.id === "c-agent-readiness");
+  const stress = suites.find((suite) => suite.id === "stress-agent-readiness");
+  assert.equal(smoke.kind, "system");
+  assert.equal(stress.kind, "stress");
+  assert.match(smoke.run[0], /ANTNEST_E2E_READINESS_ROUNDS=3 /u);
+  assert.match(stress.run[0], /ANTNEST_E2E_READINESS_ROUNDS=100 /u);
+  assert.deepEqual(
+    selectSuites([], { all: true, scope: "stress" }).map((suite) => suite.id),
+    ["stress-agent-readiness"],
+  );
+  assert(
+    !selectSuites([], { all: true, scope: "system" }).includes(stress),
+    "main system runs never include stress",
+  );
+});
+
 import { temporaryStorageRoot } from "./storage.mjs";
 
 test("ACP survivor admission runs the actual two-replica and browser scenario", () => {
@@ -93,7 +89,7 @@ test("ACP survivor admission runs the actual two-replica and browser scenario", 
   const owner = suites.find((item) => item.id === "acp-owner-bootstrap");
   assert(suite, "missing blocking two-Docker ACP survivor acceptance");
   assert(owner);
-  assert.equal(suite.tier, "c");
+  assert.equal(suite.kind, "system");
   assert(!suite.disabled);
   assert.deepEqual(suite.run, ["node tests/e2e/acp-survivor/run.mjs"]);
   assert.deepEqual(suite.setup, ["agent-ui-web", "chromium"]);
@@ -244,7 +240,7 @@ test("ACP Runtime information provenance runs against the candidate production i
   ]) {
     const suite = selectSuites([path]).find(({ id }) => id === "auth-acp");
     assert(suite, `${path} must select ACP production admission`);
-    assert.equal(suite.tier, "b");
+    assert.equal(suite.kind, "system");
     assert.deepEqual(suite.images, ["agent-acp-service"]);
     assert(suite.run.includes("make e2e-acp-authentication"));
     assert(suite.run.includes(command));
@@ -294,10 +290,9 @@ test("documentation-only changes select no suites", () => {
   );
 });
 
-test("workflow, selector, ownership, contract root and Makefile changes select every suite", () => {
+test("workflow, selector, ownership, contract root and unattributed Makefile changes select every suite", () => {
   for (const file of [
     ".github/workflows/integration.yml",
-    ".github/workflows/e2e.yml",
     ".github/workflows/_suite.yml",
     "tests/support/ci-ownership.json",
     "tests/support/ci-changes.mjs",
@@ -309,6 +304,13 @@ test("workflow, selector, ownership, contract root and Makefile changes select e
     "contracts/resource-identifiers.md",
   ])
     assert.equal(selectSuites([file]).length, enabled.length, file);
+});
+
+test("a system workflow change selects no pull request component suite", () => {
+  assert.deepEqual(
+    selectSuites([".github/workflows/e2e.yml"], { scope: "component" }),
+    [],
+  );
 });
 
 test("a contract change selects its declared owners, never every suite", () => {
@@ -406,7 +408,11 @@ test("test sources select the suites that run them", () => {
 
 test("managed MCP and deployment wiring runners select their suites", () => {
   const required = (selected) =>
-    ids(selected.filter((suite) => suite.tier !== "c"));
+    ids(
+      selected.filter(
+        (suite) => suite.kind !== "stress" && !suite.id.startsWith("c-"),
+      ),
+    );
   assert.deepEqual(
     required(selectSuites(["tests/e2e/managed-mcp/model.mjs"])),
     [
@@ -422,13 +428,13 @@ test("managed MCP and deployment wiring runners select their suites", () => {
   );
 });
 
-test("dependency secret Docker admission is required by the Tier B deployment suite", () => {
+test("dependency secret Docker admission is required by the system deployment suite", () => {
   const runner =
     "tests/e2e/service-authentication/deployment-credentials/dependency-secrets.mjs";
   const selected = selectSuites([runner]);
   const suite = selected.find(({ id }) => id === "deployment-docker");
   assert(suite);
-  assert.equal(suite.tier, "b");
+  assert.equal(suite.kind, "system");
   assert(suite.run.includes(`node ${runner}`));
   assert(suite.images.includes("temporal"));
   assert(suite.pull.includes("temporalio/server:1.32.0"));
@@ -440,7 +446,7 @@ test("documented Docker admissions include encryption rotation, Gateway shutdown
   const cases = [
     {
       id: "c-encryption-key-rotation",
-      tier: "c",
+      kind: "system",
       path: "tests/e2e/skill-learning/automatic-flow.test.mjs",
       command: "make e2e-encryption-key-rotation",
       images: [
@@ -452,7 +458,7 @@ test("documented Docker admissions include encryption rotation, Gateway shutdown
     },
     {
       id: "gateway-shutdown",
-      tier: "b",
+      kind: "system",
       path: "tests/e2e/edge-gateway/shutdown-docker.mjs",
       command:
         "ANTNEST_GATEWAY_TEST_IMAGE=antnest/edge-gateway:local node tests/e2e/edge-gateway/shutdown-docker.mjs",
@@ -460,7 +466,7 @@ test("documented Docker admissions include encryption rotation, Gateway shutdown
     },
     {
       id: "runtime-controller-skill-archives",
-      tier: "b",
+      kind: "system",
       path: "tests/e2e/go/runtime-controller/internal/platform/docker/skill_archive_e2e_test.go",
       command:
         "ANTNEST_TEST_DOCKER_SOCKET=/var/run/docker.sock node tests/integration/go/run.mjs runtime-controller --profile e2e --package internal/platform/docker -- -race -timeout=5m",
@@ -473,7 +479,7 @@ test("documented Docker admissions include encryption rotation, Gateway shutdown
         ({ id }) => id === entry.id,
       );
       assert(suite, `${entry.id} must run when its test changes`);
-      assert.equal(suite.tier, entry.tier);
+      assert.equal(suite.kind, entry.kind);
       assert(suite.run.includes(entry.command), entry.command);
       for (const image of entry.images)
         assert(suite.images.includes(image), image);
@@ -528,13 +534,13 @@ test("the scope option intersects every selection mode afterwards", () => {
   const components = selectSuites([], { all: true, scope: "component" });
   assert.deepEqual(
     components,
-    enabled.filter((suite) => suite.tier === "a"),
+    enabled.filter((suite) => suite.kind === "component"),
   );
-  const e2e = selectSuites([], { all: true, scope: "e2e" });
-  assert.deepEqual(
-    e2e,
-    enabled.filter((suite) => suite.tier !== "a"),
-  );
+  for (const scope of ["system", "stress"])
+    assert.deepEqual(
+      selectSuites([], { all: true, scope }),
+      enabled.filter((suite) => suite.kind === scope),
+    );
   assert.deepEqual(
     ids(
       selectSuites(["services/identity-service/internal/server/http.go"], {
@@ -559,11 +565,70 @@ test("the scope option intersects every selection mode afterwards", () => {
   );
 });
 
-test("Makefile changes stay conservative until target ownership is proven", () => {
-  assert.equal(
-    selectSuites(["Makefile"]).length,
-    enabled.length,
-    "a Makefile change selects every suite (narrowing pending)",
+test("a Makefile change selects the suites whose make targets reach it", () => {
+  const makefile = readFileSync(resolve(root, "Makefile"), "utf8");
+  const select = (targets, files = ["Makefile"]) =>
+    ids(selectSuites(files, { makefile: { targets, texts: [makefile] } }));
+  assert.deepEqual(select(new Set(["test-egress-postgres"])), [
+    "egress-postgres",
+  ]);
+  assert.deepEqual(
+    select(new Set(["e2e-service-authentication-integration"])),
+    ["c-service-authentication-integration", "c-encryption-key-rotation"],
+    "a recursive $(MAKE) call reaches the target",
+  );
+  assert.deepEqual(select(new Set(["fmt"])), [], "no suite runs fmt");
+  assert.deepEqual(select(new Set()), [], "a comment-only change runs none");
+  const fixture = [
+    "test-egress-postgres: helper-z",
+    "\tsh x",
+    "helper-z:",
+    "\ttrue",
+    "",
+  ].join("\n");
+  assert.deepEqual(
+    ids(
+      selectSuites(["Makefile"], {
+        makefile: { targets: new Set(["helper-z"]), texts: [fixture] },
+      }),
+    ),
+    ["egress-postgres"],
+    "a prerequisite change reaches the suite",
+  );
+  assert(
+    select(new Set(["test-egress-postgres"]), [
+      "Makefile",
+      "services/identity-service/internal/server/http.go",
+    ]).includes("identity-postgres"),
+    "other changed files still select their suites",
+  );
+});
+
+test("an unattributed Makefile change stays conservative", () => {
+  for (const makefile of [undefined, { targets: null, texts: [] }])
+    assert.equal(
+      selectSuites(["Makefile"], { makefile }).length,
+      enabled.length,
+    );
+});
+
+test("makefileChange reports changed targets and both Makefile revisions", () => {
+  const base = "test-a:\n\tnode a.mjs\n";
+  const head = "test-a:\n\tnode a2.mjs\n";
+  const git = (command, args) => {
+    if (args[0] === "diff") return "@@ -2 +2 @@\n";
+    if (args[0] === "show") return args[1] === "base:Makefile" ? base : head;
+    throw new Error(`unexpected ${args}`);
+  };
+  assert.deepEqual(makefileChange("base", "head", git), {
+    targets: new Set(["test-a"]),
+    texts: [base, head],
+  });
+  assert.deepEqual(
+    makefileChange("base", "head", () => {
+      throw new Error("no history");
+    }),
+    { targets: null, texts: [] },
   );
 });
 
@@ -597,7 +662,7 @@ test("the catalog is unique and refers to existing entry points", () => {
     ].map((match) => match[1]),
   );
   for (const suite of suites) {
-    assert(["a", "b", "c"].includes(suite.tier), suite.id);
+    assert(["component", "system", "stress"].includes(suite.kind), suite.id);
     assert(suite.paths.length > 0 && suite.run.length > 0, suite.id);
     for (const setup of suite.setup) assert(setups.includes(setup), setup);
     for (const image of suite.images ?? [])
@@ -628,23 +693,22 @@ test("platform targets kept out of CI exist, run nowhere and name their issue", 
   }
 });
 
-test("every suite belongs to exactly one shard of its own tier", () => {
+test("every suite belongs to exactly one shard of its own kind", () => {
   const members = shards.flatMap((shard) => shard.suites);
   assert.equal(new Set(members).size, members.length);
   assert.deepEqual([...members].sort(), ids(suites).sort());
   assert.equal(new Set(shards.map((shard) => shard.id)).size, shards.length);
   for (const shard of shards) {
     assert(shard.suites.length > 0, shard.id);
-    const tiers = new Set(
-      shard.suites.map((id) => suites.find((suite) => suite.id === id).tier),
+    const kinds = new Set(
+      shard.suites.map((id) => suites.find((suite) => suite.id === id).kind),
     );
-    assert.equal(tiers.size, 1, shard.id);
-    assert(shard.id.startsWith(`${[...tiers][0]}-`), shard.id);
+    assert.equal(kinds.size, 1, shard.id);
   }
   assert(shards.filter((shard) => shard.id.startsWith("c-")).length <= 13);
 });
 
-test("tier A gives every PostgreSQL, browser and contract suite its own shard", () => {
+test("every component PostgreSQL, browser and contract suite has its own shard", () => {
   const singletons = [
     ["a-egress-postgres", "egress-postgres"],
     ["a-runtime-controller-postgres", "runtime-controller-postgres"],
@@ -659,10 +723,10 @@ test("tier A gives every PostgreSQL, browser and contract suite its own shard", 
   for (const [shardId, suiteId] of singletons) {
     const shard = shards.find((item) => item.id === shardId);
     const suite = suites.find((item) => item.id === suiteId);
-    assert(shard, `missing one-suite tier A shard ${shardId}`);
+    assert(shard, `missing one-suite component shard ${shardId}`);
     assert.deepEqual(shard.suites, [suiteId]);
     assert.equal(shard.name, suite.name);
-    assert.equal(suite.tier, "a");
+    assert.equal(suite.kind, "component");
   }
   assert.deepEqual(
     shards.filter((shard) => shard.id.startsWith("a-")).map(({ id }) => id),
@@ -695,11 +759,11 @@ test("selecting one PostgreSQL suite never schedules the others", () => {
   );
 });
 
-test("suite entries carry the tier and scalar setup flags", () => {
+test("suite entries carry the kind and scalar setup flags", () => {
   const entry = matrixEntry(
     suites.find((suite) => suite.id === "auth-runtime-controller"),
   );
-  assert.equal(entry.tier, "B");
+  assert.equal(entry.kind, "system");
   assert.equal(entry.setup_go, false);
   assert.equal(entry.setup_chromium, false);
   assert.equal(entry.images, "antnest-runtime");
@@ -717,8 +781,8 @@ test("shard entries run their selected suites in shard order with merged setup",
   const { include } = matrix(suites);
   assert.equal(include.length, shards.length);
   assert.deepEqual(
-    new Set(include.map((row) => row.tier)),
-    new Set(["A", "B", "C"]),
+    new Set(include.map((row) => row.kind)),
+    new Set(["component", "system", "stress"]),
   );
   for (const row of include)
     for (const value of Object.values(row))
@@ -803,29 +867,24 @@ test("stage2 keeps boundary flow and worker recovery without the ACP run", () =>
   assert.doesNotMatch(source, /stage2_acp_test|test:postgres/u);
 });
 
-test("required shards split by image need; tier C forms its own matrix", () => {
-  const { plain, imaged, optional } = matrices(suites);
-  assert.equal(
-    plain.include.length + imaged.include.length + optional.include.length,
-    shards.length,
-  );
-  assert(plain.include.every((row) => row.images === "" && row.tier !== "C"));
-  assert(imaged.include.every((row) => row.images !== "" && row.tier !== "C"));
-  assert(optional.include.every((row) => row.tier === "C"));
+test("shards split by image need", () => {
+  const { plain, imaged } = matrices(suites);
+  assert.equal(plain.include.length + imaged.include.length, shards.length);
+  assert(plain.include.every((row) => row.images === ""));
+  assert(imaged.include.every((row) => row.images !== ""));
   assert(plain.include.some((row) => row.id === "a-admin-console-browser"));
   assert(imaged.include.some((row) => row.id === "b-auth"));
-  assert(optional.include.some((row) => row.id === "c-acp"));
+  assert(imaged.include.some((row) => row.id === "c-acp"));
   assert.deepEqual(matrices([]), {
     plain: { include: [] },
     imaged: { include: [] },
-    optional: { include: [] },
   });
 });
 
 test("the network and signed-context matrix is a required production-stack suite", () => {
   const suite = suites.find((item) => item.id === "auth-network-matrix");
   assert(suite, "missing blocking authentication matrix");
-  assert.equal(suite.tier, "b");
+  assert.equal(suite.kind, "system");
   assert.deepEqual(suite.setup, []);
   assert.deepEqual(suite.run, ["make e2e-service-authentication-matrix"]);
   assert.deepEqual(
@@ -862,12 +921,11 @@ test("the network and signed-context matrix is a required production-stack suite
     "compose.yaml",
   ])
     assert(ids(selectSuites([file])).includes(suite.id), file);
-  const { plain, imaged, optional } = matrices([suite]);
+  const { plain, imaged } = matrices([suite]);
   assert.deepEqual(plain.include, []);
-  assert.deepEqual(optional.include, []);
   assert.equal(imaged.include.length, 1);
   assert.equal(imaged.include[0].id, "b-auth-matrix");
-  assert.equal(imaged.include[0].tier, "B");
+  assert.equal(imaged.include[0].kind, "system");
   assert.deepEqual(
     JSON.parse(imaged.include[0].suites).map(({ id }) => id),
     [suite.id],
@@ -875,7 +933,7 @@ test("the network and signed-context matrix is a required production-stack suite
   const integration = suites.find(
     (item) => item.id === "c-service-authentication-integration",
   );
-  assert.equal(integration.tier, "c");
+  assert.equal(integration.kind, "system");
   assert.deepEqual(integration.run, [
     "make e2e-service-authentication-integration",
   ]);
@@ -888,7 +946,7 @@ test("ACP owner bootstrap is a separate required suite with the production matri
   assert(suite, "missing blocking ACP owner bootstrap suite");
   assert(!baseline.disabled);
   assert(!suite.disabled);
-  assert.equal(suite.tier, "b");
+  assert.equal(suite.kind, "system");
   assert.deepEqual(suite.setup, baseline.setup);
   assert.deepEqual(suite.run, ["node tests/e2e/security/owner-run.mjs"]);
   assert.deepEqual(baseline.run, ["make e2e-service-authentication-matrix"]);
@@ -939,13 +997,12 @@ test("ACP owner bootstrap shares the required auth matrix shard without replacin
     );
   }
   for (const selected of [[suite], [baseline, suite]]) {
-    const { plain, imaged, optional } = matrices(selected);
+    const { plain, imaged } = matrices(selected);
     assert.deepEqual(plain.include, []);
-    assert.deepEqual(optional.include, []);
     assert.equal(imaged.include.length, 1);
     const [entry] = imaged.include;
     assert.equal(entry.id, "b-auth-matrix");
-    assert.equal(entry.tier, "B");
+    assert.equal(entry.kind, "system");
     assert.equal(entry.images, [...baseline.images].sort().join(","));
     assert.deepEqual(
       JSON.parse(entry.suites)
@@ -959,7 +1016,7 @@ test("ACP owner bootstrap shares the required auth matrix shard without replacin
 test("ACP authentication runs in the required auth shard with its CI-built image", () => {
   const suite = suites.find((item) => item.id === "auth-acp");
   assert(suite, "missing ACP authentication suite");
-  assert.equal(suite.tier, "b");
+  assert.equal(suite.kind, "system");
   assert.deepEqual(suite.setup, []);
   assert.deepEqual(suite.images, ["agent-acp-service"]);
   assert.deepEqual(suite.pull, [
@@ -979,12 +1036,11 @@ test("ACP authentication runs in the required auth shard with its CI-built image
     "compose.yaml",
   ])
     assert(ids(selectSuites([file])).includes(suite.id), file);
-  const { plain, imaged, optional } = matrices([suite]);
+  const { plain, imaged } = matrices([suite]);
   assert.deepEqual(plain.include, []);
-  assert.deepEqual(optional.include, []);
   assert.equal(imaged.include.length, 1);
   assert.equal(imaged.include[0].id, "b-auth");
-  assert.equal(imaged.include[0].tier, "B");
+  assert.equal(imaged.include[0].kind, "system");
   assert.equal(imaged.include[0].images, "agent-acp-service");
   const makefile = readFileSync(resolve(root, "Makefile"), "utf8");
   assert.match(
@@ -993,9 +1049,9 @@ test("ACP authentication runs in the required auth shard with its CI-built image
   );
 });
 
-test("tier C platform scenarios get every local image and no rebuilding target", () => {
-  const tierC = suites.filter((suite) => suite.tier === "c");
-  assert.equal(tierC.length, 52);
+test("platform scenarios get every local image and no rebuilding target", () => {
+  const platform = suites.filter((suite) => /^(?:c|stress)-/u.test(suite.id));
+  assert.equal(platform.length, 53);
   const makefile = readFileSync(resolve(root, "Makefile"), "utf8");
   const primary = Object.keys(images).filter(
     (name) => typeof images[name] === "string",
@@ -1004,13 +1060,13 @@ test("tier C platform scenarios get every local image and no rebuilding target",
     "c-tool-permissions": ["antnest-runtime-fixture"],
     "c-tool-progress": ["antnest-runtime-fixture"],
     ...Object.fromEntries(
-      tierC
+      platform
         .filter((suite) => suite.id.startsWith("c-skill-learning-install-"))
         .map((suite) => [suite.id, ["antnest-runtime-skill-gate"]]),
     ),
   };
   assert.equal(Object.keys(variants).length, 9);
-  for (const suite of tierC) {
+  for (const suite of platform) {
     assert.deepEqual(
       suite.images,
       [...primary, ...(variants[suite.id] ?? [])].sort(),
@@ -1118,7 +1174,7 @@ test("Progress CI supplies the fixture carrier while its deployment builds the c
   assert.doesNotMatch(shell, /managed-integration|docker\.sock|--user 0:0/u);
 });
 
-test("tier C Stage 3a profiles keep their strict exit 2 by running the make recipe directly", () => {
+test("Stage 3a profiles keep their strict exit 2 by running the make recipe directly", () => {
   const makefile = readFileSync(resolve(root, "Makefile"), "utf8");
   for (const name of [
     "stage3-local",
@@ -1149,7 +1205,7 @@ test("tier C Stage 3a profiles keep their strict exit 2 by running the make reci
   }
 });
 
-test("tier C organization display installs the Agent UI browser client", () => {
+test("organization display installs the Agent UI browser client", () => {
   const suite = suites.find((item) => item.id === "c-organization-display");
   assert.deepEqual(suite.setup, ["agent-ui-web", "chromium"]);
 });
@@ -1189,7 +1245,7 @@ test("foundation runners report strict-only findings through exit 2", () => {
 test("upload capacity runs the real two-user gate and its counterexamples in required CI", () => {
   const suite = suites.find((item) => item.id === "agent-ui-upload-capacity");
   assert(suite);
-  assert.equal(suite.tier, "b");
+  assert.equal(suite.kind, "system");
   assert.deepEqual(suite.setup, ["agent-ui-web"]);
   assert.deepEqual(suite.run, ["make e2e-agent-ui-upload-capacity"]);
   assert(
@@ -1226,10 +1282,10 @@ test("upload capacity runs the real two-user gate and its counterexamples in req
   );
 });
 
-test("resolve cache outage is a required Tier B observed HTTPS suite", () => {
+test("resolve cache outage is a system observed HTTPS suite", () => {
   const suite = suites.find((item) => item.id === "gateway-resolve-cache");
   assert(suite);
-  assert.equal(suite.tier, "b");
+  assert.equal(suite.kind, "system");
   assert.equal(suite.strict, true);
   assert.deepEqual(suite.setup, ["agent-ui-web"]);
   assert(suite.pull.includes("caddy:2.11.7-alpine"));
@@ -1623,16 +1679,19 @@ test("suite images are the sorted union of the selected suites' images", () => {
   );
 });
 
-test("main prebuilds release images and only the dependencies selected suites need", () => {
-  const releaseImages = Object.keys(images)
-    .filter((name) => !localOnlyImages.includes(name))
-    .sort();
-  assert.deepEqual(suiteImages([], { allImages: true }), releaseImages);
+test("a main version set covers every release and test image", () => {
+  const every = Object.keys(images).sort();
+  assert.deepEqual(suiteImages([], { allImages: true }), every);
   assert.deepEqual(
     suiteImages([{ images: ["temporal", "antnest-runtime-managed"] }], {
       allImages: true,
     }),
-    [...releaseImages, "temporal", "antnest-runtime-managed"].sort(),
+    every,
+  );
+  assert.deepEqual(
+    suiteImages([{ images: ["temporal", "antnest-runtime-managed"] }]),
+    ["antnest-runtime-managed", "temporal"],
+    "without --all-images only the selected suites' images resolve",
   );
 });
 
@@ -1703,11 +1762,13 @@ test("CLI outputs retain publication eligibility and artifact routing across reg
       assert(!localOnlyImages.some((name) => ref.includes(`${name}:`)), ref);
     }
     assert.equal(Number(lines.building), builds.length);
-    if (id === "no-dependencies") {
-      assert.deepEqual(Object.keys(resolved).sort(), releaseNames.sort());
-      assert.deepEqual(builds, []);
-      continue;
-    }
+    // A main run builds every test image even when no selected suite needs
+    // one, so its manifest can replay any suite; none is ever queried.
+    if (id === "no-dependencies")
+      assert.deepEqual(
+        Object.keys(resolved).sort(),
+        Object.keys(images).sort(),
+      );
     assert.equal(builds.length, status === "0" ? 4 : 14, id);
     for (const name of localOnlyImages) {
       assert.deepEqual(resolved[name], {
@@ -1754,7 +1815,7 @@ test("the CLI reports a combined system matrix alongside the scoped suites", (t)
     );
     return { result, output };
   };
-  const e2e = run(["--scope", "e2e", "--all"], "e2e");
+  const e2e = run(["--scope", "system", "--all"], "system");
   assert.equal(e2e.result.status, 0, e2e.result.stderr);
   const lines = Object.fromEntries(
     readFileSync(e2e.output, "utf8")
@@ -1769,7 +1830,7 @@ test("the CLI reports a combined system matrix alongside the scoped suites", (t)
   assert.equal(Number(lines.system_count), system.include.length);
   assert(system.include.length > 0);
   for (const row of system.include) {
-    assert(["B", "C"].includes(row.tier), `component shard ${row.id} in e2e`);
+    assert.equal(row.kind, "system", `${row.id} in the system scope`);
     assert(!row.id.startsWith("a-"), row.id);
   }
   for (const key of ["suites", "image_suites"])
@@ -1788,7 +1849,7 @@ test("the CLI reports a combined system matrix alongside the scoped suites", (t)
   const componentSystem = JSON.parse(componentLines.system_suites);
   assert(componentSystem.include.length > 0);
   for (const row of componentSystem.include)
-    assert.equal(row.tier, "A", `E2E shard ${row.id} in component scope`);
+    assert.equal(row.kind, "component", `${row.id} in component scope`);
   assert.notEqual(
     run(["--scope", "sideways", "--all"], "sideways").result.status,
     0,
@@ -1812,7 +1873,7 @@ test("changed files come from a rename-free merge-base diff", () => {
   ]);
 });
 
-test("the CLI build inventory includes every resolved build, priority included", (t) => {
+test("the CLI build inventory includes every resolved build", (t) => {
   const directory = mkdtempSync(
     resolve(temporaryStorageRoot(), "antnest-ci-builds-"),
   );
@@ -1826,7 +1887,7 @@ test("the CLI build inventory includes every resolved build, priority included",
     [
       "tests/support/ci-changes.mjs",
       "--scope",
-      "e2e",
+      "system",
       "--all",
       "--resolve-images",
       "--all-images",
@@ -1856,11 +1917,8 @@ test("the CLI build inventory includes every resolved build, priority included",
   const names = builds.map((image) => image.name);
   assert(names.length > 0, "every missing image must be built");
   assert.equal(new Set(names).size, names.length, "no duplicate builds");
-  const priority = JSON.parse(lines.priority_builds).include.map(
-    (image) => image.name,
-  );
-  for (const name of ["temporal", ...priority])
-    assert(names.includes(name), `build missing ${name}`);
+  for (const name of Object.keys(images).filter((name) => !isPublishable(name)))
+    assert(names.includes(name), `test image ${name} is always built`);
   const resolved = JSON.parse(lines.images);
   const resolvedBuilds = Object.keys(resolved).filter(
     (name) => resolved[name].build,
@@ -1870,9 +1928,9 @@ test("the CLI build inventory includes every resolved build, priority included",
     [...resolvedBuilds].sort(),
     "builds include every resolved build exactly once",
   );
-  for (const name of suiteImages(
-    selectSuites([], { all: true, scope: "e2e" }),
-    { allImages: true },
-  ))
-    assert(Object.hasOwn(resolved, name), `missing resolved image ${name}`);
+  assert.deepEqual(
+    Object.keys(resolved).sort(),
+    suiteImages([], { allImages: true }),
+    "a main version set covers every image",
+  );
 });

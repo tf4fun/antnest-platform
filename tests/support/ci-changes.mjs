@@ -10,6 +10,9 @@ import {
   buildDependents,
   contractMarkers,
   impactedPaths,
+  makefileGraph,
+  makefileTargets,
+  makeTargetsRun,
   selectComponents,
 } from "./ci-impact.mjs";
 
@@ -17,10 +20,10 @@ const repositoryRoot = fileURLToPath(new URL("../../", import.meta.url));
 
 // Any change here can alter every suite's environment or selection. Shared
 // helpers and contract directories narrow through tests/support/ci-impact.mjs
-// instead of selecting everything.
+// instead of selecting everything. The system workflow (e2e.yml) is absent:
+// it never runs the PR gate, and every system run selects all its suites.
 const everySuite = [
   ".github/workflows/integration.yml",
-  ".github/workflows/e2e.yml",
   ".github/workflows/_suite.yml",
   "tests/support/ci-ownership.json",
   "tests/support/ci-changes.mjs",
@@ -66,6 +69,10 @@ const observed = [...temporal, auxiliaryCollectorImage];
 const ignored = ["**/*.md", "LICENSE"];
 const parsedProse = ["contracts/**", "tests/**"];
 
+// Every suite has one kind, which decides where it runs: component suites in
+// the pull request gate, system suites on main, stress suites nightly.
+export const kinds = ["component", "system", "stress"];
+
 // A `disabled` suite is never selected; the reason names the known breakage.
 // `images` are prebuilt as antnest/<image>:local before `run`, for runners
 // that start them with `--no-build` or inspect them without building.
@@ -73,7 +80,7 @@ export const suites = [
   {
     id: "egress-postgres",
     name: "Runtime Egress PostgreSQL",
-    tier: "a",
+    kind: "component",
     setup: ["rust"],
     paths: [
       ...service("runtime-egress"),
@@ -87,7 +94,7 @@ export const suites = [
   {
     id: "runtime-controller-postgres",
     name: "Runtime Controller PostgreSQL",
-    tier: "a",
+    kind: "component",
     setup: ["go"],
     paths: [
       ...service("runtime-controller"),
@@ -110,7 +117,7 @@ export const suites = [
   {
     id: "identity-postgres",
     name: "Identity Service PostgreSQL",
-    tier: "a",
+    kind: "component",
     setup: ["go"],
     paths: [
       ...service("identity-service"),
@@ -124,7 +131,7 @@ export const suites = [
   {
     id: "agent-controller-postgres",
     name: "Agent Controller PostgreSQL and Temporal",
-    tier: "a",
+    kind: "component",
     setup: ["go"],
     paths: [
       ...service("agent-controller"),
@@ -139,7 +146,7 @@ export const suites = [
   {
     id: "agent-acp-postgres",
     name: "Agent ACP PostgreSQL and audit",
-    tier: "a",
+    kind: "component",
     setup: [],
     paths: [
       ...service("agent-acp-service"),
@@ -152,7 +159,7 @@ export const suites = [
   {
     id: "admin-console-browser",
     name: "Admin Console browser",
-    tier: "a",
+    kind: "component",
     setup: ["admin-web", "chromium"],
     paths: [...service("admin-console"), "tests/integration/admin-console/**"],
     run: [
@@ -168,7 +175,7 @@ export const suites = [
   {
     id: "agent-ui-browser",
     name: "Agent UI browser",
-    tier: "a",
+    kind: "component",
     setup: ["agent-ui-web", "chromium"],
     paths: [...service("agent-ui"), "tests/integration/agent-ui/**"],
     run: ["npm --prefix services/agent-ui/web run test:browser"],
@@ -176,7 +183,7 @@ export const suites = [
   {
     id: "deployment-contracts",
     name: "Deployment render contracts",
-    tier: "a",
+    kind: "component",
     setup: ["go"],
     paths: [
       "services/**",
@@ -199,7 +206,7 @@ export const suites = [
   {
     id: "elicitation-sdk-probe",
     name: "Runtime elicitation SDK probe",
-    tier: "a",
+    kind: "component",
     setup: ["rust"],
     paths: ["tests/integration/antnest-runtime/sdk-probes/**", ...runtime],
     run: [
@@ -209,7 +216,7 @@ export const suites = [
   {
     id: "auth-acp",
     name: "Agent ACP service authentication",
-    tier: "b",
+    kind: "system",
     setup: [],
     images: ["agent-acp-service"],
     pull: base,
@@ -247,7 +254,7 @@ export const suites = [
   ].map(([name, title, paths]) => ({
     id: `auth-${name}`,
     name: `${title} service authentication`,
-    tier: "b",
+    kind: "system",
     setup: [],
     images: {
       controller: ["temporal"],
@@ -269,7 +276,7 @@ export const suites = [
   {
     id: "auth-network-matrix",
     name: "Production network and credential rejection matrix",
-    tier: "b",
+    kind: "system",
     setup: [],
     images: platformImages,
     pull: observed,
@@ -290,7 +297,7 @@ export const suites = [
   {
     id: "acp-owner-bootstrap",
     name: "ACP owner registration and ordinary Run admission",
-    tier: "b",
+    kind: "system",
     setup: [],
     images: platformImages,
     pull: observed,
@@ -311,7 +318,7 @@ export const suites = [
   {
     id: "deployment-docker",
     name: "Deployment credentials, PKI and ports",
-    tier: "b",
+    kind: "system",
     setup: [],
     paths: [
       "tests/e2e/service-authentication/deployment-credentials/**",
@@ -332,7 +339,7 @@ export const suites = [
   {
     id: "deployment-transports",
     name: "Deployment transports",
-    tier: "b",
+    kind: "system",
     setup: [],
     paths: ["tests/integration/deployment/**", ...compose],
     pull: base,
@@ -341,7 +348,7 @@ export const suites = [
   {
     id: "observation-retry",
     name: "Runtime Controller observation retry",
-    tier: "b",
+    kind: "system",
     setup: [],
     images: [
       "agent-acp-service",
@@ -369,7 +376,7 @@ export const suites = [
   ].map(([mode, name, owners]) => ({
     id: `shell-${mode}`,
     name,
-    tier: "b",
+    kind: "system",
     setup: [],
     pull: base,
     paths: [
@@ -423,7 +430,7 @@ export const suites = [
   ].map(([id, name, setup, run, disabled]) => ({
     id,
     name,
-    tier: "b",
+    kind: "system",
     setup,
     disabled,
     strict: id === "gateway-resolve-cache",
@@ -450,7 +457,7 @@ export const suites = [
   {
     id: "gateway-shutdown",
     name: "Edge Gateway shutdown and restart",
-    tier: "b",
+    kind: "system",
     setup: [],
     images: ["edge-gateway"],
     pull: [
@@ -470,7 +477,7 @@ export const suites = [
   {
     id: "runtime-controller-skill-archives",
     name: "Runtime Controller Skill archives",
-    tier: "b",
+    kind: "system",
     setup: ["go"],
     images: ["antnest-runtime"],
     pull: base,
@@ -489,7 +496,7 @@ export const suites = [
   {
     id: "skill-registry-discovery",
     name: "Skill Registry discovery",
-    tier: "b",
+    kind: "system",
     setup: [],
     images: ["skill-registry"],
     pull: base,
@@ -509,7 +516,7 @@ export const suites = [
   {
     id: "skill-registry-rc-prepare",
     name: "Skill Registry to Runtime Controller preparation",
-    tier: "b",
+    kind: "system",
     setup: ["go"],
     pull: base,
     paths: [
@@ -528,7 +535,7 @@ export const suites = [
   {
     id: "deployment-wiring",
     name: "Deployment Compose wiring",
-    tier: "b",
+    kind: "system",
     setup: [],
     images: platformImages,
     pull: observed,
@@ -543,7 +550,7 @@ export const suites = [
   ...[1, 2].map((version) => ({
     id: `managed-mcp-secrets-v${version}`,
     name: `Managed MCP secrets protocol v${version}`,
-    tier: "b",
+    kind: "system",
     setup: [],
     images: [
       ...platformImages,
@@ -563,7 +570,7 @@ export const suites = [
   {
     id: "skill-registry-console",
     name: "Skill Registry Admin Console discovery",
-    tier: "b",
+    kind: "system",
     setup: ["admin-web", "chromium"],
     images: ["admin-console", "skill-registry"],
     pull: base,
@@ -579,7 +586,7 @@ export const suites = [
   {
     id: "skill-temporary-runtime",
     name: "Skill Registry temporary runtime",
-    tier: "b",
+    kind: "system",
     setup: [],
     images: ["antnest-runtime"],
     pull: base,
@@ -593,7 +600,7 @@ export const suites = [
   {
     id: "skill-learning-runtime",
     name: "Skill learning Runtime install",
-    tier: "b",
+    kind: "system",
     setup: [],
     images: [
       "antnest-runtime",
@@ -604,12 +611,12 @@ export const suites = [
     paths: [...runtime, "tests/e2e/skill-learning/**"],
     run: ["make e2e-skill-learning-runtime"],
   },
-  ...tierC(),
+  ...platformScenarios(),
 ];
 
-// Tier C: whole-platform scenarios whose rule spans services. Every target
-// boots its own stack (many are deliberately destructive), so each is one
-// suite. Their separate matrix participates in `Integration checks`.
+// Whole-platform scenarios whose rule spans services. Every target boots its
+// own stack (many are deliberately destructive), so each is one suite. They
+// are system suites unless a target is marked as nightly stress.
 // Foundation runners exit 2 when business and topology pass but strict trace
 // findings remain. They run without make, which reports every failed recipe
 // as 2.
@@ -627,7 +634,7 @@ function stage3aProfile(profile = "") {
   };
 }
 
-function tierC() {
+function platformScenarios() {
   const families = {
     "ACP survivor": [
       [
@@ -665,7 +672,21 @@ function tierC() {
           "ANTNEST_E2E_SKILL_DELIVERY=true ANTNEST_E2E_SKILL_RESTART_REBUILD=true",
         ],
         ["acp-closeout", "ANTNEST_E2E_ACP_CLOSEOUT=true"],
-        ["agent-readiness", "ANTNEST_E2E_AGENT_READINESS=true"],
+        // Main runs three functional readiness rounds; nightly stress keeps
+        // the full hundred.
+        [
+          "agent-readiness",
+          "ANTNEST_E2E_AGENT_READINESS=true ANTNEST_E2E_READINESS_ROUNDS=3",
+        ],
+        [
+          "agent-readiness",
+          "ANTNEST_E2E_AGENT_READINESS=true ANTNEST_E2E_READINESS_ROUNDS=100",
+          {
+            id: "stress-agent-readiness",
+            name: "agent-readiness (100 first Prompts)",
+            kind: "stress",
+          },
+        ],
         [
           "acp-session",
           "ANTNEST_E2E_ACP_SESSION=true",
@@ -684,9 +705,9 @@ function tierC() {
           "ANTNEST_E2E_IDENTITY_CORE=true ANTNEST_E2E_ORGANIZATION_DISPLAY=true",
           { browser: true },
         ],
-      ].map(([name, profile, options]) => [
+      ].map(([name, profile, options = {}]) => [
         `e2e-${name}`,
-        name,
+        options.name ?? name,
         { ...options, ...stage3aProfile(profile) },
       ]),
       [
@@ -773,9 +794,9 @@ function tierC() {
   };
   return Object.entries(families).flatMap(([family, targets]) =>
     targets.map(([target, name, options = {}]) => ({
-      id: target.replace(/^e2e-/u, "c-"),
+      id: options.id ?? target.replace(/^e2e-/u, "c-"),
       name: `${family}: ${name}`,
-      tier: "c",
+      kind: options.kind ?? "system",
       setup:
         options.setup ?? (options.browser ? ["agent-ui-web", "chromium"] : []),
       images: options.images ?? platformImages,
@@ -1053,11 +1074,14 @@ export function resolveImages(names, { tree, readBlob, exists }) {
   });
 }
 
+// A main version set covers every image, so a manifest from any system or
+// stress run can replay any suite: release images by digest, test images
+// rebuilt from its revision.
 export function suiteImages(selected, { allImages = false } = {}) {
   return [
     ...new Set([
       ...selected.flatMap((suite) => suite.images ?? []),
-      ...(allImages ? Object.keys(serviceImages) : []),
+      ...(allImages ? Object.keys(images) : []),
     ]),
   ].sort();
 }
@@ -1108,22 +1132,24 @@ function withRequirements(selected) {
   return suites.filter((suite) => ids.has(suite.id));
 }
 
-// Scope is a mandatory intersect after selection: component keeps tier A
-// suites, e2e keeps B and C. Contract directories expand through the
+// Scope is a mandatory intersect after selection and names a suite kind:
+// component suites gate pull requests, system suites run on main and stress
+// suites run nightly. Contract directories expand through the
 // ownership map to their owning services, and shared helpers expand
 // through the static reference closure. Unresolved production helpers select
 // everything as a safe fallback; unrelated test helpers select nothing.
+// A Makefile change selects the suites whose make targets reach a changed
+// target; `makefile` is { targets, texts } from makefileChange, and a change
+// it cannot attribute to targets selects everything.
 export function selectSuites(
   files,
-  { all = false, only, scope = "all", sources } = {},
+  { all = false, only, scope = "all", sources, makefile } = {},
 ) {
   const enabledSuites = () => suites.filter((suite) => !suite.disabled);
   const withinScope = (selected) => {
     if (scope === "all") return selected;
-    if (scope === "component")
-      return selected.filter((suite) => suite.tier === "a");
-    if (scope === "e2e") return selected.filter((suite) => suite.tier !== "a");
-    throw new Error(`unknown scope ${scope}`);
+    if (!kinds.includes(scope)) throw new Error(`unknown scope ${scope}`);
+    return selected.filter((suite) => suite.kind === scope);
   };
   if (only) {
     for (const id of only)
@@ -1140,12 +1166,20 @@ export function selectSuites(
     everySuite.some((glob) => matchesGlob(file, glob)),
   );
   if (all || global) return withinScope(withRequirements(enabledSuites()));
-  // Makefile diffs stay conservative until prerequisite ownership is proven.
-  if (changed.includes("Makefile"))
-    return withinScope(withRequirements(enabledSuites()));
   const selected = new Set();
+  if (changed.includes("Makefile")) {
+    if (!makefile?.targets)
+      return withinScope(withRequirements(enabledSuites()));
+    const graphs = makefile.texts.map(makefileGraph);
+    for (const suite of enabledSuites()) {
+      const reached = makeTargetsRun(suite.run, graphs);
+      if ([...makefile.targets].some((target) => reached.has(target)))
+        selected.add(suite);
+    }
+  }
   const helpers = [];
   for (const file of changed) {
+    if (file === "Makefile") continue;
     if (file.startsWith("contracts/")) {
       const markers = contractMarkers(file);
       if (markers === null)
@@ -1204,7 +1238,7 @@ export function matrixEntry(suite) {
   const entry = {
     id: suite.id,
     name: suite.name,
-    tier: suite.tier.toUpperCase(),
+    kind: suite.kind,
     run: suite.run.join("\n"),
     images: (suite.images ?? []).join(","),
     ...pullPartition(suite.pull ?? []),
@@ -1365,9 +1399,13 @@ export const shards = [
   },
   {
     id: "c-agent-readiness",
-    name: "Acknowledged Agent readiness (100 first Prompts)",
-    priority: true,
+    name: "Acknowledged Agent readiness",
     suites: ["c-agent-readiness"],
+  },
+  {
+    id: "stress-agent-readiness",
+    name: "Acknowledged Agent readiness (100 first Prompts)",
+    suites: ["stress-agent-readiness"],
   },
   {
     id: "c-acp-survivor",
@@ -1449,7 +1487,7 @@ export function shardEntry(shard, members) {
   const entry = {
     id: shard.id,
     name: shard.name,
-    tier: entries[0].tier,
+    kind: entries[0].kind,
     images: union(members.map((suite) => suite.images ?? [])).join(","),
     ...pullPartition(union(members.map((suite) => suite.pull ?? []))),
     // A JSON string keeps every matrix value scalar.
@@ -1483,46 +1521,43 @@ export function matrix(selected) {
 
 export function matrices(selected) {
   const { include } = matrix(selected);
-  const required = include.filter((row) => row.tier !== "C");
   return {
-    plain: { include: required.filter((row) => row.images === "") },
-    imaged: { include: required.filter((row) => row.images !== "") },
-    optional: { include: include.filter((row) => row.tier === "C") },
+    plain: { include: include.filter((row) => row.images === "") },
+    imaged: { include: include.filter((row) => row.images !== "") },
   };
 }
 
 export function workflowPlan(selected, resolved = []) {
-  const { plain, imaged, optional } = matrices(selected);
-  const priorityIds = new Set(
-    shards.filter((shard) => shard.priority).map((shard) => shard.id),
-  );
-  const priority = {
-    include: optional.include.filter((row) => priorityIds.has(row.id)),
-  };
-  const priorityImages = new Set(
-    priority.include.flatMap((row) => row.images.split(",").filter(Boolean)),
-  );
-  const builds = resolved
-    .filter((image) => image.build)
-    .map(({ name, ref, publish }) => ({ name, ref, publish }));
   return {
-    plain,
-    imaged,
-    priority,
-    optional: {
-      include: optional.include.filter((row) => !priorityIds.has(row.id)),
-    },
-    optionalParallel: priority.include.length ? 5 : 6,
-    priorityBuilds: {
-      include: builds.filter((image) => priorityImages.has(image.name)),
-    },
+    ...matrices(selected),
     builds: {
-      include: builds.filter((image) => !priorityImages.has(image.name)),
+      include: resolved
+        .filter((image) => image.build)
+        .map(({ name, ref, publish }) => ({ name, ref, publish })),
     },
   };
 }
 
 const zeroSha = /^0+$/u;
+
+// The changed Makefile targets and both Makefile revisions, or no targets
+// when the diff cannot be attributed (selection then stays conservative).
+export function makefileChange(base, head, git = execFileSync) {
+  try {
+    const show = (revision) =>
+      git("git", ["show", `${revision}:Makefile`], { encoding: "utf8" });
+    const texts = [];
+    for (const revision of [base, head])
+      try {
+        texts.push(show(revision));
+      } catch {
+        // An added or removed Makefile has no text at that revision.
+      }
+    return { targets: makefileTargets(base, head, git), texts };
+  } catch {
+    return { targets: null, texts: [] };
+  }
+}
 
 export function changedFiles(base, head, git = execFileSync) {
   const output = git(
@@ -1558,25 +1593,22 @@ function main() {
     all,
     only: only?.length ? only : undefined,
     scope: values.scope,
+    makefile: files.includes("Makefile")
+      ? makefileChange(values.base, values.head)
+      : undefined,
   });
-  const { plain, imaged, optional, priority, optionalParallel } =
-    workflowPlan(selected);
+  const { plain, imaged } = matrices(selected);
   const system = matrix(selected);
   const lines = [
     `suites=${JSON.stringify(plain)}`,
     `plain=${plain.include.length}`,
     `image_suites=${JSON.stringify(imaged)}`,
     `imaged=${imaged.include.length}`,
-    `optional_suites=${JSON.stringify(optional)}`,
-    `optional=${optional.include.length}`,
     `system_suites=${JSON.stringify(system)}`,
     `system_count=${system.include.length}`,
     `services=${JSON.stringify(
       selectComponents(files, { all: all || only?.length > 0 }),
     )}`,
-    `priority_suites=${JSON.stringify(priority)}`,
-    `priority=${priority.include.length}`,
-    `optional_parallel=${optionalParallel}`,
   ];
   let resolved = [];
   if (values["resolve-images"]) {
@@ -1587,18 +1619,11 @@ function main() {
       suiteImages(selected, { allImages: values["all-images"] }),
       { tree, readBlob, exists: imageExists },
     );
-    const { priorityBuilds } = workflowPlan(selected, resolved);
-    const builds = {
-      include: resolved
-        .filter((image) => image.build)
-        .map(({ name, ref, publish }) => ({ name, ref, publish })),
-    };
+    const { builds } = workflowPlan(selected, resolved);
     lines.push(
       `images=${JSON.stringify(Object.fromEntries(resolved.map(({ name, ref, build }) => [name, { ref, build }])))}`,
       `builds=${JSON.stringify(builds)}`,
       `building=${builds.include.length}`,
-      `priority_builds=${JSON.stringify(priorityBuilds)}`,
-      `priority_building=${priorityBuilds.include.length}`,
     );
   }
   if (process.env.GITHUB_OUTPUT)
@@ -1612,7 +1637,7 @@ function main() {
     "",
     ...suites.map(
       (suite) =>
-        `- ${suite.disabled ? "disabled" : selected.includes(suite) ? "run" : "skip"}: ${suite.name} (tier ${suite.tier.toUpperCase()})${suite.disabled ? `: ${suite.disabled}` : ""}`,
+        `- ${suite.disabled ? "disabled" : selected.includes(suite) ? "run" : "skip"}: ${suite.name} (${suite.kind})${suite.disabled ? `: ${suite.disabled}` : ""}`,
     ),
     ...(resolved.length > 0 ? ["", "Images:", ""] : []),
     ...resolved.map(
