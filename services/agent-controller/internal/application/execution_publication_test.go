@@ -15,8 +15,13 @@ type executionPublicationStoreStub struct {
 	ports.ExecutionPublicationStore
 	read             func(context.Context, string) (ports.ExecutionSource, error)
 	record           func(context.Context, ports.ExecutionAcknowledgement) error
+	synchronization  func(context.Context, string) (ports.ExecutionSynchronization, error)
 	publicationMu    sync.Mutex
 	publicationGates map[string]*executionPublicationStoreGate
+}
+
+func (store *executionPublicationStoreStub) GetExecutionSynchronization(ctx context.Context, organizationID string) (ports.ExecutionSynchronization, error) {
+	return store.synchronization(ctx, organizationID)
 }
 
 type executionPublicationStoreGate struct {

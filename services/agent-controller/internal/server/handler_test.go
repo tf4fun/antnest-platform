@@ -907,3 +907,8 @@ func sampleTemplateView() application.TemplateView {
 func (service *catalogServiceStub) ResolveMCPSecrets(context.Context, ports.MCPTemplateSource) (map[string]map[string]string, error) {
 	return map[string]map[string]string{"docs": {"API_KEY": "synthetic-bootstrap"}}, nil
 }
+
+func (service *catalogServiceStub) ResolveExecutionCredential(_ context.Context, input ports.ExecutionCredentialRequest) (ports.ResolvedExecutionCredential, error) {
+	return ports.ResolvedExecutionCredential{OrganizationID: input.OrganizationID, ConnectionID: input.ConnectionID,
+		CredentialVersion: input.CredentialVersion, Method: "api_key", Secret: "synthetic-resolved-secret"}, nil
+}

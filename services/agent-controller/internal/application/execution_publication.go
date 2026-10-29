@@ -2,6 +2,7 @@ package application
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 
@@ -9,12 +10,13 @@ import (
 )
 
 type ExecutionPublisher struct {
-	store   ports.ExecutionPublicationStore
-	opener  ports.CredentialOpener
-	client  ports.ExecutionClient
-	runtime ports.RuntimeConnectionResolver
-	mu      sync.Mutex
-	active  map[string]*executionPublicationGate
+	store       ports.ExecutionPublicationStore
+	opener      ports.CredentialOpener
+	client      ports.ExecutionClient
+	runtime     ports.RuntimeConnectionResolver
+	wireVersion int
+	mu          sync.Mutex
+	active      map[string]*executionPublicationGate
 }
 
 type executionPublicationGate struct {
@@ -65,6 +67,30 @@ func (publisher *ExecutionPublisher) publish(ctx context.Context, organizationID
 }
 
 func (publisher *ExecutionPublisher) publishCurrent(ctx context.Context, organizationID string, settlement *ports.LifecycleSettlementRequest) (ports.ExecutionAcknowledgement, error) {
+	var remote ports.ExecutionDigest
+	var remoteKnown bool
+	if publisher.wireVersion == ports.ExecutionSchemaVersion2 && settlement == nil {
+		synchronization, err := publisher.store.GetExecutionSynchronization(ctx, organizationID)
+		if errors.Is(err, ports.ErrNotFound) {
+			synchronization = ports.ExecutionSynchronization{OrganizationID: organizationID}
+		} else if err != nil {
+			return ports.ExecutionAcknowledgement{}, fmt.Errorf("read execution synchronization: %w", err)
+		}
+		if synchronization.OrganizationID != organizationID || synchronization.Revision < 0 || synchronization.Revision > ports.MaximumExecutionRevision {
+			return ports.ExecutionAcknowledgement{}, ports.ErrInvalidExecutionConfiguration
+		}
+		remote, err = publisher.executionRemoteDigest(ctx, organizationID)
+		if err != nil {
+			return ports.ExecutionAcknowledgement{}, err
+		}
+		remoteKnown = true
+		if remote.SchemaVersion == ports.ExecutionSchemaVersion2 && synchronization.Revision >= 1 && remote.Revision == synchronization.Revision {
+			return publisher.recordAcknowledgement(ctx, ports.ExecutionAcknowledgement{OrganizationID: organizationID, AppliedRevision: remote.Revision})
+		}
+		if remote.Revision > synchronization.Revision {
+			return ports.ExecutionAcknowledgement{}, &ports.DependencyError{Service: "agent-acp-service", Code: "invalid_response", Retryable: true}
+		}
+	}
 	source, err := publisher.store.ReadExecutionSource(ctx, organizationID)
 	if err != nil {
 		return ports.ExecutionAcknowledgement{}, fmt.Errorf("read current execution configuration: %w", err)
@@ -74,6 +100,9 @@ func (publisher *ExecutionPublisher) publishCurrent(ctx context.Context, organiz
 	}
 	if settlement != nil && !currentSettlementOperation(source, *settlement) {
 		return ports.ExecutionAcknowledgement{}, ports.ErrConcurrentChange
+	}
+	if publisher.wireVersion == ports.ExecutionSchemaVersion2 {
+		return publisher.publishCurrentV2(ctx, source, remote, remoteKnown)
 	}
 	snapshot, err := BuildExecutionSnapshot(ctx, source, publisher.opener)
 	if err != nil {
@@ -86,9 +115,94 @@ func (publisher *ExecutionPublisher) publishCurrent(ctx context.Context, organiz
 	if err != nil {
 		return ports.ExecutionAcknowledgement{}, err
 	}
-	if acknowledgement.OrganizationID != organizationID || acknowledgement.AppliedRevision < source.Revision || acknowledgement.AppliedRevision > ports.MaximumExecutionRevision {
+	return publisher.acknowledge(ctx, source, acknowledgement)
+}
+
+func (publisher *ExecutionPublisher) publishCurrentV2(ctx context.Context, source ports.ExecutionSource, remote ports.ExecutionDigest, remoteKnown bool) (ports.ExecutionAcknowledgement, error) {
+	client, err := publisher.executionV2Client()
+	if err != nil {
+		return ports.ExecutionAcknowledgement{}, err
+	}
+	if !remoteKnown {
+		remote, err = publisher.executionRemoteDigest(ctx, source.OrganizationID)
+		if err != nil {
+			return ports.ExecutionAcknowledgement{}, err
+		}
+	}
+	if remote.Revision > source.Revision {
 		return ports.ExecutionAcknowledgement{}, &ports.DependencyError{Service: "agent-acp-service", Code: "invalid_response", Retryable: true}
 	}
+	if remote.SchemaVersion == ports.ExecutionSchemaVersion2 && remote.Revision == source.Revision {
+		return publisher.recordAcknowledgement(ctx, ports.ExecutionAcknowledgement{OrganizationID: source.OrganizationID, AppliedRevision: source.Revision})
+	}
+	snapshot, err := BuildExecutionSnapshotV2(ctx, source)
+	if err != nil {
+		return ports.ExecutionAcknowledgement{}, err
+	}
+	if err := publisher.resolveRuntimeAuthority(ctx, &snapshot); err != nil {
+		return ports.ExecutionAcknowledgement{}, err
+	}
+	var acknowledgement ports.ExecutionAcknowledgement
+	if remote.SchemaVersion == ports.ExecutionSchemaVersion2 && remote.Revision >= 1 && remote.Revision < source.Revision {
+		delta, err := ports.BuildExecutionDelta(snapshot, remote)
+		if err != nil {
+			return ports.ExecutionAcknowledgement{}, err
+		}
+		acknowledgement, err = client.ApplyExecutionDelta(ctx, delta)
+		if err != nil {
+			if !executionBaseMismatch(err) {
+				return ports.ExecutionAcknowledgement{}, err
+			}
+			acknowledgement, err = publisher.client.ApplyExecutionSnapshot(ctx, snapshot)
+			if err != nil {
+				return ports.ExecutionAcknowledgement{}, err
+			}
+		}
+	} else {
+		acknowledgement, err = publisher.client.ApplyExecutionSnapshot(ctx, snapshot)
+		if err != nil {
+			return ports.ExecutionAcknowledgement{}, err
+		}
+	}
+	return publisher.acknowledge(ctx, source, acknowledgement)
+}
+
+func (publisher *ExecutionPublisher) executionV2Client() (ports.ExecutionV2Client, error) {
+	client, ok := publisher.client.(ports.ExecutionV2Client)
+	if !ok {
+		return nil, ports.ErrInvalidExecutionConfiguration
+	}
+	return client, nil
+}
+
+func executionBaseMismatch(err error) bool {
+	var dependency *ports.DependencyError
+	return errors.As(err, &dependency) && dependency.Service == "agent-acp-service" && dependency.Code == "configuration_base_mismatch"
+}
+
+func (publisher *ExecutionPublisher) executionRemoteDigest(ctx context.Context, organizationID string) (ports.ExecutionDigest, error) {
+	client, err := publisher.executionV2Client()
+	if err != nil {
+		return ports.ExecutionDigest{}, err
+	}
+	remote, err := client.GetExecutionDigest(ctx, organizationID)
+	if err != nil {
+		return ports.ExecutionDigest{}, err
+	}
+	if remote.OrganizationID != organizationID || remote.Validate() != nil {
+		return ports.ExecutionDigest{}, &ports.DependencyError{Service: "agent-acp-service", Code: "invalid_response", Retryable: true}
+	}
+	return remote, nil
+}
+
+func (publisher *ExecutionPublisher) acknowledge(ctx context.Context, source ports.ExecutionSource, acknowledgement ports.ExecutionAcknowledgement) (ports.ExecutionAcknowledgement, error) {
+	if acknowledgement.OrganizationID != source.OrganizationID || acknowledgement.AppliedRevision < source.Revision || acknowledgement.AppliedRevision > ports.MaximumExecutionRevision {
+		return ports.ExecutionAcknowledgement{}, &ports.DependencyError{Service: "agent-acp-service", Code: "invalid_response", Retryable: true}
+	}
+	return publisher.recordAcknowledgement(ctx, acknowledgement)
+}
+
+func (publisher *ExecutionPublisher) recordAcknowledgement(ctx context.Context, acknowledgement ports.ExecutionAcknowledgement) (ports.ExecutionAcknowledgement, error) {
 	if err := publisher.store.RecordExecutionApplied(ctx, acknowledgement); err != nil {
 		return ports.ExecutionAcknowledgement{}, fmt.Errorf("record applied execution configuration: %w", err)
 	}

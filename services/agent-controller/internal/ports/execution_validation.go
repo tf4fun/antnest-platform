@@ -15,6 +15,7 @@ var executionIdentifier = regexp.MustCompile(`^[a-zA-Z0-9_./:-]{1,200}$`)
 
 func (snapshot ExecutionSnapshot) Validate() error {
 	if !executionIdentifier.MatchString(snapshot.OrganizationID) || !executionRevision(snapshot.Revision) ||
+		(snapshot.SchemaVersion != 0 && snapshot.SchemaVersion != 2) ||
 		snapshot.Providers == nil || snapshot.Models == nil || snapshot.Agents == nil {
 		return ErrInvalidExecutionConfiguration
 	}
@@ -23,7 +24,7 @@ func (snapshot ExecutionSnapshot) Validate() error {
 	}
 	providers := make(map[string]ExecutionProvider, len(snapshot.Providers))
 	for _, provider := range snapshot.Providers {
-		if _, duplicate := providers[provider.ConnectionID]; duplicate || !provider.valid() {
+		if _, duplicate := providers[provider.ConnectionID]; duplicate || !provider.valid(snapshot.SchemaVersion) {
 			return ErrInvalidExecutionConfiguration
 		}
 		providers[provider.ConnectionID] = provider
@@ -55,7 +56,7 @@ func (snapshot ExecutionSnapshot) Validate() error {
 	return nil
 }
 
-func (provider ExecutionProvider) valid() bool {
+func (provider ExecutionProvider) valid(version int) bool {
 	support, ok := domain.SupportedProvider(provider.ProviderKey)
 	if !ok || !executionIdentifier.MatchString(provider.ConnectionID) || provider.RequestProtocol != support.RequestProtocol || !executionEndpoint(provider.BaseURL) {
 		return false
@@ -63,7 +64,15 @@ func (provider ExecutionProvider) valid() bool {
 	if provider.Credential == nil {
 		return !provider.Enabled && provider.CredentialRevision == ""
 	}
-	return executionIdentifier.MatchString(provider.CredentialRevision) && provider.Credential.Method == support.CredentialMethod && provider.Credential.Secret != ""
+	if !executionIdentifier.MatchString(provider.CredentialRevision) {
+		return false
+	}
+	if version == 2 {
+		return provider.Credential.Method == "" && provider.Credential.Secret == "" &&
+			provider.Credential.Ref == provider.ConnectionID && provider.Credential.Version == provider.CredentialRevision
+	}
+	return provider.Credential.Method == support.CredentialMethod && provider.Credential.Secret != "" &&
+		provider.Credential.Ref == "" && provider.Credential.Version == ""
 }
 
 func (model ExecutionModel) valid(baseURL string) bool {

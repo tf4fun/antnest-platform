@@ -13,6 +13,10 @@ func WithRuntimeConnectionResolver(resolver ports.RuntimeConnectionResolver) Exe
 	return func(publisher *ExecutionPublisher) { publisher.runtime = resolver }
 }
 
+func WithExecutionWireVersion(version int) ExecutionPublicationOption {
+	return func(publisher *ExecutionPublisher) { publisher.wireVersion = version }
+}
+
 func (publisher *ExecutionPublisher) resolveRuntimeAuthority(ctx context.Context, snapshot *ports.ExecutionSnapshot) error {
 	for index := range snapshot.Agents {
 		agent := &snapshot.Agents[index]

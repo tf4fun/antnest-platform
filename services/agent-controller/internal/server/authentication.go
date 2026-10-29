@@ -71,9 +71,10 @@ func (security Security) guardRoute(pattern string, next http.Handler) http.Hand
 		allowed := []string{"admin-console"}
 		bootstrap := pattern == "POST /internal/managed-mcp-secrets/resolve"
 		operation := pattern == "GET /internal/agents/{agent_id}/skill-learning-policy"
+		credentialResolve := pattern == "POST /internal/execution-credentials/resolve"
 		if bootstrap {
 			allowed = []string{"runtime-controller"}
-		} else if operation {
+		} else if operation || credentialResolve {
 			allowed = []string{"agent-acp-service"}
 		} else if pattern == "POST /rpc/agent-controller/list-workspace-agents" {
 			allowed = []string{"agent-ui"}
@@ -105,7 +106,7 @@ func (security Security) guardRoute(pattern string, next http.Handler) http.Hand
 				return
 			}
 		}
-		if operation || bootstrap {
+		if operation || bootstrap || credentialResolve {
 			// The learning policy service resolves the persisted Agent, exact
 			// owner, access revision and live owner membership before returning
 			// policy. ACP cannot manufacture a user delegation with body hints.

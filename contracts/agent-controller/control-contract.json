@@ -1,6 +1,6 @@
 {
   "contract": "antnest.agent-controller.lifecycle",
-  "revision": 45,
+  "revision": 46,
   "transport": "json-over-http",
   "trust": "verified-workload-and-caller-context",
   "authentication": "service-authentication.md",
@@ -349,6 +349,15 @@
         "request": "control-api.schema.json#/$defs/list_workspace_agents_request",
         "success_status": 200,
         "response": "control-api.schema.json#/$defs/list_workspace_agents_response"
+      }
+    },
+    "execution_credentials": {
+      "resolve": {
+        "method": "POST",
+        "path": "/internal/execution-credentials/resolve",
+        "success_status": 200,
+        "request": "control-api.schema.json#/$defs/execution_credential_request",
+        "response": "control-api.schema.json#/$defs/execution_credential_response"
       }
     }
   },

@@ -12,7 +12,7 @@ func TestExecutionConfigurationDefaultsAndOverrides(t *testing.T) {
 	lookup := func(key string) string { return values[key] }
 	config, err := loadExecutionConfiguration(lookup)
 	require.NoError(t, err)
-	require.Equal(t, ExecutionConfiguration{URL: values["ANTNEST_AGENT_ACP_CONTROL_URL"], MaxBytes: 16777216, ResyncInterval: 30 * time.Second, RetryInterval: time.Second, MaxRetryInterval: 30 * time.Second, RequestTimeout: 15 * time.Second}, config)
+	require.Equal(t, ExecutionConfiguration{URL: values["ANTNEST_AGENT_ACP_CONTROL_URL"], MaxBytes: 16777216, WireVersion: 1, ResyncInterval: 30 * time.Second, RetryInterval: time.Second, MaxRetryInterval: 30 * time.Second, RequestTimeout: 15 * time.Second}, config)
 	values["ANTNEST_ACP_MAX_CONFIGURATION_BYTES"] = "67108864"
 	values["ANTNEST_AGENT_CONTROLLER_EXECUTION_RESYNC_INTERVAL"] = "1m"
 	values["ANTNEST_AGENT_CONTROLLER_EXECUTION_RETRY_INTERVAL"] = "2s"
@@ -20,7 +20,30 @@ func TestExecutionConfigurationDefaultsAndOverrides(t *testing.T) {
 	values["ANTNEST_AGENT_CONTROLLER_EXECUTION_REQUEST_TIMEOUT"] = "10s"
 	config, err = loadExecutionConfiguration(lookup)
 	require.NoError(t, err)
-	require.Equal(t, ExecutionConfiguration{URL: values["ANTNEST_AGENT_ACP_CONTROL_URL"], MaxBytes: 67108864, ResyncInterval: time.Minute, RetryInterval: 2 * time.Second, MaxRetryInterval: 20 * time.Second, RequestTimeout: 10 * time.Second}, config)
+	require.Equal(t, ExecutionConfiguration{URL: values["ANTNEST_AGENT_ACP_CONTROL_URL"], MaxBytes: 67108864, WireVersion: 1, ResyncInterval: time.Minute, RetryInterval: 2 * time.Second, MaxRetryInterval: 20 * time.Second, RequestTimeout: 10 * time.Second}, config)
+}
+
+func TestExecutionConfigurationWireVersionSelectsPublicationAndResync(t *testing.T) {
+	values := map[string]string{
+		"ANTNEST_AGENT_ACP_CONTROL_URL":                   "http://agent-acp-service:8090",
+		"ANTNEST_AGENT_CONTROLLER_EXECUTION_WIRE_VERSION": "2",
+	}
+	config, err := loadExecutionConfiguration(func(key string) string { return values[key] })
+	require.NoError(t, err)
+	require.Equal(t, 2, config.WireVersion)
+	require.Equal(t, 5*time.Minute, config.ResyncInterval, "v2 deployments resynchronize unchanged organizations by digest")
+	values["ANTNEST_AGENT_CONTROLLER_EXECUTION_RESYNC_INTERVAL"] = "45s"
+	config, err = loadExecutionConfiguration(func(key string) string { return values[key] })
+	require.NoError(t, err)
+	require.Equal(t, 45*time.Second, config.ResyncInterval, "explicit interval wins over the v2 default")
+	for _, value := range []string{"0", "3", "v2", ""} {
+		if value == "" {
+			continue
+		}
+		values["ANTNEST_AGENT_CONTROLLER_EXECUTION_WIRE_VERSION"] = value
+		_, err = loadExecutionConfiguration(func(key string) string { return values[key] })
+		require.Error(t, err, value)
+	}
 }
 
 func TestExecutionConfigurationRejectsInvalidLimitOriginAndSchedule(t *testing.T) {

@@ -82,7 +82,7 @@ func TestMachineControlContractMatchesRegisteredBoundary(t *testing.T) {
 	readStrictContractJSON(t, filepath.Join(root, "contracts/agent-controller/control-contract.json"), &contract)
 	var schema machineControlSchema
 	readContractJSON(t, filepath.Join(root, "contracts/agent-controller/control-api.schema.json"), &schema)
-	if contract.Revision != 45 || contract.Trust != "verified-workload-and-caller-context" || contract.Authentication != "service-authentication.md" {
+	if contract.Revision != 46 || contract.Trust != "verified-workload-and-caller-context" || contract.Authentication != "service-authentication.md" {
 		t.Fatalf("control contract revision = %d", contract.Revision)
 	}
 	if contract.MediaTypes.Request != "application/json" ||
@@ -445,6 +445,9 @@ func TestMachineControlContractValidatesSuccessfulHTTPBoundary(t *testing.T) {
 		},
 		"POST /internal/agents/{agent_id}/delete": lifecycleRequest{
 			RequestID: "request-delete", OrganizationID: "org-1", ActorPrincipalID: "admin-1",
+		},
+		"POST /internal/execution-credentials/resolve": ports.ExecutionCredentialRequest{
+			OrganizationID: "org-1", ConnectionID: "provider-1", CredentialVersion: "credential-current",
 		},
 	}
 

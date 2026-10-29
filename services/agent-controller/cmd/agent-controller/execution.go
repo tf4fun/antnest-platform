@@ -15,11 +15,11 @@ func configureExecutionPublication(repository *postgres.Repository, cfg config.C
 	if err != nil {
 		return nil, nil, err
 	}
-	capacity, err := application.NewExecutionCapacity(opener, cfg.Execution.MaxBytes)
+	capacity, err := application.NewExecutionCapacity(opener, cfg.Execution.MaxBytes, application.WithExecutionCapacityWireVersion(cfg.Execution.WireVersion))
 	if err != nil {
 		return nil, nil, err
 	}
-	publisher := application.NewExecutionPublisher(repository, opener, client, application.WithRuntimeConnectionResolver(runtime))
+	publisher := application.NewExecutionPublisher(repository, opener, client, application.WithRuntimeConnectionResolver(runtime), application.WithExecutionWireVersion(cfg.Execution.WireVersion))
 	worker, err := application.NewExecutionPublicationWorker(repository, publisher, application.ExecutionPublicationSchedule{
 		ResyncInterval: cfg.Execution.ResyncInterval, RetryInterval: cfg.Execution.RetryInterval,
 		MaxRetryInterval: cfg.Execution.MaxRetryInterval, RequestTimeout: cfg.Execution.RequestTimeout,
