@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { selectSuites, suiteImages } from "./ci-changes.mjs";
+import { isPublishable, selectSuites, suiteImages } from "./ci-changes.mjs";
 import { cli, freezeManifest, validateManifest } from "./ci-manifest.mjs";
 
 const root = fileURLToPath(new URL("../../", import.meta.url));
@@ -21,11 +21,18 @@ const frozen = (name) => ({
   }@sha256:${digest}`,
   build: false,
 });
+const local = (name) => ({ ref: `antnest/${name}:local`, build: true });
+const testImages = () => mainImages().filter((name) => !isPublishable(name));
 const mainManifest = () => ({
   version: 1,
   revision,
   origin: "main",
-  images: Object.fromEntries(mainImages().map((name) => [name, frozen(name)])),
+  images: Object.fromEntries(
+    mainImages().map((name) => [
+      name,
+      isPublishable(name) ? frozen(name) : local(name),
+    ]),
+  ),
 });
 
 test("a complete main version manifest validates", () => {
@@ -117,10 +124,7 @@ test("PR artifact entries are an explicit exception, never release manifests", (
     "a PR artifact manifest is never release evidence",
   );
   const mainArtifact = mainManifest();
-  mainArtifact.images.temporal = {
-    ref: "antnest/temporal:local",
-    build: true,
-  };
+  mainArtifact.images["agent-ui"] = local("agent-ui");
   assert.throws(
     () =>
       validateManifest(mainArtifact, {
@@ -131,7 +135,7 @@ test("PR artifact entries are an explicit exception, never release manifests", (
   );
   const prFrozen = {
     ...artifact,
-    images: { temporal: frozen("temporal") },
+    images: { "agent-ui": frozen("agent-ui") },
   };
   assert.throws(
     () => validateManifest(prFrozen, { required: [] }),
@@ -139,7 +143,37 @@ test("PR artifact entries are an explicit exception, never release manifests", (
   );
 });
 
-test("freeze resolves every main image to its immutable registry digest", () => {
+test("test images are never registry packages in any manifest", () => {
+  assert(testImages().length > 0, "the E2E set uses test images");
+  for (const name of testImages()) {
+    for (const entry of [
+      frozen(name),
+      {
+        ref: `ghcr.io/tf4fun/antnest-${name}:inputs-${"c".repeat(32)}`,
+        build: true,
+      },
+      { ref: `antnest/${name}:local`, build: false },
+    ]) {
+      const manifest = mainManifest();
+      manifest.images[name] = entry;
+      assert.throws(
+        () => validateManifest(manifest, { required: mainImages() }),
+        /must be built in the run/u,
+        `${name} ${entry.ref}`,
+      );
+      assert.throws(
+        () =>
+          validateManifest(
+            { ...manifest, origin: "pr" },
+            { allowArtifacts: true, required: mainImages() },
+          ),
+        /must be built in the run/u,
+      );
+    }
+  }
+});
+
+test("freeze resolves every main release image to its immutable registry digest", () => {
   const input = {
     revision,
     origin: "main",
@@ -159,11 +193,16 @@ test("freeze resolves every main image to its immutable registry digest", () => 
     inspected.push(ref);
     return `sha256:${digest}`;
   });
-  assert.equal(inspected.length, 2, "main entries always inspect");
-  for (const [name, entry] of Object.entries(manifest.images)) {
-    assert.equal(entry.build, false, name);
-    assert.match(entry.ref, /@sha256:[0-9a-f]{64}$/u, name);
-  }
+  assert.deepEqual(
+    inspected,
+    [input.images["agent-ui"].ref],
+    "release images always inspect; test images never do",
+  );
+  assert.deepEqual(manifest.images.temporal, local("temporal"));
+  assert.deepEqual(manifest.images["agent-ui"], {
+    ref: `ghcr.io/tf4fun/antnest-agent-ui@sha256:${digest}`,
+    build: false,
+  });
   assert.equal(input.images.temporal.build, true, "input never mutates");
   assert.equal(manifest.origin, "main");
   assert.equal(manifest.version, 1);
@@ -218,6 +257,14 @@ test("the validate CLI writes the manifest file and its outputs", (t) => {
   const lines = readFileSync(github, "utf8");
   assert.match(lines, new RegExp(`^revision=${revision}$`, "mu"));
   assert.match(lines, /^images=\{.*"ref".*\}$/mu);
+  const builds = JSON.parse(/^builds=(.*)$/mu.exec(lines)[1]).include;
+  assert.deepEqual(
+    builds.map((image) => image.name).sort(),
+    testImages().sort(),
+    "a replay rebuilds exactly the manifest's test images",
+  );
+  for (const image of builds) assert.equal(image.publish, false, image.name);
+  assert.match(lines, new RegExp(`^building=${builds.length}$`, "mu"));
 });
 
 test("the freeze CLI inspects registry images and reports the frozen set", (t) => {

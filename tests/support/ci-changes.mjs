@@ -1020,9 +1020,9 @@ export function imageDigest(name, tree, readBlob) {
   return hash.digest("hex").slice(0, 32);
 }
 
-export function imageReference(name, digest, { registryImages = false } = {}) {
+export function imageReference(name, digest) {
   imageSpec(name);
-  return isPublishable(name) || registryImages
+  return isPublishable(name)
     ? `${registry}/${packageName(name)}:inputs-${digest}`
     : `antnest/${name}:local`;
 }
@@ -1039,15 +1039,10 @@ export function imageExists(ref, run = execFileSync) {
   }
 }
 
-export function resolveImages(
-  names,
-  { tree, readBlob, exists, registryImages = false },
-) {
+export function resolveImages(names, { tree, readBlob, exists }) {
   return names.map((name) => {
-    const ref = imageReference(name, imageDigest(name, tree, readBlob), {
-      registryImages,
-    });
-    const publish = isPublishable(name) || registryImages;
+    const ref = imageReference(name, imageDigest(name, tree, readBlob));
+    const publish = isPublishable(name);
     return {
       name,
       dockerfile: imageSpec(name).dockerfile,
@@ -1547,7 +1542,6 @@ function main() {
       bake: { type: "string" },
       "resolve-images": { type: "boolean", default: false },
       "all-images": { type: "boolean", default: false },
-      "registry-images": { type: "boolean", default: false },
       only: { type: "string" },
       scope: { type: "string", default: "all" },
     },
@@ -1591,12 +1585,7 @@ function main() {
       execFileSync("git", ["cat-file", "blob", object], { encoding: "utf8" });
     resolved = resolveImages(
       suiteImages(selected, { allImages: values["all-images"] }),
-      {
-        tree,
-        readBlob,
-        exists: imageExists,
-        registryImages: values["registry-images"],
-      },
+      { tree, readBlob, exists: imageExists },
     );
     const { priorityBuilds } = workflowPlan(selected, resolved);
     const builds = {

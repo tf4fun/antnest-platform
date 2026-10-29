@@ -17,6 +17,7 @@ const text = (name) =>
   readFileSync(resolve(root, `.github/workflows/${name}`), "utf8");
 
 const e2e = workflow("e2e.yml");
+const runImage = "github.event_name == 'pull_request' || !matrix.publish";
 const suite = workflow("_suite.yml");
 const integration = workflow("integration.yml");
 
@@ -64,12 +65,46 @@ test("PR checkouts never persist credentials and never publish to GHCR", () => {
   }
   assert(
     imageSteps.some(
-      (step) =>
-        step.if === "github.event_name == 'pull_request'" &&
-        /docker save/u.test(step.run ?? ""),
+      (step) => step.if === runImage && /docker save/u.test(step.run ?? ""),
     ),
-    "PR images travel as artifacts, never packages",
+    "PR and test images travel as artifacts, never packages",
   );
+});
+
+test("main publishes release images only; test images never reach GHCR", () => {
+  const plan = e2e.jobs.plan.steps.find((step) => step.id === "plan");
+  assert.doesNotMatch(plan.run, /--registry-images/u);
+  const imageSteps = e2e.jobs.images.steps;
+  for (const step of imageSteps) {
+    const uses = step.uses ?? "";
+    const run = step.run ?? "";
+    if (/login-action|docker push/u.test(uses + run))
+      assert.match(step.if ?? "", /&& matrix\.publish$/u, step.name ?? uses);
+  }
+  const upload = imageSteps.find((step) =>
+    /upload-artifact/u.test(step.uses ?? ""),
+  );
+  assert.equal(upload.if, runImage);
+});
+
+test("a newer main merge cancels the superseded system run; nightly and replays finish", () => {
+  const cancel = e2e.concurrency["cancel-in-progress"];
+  assert.match(cancel, /github\.event_name == 'push' \|\|/u);
+  assert.doesNotMatch(cancel, /schedule|workflow_dispatch/u);
+  assert.match(e2e.concurrency.group, /github\.event_name/u);
+  const record = e2e.jobs.result.steps.find((step) => step.id === "result");
+  assert.match(record.run, /"cancelled"/u);
+  const track = e2e.jobs.result.steps.find((step) =>
+    /github-script/u.test(step.uses ?? ""),
+  );
+  assert.match(track.if, /!cancelled\(\)/u, "superseded runs open no issue");
+});
+
+test("a full passed main run is release-capable", () => {
+  const record = e2e.jobs.result.steps.find((step) => step.id === "result");
+  assert.match(record.run, /release_eligible: e2ePassed,/u);
+  assert.match(record.run, /e2e_passed: e2ePassed,/u);
+  assert.doesNotMatch(record.run, /legacy/u);
 });
 
 test("issue tracking and manifest publishing stay main-only privileged steps", () => {

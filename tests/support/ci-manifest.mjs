@@ -1,6 +1,8 @@
 // Version manifests pin one repository revision to an immutable image set:
-// every registry image as package@sha256:<digest>. Pull request builds are
-// artifacts, never release manifests.
+// every release image as package@sha256:<digest>. Test images (dependencies
+// and Runtime test variants) are never registry packages: every run that
+// consumes a manifest builds them from its revision as antnest/<name>:local.
+// Pull request builds are artifacts, never release manifests.
 import { execFileSync } from "node:child_process";
 import { appendFileSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -51,6 +53,12 @@ export function validateManifest(
       fail(`${name} must be an object`);
     if (typeof entry.ref !== "string" || typeof entry.build !== "boolean")
       fail(`${name} requires a string ref and a boolean build`);
+    const local = `antnest/${name}:local`;
+    if (!isPublishable(name)) {
+      if (entry.ref !== local || entry.build !== true)
+        fail(`test image ${name} must be built in the run as ${local}`);
+      continue;
+    }
     const pkg = packageOf(name);
     if (entry.build === false) {
       const pinned = immutable.exec(entry.ref);
@@ -61,10 +69,7 @@ export function validateManifest(
     if (!(allowArtifacts && value.origin === "pr"))
       fail(`${name} carries a build artifact outside the PR exception`);
     const selected = inputs.exec(entry.ref);
-    if (
-      entry.ref !== `antnest/${name}:local` &&
-      !(isPublishable(name) && selected?.groups.ref === pkg)
-    )
+    if (entry.ref !== local && selected?.groups.ref !== pkg)
       fail(`${name} artifact must be antnest/${name}:local or its inputs ref`);
   }
   for (const name of required)
@@ -73,9 +78,10 @@ export function validateManifest(
   return value;
 }
 
-// Every main entry and every already-published ref freezes to its registry
-// digest; PR build artifacts keep their local reference for artifact
-// loading and are never inspected. The input is never mutated.
+// Every main release image and every already-published ref freezes to its
+// registry digest; test images and PR build artifacts keep their local
+// reference for artifact loading and are never inspected. The input is
+// never mutated.
 export function freezeManifest({ revision, origin, images }, inspect) {
   if (!/^[0-9a-f]{40}$/u.test(revision ?? ""))
     fail("freeze requires a 40 character lowercase hex revision");
@@ -95,6 +101,10 @@ export function freezeManifest({ revision, origin, images }, inspect) {
   const frozen = {};
   for (const [name, entry] of Object.entries(images ?? {})) {
     imageSpec(name);
+    if (!isPublishable(name)) {
+      frozen[name] = { ref: `antnest/${name}:local`, build: true };
+      continue;
+    }
     if (origin === "main" || entry.build === false) {
       const digest = /^sha256:([0-9a-f]{64})$/u.exec(
         String(inspect(entry.ref)).trim(),
@@ -159,8 +169,14 @@ export function cli(
     });
     if (outputFile)
       writeFileSync(outputFile, JSON.stringify(manifest, null, 2) + "\n");
+    // A replay rebuilds the manifest's test images from its revision.
+    const builds = Object.entries(manifest.images)
+      .filter(([, entry]) => entry.build)
+      .map(([name, { ref }]) => ({ name, ref, publish: false }));
     append(`revision=${manifest.revision}`);
     append(`images=${JSON.stringify(manifest.images)}`);
+    append(`builds=${JSON.stringify({ include: builds })}`);
+    append(`building=${builds.length}`);
     return manifest;
   }
   throw new Error("usage: ci-manifest.mjs freeze|validate <output-file>");
