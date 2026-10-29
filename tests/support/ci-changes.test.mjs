@@ -1699,7 +1699,10 @@ test("CLI outputs retain publication eligibility and artifact routing across reg
     // A main run builds every test image even when no selected suite needs
     // one, so its manifest can replay any suite; none is ever queried.
     if (id === "no-dependencies")
-      assert.deepEqual(Object.keys(resolved).sort(), Object.keys(images).sort());
+      assert.deepEqual(
+        Object.keys(resolved).sort(),
+        Object.keys(images).sort(),
+      );
     assert.equal(builds.length, status === "0" ? 4 : 14, id);
     for (const name of localOnlyImages) {
       assert.deepEqual(resolved[name], {
