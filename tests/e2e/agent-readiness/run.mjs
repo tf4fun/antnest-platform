@@ -261,6 +261,11 @@ try {
       let round = await readRound(index);
       recorded.round = round.timing?.round;
       recorded.publication = round.publication;
+      assert.equal(
+        round.publication.schemaVersion,
+        2,
+        "readiness must consume versioned v2 execution publication",
+      );
       const { before, currentStatus } = await timing.measure(
         "resourceInspection",
         async () => {

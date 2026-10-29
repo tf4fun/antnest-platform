@@ -134,10 +134,10 @@ traceability.
 
 ### 5.1 Three Independent Dimensions
 
-| Dimension | Supported today | Future extension examples |
-| --- | --- | --- |
-| Provider definition | `deepseek`, `openrouter` | Other builtin Providers, custom Providers |
-| Credential method | `api_key` | `oauth` |
+| Dimension                      | Supported today           | Future extension examples                      |
+| ------------------------------ | ------------------------- | ---------------------------------------------- |
+| Provider definition            | `deepseek`, `openrouter`  | Other builtin Providers, custom Providers      |
+| Credential method              | `api_key`                 | `oauth`                                        |
 | Model request protocol adapter | `openai_chat_completions` | Provider-specific Responses or other protocols |
 
 The server validates which Provider, credential method and request protocol
@@ -155,13 +155,13 @@ make a Provider supported.
 The table below is a responsibility contract. It does not require empty
 implementations for OAuth, which is not implemented.
 
-| Interface | Input and output | Owner |
-| --- | --- | --- |
-| BuiltinProviderCatalog | `provider_key`, default endpoint, preset models and the source of their metadata. Used only for prefill; it is not the execution authority. | Admin Console |
-| ProviderSupport | `provider_key`, implemented credential method, request adapter identifier. Rejects unimplemented combinations. Contains no model names, prices or context-window catalog. | Agent Controller |
-| CredentialResolver | Organization and connection context plus the current sealed credential record -> the authentication material a call needs and the credential revision. Future methods may also produce validity periods and updates. | Agent Controller |
-| ModelDiscovery | An unsaved connection draft, or a saved connection plus the credential that Controller resolves for it -> a list of model candidates. Partial metadata is allowed. | Admin Console, using Controller credential resolution for saved connections |
-| ModelTransport | Resolved model parameters and authentication material -> model requests and streaming events | Agent ACP Service |
+| Interface              | Input and output                                                                                                                                                                                                     | Owner                                                                       |
+| ---------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------- |
+| BuiltinProviderCatalog | `provider_key`, default endpoint, preset models and the source of their metadata. Used only for prefill; it is not the execution authority.                                                                          | Admin Console                                                               |
+| ProviderSupport        | `provider_key`, implemented credential method, request adapter identifier. Rejects unimplemented combinations. Contains no model names, prices or context-window catalog.                                            | Agent Controller                                                            |
+| CredentialResolver     | Organization and connection context plus the current sealed credential record -> the authentication material a call needs and the credential revision. Future methods may also produce validity periods and updates. | Agent Controller                                                            |
+| ModelDiscovery         | An unsaved connection draft, or a saved connection plus the credential that Controller resolves for it -> a list of model candidates. Partial metadata is allowed.                                                   | Admin Console, using Controller credential resolution for saved connections |
+| ModelTransport         | Resolved model parameters and authentication material -> model requests and streaming events                                                                                                                         | Agent ACP Service                                                           |
 
 These registries are internal extension points of each service. They do not
 support dynamic plugin upload, arbitrary authentication callback URLs or
@@ -309,12 +309,12 @@ historical secret store". OAuth is not implemented.
 Each service owns one part of the Provider, credential and model design. A
 contract is complete only when both its producer and its consumers implement it.
 
-| Service | Role | Owns |
-| --- | --- | --- |
-| Admin Console | Management consumer and builtin catalogue owner | The builtin model catalogue, Provider connection management, separate credential editing, the per-connection model list and model editor, template model selection, and model discovery |
-| Agent Controller | Storage authority and execution configuration producer | Supported Provider and authentication method registration, connections with their current credential, models, templates and Agents, organization isolation, idempotent commands, and publication of current configuration to ACP |
-| Agent ACP Service | Execution consumer | Session model selection, Run admission, logical Provider clients, the request adapter, and reporting of model call failures |
-| Edge Gateway | Transport | Forwards the existing `/api/admin/*` routes without a Provider-specific branch |
+| Service           | Role                                                   | Owns                                                                                                                                                                                                                             |
+| ----------------- | ------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Admin Console     | Management consumer and builtin catalogue owner        | The builtin model catalogue, Provider connection management, separate credential editing, the per-connection model list and model editor, template model selection, and model discovery                                          |
+| Agent Controller  | Storage authority and execution configuration producer | Supported Provider and authentication method registration, connections with their current credential, models, templates and Agents, organization isolation, idempotent commands, and publication of current configuration to ACP |
+| Agent ACP Service | Execution consumer                                     | Session model selection, Run admission, logical Provider clients, the request adapter, and reporting of model call failures                                                                                                      |
+| Edge Gateway      | Transport                                              | Forwards the existing `/api/admin/*` routes without a Provider-specific branch                                                                                                                                                   |
 
 ### Admin Console
 
@@ -494,3 +494,58 @@ replacement; reauthorization after failure; account identity propagation; and
 the dedicated model protocol. Until then, only rejection of the unimplemented
 capability is tested, and no test double stands in for a finished Codex
 integration.
+
+## Execution publication v2 rollout and acceptance (issue #43)
+
+The v1 contract published the complete per-organization execution payload
+with decrypted Provider credentials on every mutation and every 30-second
+resync. Issue #43 replaces it with a versioned v2 contract delivered as
+independent service batches:
+
+1. Shared contract (PR #395): `execution-publication-v2.schema.json` —
+   Provider `credential` becomes an opaque `{ref, version}` reference;
+   `execution-credentials.schema.json` defines the Controller resolve
+   endpoint. Legacy schema/generator unchanged for N-1.
+2. Controller producer (PR #396 + revision fix `e41f43ef`): secret-free v2
+   projection, digest fast-path and delta publication, credential-resolution
+   route. `ANTNEST_AGENT_CONTROLLER_EXECUTION_WIRE_VERSION` (default `1`;
+   the deployment overlay enables `2`) and resync default `5m`.
+3. ACP consumer (PR #397): strict v1/v2 authority parsing, version-neutral
+   public projection, atomic deltas with `configuration_base_mismatch`
+   fallback, digest proofs, equal-revision one-way v1→v2 upgrade (public
+   projection, credential revisions and Runtime private authority must be
+   identical), lazy credential resolution with a 60 s/1024-entry in-memory
+   cache, `ANTNEST_ACP_EXECUTION_CONTROLLER_URL` (bare origin; must match the
+   Skill learning Controller origin when both are configured).
+
+The equal-revision upgrade is one-way only: v2→v1 downgrades and any other
+same-revision change are rejected; ordinary higher revisions remain
+replacements. Reference-mode Provider clients keep no secret in client state
+and stale in-flight resolutions are generation-fenced. A producer rollback
+uses wire version `1` plus the original 30 s resync interval, but an existing
+v2 authority cannot be replaced at the same revision: a legitimate
+Controller configuration mutation must first advance the authoritative
+revision. Keep the upgraded ACP consumer during this transition; do not
+force revisions or clear durable authority to bypass the upgrade guard.
+
+The readiness system's transparent publication proxy delays both the
+snapshot and delta paths (never the digest path) and the real run asserts
+`schemaVersion === 2`. Stage 3's existing credential rotation — initial key
+verified only in `v1-baseline`, rotated key from `v2-baseline` onward —
+records `execution_credential_rotation` in its business artifact and is the
+cross-service rotation acceptance for this contract.
+
+Frozen load evidence (Controller batch, recorded once, not re-measured):
+request+response bytes 68,855,000 → 2,567,500 per cycle; source read, decrypt
+and publish calls 500 each → 0; process CPU 1,427,755 µs → 327,015 µs.
+The sample is one unchanged sequential sweep after warmup across 500
+organizations with 50 closed Agents each and 2,048-byte prompts. It uses
+the production Publisher, HTTP client and AES credential opening with an
+in-memory Controller source/ACK store and a same-process ACP HTTP fixture.
+CPU includes that fixture; HTTP headers, TLS, PostgreSQL, real ACP owner
+barriers and authority restoration are excluded. This is neither a CPU
+threshold nor a deployment-throughput claim.
+
+Issue #43 remains open: actual PostgreSQL component runs, the two-process
+publication race, cross-service rotation on main, and release-capable system
+evidence are pending until the merged candidate passes remote acceptance.

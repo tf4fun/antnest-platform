@@ -60,7 +60,19 @@ export function publicationProof(
   { bound, ready },
   { agentId, organizationId },
 ) {
-  assert.equal(attempt.path, "/rpc/agent-acp/apply-execution-snapshot");
+  const delta = attempt.path === "/rpc/agent-acp/apply-execution-delta";
+  assert(
+    delta || attempt.path === "/rpc/agent-acp/apply-execution-snapshot",
+    "unexpected publication path",
+  );
+  if (delta) {
+    assert.equal(attempt.schemaVersion, 2);
+    assert(
+      Number.isSafeInteger(attempt.baseRevision) && attempt.baseRevision >= 1,
+      "delta requires a safe base revision",
+    );
+    assert(attempt.baseRevision < attempt.revision, "delta base must be stale");
+  }
   assert.equal(attempt.organizationId, organizationId);
   revision(attempt.revision);
   assert(attempt.revision >= bound.data.ready_after_revision);

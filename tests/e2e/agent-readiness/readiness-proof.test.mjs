@@ -129,3 +129,33 @@ for (const [name, change] of [
       ),
     );
   });
+
+test("a v2 delta publication satisfies the proof with its exact base", () => {
+  const { context, events, publication } = fixture();
+  publication.path = "/rpc/agent-acp/apply-execution-delta";
+  publication.schemaVersion = 2;
+  publication.baseRevision = 8;
+  publication.revision = 9;
+  publicationProof(publication, readinessProof(events, context), context);
+});
+
+for (const [name, change] of [
+  ["foreign path", (x) => (x.publication.path = "/rpc/agent-acp/other")],
+  ["legacy delta schema", (x) => (x.publication.schemaVersion = 1)],
+  ["missing delta base", (x) => (x.publication.baseRevision = null)],
+  ["base not below revision", (x) => (x.publication.baseRevision = 9)],
+])
+  test("delta publication proof rejects " + name, () => {
+    const value = fixture();
+    value.publication.path = "/rpc/agent-acp/apply-execution-delta";
+    value.publication.schemaVersion = 2;
+    value.publication.baseRevision = 8;
+    change(value);
+    assert.throws(() =>
+      publicationProof(
+        value.publication,
+        readinessProof(value.events, value.context),
+        value.context,
+      ),
+    );
+  });
