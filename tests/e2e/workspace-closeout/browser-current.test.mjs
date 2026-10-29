@@ -25,6 +25,7 @@ test("browser setup uses returned Provider Model identity and immutable Runtime 
   };
   assert.equal((await createBrowserTemplate(json, "sha256:image")).revision, 3);
   assert.equal(calls[0].options.body.models[0].model.supports_images, true);
+  assert.equal(calls[0].options.body.models[0].model.context_window, 65536);
   assert.equal(calls[2].options.body.model_profile_id, "model");
   assert.equal(calls[2].options.body.runtime.image_ref, "sha256:image");
   assert(!JSON.stringify(calls).includes("model_profile_revision_id"));
