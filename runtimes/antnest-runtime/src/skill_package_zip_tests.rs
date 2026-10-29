@@ -119,6 +119,80 @@ fn rejects_corruption_nonregular_files_and_size_limits() {
 }
 
 #[test]
+fn rejects_non_utf8_entry_name() {
+    let mut bytes = archive(&[("SKILL.md", MANIFEST), ("asset", b"data")]);
+    let second = |signature: &[u8; 4]| {
+        bytes
+            .windows(4)
+            .enumerate()
+            .filter_map(|(offset, value)| (value == signature).then_some(offset))
+            .nth(1)
+            .unwrap()
+    };
+    let local = second(b"PK\x03\x04");
+    let central = second(b"PK\x01\x02");
+    for (header, flags_offset, name_offset) in [(local, 6usize, 30usize), (central, 8, 46)] {
+        let flags = u16::from_le_bytes([
+            bytes[header + flags_offset],
+            bytes[header + flags_offset + 1],
+        ]) | 0x800;
+        bytes[header + flags_offset..header + flags_offset + 2]
+            .copy_from_slice(&flags.to_le_bytes());
+        bytes[header + name_offset] = 0xff;
+    }
+    assert_eq!(validate_skill_zip(&bytes).unwrap_err(), "invalid_package");
+}
+
+fn with_central_extra(bytes: &[u8], extra: &[u8]) -> Vec<u8> {
+    let central = bytes
+        .windows(4)
+        .enumerate()
+        .filter_map(|(offset, value)| (value == b"PK\x01\x02").then_some(offset))
+        .nth(1)
+        .unwrap();
+    let name_len = u16::from_le_bytes([bytes[central + 28], bytes[central + 29]]) as usize;
+    let extra_len = u16::from_le_bytes([bytes[central + 30], bytes[central + 31]]) as usize;
+    let insert = central + 46 + name_len;
+    let mut patched = Vec::with_capacity(bytes.len() + extra.len());
+    patched.extend_from_slice(&bytes[..insert]);
+    patched.extend_from_slice(extra);
+    patched.extend_from_slice(&bytes[insert..]);
+    let extra_len = (extra_len + extra.len()) as u16;
+    patched[central + 30..central + 32].copy_from_slice(&extra_len.to_le_bytes());
+    let eocd = patched
+        .windows(4)
+        .rposition(|value| value == b"PK\x05\x06")
+        .unwrap();
+    let size =
+        u32::from_le_bytes(patched[eocd + 12..eocd + 16].try_into().unwrap()) + extra.len() as u32;
+    patched[eocd + 12..eocd + 16].copy_from_slice(&size.to_le_bytes());
+    patched
+}
+
+#[test]
+fn accepts_allowlisted_central_extra_and_rejects_others() {
+    let bytes = archive(&[("SKILL.md", MANIFEST), ("asset", b"data")]);
+    let valid = with_central_extra(&bytes, &[0x55, 0x54, 1, 0, 0]);
+    assert!(validate_skill_zip(&valid).is_ok());
+    let mut ntfs = vec![0x0a, 0x00, 0x20, 0x00, 0, 0, 0, 0, 0x01, 0x00, 0x18, 0x00];
+    ntfs.extend_from_slice(&[0; 24]);
+    for extra in [
+        &[0xfe, 0xca, 0, 0][..],
+        &ntfs[..],
+        &[0x55, 0x54, 1, 0, 0, 0x55, 0x54, 1, 0, 0][..],
+        &[0x55, 0x54, 1][..],
+        &[0x55, 0x54, 2, 0, 0][..],
+    ] {
+        let patched = with_central_extra(&bytes, extra);
+        assert_eq!(
+            validate_skill_zip(&patched).unwrap_err(),
+            "invalid_package",
+            "extra {extra:?}"
+        );
+    }
+}
+
+#[test]
 fn rejects_non_ascii_name_without_utf8_flag() {
     let mut bytes = archive(&[("SKILL.md", MANIFEST), ("references/指南.md", b"Guide")]);
     assert!(validate_skill_zip(&bytes).is_ok());
