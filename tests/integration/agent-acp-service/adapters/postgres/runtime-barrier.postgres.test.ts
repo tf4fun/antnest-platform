@@ -395,6 +395,10 @@ describe.skipIf(databaseUrl === undefined)(
       const client = await pool.connect();
       try {
         await client.query("BEGIN");
+        await client.query("DROP VIEW model_token_calibration");
+        await client.query(
+          "ALTER TABLE context_checkpoints DROP COLUMN compaction_prompt_version, DROP COLUMN pinned_message_ids",
+        );
         await client.query("ALTER TABLE runs DROP COLUMN budget_reason");
         await client.query("DROP TABLE model_budget_reservations");
         await client.query("DROP TABLE model_budget_baseline_attempts");
@@ -456,7 +460,7 @@ describe.skipIf(databaseUrl === undefined)(
            DROP COLUMN execution_owner_epoch`,
         );
         const removed = await client.query(
-          "DELETE FROM schema_migrations WHERE version IN ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)",
+          "DELETE FROM schema_migrations WHERE version IN ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)",
           [
             "0023_runtime_barrier_cycles.sql",
             "0024_agent_run_admission.sql",
@@ -468,9 +472,11 @@ describe.skipIf(databaseUrl === undefined)(
             "0030_peer_membership.sql",
             "0031_peer_participation.sql",
             "0032_model_budget_ledger.sql",
+            "0033_context_compaction.sql",
+            "0034_model_token_calibration.sql",
           ],
         );
-        expect(removed.rowCount).toBe(10);
+        expect(removed.rowCount).toBe(12);
         await client.query("COMMIT");
       } catch (error) {
         await client.query("ROLLBACK");

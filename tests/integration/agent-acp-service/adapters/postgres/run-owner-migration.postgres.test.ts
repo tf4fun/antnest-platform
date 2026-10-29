@@ -424,6 +424,8 @@ describe.skipIf(databaseUrl === undefined)(
           "0030_peer_membership.sql",
           "0031_peer_participation.sql",
           "0032_model_budget_ledger.sql",
+          "0033_context_compaction.sql",
+          "0034_model_token_calibration.sql",
         ]);
         expect(
           migrated.find((entry) => entry.version === migration)?.checksum,
