@@ -3,6 +3,7 @@ import { isDeepStrictEqual } from "node:util";
 import type { ExecutionIdentity } from "../domain/execution-configuration.js";
 import type { LearningTaskClaim } from "../domain/learning-scan.js";
 import { thinkingEfforts } from "../domain/model-thinking.js";
+import type { ProviderTokenLimits } from "../domain/provider-token-limits.js";
 import type { ModelSpec, RunExecutionSnapshot } from "../domain/types.js";
 
 type CurrentModel = {
@@ -16,6 +17,8 @@ type CurrentModel = {
   supports_images: boolean;
   supports_audio?: boolean | undefined;
   supports_pdf?: boolean | undefined;
+  supports_tools?: boolean | undefined;
+  provider_token_limits?: ProviderTokenLimits | undefined;
   pricing?:
     | {
         currency: "USD";
@@ -94,6 +97,9 @@ function currentModelSpec(
   const price = model.pricing;
   return {
     baseUrl: provider.base_url,
+    ...(model.provider_token_limits === undefined
+      ? {}
+      : { providerTokenLimits: model.provider_token_limits }),
     model: model.model,
     contextWindow: model.context_window,
     maxOutputTokens: model.max_output_tokens,
@@ -101,6 +107,7 @@ function currentModelSpec(
     ...(model.temperature === undefined ? {} : { temperature: model.temperature }),
     ...(model.supports_audio === undefined ? {} : { supportsAudio: model.supports_audio }),
     ...(model.supports_pdf === undefined ? {} : { supportsPdf: model.supports_pdf }),
+    ...(model.supports_tools === undefined ? {} : { supportsTools: model.supports_tools }),
     ...(selectedThinking === undefined ? {} : { thinking: selectedThinking }),
     ...(price === undefined
       ? {}
