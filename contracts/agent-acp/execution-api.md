@@ -216,6 +216,120 @@ cancel B, while current B's revocation still stops further work and joins its
 original tasks. Released attempt handles and current-Provider monitoring have
 distinct lifetimes; final Run cleanup removes the remaining monitor.
 
+## Execution Publication V2 (#43, pending)
+
+This section defines the shared v2 wire contract in
+[execution-publication-v2.schema.json](execution-publication-v2.schema.json).
+ACP and Controller implement it in separate owning-service batches, followed by
+a cross-service integration batch; freezing the contract changes neither the
+current publisher nor the pending consumers. The legacy
+[execution-snapshot.schema.json](execution-snapshot.schema.json) and its
+producer remain the unchanged N-1 v1 contract.
+
+### Versioned snapshot
+
+`POST /rpc/agent-acp/apply-execution-snapshot` continues to carry one complete
+organization snapshot under the existing admission, size and error rules. A
+body without `schema_version` is version 1 (the legacy shape); `schema_version:
+2` selects the v2 snapshot. The v2 snapshot keeps the v1 `providers`, `models`,
+`agents` and `organization_budget` collections and their document shapes, with
+one change: a Provider `credential` is the closed reference `{ref, version}`
+instead of decrypted `{method, secret}` material, and the wire carries no
+plaintext Provider key. A semantic rule enforced by both services, not the
+schema, requires `ref` to equal the Provider's `connection_id` and `version` to
+equal its `credential_revision`. Enabled Providers require
+`credential_revision` and `credential`; disabled Providers may retain or omit
+the pair, and retaining it grants no usability. Model, Agent, Runtime and
+budget shapes are unchanged: only Provider secret material leaves the wire,
+and accepting-Agent Runtime `credential` relay is exactly as above.
+
+### Apply Execution Delta
+
+`POST /rpc/agent-acp/apply-execution-delta`
+
+The body has exactly `schema_version: 2`, `organization_id`, `base_revision`,
+`revision`, per-collection `{upserts, deletes}` for `providers`, `models` and
+`agents`, and `organization_budget` (a budget object or `null`). Revisions are
+JavaScript-safe integers; `base_revision` is at least 1 and `revision` must be
+greater than `base_revision` (the schema therefore admits only `revision` ≥ 2;
+equality and ordering beyond that are service checks). ACP reconstructs the
+complete v2 authority atomically: unchanged documents are retained, deletes
+remove their IDs, upserts replace same-ID documents, and `null` budget removes
+the policy. Duplicate IDs within or across `upserts` and `deletes` are
+rejected, and all final references are validated against the reconstructed
+authority before it is persisted, under the same checks a full snapshot faces.
+
+`base_revision` must equal the organization's current revision. A mismatch
+returns 409 `configuration_base_mismatch`, and that result alone permits
+Controller to fall back to a full v2 snapshot; the same base is never retried
+and a delta failure never downgrades to a v1 plaintext snapshot. Other
+failures follow the existing error rules and publish no partial state. The
+per-request payload cap is unchanged; an organization whose recovery payload
+exceeds the limit hits that explicit bound rather than unbounded capacity.
+
+### Get Execution Digest
+
+`POST /rpc/agent-acp/get-execution-digest`
+
+The request has exactly `organization_id`. The response has exactly
+`organization_id`, `schema_version` (0 absent, 1 legacy snapshot, 2 v2),
+`revision`, `digest`, `{id, digest}` arrays for `providers`, `models` and
+`agents`, and `organization_budget_digest`. An absent organization returns
+`schema_version: 0`, `revision: 0`, null digests and empty arrays; a storage
+error fails the request and is never reported as absence.
+
+Digests cover the public projection only: Provider `credential` references
+and secrets and Runtime `credential.token` are removed, and all other fields
+are preserved. Each document digest is SHA-256 over the UTF-8 JSON whose
+object keys are lexicographically sorted, arrays keep their order, string
+escaping follows `JSON.stringify` except that U+2028 and U+2029 are escaped,
+and no HTML escaping is applied. Collection digest entries are sorted by
+`id`. The root `digest` hashes the object `{organization_id, schema_version,
+revision, providers, models, agents, organization_budget_digest}` under the
+same encoding. Digests are an optimization: revision compare-and-set and the
+existing authority checks still enforce correctness, and a hash encoding
+difference can only cause a safe extra full snapshot or upsert, never a lost
+change. Digest reads include the current restored or published authority and
+rerun the existing owner and acknowledgement barrier on a revision match; a
+stored revision alone cannot shortcut readiness.
+
+### Resolve Execution Credential
+
+`POST /internal/execution-credentials/resolve`
+
+Controller serves this route only to the authenticated `agent-acp-service`
+workload, without a user CCT. The request has exactly `organization_id`,
+`connection_id` and `credential_version`; the response is the same identity
+plus `method: "api_key"` and a non-empty `secret`, defined in
+[execution-credentials.schema.json](../agent-controller/execution-credentials.schema.json).
+Controller binds the exact current organization, enabled connection and
+credential version before decrypting. A missing or disabled connection or a
+wrong version returns 409 `configuration_conflict` or 404 `not_found`,
+invalid input 400, and a dependency failure 503. There is no
+historical-secret fallback and no query parameters; responses carry
+`Cache-Control: no-store`, instrumentation is metadata-only, and neither
+request nor response secrets are logged or traced.
+
+ACP resolves at model dispatch, never during apply or startup restore, holds
+the result in a bounded in-memory cache with a 60 second TTL, and invalidates
+it on credential version change, connection disable or removal. Cancellation
+and version checks still run after the asynchronous resolve completes, and
+there is no stale-entry fallback. Secrets never enter snapshot or Provider
+persistence, audit or traces. The sealed Runtime authority above is unchanged.
+
+### V2 rollout
+
+All publication routes remain on the authenticated `agent-controller` control
+listener only, with no user CCT. N-1 reads of v1 stay supported while ACP has
+not been upgraded. Controller enables the v2 producer only after the ACP
+upgrade, behind an explicit Controller wire-version setting that defaults to
+1 until the deployment is updated; a v2 publisher never silently falls back
+to v1. For the final v2 deployment the existing 30 second full
+resynchronization becomes a 5 minute digest check that exchanges only digests
+for unchanged organizations, while mutations and retries still wake
+immediately. A full v2 snapshot fallback remains available for missing
+authority or base mismatch.
+
 ## Settle Agent
 
 `POST /rpc/agent-acp/settle-agent`
