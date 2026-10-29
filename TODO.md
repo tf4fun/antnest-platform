@@ -52,7 +52,7 @@ Issue 状态最后核对于 2026-10-28：141 个 issue，87 个已关闭，54 �
 - [x] [#233](https://github.com/tf4fun/antnest-platform/issues/233) test(runtime-egress): scoped privilege logging intermittently captures no event during image builds
 - [ ] [#247](https://github.com/tf4fun/antnest-platform/issues/247) Skill discovery trace collection admits traces with missing Gateway parent spans
 - [ ] [#361](https://github.com/tf4fun/antnest-platform/issues/361) CI: PR runs component CI only; main is the system integration branch that triggers E2E — #362、#378、#379、#380、#382 已合并；验收证据由用户跟踪，是否关闭待结论
-- [ ] [#355](https://github.com/tf4fun/antnest-platform/issues/355) Identity PostgreSQL verification exits after ~720s without an actionable failure record
+- [ ] [#355](https://github.com/tf4fun/antnest-platform/issues/355) Identity PostgreSQL verification exits after ~720s without an actionable failure record — 定位为 720s 预算耗尽（非挂死），主要成本是测试 fixture 在 `-race` 下逐个使用生产 Argon2；#384（`cf9eac9`）改为廉价 fixture 策略后 Go 命令 359.7s（历史 520–716s）。诊断（超时原因／阶段／在途测试身份、`go-progress-*.json` 耗时记录）与 CI Go 缓存路径对齐待远程 CI；未改 720s 预算与业务断言
 - [ ] [#357](https://github.com/tf4fun/antnest-platform/issues/357) Lifecycle restore verification exits 1 without an independent cleanup result
 
 ### 2 共享契约与依赖清单

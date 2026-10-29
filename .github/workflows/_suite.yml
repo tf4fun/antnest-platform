@@ -29,6 +29,11 @@ jobs:
       contents: read
       actions: read
       packages: read
+    # The suite commands build in the repository caches; setup-go caches
+    # whatever `go env` reports, so point it at the same directories.
+    env:
+      GOCACHE: ${{ github.workspace }}/.cache/go-build
+      GOMODCACHE: ${{ github.workspace }}/.cache/go-mod
     steps:
       - uses: actions/checkout@v7
         with:
