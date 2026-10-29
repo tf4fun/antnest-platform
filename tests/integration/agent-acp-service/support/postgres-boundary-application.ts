@@ -54,6 +54,7 @@ export async function startBoundaryApplication(
     runTimeoutMs?: number;
     configuration?: ExecutionConfiguration;
     providerCircuit?: { failureThreshold: number; cooldownMs: number };
+    modelTransport?: AuthenticatedModelTransport;
   } = {},
 ) {
   const kernel = new PostgresKernel(pool);
@@ -128,7 +129,10 @@ export async function startBoundaryApplication(
     kernel,
     new AbortController().signal,
   ).events;
-  const providers = new ProviderClients(model, options.providerCircuit);
+  const providers = new ProviderClients(
+    options.modelTransport ?? model,
+    options.providerCircuit,
+  );
   const acquireClient = vi.spyOn(providers, "acquire");
   const permissions = new PermissionConnections();
   const outputs = new SessionOutputStreams();
