@@ -9,6 +9,8 @@ import {
 import { RunEventPersistenceError } from "../../src/application/durable-run-events.js";
 import { ModelRequestLimitError } from "../../src/application/model-request-budget.js";
 import { ModelBudgetExceededError } from "../../src/domain/model-budget.js";
+import { inputBudget } from "../../src/application/context-budget.js";
+import { createTokenEstimator } from "../../src/application/token-estimator.js";
 import { ModelError, type ModelRequest, type ModelResult } from "../../src/ports/model.js";
 import type { ModelMessage, RunExecutionSnapshot } from "../../src/domain/types.js";
 import { snapshot as baseSnapshot } from "../support/fixtures.js";
@@ -155,6 +157,9 @@ describe("compactModelContext", () => {
     expect(first.fallback).toBe(true);
     expect(first.summary).toBe(second.summary);
     expect(first.messages).toEqual(second.messages);
+    expect(
+      createTokenEstimator(input.snapshot.executionSpec.model).estimateText(first.summary),
+    ).toBeLessThanOrEqual(Math.floor(inputBudget(input.snapshot, []) * 0.15));
   });
 
   it.each([

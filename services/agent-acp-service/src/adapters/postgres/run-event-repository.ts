@@ -526,20 +526,27 @@ export class PostgresRunEventRepository implements RunEventRepository {
   }
 }
 
-function frozenModelCandidate(
+export function frozenModelCandidate(
   snapshot: RunExecutionSnapshot,
-  attempt: Pick<ModelAttemptStarted, "modelProfileId" | "providerConnectionId" | "model">,
+  attempt: Pick<
+    ModelAttemptStarted,
+    "modelProfileId" | "providerConnectionId" | "model" | "purpose"
+  >,
 ): ModelCandidate | undefined {
-  const candidates = [
-    {
-      modelProfileId: snapshot.modelProfileId,
-      providerConnectionId: snapshot.providerConnectionId,
-      model: snapshot.executionSpec.model,
-    },
-    ...(snapshot.executionSpec.modelFailover === "before_output"
-      ? (snapshot.executionSpec.fallbackModels ?? [])
-      : []),
-  ];
+  const primary = {
+    modelProfileId: snapshot.modelProfileId,
+    providerConnectionId: snapshot.providerConnectionId,
+    model: snapshot.executionSpec.model,
+  };
+  const candidates =
+    attempt.purpose === "compaction"
+      ? [snapshot.executionSpec.compactionModel ?? primary]
+      : [
+          primary,
+          ...(snapshot.executionSpec.modelFailover === "before_output"
+            ? (snapshot.executionSpec.fallbackModels ?? [])
+            : []),
+        ];
   return candidates.find(
     (candidate) =>
       candidate.modelProfileId === attempt.modelProfileId &&

@@ -95,6 +95,7 @@ export class TurnRunner {
       assertAuthority(input.authoritySignal);
       let overflowRetried = false;
       for (let request = 0; budget.canTake(); request += 1) {
+        assertAuthority(input.authoritySignal);
         input.signal.throwIfAborted();
         if (
           estimateMessages(messages, input.snapshot.executionSpec.model) >
@@ -119,6 +120,8 @@ export class TurnRunner {
         try {
           attempt = await this.completeModel(input, messages, responseId, model, request);
         } catch (error) {
+          if (error instanceof RunEventPersistenceError) throw error;
+          assertAuthority(input.authoritySignal);
           const overflow = contextOverflowError(error);
           const outputStarted =
             overflow?.outputStarted === true ||
@@ -703,6 +706,14 @@ function completed(
 function contextOverflowError(error: unknown): ModelError | undefined {
   let current: unknown = error;
   while (current instanceof Error) {
+    if (
+      current instanceof ModelTransportCleanupError ||
+      current instanceof ModelCallInterruptedError ||
+      current instanceof RunEventPersistenceError ||
+      current instanceof ModelBudgetExceededError ||
+      current instanceof ModelRequestLimitError
+    )
+      return undefined;
     if (current instanceof ModelError && current.code === "context_overflow") return current;
     current = current.cause;
   }

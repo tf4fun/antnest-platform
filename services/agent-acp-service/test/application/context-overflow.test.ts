@@ -1,7 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { TurnRunner } from "../../src/application/turn-runner.js";
-import { ModelError, type ModelPort } from "../../src/ports/model.js";
+import { ModelCallInterruptedError } from "../../src/application/model-call-policy.js";
+import { RunEventPersistenceError } from "../../src/application/durable-run-events.js";
+import { ModelError, ModelTransportCleanupError, type ModelPort } from "../../src/ports/model.js";
 import type { RunEventPort } from "../../src/ports/run-events.js";
 import type { ToolCatalogPort } from "../../src/ports/tools.js";
 import type { ModelMessage, RunExecutionSnapshot } from "../../src/domain/types.js";
@@ -182,6 +184,124 @@ describe("TurnRunner context overflow recovery", () => {
         authoritySignal: new AbortController().signal,
       }),
     ).resolves.toMatchObject({ stopReason: "max_turn_requests" });
+    expect(complete).toHaveBeenCalledTimes(1);
+    expect(purposes(events.start.mock.calls)).not.toContain("compaction");
+  });
+
+  it("never compacts when the overflow is reported through a cleanup failure", async () => {
+    const complete = vi
+      .fn<ModelPort["complete"]>()
+      .mockRejectedValue(
+        new ModelTransportCleanupError(
+          new ModelError("context_overflow", "context too large", false, 400),
+        ),
+      );
+    const events = createEvents();
+    const runner = new TurnRunner({
+      model: { complete },
+      tools: { call: vi.fn<ToolCatalogPort["call"]>() },
+      catalog: [],
+      events: events.port,
+      now: () => new Date("2026-08-30T00:00:00Z"),
+    });
+    await expect(
+      runner.run({
+        runId: "run-1",
+        sessionId: "session-1",
+        snapshot: runSnapshot(),
+        context: context(),
+        signal: new AbortController().signal,
+        authoritySignal: new AbortController().signal,
+      }),
+    ).resolves.toMatchObject({ terminalClass: "failed", errorClass: "model_unavailable" });
+    expect(complete).toHaveBeenCalledTimes(1);
+    expect(purposes(events.start.mock.calls)).not.toContain("compaction");
+  });
+
+  it("never compacts when the overflow is reported through a deadline interruption", async () => {
+    const complete = vi
+      .fn<ModelPort["complete"]>()
+      .mockRejectedValue(
+        new ModelCallInterruptedError(
+          new ModelError("context_overflow", "context too large", false, 400),
+          undefined,
+          true,
+        ),
+      );
+    const events = createEvents();
+    const runner = new TurnRunner({
+      model: { complete },
+      tools: { call: vi.fn<ToolCatalogPort["call"]>() },
+      catalog: [],
+      events: events.port,
+      now: () => new Date("2026-08-30T00:00:00Z"),
+    });
+    await expect(
+      runner.run({
+        runId: "run-1",
+        sessionId: "session-1",
+        snapshot: runSnapshot(),
+        context: context(),
+        signal: new AbortController().signal,
+        authoritySignal: new AbortController().signal,
+      }),
+    ).resolves.toMatchObject({ terminalClass: "failed", errorClass: "run_deadline_exceeded" });
+    expect(complete).toHaveBeenCalledTimes(1);
+    expect(purposes(events.start.mock.calls)).not.toContain("compaction");
+  });
+
+  it("never compacts when the overflow is reported through a persistence failure", async () => {
+    const failure = new RunEventPersistenceError(
+      "finish",
+      new ModelError("context_overflow", "context too large", false, 400),
+    );
+    const complete = vi.fn<ModelPort["complete"]>().mockRejectedValue(failure);
+    const events = createEvents();
+    const runner = new TurnRunner({
+      model: { complete },
+      tools: { call: vi.fn<ToolCatalogPort["call"]>() },
+      catalog: [],
+      events: events.port,
+      now: () => new Date("2026-08-30T00:00:00Z"),
+    });
+    await expect(
+      runner.run({
+        runId: "run-1",
+        sessionId: "session-1",
+        snapshot: runSnapshot(),
+        context: context(),
+        signal: new AbortController().signal,
+        authoritySignal: new AbortController().signal,
+      }),
+    ).rejects.toBe(failure);
+    expect(complete).toHaveBeenCalledTimes(1);
+    expect(purposes(events.start.mock.calls)).not.toContain("compaction");
+  });
+
+  it("never compacts when the overflow follows lost worker ownership", async () => {
+    const authority = new AbortController();
+    const complete = vi.fn<ModelPort["complete"]>().mockImplementation(() => {
+      authority.abort(new Error("worker lock lost"));
+      return Promise.reject(new ModelError("context_overflow", "context too large", false, 400));
+    });
+    const events = createEvents();
+    const runner = new TurnRunner({
+      model: { complete },
+      tools: { call: vi.fn<ToolCatalogPort["call"]>() },
+      catalog: [],
+      events: events.port,
+      now: () => new Date("2026-08-30T00:00:00Z"),
+    });
+    await expect(
+      runner.run({
+        runId: "run-1",
+        sessionId: "session-1",
+        snapshot: runSnapshot(),
+        context: context(),
+        signal: new AbortController().signal,
+        authoritySignal: authority.signal,
+      }),
+    ).rejects.toThrow("worker lock lost");
     expect(complete).toHaveBeenCalledTimes(1);
     expect(purposes(events.start.mock.calls)).not.toContain("compaction");
   });

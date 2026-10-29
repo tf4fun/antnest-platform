@@ -6,7 +6,9 @@ WITH measured AS (
            COALESCE(started.payload->>'tokenizer', 'none') AS tokenizer,
            finished.created_at,
            finished.id,
-           CASE WHEN started.payload->>'estimatedInputTokens' ~ '^[0-9]+$'
+           CASE WHEN jsonb_typeof(started.payload->'estimatedInputTokens') = 'number'
+                     AND jsonb_typeof(finished.payload->'usage'->'inputTokens') = 'number'
+                     AND started.payload->>'estimatedInputTokens' ~ '^[0-9]+$'
                      AND finished.payload->'usage'->>'inputTokens' ~ '^[0-9]+$'
                 THEN (finished.payload->'usage'->>'inputTokens')::double precision /
                      NULLIF((started.payload->>'estimatedInputTokens')::double precision, 0)
