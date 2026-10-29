@@ -97,7 +97,35 @@ test("a newer main merge cancels the superseded system run; nightly and replays 
   const track = e2e.jobs.result.steps.find((step) =>
     /github-script/u.test(step.uses ?? ""),
   );
-  assert.match(track.if, /!cancelled\(\)/u, "superseded runs open no issue");
+  // A concurrency-cancelled run still runs always() jobs with cancelled()
+  // false, so tracking keys on the recorded conclusion instead.
+  assert.match(record.run, /conclusion=\$\{result\.conclusion\}/u);
+  assert.doesNotMatch(track.if, /cancelled\(\)/u);
+  assert.match(track.if, /conclusion == 'failed'/u);
+  assert.match(track.if, /conclusion == 'passed'/u);
+  assert.doesNotMatch(track.if, /'cancelled'/u, "superseded runs never track");
+});
+
+test("one tracking issue holds the latest state instead of a comment stream", () => {
+  const track = e2e.jobs.result.steps.find((step) =>
+    /github-script/u.test(step.uses ?? ""),
+  );
+  const script = track.with.script;
+  assert.doesNotMatch(script, /createComment/u, "failures never add comments");
+  assert.match(script, /issues\.update\(/u);
+  assert.match(
+    script,
+    /state: "open", body/u,
+    "a failure reopens and rewrites",
+  );
+  assert.match(script, /state: "closed", state_reason: "completed"/u);
+  assert.match(script, /listJobsForWorkflowRun/u, "the body names failed jobs");
+  assert.match(
+    script,
+    /state: "all"/u,
+    "a closed issue is reused, not duplicated",
+  );
+  assert.equal(e2e.jobs.result.permissions.actions, "read");
 });
 
 test("a full passed main run is release-capable", () => {
@@ -111,7 +139,11 @@ test("issue tracking and manifest publishing stay main-only privileged steps", (
   for (const step of e2e.jobs.result.steps.filter((item) =>
     /github-script/u.test(item.uses ?? ""),
   )) {
-    assert.match(step.if, /github\.event_name != 'pull_request'/u);
+    assert.match(
+      step.if,
+      /\(github\.event_name == 'push' \|\| github\.event_name == 'schedule'\)/u,
+      "pull requests, dispatch and manifest replays never track",
+    );
     assert.match(step.if, /github\.ref == 'refs\/heads\/main'/u);
   }
   const upload = e2e.jobs.manifest.steps.find((step) =>
@@ -170,7 +202,10 @@ test("nightly runs the stress suites; other events run the system suites", () =>
   const track = e2e.jobs.result.steps.find((step) =>
     /github-script/u.test(step.uses ?? ""),
   );
-  assert.equal(track.env.SCOPE, scope);
+  assert.equal(
+    track.env.SCOPE,
+    "${{ github.event_name == 'schedule' && 'stress' || 'system' }}",
+  );
   assert.match(track.with.script, /antnest-stress-failure/u);
   assert.match(e2e.jobs.suite.name, /matrix\.kind == 'stress'/u);
 });

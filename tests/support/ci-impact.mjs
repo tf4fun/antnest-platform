@@ -225,9 +225,14 @@ export function selectComponents(files, { all = false, sources } = {}) {
       selected.add(direct);
       continue;
     }
-    // Service workflows never run the root Makefile; its suites narrow by
-    // target in ci-changes.mjs.
-    if (helperTest.test(file) || file === "LICENSE" || file === "Makefile")
+    // Neither the root Makefile nor the system workflow runs a service unit
+    // job; suites narrow by Makefile target in ci-changes.mjs.
+    if (
+      helperTest.test(file) ||
+      file === "LICENSE" ||
+      file === "Makefile" ||
+      file === ".github/workflows/e2e.yml"
+    )
       continue;
     const owned = workflowService.exec(file)?.[1];
     if (owned) {

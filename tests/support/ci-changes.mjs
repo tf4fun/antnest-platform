@@ -20,10 +20,10 @@ const repositoryRoot = fileURLToPath(new URL("../../", import.meta.url));
 
 // Any change here can alter every suite's environment or selection. Shared
 // helpers and contract directories narrow through tests/support/ci-impact.mjs
-// instead of selecting everything.
+// instead of selecting everything. The system workflow (e2e.yml) is absent:
+// it never runs the PR gate, and every system run selects all its suites.
 const everySuite = [
   ".github/workflows/integration.yml",
-  ".github/workflows/e2e.yml",
   ".github/workflows/_suite.yml",
   "tests/support/ci-ownership.json",
   "tests/support/ci-changes.mjs",

@@ -293,7 +293,6 @@ test("documentation-only changes select no suites", () => {
 test("workflow, selector, ownership, contract root and unattributed Makefile changes select every suite", () => {
   for (const file of [
     ".github/workflows/integration.yml",
-    ".github/workflows/e2e.yml",
     ".github/workflows/_suite.yml",
     "tests/support/ci-ownership.json",
     "tests/support/ci-changes.mjs",
@@ -305,6 +304,13 @@ test("workflow, selector, ownership, contract root and unattributed Makefile cha
     "contracts/resource-identifiers.md",
   ])
     assert.equal(selectSuites([file]).length, enabled.length, file);
+});
+
+test("a system workflow change selects no pull request component suite", () => {
+  assert.deepEqual(
+    selectSuites([".github/workflows/e2e.yml"], { scope: "component" }),
+    [],
+  );
 });
 
 test("a contract change selects its declared owners, never every suite", () => {
