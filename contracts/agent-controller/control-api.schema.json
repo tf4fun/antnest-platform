@@ -394,6 +394,15 @@
           "type": "boolean",
           "default": false
         },
+        "tokenizer": {
+          "enum": ["o200k", "cl100k", "none"]
+        },
+        "compaction_model_profile_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200,
+          "pattern": "^\\S+$"
+        },
         "pricing": {
           "$ref": "#/$defs/model_pricing"
         }
@@ -869,6 +878,15 @@
         "supports_pdf": {
           "type": "boolean",
           "default": false
+        },
+        "tokenizer": {
+          "enum": ["o200k", "cl100k", "none"]
+        },
+        "compaction_model_profile_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200,
+          "pattern": "^\\S+$"
         },
         "pricing": {
           "$ref": "#/$defs/model_pricing"
