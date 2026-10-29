@@ -100,9 +100,12 @@ test("runner keeps the serial database run and records package timing", (t) => {
 test("a stopped run names the in-flight test and keeps partial counts out of admission", async (t) => {
   const options = fixture(
     t,
-    (directory) =>
-      `const e = (x) => console.log(JSON.stringify({Package:'sample',...x})); e({Action:'start'}); e({Action:'run',Test:'TestDone'}); e({Action:'output',Test:'TestDone',Output:'canary\\n'}); e({Action:'pass',Test:'TestDone',Elapsed:0.1}); e({Action:'run',Test:'TestSlow'}); require('node:fs').writeFileSync(${JSON.stringify(join(directory, "ready"))}, ''); setInterval(() => {}, 1000);`,
+    (directory) => {
+      const readyPath = join(directory, "ready");
+      return `const e = (x) => console.log(JSON.stringify({Package:'sample',...x})); e({Action:'start'}); e({Action:'run',Test:'TestDone'}); e({Action:'output',Test:'TestDone',Output:'canary\\n'}); e({Action:'pass',Test:'TestDone',Elapsed:0.1}); e({Action:'run',Test:'TestSlow'}); require('node:fs').writeFileSync(process.env.READY_PATH, ''); setInterval(() => {}, 1000);`;
+    },
   );
+  options.env = { ...options.env, READY_PATH: join(options.cwd, "ready") };
   const child = spawn(process.execPath, [script, "agent-controller"], {
     ...options,
     stdio: ["ignore", "pipe", "pipe"],
