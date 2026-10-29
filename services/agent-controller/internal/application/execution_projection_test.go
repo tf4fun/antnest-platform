@@ -12,12 +12,16 @@ import (
 )
 
 type executionCredentialOpener struct {
-	calls []ports.CredentialIdentity
-	err   error
+	calls     []ports.CredentialIdentity
+	err       error
+	plaintext *string
 }
 
 func (opener *executionCredentialOpener) Open(_ context.Context, identity ports.CredentialIdentity, _ ports.SealedSecret) (string, error) {
 	opener.calls = append(opener.calls, identity)
+	if opener.plaintext != nil {
+		return *opener.plaintext, opener.err
+	}
 	return "synthetic-current-secret", opener.err
 }
 

@@ -283,6 +283,12 @@
       },
       "request_body": "json"
     },
+    "POST /internal/execution-credentials/resolve": {
+      "callers": ["agent-acp-service"],
+      "authentication": "workload",
+      "caller_context": { "agent-acp-service": "none" },
+      "request_body": "json"
+    },
     "POST /internal/managed-mcp-secrets/resolve": {
       "callers": ["runtime-controller"],
       "authentication": "workload",

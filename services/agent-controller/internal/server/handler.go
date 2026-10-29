@@ -163,6 +163,7 @@ func (h *handler) routes() []routeDefinition {
 		{pattern: "POST /rpc/agent-controller/set-agent-authorization", handler: h.setAgentAuthorization},
 		{pattern: "GET /internal/execution-synchronization", handler: h.getExecutionSynchronization},
 		{pattern: "POST /internal/managed-mcp-secrets/resolve", handler: h.resolveMCPSecrets, metadataOnly: true},
+		{pattern: "POST /internal/execution-credentials/resolve", handler: h.resolveExecutionCredential, metadataOnly: true},
 		{pattern: "POST /internal/provider-connections", handler: h.createProviderConnection, metadataOnly: true},
 		{pattern: "PUT /internal/provider-connections/{connection_id}/availability", handler: h.setProviderAvailability},
 		{pattern: "PUT /internal/model-profiles/{model_profile_id}/availability", handler: h.setModelAvailability},

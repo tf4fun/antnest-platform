@@ -128,6 +128,8 @@ func (f *businessFixture) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		caller = "agent-acp-service"
 	} else if r.URL.Path == "/internal/managed-mcp-secrets/resolve" {
 		caller = "runtime-controller"
+	} else if r.URL.Path == "/internal/execution-credentials/resolve" {
+		caller = "agent-acp-service"
 	}
 	claims := map[string]any{}
 	for key, claim := range map[string]string{"organization_id": "org", "principal_id": "sub"} {

@@ -9,16 +9,27 @@ import (
 	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/ports"
 )
 
-type ExecutionCapacity struct {
-	opener   ports.CredentialOpener
-	maxBytes int
+type ExecutionCapacityOption func(*ExecutionCapacity)
+
+func WithExecutionCapacityWireVersion(version int) ExecutionCapacityOption {
+	return func(capacity *ExecutionCapacity) { capacity.wireVersion = version }
 }
 
-func NewExecutionCapacity(opener ports.CredentialOpener, maxBytes int) (*ExecutionCapacity, error) {
+type ExecutionCapacity struct {
+	opener      ports.CredentialOpener
+	maxBytes    int
+	wireVersion int
+}
+
+func NewExecutionCapacity(opener ports.CredentialOpener, maxBytes int, options ...ExecutionCapacityOption) (*ExecutionCapacity, error) {
 	if opener == nil || maxBytes < 1 {
 		return nil, fmt.Errorf("execution capacity requires local credential opening and a positive byte limit")
 	}
-	return &ExecutionCapacity{opener: opener, maxBytes: maxBytes}, nil
+	capacity := &ExecutionCapacity{opener: opener, maxBytes: maxBytes}
+	for _, option := range options {
+		option(capacity)
+	}
+	return capacity, nil
 }
 
 func (capacity *ExecutionCapacity) ValidateExecutionCapacity(ctx context.Context, input ports.ExecutionCapacityInput) error {
@@ -33,7 +44,13 @@ func (capacity *ExecutionCapacity) ValidateExecutionCapacity(ctx context.Context
 }
 
 func (capacity *ExecutionCapacity) RequiredBytes(ctx context.Context, input ports.ExecutionCapacityInput) (int, error) {
-	snapshot, err := BuildExecutionSnapshot(ctx, input.Current, capacity.opener)
+	var snapshot ports.ExecutionSnapshot
+	var err error
+	if capacity.wireVersion == ports.ExecutionSchemaVersion2 {
+		snapshot, err = BuildExecutionSnapshotV2(ctx, input.Current)
+	} else {
+		snapshot, err = BuildExecutionSnapshot(ctx, input.Current, capacity.opener)
+	}
 	if err != nil {
 		return 0, err
 	}

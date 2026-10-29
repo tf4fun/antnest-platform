@@ -818,3 +818,63 @@ retry/failover defaults while preserving immutable history and existing ACKs.
 Stop old Controller publishers before the migration, and deploy the ACP consumer
 first. The [model-call policy guide](model-call-policy.md) specifies rollout,
 revision exhaustion, explicit opt-outs and remaining consumer work.
+
+## Publication Wire Version 2 (#43, pending)
+
+`ANTNEST_AGENT_CONTROLLER_EXECUTION_WIRE_VERSION` selects the publication wire.
+The default `1` keeps the legacy plaintext snapshot unchanged (N-1); `2` is the
+opt-in v2 contract and must only be enabled after the ACP consumer upgrade.
+
+Under wire 2 the publisher probes `get-execution-digest` under the same
+database lock before reading the source. When the remote v2 digest revision
+equals the stored synchronization revision the run records the verified ACK
+and returns without reading the source, decrypting, resolving Runtime, or
+applying — the digest route re-runs the ACP owner/ACK barrier for that
+revision. A remote revision newer than local authority is `invalid_response`.
+Otherwise the producer builds the reference snapshot (`schema_version: 2`,
+Provider `credential` is `{ref: connection_id, version: credential_revision}`,
+no `method`/`secret`; model, Agent and budget projections are identical to
+v1), resolves private Runtime authority as before, and sends either an
+`apply-execution-delta` request (only when the remote is v2 and strictly
+behind) or a full v2 snapshot (absent, legacy, or equal-revision v1→v2
+upgrade, which ACP admits only when the public projection, credential
+versions and Runtime private authority match). Only
+`configuration_base_mismatch` triggers one full-v2 fallback; every other
+error propagates and v2 never downgrades to plaintext v1. The per-request
+payload cap still bounds full recovery.
+
+Delta upserts/deletes are chosen by comparing remote per-document public
+digests (Provider credential and Runtime token removed, `principal_ids`
+canonically sorted, SHA-256 over sorted-key UTF-8 JSON with minimal
+escaping); unchanged documents are retained and deletes carry removed IDs.
+Capacity and mutation-time validation use the same wire version, so v2 never
+decrypts outside a legacy send.
+
+`POST /internal/execution-credentials/resolve` lets the authenticated
+`agent-acp-service` workload (no caller context, no query, `Cache-Control:
+no-store`) resolve an exact `{organization_id, connection_id,
+credential_version}` identity to `{method: "api_key", secret}` at dispatch
+time; missing/disabled/rotated scope returns 404 or 409
+`configuration_conflict`, dependency failures return a uniform safe 503 and
+secrets are never logged.
+
+Wire 2 resynchronizes unchanged organizations every 5 minutes by digest
+(explicit `ANTNEST_AGENT_CONTROLLER_EXECUTION_RESYNC_INTERVAL` wins);
+mutations and retries still wake immediately.
+
+The reproducible `TestExecutionPublication500x50SteadyStateTrafficAndCPU`
+comparison uses 500 organizations, each with one Provider, one model and 50
+closed Agents carrying 2,048-byte prompts. After warming each protocol, one
+sequential unchanged sweep on macOS measured v1 request/response bodies of
+68,827,500/27,500 bytes versus v2 17,000/2,550,500 bytes. Source reads,
+credential decryptions and full applies were each 500 for v1 and zero for v2;
+v2 made 500 digest requests. Process CPU was 1,427,755 microseconds for v1 and
+327,015 for v2; wall time was 1,200,843 and 252,811 microseconds respectively.
+These are one recorded sample, not a CPU threshold or deployment capacity
+promise. The test uses the production Publisher, HTTP client and real AES
+credential opening, but an in-memory source/ACK store and an ACP protocol
+fixture. CPU includes that fixture in the same process. HTTP headers, TLS,
+PostgreSQL, real ACP owner barriers and authority restoration are excluded.
+The remote unit run repeats the test and records its own measurements;
+two-process PostgreSQL and system credential-rotation acceptance remain
+independent evidence.

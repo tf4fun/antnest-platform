@@ -10,10 +10,18 @@ import (
 )
 
 func BuildExecutionSnapshot(ctx context.Context, source ports.ExecutionSource, opener ports.CredentialOpener) (ports.ExecutionSnapshot, error) {
+	return buildExecutionSnapshot(ctx, source, 0, opener)
+}
+
+func BuildExecutionSnapshotV2(ctx context.Context, source ports.ExecutionSource) (ports.ExecutionSnapshot, error) {
+	return buildExecutionSnapshot(ctx, source, ports.ExecutionSchemaVersion2, nil)
+}
+
+func buildExecutionSnapshot(ctx context.Context, source ports.ExecutionSource, version int, opener ports.CredentialOpener) (ports.ExecutionSnapshot, error) {
 	if err := ctx.Err(); err != nil {
 		return ports.ExecutionSnapshot{}, err
 	}
-	result := ports.ExecutionSnapshot{OrganizationID: source.OrganizationID, Revision: source.Revision,
+	result := ports.ExecutionSnapshot{OrganizationID: source.OrganizationID, SchemaVersion: version, Revision: source.Revision,
 		Providers: make([]ports.ExecutionProvider, 0, len(source.Providers)), Models: make([]ports.ExecutionModel, 0, len(source.Models)), Agents: make([]ports.ExecutionAgent, 0, len(source.Agents))}
 	if source.OrganizationBudget != nil {
 		if err := source.OrganizationBudget.Validate(); err != nil {
@@ -29,15 +37,21 @@ func BuildExecutionSnapshot(ctx context.Context, source ports.ExecutionSource, o
 		if !ok || provider.CredentialMethod != support.CredentialMethod {
 			return ports.ExecutionSnapshot{}, ports.ErrInvalidExecutionConfiguration
 		}
-		secret, err := opener.Open(ctx, ports.CredentialIdentity{OrganizationID: provider.OrganizationID, CredentialRef: provider.ConnectionID, CredentialVersion: provider.CredentialVersion}, provider.SealedCredential)
-		if err != nil {
-			if err := ctx.Err(); err != nil {
-				return ports.ExecutionSnapshot{}, err
+		var credential *ports.ExecutionCredential
+		if version == ports.ExecutionSchemaVersion2 {
+			credential = &ports.ExecutionCredential{Ref: provider.ConnectionID, Version: provider.CredentialVersion}
+		} else {
+			secret, err := opener.Open(ctx, ports.CredentialIdentity{OrganizationID: provider.OrganizationID, CredentialRef: provider.ConnectionID, CredentialVersion: provider.CredentialVersion}, provider.SealedCredential)
+			if err != nil {
+				if err := ctx.Err(); err != nil {
+					return ports.ExecutionSnapshot{}, err
+				}
+				return ports.ExecutionSnapshot{}, fmt.Errorf("open current execution credential: %w", ports.ErrInvalidExecutionConfiguration)
 			}
-			return ports.ExecutionSnapshot{}, fmt.Errorf("open current execution credential: %w", ports.ErrInvalidExecutionConfiguration)
+			credential = &ports.ExecutionCredential{Method: provider.CredentialMethod, Secret: secret}
 		}
 		result.Providers = append(result.Providers, ports.ExecutionProvider{ConnectionID: provider.ConnectionID, ProviderKey: provider.ProviderKey, RequestProtocol: support.RequestProtocol, BaseURL: provider.BaseURL, Enabled: provider.Enabled,
-			CredentialRevision: provider.CredentialVersion, Credential: &ports.ExecutionCredential{Method: provider.CredentialMethod, Secret: secret}})
+			CredentialRevision: provider.CredentialVersion, Credential: credential})
 	}
 	for _, model := range source.Models {
 		if model.OrganizationID != source.OrganizationID || model.Revision.OrganizationID() != source.OrganizationID || model.Revision.Snapshot().ModelProfileID != model.ModelProfileID {

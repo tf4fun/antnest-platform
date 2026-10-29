@@ -78,6 +78,17 @@ var methodFailures = map[string][]responseFailure{
 		{413, "configuration_too_large", false},
 		{503, "configuration_unavailable", true},
 	},
+	"get-execution-digest": {
+		{400, "invalid_execution_configuration", false},
+		{503, "configuration_unavailable", true},
+	},
+	"apply-execution-delta": {
+		{400, "invalid_execution_configuration", false},
+		{409, "configuration_base_mismatch", false},
+		{409, "configuration_conflict", false},
+		{413, "configuration_too_large", false},
+		{503, "configuration_unavailable", true},
+	},
 	"settle-agent": {
 		{400, "invalid_agent_settlement", false},
 		{409, "agent_operation_conflict", false},

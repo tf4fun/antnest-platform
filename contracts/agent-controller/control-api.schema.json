@@ -2286,6 +2286,63 @@
           "$ref": "#/$defs/period_caps"
         }
       }
+    },
+    "execution_credential_request": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["organization_id", "connection_id", "credential_version"],
+      "properties": {
+        "organization_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "connection_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "credential_version": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        }
+      }
+    },
+    "execution_credential_response": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "organization_id",
+        "connection_id",
+        "credential_version",
+        "method",
+        "secret"
+      ],
+      "properties": {
+        "organization_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "connection_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "credential_version": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "method": {
+          "const": "api_key"
+        },
+        "secret": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
     }
   }
 }

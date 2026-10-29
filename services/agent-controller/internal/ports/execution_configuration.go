@@ -35,6 +35,7 @@ type ExecutionAgentSource struct {
 
 type ExecutionSnapshot struct {
 	OrganizationID     string                     `json:"organization_id"`
+	SchemaVersion      int                        `json:"schema_version,omitempty"`
 	Revision           int64                      `json:"revision"`
 	OrganizationBudget *domain.OrganizationBudget `json:"organization_budget,omitempty"`
 	Providers          []ExecutionProvider        `json:"providers"`
@@ -43,8 +44,10 @@ type ExecutionSnapshot struct {
 }
 
 type ExecutionCredential struct {
-	Method string `json:"method"`
-	Secret string `json:"secret"`
+	Method  string `json:"method,omitempty"`
+	Secret  string `json:"secret,omitempty"`
+	Ref     string `json:"ref,omitempty"`
+	Version string `json:"version,omitempty"`
 }
 
 type ExecutionProvider struct {
@@ -132,4 +135,9 @@ const (
 type ExecutionClient interface {
 	ApplyExecutionSnapshot(context.Context, ExecutionSnapshot) (ExecutionAcknowledgement, error)
 	SettleAgent(context.Context, AgentSettlementRequest) (AgentSettlementResult, error)
+}
+
+type ExecutionV2Client interface {
+	GetExecutionDigest(context.Context, string) (ExecutionDigest, error)
+	ApplyExecutionDelta(context.Context, ExecutionDelta) (ExecutionAcknowledgement, error)
 }
