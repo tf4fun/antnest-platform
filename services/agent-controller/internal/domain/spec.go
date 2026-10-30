@@ -1,6 +1,7 @@
 package domain
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -42,9 +43,62 @@ type ModelSpec struct {
 }
 
 type RuntimeResources struct {
-	MemoryBytes int64 `json:"memory_bytes"`
-	PIDsLimit   int   `json:"pids_limit"`
-	TmpfsBytes  int64 `json:"tmpfs_bytes"`
+	MemoryBytes    int64  `json:"memory_bytes"`
+	PIDsLimit      int    `json:"pids_limit"`
+	TmpfsBytes     int64  `json:"tmpfs_bytes"`
+	CPUMillis      *int64 `json:"cpu_millis,omitempty"`
+	WorkspaceBytes *int64 `json:"workspace_bytes,omitempty"`
+}
+
+func (r RuntimeResources) EffectiveCPUMillis() int64 {
+	if r.CPUMillis == nil {
+		return 1000
+	}
+	return *r.CPUMillis
+}
+
+func (r RuntimeResources) EffectiveWorkspaceBytes() int64 {
+	if r.WorkspaceBytes == nil {
+		return 10737418240
+	}
+	return *r.WorkspaceBytes
+}
+
+func (r RuntimeResources) Clone() RuntimeResources {
+	clone := r
+	if r.CPUMillis != nil {
+		value := *r.CPUMillis
+		clone.CPUMillis = &value
+	}
+	if r.WorkspaceBytes != nil {
+		value := *r.WorkspaceBytes
+		clone.WorkspaceBytes = &value
+	}
+	return clone
+}
+
+func (r *RuntimeResources) UnmarshalJSON(raw []byte) error {
+	if string(bytes.TrimSpace(raw)) == "null" {
+		return errors.New("runtime resources must be an object, not null")
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &fields); err != nil {
+		return err
+	}
+	for name, value := range fields {
+		if string(bytes.TrimSpace(value)) == "null" {
+			return fmt.Errorf("runtime resources field %q must not be null", name)
+		}
+	}
+	type runtimeResourcesAlias RuntimeResources
+	var decoded runtimeResourcesAlias
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&decoded); err != nil {
+		return err
+	}
+	*r = RuntimeResources(decoded)
+	return nil
 }
 
 type RuntimeSpecInput struct {
@@ -388,6 +442,12 @@ func validateRuntime(runtime RuntimeSpecInput) error {
 	}
 	if resources.PIDsLimit < minimumPIDs || resources.PIDsLimit > maximumPIDs {
 		return fmt.Errorf("runtime PID limit must be between %d and %d", minimumPIDs, maximumPIDs)
+	}
+	if resources.CPUMillis != nil && (*resources.CPUMillis < 100 || *resources.CPUMillis > 16000) {
+		return fmt.Errorf("runtime cpu_millis must be between 100 and 16000")
+	}
+	if resources.WorkspaceBytes != nil && (*resources.WorkspaceBytes < 67108864 || *resources.WorkspaceBytes > 1099511627776) {
+		return fmt.Errorf("runtime workspace_bytes must be between %d and %d", int64(67108864), int64(1099511627776))
 	}
 	return validateMCPServers(runtime.MCPServers)
 }

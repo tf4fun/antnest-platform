@@ -52,6 +52,11 @@ Startup follows the [development secret policy](../../contracts/platform/develop
   projection.
 - Consumption of Identity Service owner revocations, which close execution
   permission and schedule the Disable workflow.
+- Optional Template `runtime.resources` bounds `cpu_millis` (100..16000,
+  default 1000) and `workspace_bytes` (67108864..1099511627776, default
+  10737418240) forwarded as concrete values to Runtime Controller; the
+  workspace bound is a hard quota only when RC runs a configured external
+  size-enforcing volume driver, otherwise `disk_quota_enforced=false`.
 
 ## Non-responsibilities
 
