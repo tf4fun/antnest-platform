@@ -97,12 +97,28 @@ func TestCreateMapsImmutableRuntimeSpecToHardenedContainer(t *testing.T) {
 	if spec.Name != "antnest-runtime-agent-1" || spec.Image != testDeployment().ImageRef {
 		t.Fatalf("wrong Docker identity: %+v", spec)
 	}
-	if spec.ReadOnlyRootFS || spec.Environment["ANTNEST_RUNTIME_SPEC"] == "" || spec.User != "0:0" {
+	if !spec.ReadOnlyRootFS || spec.Environment["ANTNEST_RUNTIME_SPEC"] == "" || spec.User != "0:0" {
 		t.Fatalf("Runtime bootstrap was not hardened: %+v", spec)
 	}
 	if spec.Mounts["/workspace"].Source != "antnest-workspace-agent-1" ||
 		!spec.Mounts["/skills"].ReadOnly {
 		t.Fatalf("unexpected mounts: %+v", spec.Mounts)
+	}
+	resolverMount := spec.Mounts["/etc/resolv.conf"]
+	if resolverMount.Source != resolverVolumeName("test-controller", "agent-1", 7) ||
+		!resolverMount.ReadOnly || !resolverMount.NoCopy || resolverMount.Subpath != "resolv.conf" {
+		t.Fatalf("resolver mount missing or mutable: %+v", spec.Mounts)
+	}
+	if spec.Tmpfs["/tmp"] != "rw,noexec,nosuid,nodev,size=536870912" ||
+		spec.Tmpfs["/run/antnest"] != "rw,noexec,nosuid,nodev,size=16777216,mode=0700,uid=0,gid=0" {
+		t.Fatalf("unexpected tmpfs policy: %+v", spec.Tmpfs)
+	}
+	if spec.NanoCPUs != 1000000000 || spec.CPUShares != 1024 || spec.StopTimeout != RuntimeStopGraceSeconds {
+		t.Fatalf("resource or stop policy missing: %+v", spec)
+	}
+	if len(spec.SecurityOpt) != 2 || spec.SecurityOpt[0] != "no-new-privileges=true" ||
+		!strings.HasPrefix(spec.SecurityOpt[1], "seccomp={\"defaultAction\":\"SCMP_ACT_ERRNO\"") {
+		t.Fatalf("security options are not the deny-default profile: %+v", spec.SecurityOpt)
 	}
 	if spec.RestartPolicy != "unless-stopped" || len(spec.Healthcheck.Test) == 0 {
 		t.Fatalf("container lifecycle policy missing: %+v", spec)
@@ -539,7 +555,32 @@ func testDriverConfig() Config {
 	return Config{
 		ControllerScope: "test-controller", ManagementNetwork: "antnest-runtime-management",
 		SystemSkillsVolume: "antnest-system-skills",
+		ResolverMountGate:  &fakeResolverGate{},
 	}
+}
+
+type fakeResolverGate struct {
+	prepareCalls int
+	verifyCalls  int
+	removeCalls  int
+	prepareErr   error
+	verifyErr    error
+	removeErr    error
+}
+
+func (g *fakeResolverGate) Prepare(context.Context, deployment.Key, string) error {
+	g.prepareCalls++
+	return g.prepareErr
+}
+
+func (g *fakeResolverGate) VerifyRuntimeMount(context.Context, deployment.Key, string, string) error {
+	g.verifyCalls++
+	return g.verifyErr
+}
+
+func (g *fakeResolverGate) Remove(context.Context, deployment.Key) error {
+	g.removeCalls++
+	return g.removeErr
 }
 
 type fakeEngine struct {
@@ -555,6 +596,9 @@ type fakeEngine struct {
 	createMaterializes       bool
 	createVolumeErr          error
 	createVolumeMaterializes bool
+	createQuotaDriver        string
+	createQuotaOptions       map[string]string
+	lastStopGrace            int
 	inspectVolumeErrors      map[string]error
 	volumes                  map[string]Volume
 	networks                 map[string]bool
@@ -641,6 +685,16 @@ func (e *fakeEngine) CreateVolume(_ context.Context, name string, labels map[str
 	return nil
 }
 
+func (e *fakeEngine) CreateQuotaVolume(_ context.Context, name string, labels map[string]string, driver string, options map[string]string) error {
+	e.createQuotaDriver = driver
+	e.createQuotaOptions = options
+	if e.createVolumeErr != nil {
+		return e.createVolumeErr
+	}
+	e.volumes[name] = Volume{Name: name, Driver: driver, Options: options, Labels: labels}
+	return nil
+}
+
 func (e *fakeEngine) InspectNetwork(_ context.Context, name string) error {
 	if !e.networks[name] {
 		return ErrNotFound
@@ -657,13 +711,20 @@ func (e *fakeEngine) RemoveVolume(_ context.Context, name string) error {
 func (e *fakeEngine) CreateContainer(_ context.Context, spec ContainerSpec) (string, error) {
 	e.createCalls++
 	e.created = spec
+	mounts := make([]ObservedMount, 0, len(spec.Mounts))
+	for target, mount := range spec.Mounts {
+		mounts = append(mounts, ObservedMount{
+			Type: "volume", Name: mount.Source, Destination: target,
+			ReadWrite: !mount.ReadOnly, NoCopy: mount.NoCopy, Subpath: mount.Subpath,
+		})
+	}
 	if e.createMaterializes {
-		e.container = &Container{ID: "created", Name: spec.Name, Status: "created", Labels: spec.Labels}
+		e.container = &Container{ID: "created", Name: spec.Name, Status: "created", Labels: spec.Labels, Mounts: mounts}
 	}
 	if e.createErr != nil {
 		return "", e.createErr
 	}
-	e.container = &Container{ID: "created", Name: spec.Name, Status: "created", Labels: spec.Labels}
+	e.container = &Container{ID: "created", Name: spec.Name, Status: "created", Labels: spec.Labels, Mounts: mounts}
 	return "created", nil
 }
 
@@ -678,8 +739,13 @@ func (e *fakeEngine) StartContainer(context.Context, string) error {
 	return e.startErr
 }
 
-func (e *fakeEngine) StopContainer(context.Context, string) error {
+func (e *fakeEngine) StopContainer(ctx context.Context, identifier string) error {
+	return e.StopContainerWithGrace(ctx, identifier, RuntimeStopGraceSeconds)
+}
+
+func (e *fakeEngine) StopContainerWithGrace(_ context.Context, _ string, graceSeconds int) error {
 	e.stopCalls++
+	e.lastStopGrace = graceSeconds
 	if e.container != nil {
 		e.container.Running = false
 		e.container.Status = "exited"
@@ -691,4 +757,93 @@ func (e *fakeEngine) RemoveContainer(context.Context, string) error {
 	e.removeCalls++
 	e.container = nil
 	return nil
+}
+
+func TestCreateFailsClosedWithoutResolverMountGate(t *testing.T) {
+	engine := newFakeEngine()
+	driver, err := NewDriver(engine, Config{
+		ControllerScope: "test-controller", ManagementNetwork: "antnest-runtime-management",
+		SystemSkillsVolume: "antnest-system-skills",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	outcome := driver.Create(context.Background(), testDeployment(), testDigest)
+	if outcome.State != deployment.EffectNotStarted || outcome.Code != "invalid_request" {
+		t.Fatalf("missing resolver gate must fail closed: %+v", outcome)
+	}
+	if engine.createCalls != 0 {
+		t.Fatal("container created without a resolver gate")
+	}
+}
+
+func TestResolverVerifyFailureRemovesRejectedCandidateWithRegisteredCode(t *testing.T) {
+	engine := newFakeEngine()
+	gate := &fakeResolverGate{verifyErr: errors.New("resolver mount differs")}
+	config := testDriverConfig()
+	config.ResolverMountGate = gate
+	driver, err := NewDriver(engine, config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	outcome := driver.Create(context.Background(), testDeployment(), testDigest)
+	if outcome.State != deployment.EffectUnknown || outcome.Code != "platform_unavailable" {
+		t.Fatalf("resolver verify failure must use a registered code: %+v", outcome)
+	}
+	if engine.removeCalls != 1 {
+		t.Fatalf("rejected candidate was not cleaned up: %+v", engine)
+	}
+}
+
+func TestDeletePassesConfiguredStopGraceAndRegisteredCleanupCode(t *testing.T) {
+	engine := newFakeEngine()
+	engine.container = exactContainer()
+	engine.container.Running = true
+	gate := &fakeResolverGate{removeErr: errors.New("daemon lost")}
+	config := testDriverConfig()
+	config.ResolverMountGate = gate
+	config.StopGraceSeconds = 45
+	driver, err := NewDriver(engine, config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	outcome := driver.Delete(context.Background(), deployment.Key{AgentID: "agent-1", Generation: 7}, testDigest)
+	if engine.lastStopGrace != 45 {
+		t.Fatalf("configured stop grace not passed: %+v", engine)
+	}
+	if outcome.State != deployment.EffectUnknown || outcome.Code != "platform_unavailable" {
+		t.Fatalf("resolver cleanup failure must use a registered code: %+v", outcome)
+	}
+	if gate.removeCalls != 1 {
+		t.Fatalf("resolver remove was not attempted: %+v", gate)
+	}
+}
+
+func TestDeploymentDigestBindsWorkspaceQuotaOption(t *testing.T) {
+	config := func(option string) Config {
+		return Config{
+			ControllerScope: "test-controller", ManagementNetwork: "antnest-runtime-management",
+			SystemSkillsVolume: "antnest-system-skills", ResolverMountGate: &fakeResolverGate{},
+			WorkspaceVolumeDriver: "example-quota", WorkspaceQuotaOption: option,
+		}
+	}
+	first, err := NewDriver(newFakeEngine(), config("size"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := NewDriver(newFakeEngine(), config("quota"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	d1, err := first.DeploymentDigest(testDeployment())
+	if err != nil {
+		t.Fatal(err)
+	}
+	d2, err := second.DeploymentDigest(testDeployment())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d1 == d2 {
+		t.Fatal("deployment digest ignores the workspace quota option")
+	}
 }

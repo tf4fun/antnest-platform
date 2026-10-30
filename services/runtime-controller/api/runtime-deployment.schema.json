@@ -96,6 +96,20 @@
           "type": "integer",
           "minimum": 16777216,
           "maximum": 9223372036854775807
+        },
+        "cpu_millis": {
+          "type": "integer",
+          "minimum": 100,
+          "maximum": 16000,
+          "default": 1000,
+          "description": "Optional whole-CPU-thousandths limit; omission applies the default, explicit 0 or out-of-range is rejected (N-1 producers may omit it)."
+        },
+        "workspace_bytes": {
+          "type": "integer",
+          "minimum": 67108864,
+          "maximum": 1099511627776,
+          "default": 10737418240,
+          "description": "Optional persistent workspace byte bound; omission applies the default, explicit 0 or out-of-range is rejected (N-1 producers may omit it)."
         }
       }
     }

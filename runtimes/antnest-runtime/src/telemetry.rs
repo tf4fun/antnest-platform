@@ -25,7 +25,6 @@ use crate::network::PlatformNetwork;
 use crate::spec::RuntimeIdentity;
 
 pub(crate) const SERVICE_NAME: &str = "antnest-runtime";
-const SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
 
 #[derive(Debug, Error)]
 pub(crate) enum TelemetryError {
@@ -392,7 +391,7 @@ impl Telemetry {
     }
 
     pub(crate) fn shutdown(mut self) {
-        let deadline = Instant::now() + SHUTDOWN_TIMEOUT;
+        let deadline = Instant::now() + crate::shutdown::TELEMETRY_TIMEOUT;
         let meter_provider = self
             .meter_provider
             .take()

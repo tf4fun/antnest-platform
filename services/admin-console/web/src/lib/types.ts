@@ -269,10 +269,18 @@ export type ManagedMCPSecretWrite = { value: string } | { keep: true };
 export type ManagedMCPServer = ManagedMCPSummary & { args: string[]; env: Record<string, string>; secret_env?: Record<string, ManagedMCPSecret> };
 export type ManagedMCPServerWrite = Omit<ManagedMCPServer, "secret_env"> & { secret_env?: Record<string, ManagedMCPSecretWrite> };
 
+export type RuntimeResources = {
+  memory_bytes: number;
+  pids_limit: number;
+  tmpfs_bytes: number;
+  cpu_millis?: number;
+  workspace_bytes?: number;
+};
+
 export type RuntimeSpec = {
   image_ref: string;
   image_source?: string;
-  resources: { memory_bytes: number; pids_limit: number; tmpfs_bytes: number };
+  resources: RuntimeResources;
   mcp_servers?: ManagedMCPServer[];
 };
 

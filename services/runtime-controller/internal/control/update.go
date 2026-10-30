@@ -23,6 +23,9 @@ func (s *Service) updateRuntime(
 	if err != nil {
 		return s.unresolvedUpdate(ctx, operation, "platform_unavailable")
 	}
+	if outcome := s.platform.VerifyStorage(ctx, operation.AgentID, physical.Resources); outcome.State != deployment.EffectCompleted {
+		return s.finishFromEffect(ctx, operation, outcome, false, false)
+	}
 	if inspection.RuntimeKey() == source && inspection.PlatformPhase == deployment.PhaseAbsent &&
 		inspection.Health == deployment.HealthAbsent && inspection.SpecDigest == "" {
 		// A lost container leaves its generation-scoped receiver and MCP

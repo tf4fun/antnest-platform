@@ -100,10 +100,11 @@ func (s *Service) SetSkillVolumeInspector(inspector SkillVolumeInspector) {
 }
 
 type Readiness struct {
-	DatabaseReady    bool
-	PlatformReady    bool
-	ObservationReady bool
-	MonitorReady     bool
+	DatabaseReady     bool
+	PlatformReady     bool
+	ObservationReady  bool
+	MonitorReady      bool
+	DiskQuotaEnforced bool
 }
 
 func (r Readiness) Ready() bool {
@@ -160,6 +161,9 @@ func (s *Service) Status(ctx context.Context) (Readiness, error) {
 	// Docker/Runtime reachability is observed by actual lifecycle operations.
 	status.PlatformReady = s.platform != nil
 	status.MonitorReady = s.observations.MonitorReady()
+	if prober, ok := s.platform.(interface{ DiskQuotaEnforced() bool }); ok {
+		status.DiskQuotaEnforced = prober.DiskQuotaEnforced()
+	}
 	if ctx.Err() != nil {
 		result = errors.Join(result, ctx.Err())
 	}
@@ -461,7 +465,7 @@ func (s *Service) executeOperation(
 	}
 	switch operation.Kind {
 	case deployment.OperationInitializeRuntime:
-		if outcome := s.platform.EnsureStorage(ctx, operation.AgentID); outcome.State != deployment.EffectCompleted {
+		if outcome := s.platform.EnsureStorage(ctx, operation.AgentID, physical.Resources); outcome.State != deployment.EffectCompleted {
 			return s.finishFromEffect(ctx, operation, outcome, false, false)
 		}
 		return s.createRuntime(ctx, operation, physical, false)

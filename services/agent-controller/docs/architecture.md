@@ -251,6 +251,17 @@ metadata here records build lineage only; ACP selects current synchronized Model
 parameters by logical identity. Provider credentials are not build inputs.
 Managed MCP arguments and environment are not copied into the ACP Agent
 configuration payload or operational events.
+
+Template `runtime.resources` also accepts optional `cpu_millis` (integer
+100..16000, default 1000) and `workspace_bytes` (integer 67108864..1099511627776,
+default 10737418240). Omission applies the defaults so older producers stay
+compatible; explicit zero, `null`, fractional or out-of-range values are
+rejected at the JSON boundary and by domain validation. Agent Controller emits
+the concrete effective values to Runtime Controller on initialize, update and
+enable; explicit values are frozen into the Template revision and AgentSpec
+digest. Whether `workspace_bytes` is a hard quota depends on the RC workspace
+backend — with the default local Docker driver the bound is recorded but
+unbounded storage is reported as `disk_quota_enforced=false`.
 The current projection always emits `skill_instructions: []`. The
 [Skill Registry design](../../../docs/skill-registry-minimal-design.md) keeps it
 permanently empty and retires the full-text channel. The execution snapshot

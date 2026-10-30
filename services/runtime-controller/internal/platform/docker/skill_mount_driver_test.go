@@ -46,7 +46,7 @@ func TestPreparedSkillRuntimeStartsOnlyAfterActualMountGate(t *testing.T) {
 		if broken {
 			gate.err = errors.New("empty auto-created volume")
 		}
-		driver, err := NewDriver(engine, Config{ControllerScope: "test-controller", ManagementNetwork: "antnest-runtime-management", SystemSkillsVolume: "antnest-system-skills", SkillMountGate: gate})
+		driver, err := NewDriver(engine, Config{ControllerScope: "test-controller", ManagementNetwork: "antnest-runtime-management", SystemSkillsVolume: "antnest-system-skills", SkillMountGate: gate, ResolverMountGate: &fakeResolverGate{}})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -116,7 +116,7 @@ func TestRejectedSkillCandidateCleanupKeepsChangedOrRunningContainer(t *testing.
 					engine.container.Labels[labelGeneration] = "100"
 				}
 			})
-			driver, err := NewDriver(engine, Config{ControllerScope: key.Scope, ManagementNetwork: "antnest-runtime-management", SystemSkillsVolume: "antnest-system-skills", SkillMountGate: gate})
+			driver, err := NewDriver(engine, Config{ControllerScope: key.Scope, ManagementNetwork: "antnest-runtime-management", SystemSkillsVolume: "antnest-system-skills", SkillMountGate: gate, ResolverMountGate: &fakeResolverGate{}})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -140,7 +140,7 @@ func TestPreparedSkillStartResponseLossRechecksRunningMount(t *testing.T) {
 		if drift {
 			gate.failAfter = 2
 		}
-		driver, err := NewDriver(engine, Config{ControllerScope: "test-controller", ManagementNetwork: "antnest-runtime-management", SystemSkillsVolume: "antnest-system-skills", SkillMountGate: gate})
+		driver, err := NewDriver(engine, Config{ControllerScope: "test-controller", ManagementNetwork: "antnest-runtime-management", SystemSkillsVolume: "antnest-system-skills", SkillMountGate: gate, ResolverMountGate: &fakeResolverGate{}})
 		if err != nil {
 			t.Fatal(err)
 		}

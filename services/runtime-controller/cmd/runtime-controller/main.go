@@ -184,6 +184,10 @@ func run(ctx context.Context) (resultErr error) {
 	if err != nil {
 		return classified("instance_authentication", "instance_volume_initialization_failed", err)
 	}
+	resolverVolumes, err := platformdocker.NewResolverVolumeWriter(dockerClient, configuration.SkillPreparerImage, configuration.ControllerScope)
+	if err != nil {
+		return classified("resolver", "resolver_volume_initialization_failed", err)
+	}
 	senders, err := instanceauth.NewSender("", configuration.InstanceCredentials)
 	if err != nil {
 		return classified("instance_authentication", "instance_sender_initialization_failed", err)
@@ -208,7 +212,11 @@ func run(ctx context.Context) (resultErr error) {
 		RuntimeOTEL:           configuration.RuntimeOTEL,
 		SkillMountGate:        skillVolumes,
 		InstanceMountGate:     instanceVolumes,
+		ResolverMountGate:     resolverVolumes,
 		RuntimeAuthentication: configuration.RuntimeAuthentication,
+		StopGraceSeconds:      configuration.StopGraceSeconds,
+		WorkspaceVolumeDriver: configuration.WorkspaceVolumeDriver,
+		WorkspaceQuotaOption:  configuration.WorkspaceQuotaOption,
 	}
 	if mcpVolumes != nil {
 		driverConfig.MCPMountGate = mcpVolumes
@@ -216,6 +224,9 @@ func run(ctx context.Context) (resultErr error) {
 	driver, err := platformdocker.NewDriver(dockerClient, driverConfig)
 	if err != nil {
 		return classified("platform", "docker_driver_initialization_failed", err)
+	}
+	if !driver.DiskQuotaEnforced() {
+		slog.Warn("Runtime workspace storage is unbounded", "disk_quota_enforced", false)
 	}
 	var skillService *control.SkillPreparationService
 	var skillWorker *control.SkillPreparationWorker

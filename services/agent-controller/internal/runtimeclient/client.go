@@ -396,9 +396,11 @@ type runtimeConfigurationDTO struct {
 		ResolverIPv4 string `json:"resolver_ipv4"`
 	} `json:"network"`
 	Resources struct {
-		MemoryBytes int64 `json:"memory_bytes"`
-		PIDsLimit   int   `json:"pids_limit"`
-		TmpfsBytes  int64 `json:"tmpfs_bytes"`
+		MemoryBytes    int64 `json:"memory_bytes"`
+		PIDsLimit      int   `json:"pids_limit"`
+		TmpfsBytes     int64 `json:"tmpfs_bytes"`
+		CPUMillis      int64 `json:"cpu_millis"`
+		WorkspaceBytes int64 `json:"workspace_bytes"`
 	} `json:"resources"`
 }
 
@@ -427,6 +429,8 @@ func runtimeConfigurationPayload(configuration ports.RuntimeConfiguration) runti
 	payload.Resources.MemoryBytes = configuration.Resources.MemoryBytes
 	payload.Resources.PIDsLimit = configuration.Resources.PIDsLimit
 	payload.Resources.TmpfsBytes = configuration.Resources.TmpfsBytes
+	payload.Resources.CPUMillis = configuration.Resources.EffectiveCPUMillis()
+	payload.Resources.WorkspaceBytes = configuration.Resources.EffectiveWorkspaceBytes()
 	return payload
 }
 

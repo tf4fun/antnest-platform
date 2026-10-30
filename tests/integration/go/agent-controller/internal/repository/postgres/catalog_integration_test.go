@@ -93,6 +93,9 @@ func TestCatalogRepositoryPersistsAndReplaysRequests(t *testing.T) {
 	if err != nil || !reflect.DeepEqual(loadedTemplate.Revision.Snapshot().Runtime.MCPServers, template.Revision.Snapshot().Runtime.MCPServers) {
 		t.Fatalf("MCP configuration did not survive template persistence: %v", err)
 	}
+	if !reflect.DeepEqual(loadedTemplate.Revision.Snapshot().Runtime.Resources, template.Revision.Snapshot().Runtime.Resources) {
+		t.Fatalf("resource limits did not survive template persistence: %+v", loadedTemplate.Revision.Snapshot().Runtime.Resources)
+	}
 	if replayed, found, err := repository.ReplayTemplateRequest(
 		ctx, ports.CreateTemplateRequest, template.RequestID, template.RequestFingerprint,
 	); err != nil || !found || replayed.TemplateID != template.TemplateID {
@@ -108,6 +111,9 @@ func TestCatalogRepositoryPersistsAndReplaysRequests(t *testing.T) {
 	currentTemplate, err := repository.GetTemplate(ctx, template.TemplateID)
 	if err != nil || currentTemplate.Revision.Revision() != 2 {
 		t.Fatalf("get current Template: record=%+v err=%v", currentTemplate, err)
+	}
+	if !reflect.DeepEqual(currentTemplate.Revision.Snapshot().Runtime.Resources, revisedTemplate.Revision.Snapshot().Runtime.Resources) {
+		t.Fatalf("revised resource limits did not survive template persistence: %+v", currentTemplate.Revision.Snapshot().Runtime.Resources)
 	}
 	templates, _, err := repository.ListTemplates(ctx, "org-integration", "", 10)
 	if err != nil || len(templates) != 1 || templates[0].Revision.Revision() != 2 {
@@ -232,6 +238,7 @@ func mustIntegrationModelRevision(
 
 func integrationTemplateRecord(t *testing.T, model domain.ModelProfileRevision) ports.TemplateRecord {
 	t.Helper()
+	cpuLimit, workspaceLimit := int64(2500), int64(67108864)
 	revision, err := domain.NewTemplateRevision(domain.TemplateRevisionInput{
 		TemplateID: "template_integration", OrganizationID: "org-integration", Revision: 1,
 		ModelProfileID: model.Snapshot().ModelProfileID, SystemPrompt: "prompt", MaxModelRequests: 8,
@@ -241,6 +248,7 @@ func integrationTemplateRecord(t *testing.T, model domain.ModelProfileRevision) 
 			MCPServers: []domain.MCPServer{{ID: "documents", Command: "node", Args: []string{"server.js"}, Env: map[string]string{"TOKEN": "synthetic-mcp-token"}}},
 			Resources: domain.RuntimeResources{
 				MemoryBytes: 536870912, PIDsLimit: 256, TmpfsBytes: 67108864,
+				CPUMillis: &cpuLimit, WorkspaceBytes: &workspaceLimit,
 			},
 		},
 	})
@@ -259,6 +267,7 @@ func integrationRevisedTemplateRecord(
 	t *testing.T, current ports.TemplateRecord, model domain.ModelProfileRevision,
 ) ports.TemplateRecord {
 	t.Helper()
+	cpuLimit, workspaceLimit := int64(4000), int64(134217728)
 	revision, err := domain.NewTemplateRevision(domain.TemplateRevisionInput{
 		TemplateID: current.TemplateID, OrganizationID: current.OrganizationID, Revision: 2,
 		ModelProfileID: model.Snapshot().ModelProfileID, SystemPrompt: "prompt-v2", MaxModelRequests: 16,
@@ -267,6 +276,7 @@ func integrationRevisedTemplateRecord(
 			ImageRef: "antnest/runtime@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 			Resources: domain.RuntimeResources{
 				MemoryBytes: 536870912, PIDsLimit: 256, TmpfsBytes: 67108864,
+				CPUMillis: &cpuLimit, WorkspaceBytes: &workspaceLimit,
 			},
 		},
 	})

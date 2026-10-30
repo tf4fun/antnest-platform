@@ -570,6 +570,11 @@ mod platform {
     }
 
     fn configure_resolver_file(path: &Path, resolver: Ipv4Addr) -> Result<(), NetworkError> {
+        if let Ok(contents) = fs::read_to_string(path)
+            && validate_resolver_contents(&contents, resolver).is_ok()
+        {
+            return Ok(());
+        }
         let document = format!("options use-vc\nnameserver {resolver}\n");
         let mut file = OpenOptions::new()
             .write(true)
@@ -733,6 +738,7 @@ mod platform {
     #[cfg(test)]
     mod tests {
         use std::net::Ipv4Addr;
+        use std::path::Path;
 
         use super::{
             agent_route_commands, all_route_tables_query, configure_resolver_file,
@@ -794,6 +800,67 @@ mod platform {
             assert_eq!(
                 std::fs::read_to_string(path).expect("read reconciled resolver"),
                 "options use-vc\nnameserver 100.64.0.1\n"
+            );
+        }
+
+        #[test]
+        fn valid_resolver_is_accepted_without_rewriting_the_file() {
+            let directory = tempfile::tempdir().expect("temporary resolver directory");
+            let path = directory.path().join("resolv.conf");
+            let contents = "# platform-provided resolver\noptions use-vc\nnameserver 100.64.0.1\n";
+            std::fs::write(&path, contents).expect("write platform resolver");
+            let mut permissions = std::fs::metadata(&path)
+                .expect("stat platform resolver")
+                .permissions();
+            permissions.set_readonly(true);
+            std::fs::set_permissions(&path, permissions).expect("mark platform resolver read-only");
+            let modified = std::fs::metadata(&path)
+                .expect("stat read-only resolver")
+                .modified()
+                .expect("resolver mtime");
+
+            configure_resolver_file(&path, Ipv4Addr::new(100, 64, 0, 1))
+                .expect("accept an already valid resolver");
+
+            assert_eq!(
+                std::fs::read_to_string(&path).expect("read accepted resolver"),
+                contents
+            );
+            assert_eq!(
+                std::fs::metadata(&path)
+                    .expect("stat accepted resolver")
+                    .modified()
+                    .expect("resolver mtime"),
+                modified,
+                "a valid file must not be opened for writing"
+            );
+        }
+
+        #[test]
+        fn writable_wrong_resolver_is_still_reconciled() {
+            let directory = tempfile::tempdir().expect("temporary resolver directory");
+            let path = directory.path().join("resolv.conf");
+            std::fs::write(&path, "options use-vc\nnameserver 100.64.0.2\n")
+                .expect("write wrong writable resolver");
+
+            configure_resolver_file(&path, Ipv4Addr::new(100, 64, 0, 1))
+                .expect("reconcile wrong writable resolver");
+
+            assert_eq!(
+                std::fs::read_to_string(path).expect("read reconciled resolver"),
+                "options use-vc\nnameserver 100.64.0.1\n"
+            );
+        }
+
+        #[test]
+        fn read_only_wrong_resolver_fails_closed() {
+            let error =
+                configure_resolver_file(Path::new("/proc/version"), Ipv4Addr::new(100, 64, 0, 1))
+                    .expect_err("a wrong resolver that cannot be rewritten must fail");
+
+            assert!(
+                error.to_string().contains("resolver"),
+                "the failure must name the resolver reconciliation step"
             );
         }
 

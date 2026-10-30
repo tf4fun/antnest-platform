@@ -1,0 +1,111 @@
+{
+  "contract": "antnest.runtime.container-security",
+  "schema_version": 1,
+  "status": "published",
+  "issue": 35,
+  "activation": "Published by the owning Runtime, Runtime Controller, Agent Controller and Admin Console batches; contract/component integration verifies delivery without claiming Docker E2E acceptance.",
+  "resource_properties": {
+    "container": "deployment.resources",
+    "legacy_fields": {
+      "names": ["memory_bytes", "pids_limit", "tmpfs_bytes"],
+      "policy": "remain-compatible"
+    },
+    "definitions": {
+      "cpu_millis": {
+        "type": "integer",
+        "minimum": 100,
+        "maximum": 16000,
+        "default": 1000
+      },
+      "workspace_bytes": {
+        "type": "integer",
+        "minimum": 67108864,
+        "maximum": 1099511627776,
+        "default": 10737418240
+      }
+    },
+    "compatibility": {
+      "additional_fields": "optional",
+      "n_minus_1_producers": "accepted",
+      "omitted_fields": "apply-default",
+      "explicit_zero": "rejected",
+      "out_of_range": "rejected"
+    }
+  },
+  "cpu": {
+    "nano_cpus": "cpu_millis*1000000",
+    "cpu_shares": "max(2,cpu_millis*1024/1000)"
+  },
+  "shutdown": {
+    "drain_seconds": 8,
+    "cleanup_seconds": 3,
+    "telemetry_seconds": 5,
+    "total_seconds": 16,
+    "stop_grace_seconds": 20,
+    "managed_shutdown": {
+      "parallel_with_drain": true,
+      "budget_seconds": 8
+    },
+    "cleanup_budget_scope": "executor-and-io-join-not-only-tool-timeout"
+  },
+  "filesystem": {
+    "readonly_rootfs": true,
+    "tmp_noexec": true,
+    "run_tmpfs_bytes": 16777216,
+    "workspace": "persistent",
+    "managed_mcp_home": {
+      "kind": "separately-bounded-exec-tmpfs",
+      "exec": true,
+      "reason": "package-tools-require-exec"
+    }
+  },
+  "capabilities": {
+    "policy": "drop-all-then-add",
+    "set": [
+      "CHOWN",
+      "DAC_OVERRIDE",
+      "KILL",
+      "NET_ADMIN",
+      "SETGID",
+      "SETPCAP",
+      "SETUID"
+    ],
+    "setpcap_rationale": "required for PR_CAPBSET_DROP to keep the Executor bounding set empty",
+    "dac_override_rationale": "required for Supervisor cross-UID 0700 maintenance and private-home operations",
+    "removal_claimed": false
+  },
+  "seccomp": {
+    "base": "docker-default-allowlist",
+    "deny_syscalls_at_least": [
+      "keyctl",
+      "bpf",
+      "perf_event_open",
+      "userfaultfd",
+      "mount"
+    ]
+  },
+  "disk": {
+    "default_backend": {
+      "kind": "local-persistent-volume",
+      "workspace_bounded": false,
+      "disk_quota_enforced": false
+    },
+    "quota_backend": {
+      "kind": "external-volume-driver",
+      "driver_trust": "operator-configured-size-enforcing-driver",
+      "size_option": "operator-chosen-name-with-decimal-bytes-value",
+      "arbitrary_driver_enforces_size": false
+    },
+    "verification": "inspect-driver-and-options-must-match",
+    "existing_volume": "reject-unbounded-or-mismatched-quota-never-silently-migrate",
+    "storage_opt_size": "root-image-layer-only-never-workspace"
+  },
+  "delivery_batches": [
+    "antnest-runtime",
+    "runtime-controller",
+    "agent-controller",
+    "admin-console",
+    "integration"
+  ],
+  "docker_e2e": "dedicated-workflow-not-a-development-follow-up"
+}

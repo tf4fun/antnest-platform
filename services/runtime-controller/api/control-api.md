@@ -208,6 +208,16 @@ Initialize, Update, and Enable carry a Runtime configuration:
 }
 ```
 
+`resources` also accepts optional `cpu_millis` (integer 100..16000, default
+1000) and `workspace_bytes` (integer 67108864..1099511627776, default
+10737418240). Omission applies the defaults so N-1 producers stay compatible;
+explicit `0`, `null`, or an out-of-range value is rejected. `cpu_millis` maps
+to `NanoCpus = cpu_millis * 1000000` and `CpuShares = max(2, cpu_millis * 1024
+/ 1000)`; `workspace_bytes` is the persistent workspace byte bound enforced
+only when an operator-configured external quota driver is selected — the
+default local volume stays unbounded and `StorageOpt.size` is never used
+because it applies to the root layer, not the workspace.
+
 For system Skills, the same configuration also carries `organization_id`,
 the frozen `system_skills` array, `prepared_skill_set` (digest and layout
 version), and `prepared_reference_id`. The four fields must appear together,
@@ -457,9 +467,15 @@ boolean on both HTTP 200 and HTTP 503 responses:
   "database_ready": true,
   "platform_ready": true,
   "observation_ready": true,
-  "monitor_ready": true
+  "monitor_ready": true,
+  "disk_quota_enforced": false
 }
 ```
+
+`disk_quota_enforced` reports whether the configured workspace volume backend
+applies an operator-attested hard byte quota; `false` means the default local
+driver is unbounded. It is information, not a readiness failure, and does not
+claim a measured disk-fill proof.
 
 `ready` requires all four component flags. `platform_ready` denotes local
 adapter initialization; `observation_ready` denotes journal and notification

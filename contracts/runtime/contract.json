@@ -137,6 +137,7 @@
     "max_skills_per_root": 32,
     "max_warnings": 67
   },
+  "container_security": "container-security.json",
   "egress_tunnel": {
     "kind": "udp",
     "payload": "ant2-prefixed-wireguard-message",

@@ -49,24 +49,36 @@ reserved names.
 - `antnest-runtime serve` is container PID 1 and remains root.
 - The Supervisor has the platform privileges needed for TUN, policy routing,
   nftables, UID/GID transition, and process-tree cleanup, plus `/dev/net/tun`.
-- The root filesystem is writable by the trusted Supervisor so it can replace
-  the platform resolver; image files remain root-owned and are not writable by
-  UID/GID 1000 Executors.
-- `/workspace` is a writable persistent Agent volume.
+- The recommended shape mounts the root filesystem read-only. With
+  `ReadonlyRootfs` Docker also mounts its generated `/etc/resolv.conf`,
+  `/etc/hosts` and `/etc/hostname` read-only, so the platform must supply the
+  exact Agent resolver through its own read-only per-file mount; image files
+  remain root-owned and are not writable by UID/GID 1000 Executors.
+- `/workspace` is a writable persistent Agent volume. Tool scratch areas that
+  must execute belong inside it (for example `.cache/exec`), not in a new
+  privileged mount.
 - `/skills` is mounted read-only by Runtime Controller/container policy. Runtime's tool
   API does not grant writes but does not enforce the mount flag.
 - `/run/antnest-auth` is RC's read-only, root-only, per-generation receiver volume.
   Its hashes are not credentials and it is separate from the workspace and Skills.
-- `/tmp` is bounded ephemeral storage.
+- `/run/antnest-mcp-home` is a separately bounded writable `exec` tmpfs for
+  managed MCP homes; package-managed tooling requires execution, so it is the
+  deliberate `exec` exception.
+- `/tmp` is bounded `noexec` ephemeral storage.
 - No Docker socket, database credential, host filesystem, or external API
   credential is mounted.
 - Runtime HTTP is exposed only on the private platform network.
 
 A minimal Docker container has this shape. Runtime Controller supplies the
 workspace, system-Skill mounts, DNS upstream, and immutable RuntimeSpec values.
-Docker may initially expose its `127.0.0.11` embedded resolver; the root
-Supervisor replaces that container-local file with the exact virtual resolver
-before any UID/GID 1000 Executor exists.
+The read-only root filesystem, `noexec` `/tmp`, CPU and disk bounds here are
+the recommended contract shape; RC applies them to created containers in its
+own batch.
+The `/etc/resolv.conf` bind supplies the exact `options use-vc` plus one
+`nameserver <network.resolver_ipv4>` entry, prepared by the platform and
+mounted read-only; Docker's generated resolver is never accepted or rewritten.
+The Supervisor verifies contents instead of replacing the file before any
+UID/GID 1000 Executor exists.
 
 The kill switch also drops UID 1000 and managed tool UID 2000..2007 traffic to
 `127.0.0.11` before each loopback accept. This address-wide rule covers TCP and
@@ -80,7 +92,8 @@ docker run --rm \
   --cpus 1 \
   --memory 1g \
   --pids-limit 256 \
-  --stop-timeout 15 \
+  --read-only \
+  --stop-timeout 20 \
   --cap-drop ALL \
   --cap-add CHOWN \
   --cap-add DAC_OVERRIDE \
@@ -90,9 +103,13 @@ docker run --rm \
   --cap-add SETPCAP \
   --cap-add SETUID \
   --device /dev/net/tun \
-  --tmpfs /tmp:rw,nosuid,nodev,size=64m \
+  --tmpfs /tmp:rw,noexec,nosuid,nodev,size=64m \
+  --tmpfs /run/antnest:rw,noexec,nosuid,nodev,size=16m \
+  --tmpfs /run/antnest-mcp-home:rw,exec,nosuid,nodev,size=16m,mode=0711,uid=0,gid=0 \
   --dns 100.64.0.1 \
   --dns-option use-vc \
+  --mount type=bind,src=/srv/antnest/agents/agent-123/resolv.conf,\
+dst=/etc/resolv.conf,readonly \
   --mount type=bind,src=/srv/antnest/agents/agent-123,\
 dst=/workspace \
   --mount type=bind,src=/srv/antnest/skills,\
@@ -109,7 +126,7 @@ The corresponding Kubernetes container security context is:
 
 ```yaml
 spec:
-  terminationGracePeriodSeconds: 15
+  terminationGracePeriodSeconds: 20
   containers:
     - name: runtime
       resources:
@@ -118,7 +135,7 @@ spec:
       securityContext:
         runAsUser: 0
         runAsGroup: 0
-        readOnlyRootFilesystem: false
+        readOnlyRootFilesystem: true
         allowPrivilegeEscalation: false
         capabilities:
           drop: ["ALL"]
@@ -137,14 +154,18 @@ spec:
         - { name: workspace, mountPath: /workspace }
         - { name: system-skills, mountPath: /skills, readOnly: true }
         - { name: instance-auth, mountPath: /run/antnest-auth, readOnly: true }
+        - { name: resolver, mountPath: /etc/resolv.conf, readOnly: true, subPath: resolv.conf }
         - { name: tmp, mountPath: /tmp }
 ```
 
 `tun` is a deployment-managed character-device mount, `workspace` is an
 Agent-owned persistent volume, `system-skills` is read-only, and `tmp` is a
-memory-backed `emptyDir` with a size limit. `/etc/resolv.conf` must remain
-writable by the root Supervisor during bootstrap; the default cluster resolver
-is only an initial platform value and is not an Agent DNS path.
+memory-backed `emptyDir` with a size limit; where the platform supports mount
+options it must be `noexec`. The kubelet-generated `/etc/resolv.conf` stays
+read-only over a read-only root filesystem and is never rewritten; the planned
+Kubernetes shape explicitly provisions the matching file through a projected
+config mounted read-only at `/etc/resolv.conf`. The default cluster resolver is
+only an initial platform value and is not an Agent DNS path.
 The `instance-auth` volume must preserve the root-only receiver shape above;
 default-readable projected volumes are insufficient. The Pod has no public
 Service or ingress. NetworkPolicy permits full status from RC/ACP, MCP from ACP,
@@ -154,10 +175,13 @@ traffic reaches every allowed internal or external destination through TUN and
 Runtime Egress policy.
 
 CPU, memory, PID, workspace-volume, and `/tmp` limits are deployment inputs and
-must be explicit. The platform termination grace period must cover Runtime's
-eight-second component drain plus its five-second telemetry flush so active
-Executor cancellation, descendant reaping, network task exit, and telemetry
-flush can finish before SIGKILL.
+must be explicit. Runtime's normal shutdown budget is sixteen seconds: an
+eight-second component drain that includes managed MCP shutdown in parallel, a
+three-second temporary-Skill cleanup that covers the Executor kill, reap and
+owned I/O joins, and a five-second telemetry flush. The platform termination
+grace period is twenty seconds so active Executor cancellation, descendant
+reaping, network task exit, cleanup and telemetry flush can finish before
+SIGKILL.
 
 Named-root containment uses Linux `openat2`; the host kernel must provide that
 system call (Linux 5.6 or newer) and the container seccomp profile must allow
@@ -175,11 +199,22 @@ process state. Managed tool calls instead forward through their already-running
 dedicated UID 2000..2007 / workspace GID 1000 stdio server, started by the `mcp-stdio` launcher; discovery/status
 requests do not create a one-shot Executor.
 
-Bootstrap verifies that every required Supervisor capability is present,
-including `CAP_KILL`. Runtime Controller owns the exact capability set. This
-capability is required to terminate a UID/GID 1000 Executor on request
-cancellation, timeout, or container shutdown; it is never retained by the
-Executor.
+Bootstrap verifies that every required Supervisor capability is present.
+Runtime Controller owns the exact set, which stays at seven entries:
+
+- `CAP_CHOWN`: bootstrap takes ownership of the workspace directories before
+  handing them to UID/GID 1000.
+- `CAP_DAC_OVERRIDE`: the Supervisor traverses private 0700 directories owned
+  by other UIDs for maintenance and managed MCP private homes.
+- `CAP_KILL`: the Supervisor terminates UID/GID 1000 Executor process trees on
+  request cancellation, timeout, or container shutdown.
+- `CAP_NET_ADMIN`: TUN, policy routing, and the nftables kill switch.
+- `CAP_SETGID` and `CAP_SETUID`: the irreversible drop to UID/GID 1000
+  Executors and UID 2000..2007 managed servers.
+- `CAP_SETPCAP`: `PR_CAPBSET_DROP` empties each Executor's capability bounding
+  set.
+
+None of these capabilities is ever retained by the Executor.
 
 Supervisor starts subcommands through `/proc/self/exe` with an empty environment
 and only three protocol pipes. All other descriptors are close-on-exec. stdin
@@ -214,11 +249,14 @@ policy instead of direct platform routes. The deployment must not publish the
 MCP port outside the trusted Docker or Kubernetes network.
 
 Runtime installs immutable DNS-over-TCP resolver configuration before it
-installs the Agent policy route. The root Supervisor truncates the
-container-local `/etc/resolv.conf`, writes `options use-vc` plus exactly one
-`nameserver <network.resolver_ipv4>` entry from RuntimeSpec, flushes it, and
-validates the result. Startup fails closed when the file cannot be written or
-does not match. UID/GID 1000 cannot modify the root-owned file later.
+installs the Agent policy route. The Supervisor first reads `/etc/resolv.conf`;
+a file that already carries `options use-vc` plus exactly one
+`nameserver <network.resolver_ipv4>` entry from RuntimeSpec is accepted as-is,
+which is how a platform-provided read-only mount passes. Otherwise the
+Supervisor reconciles a writable file to that exact document, flushes it, and
+validates the result. A missing file, a wrong read-only file, or a rewrite that
+still does not match fails closed; Docker's generated stub is never accepted.
+UID/GID 1000 cannot modify the root-owned file later.
 
 This removes Docker's embedded `127.0.0.11` and Kubernetes cluster DNS from the
 Agent path because either would bypass TUN and Egress policy. Runtime Controller

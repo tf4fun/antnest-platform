@@ -5,6 +5,7 @@
   "base_path": "/api/admin",
   "authentication_contract": "service-authentication.md",
   "authenticated_actor": "identity_signed_cct_verified_by_console",
+  "runtime_resources_contract": "runtime-resources.schema.json",
   "routes": {
     "search_skill_sources": {
       "method": "POST",

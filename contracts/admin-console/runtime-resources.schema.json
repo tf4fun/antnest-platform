@@ -1,0 +1,50 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://antnest.local/contracts/admin-console/runtime-resources.schema.json",
+  "title": "Console Runtime resource bounds",
+  "$defs": {
+    "resource_input": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "memory_bytes": { "type": "integer" },
+        "pids_limit": { "type": "integer" },
+        "tmpfs_bytes": { "type": "integer" },
+        "cpu_millis": {
+          "type": "integer",
+          "minimum": 100,
+          "maximum": 16000,
+          "default": 1000
+        },
+        "workspace_bytes": {
+          "type": "integer",
+          "minimum": 67108864,
+          "maximum": 1099511627776,
+          "default": 10737418240
+        }
+      }
+    },
+    "resource_view": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["memory_bytes", "pids_limit", "tmpfs_bytes"],
+      "properties": {
+        "memory_bytes": { "type": "integer" },
+        "pids_limit": { "type": "integer" },
+        "tmpfs_bytes": { "type": "integer" },
+        "cpu_millis": {
+          "type": "integer",
+          "minimum": 100,
+          "maximum": 16000,
+          "default": 1000
+        },
+        "workspace_bytes": {
+          "type": "integer",
+          "minimum": 67108864,
+          "maximum": 1099511627776,
+          "default": 10737418240
+        }
+      }
+    }
+  }
+}

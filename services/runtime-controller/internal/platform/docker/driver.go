@@ -41,11 +41,23 @@ type Config struct {
 	RuntimeOTEL           map[string]string
 	SkillMountGate        SkillMountGate
 	InstanceMountGate     InstanceMountGate
+	ResolverMountGate     ResolverMountGate
 	RuntimeAuthentication map[string]string
+	StopGraceSeconds      int
+	WorkspaceVolumeDriver string
+	WorkspaceQuotaOption  string
 }
+
+const RuntimeStopGraceSeconds = 20
 
 type SkillMountGate interface {
 	VerifyRuntimeMount(context.Context, skillset.SetKey, string, string) error
+}
+
+type ResolverMountGate interface {
+	Prepare(context.Context, deployment.Key, string) error
+	VerifyRuntimeMount(context.Context, deployment.Key, string, string) error
+	Remove(context.Context, deployment.Key) error
 }
 
 type Engine interface {
@@ -57,6 +69,7 @@ type Engine interface {
 	WatchManagedEvents(context.Context, time.Time, func() error, func(ContainerEvent) error) error
 	InspectVolume(context.Context, string) (Volume, error)
 	CreateVolume(context.Context, string, map[string]string) error
+	CreateQuotaVolume(context.Context, string, map[string]string, string, map[string]string) error
 	InspectNetwork(context.Context, string) error
 	CreateContainer(context.Context, ContainerSpec) (string, error)
 	StartContainer(context.Context, string) error
@@ -93,17 +106,21 @@ type ObservedMount struct {
 	Destination string
 	ReadWrite   bool
 	NoCopy      bool
+	Subpath     string
 }
 
 type Volume struct {
-	Name   string
-	Labels map[string]string
+	Name    string
+	Driver  string
+	Options map[string]string
+	Labels  map[string]string
 }
 
 type Mount struct {
 	Source   string
 	ReadOnly bool
 	NoCopy   bool
+	Subpath  string
 }
 
 type Healthcheck struct {
@@ -132,6 +149,10 @@ type ContainerSpec struct {
 	NetworkMode    string
 	PidsLimit      int64
 	MemoryBytes    int64
+	NanoCPUs       int64
+	CPUShares      int64
+	StopTimeout    int
+	SecurityOpt    []string
 	RestartPolicy  string
 	Healthcheck    Healthcheck
 }
@@ -155,6 +176,12 @@ func NewDriver(engine Engine, config Config) (*Driver, error) {
 	images, err := ParseImagePolicy(config.AllowedImages)
 	if err != nil {
 		return nil, err
+	}
+	if config.StopGraceSeconds == 0 {
+		config.StopGraceSeconds = RuntimeStopGraceSeconds
+	}
+	if config.StopGraceSeconds < 20 || config.StopGraceSeconds > 120 {
+		return nil, fmt.Errorf("runtime stop grace %d must be a whole second value within [20, 120]", config.StopGraceSeconds)
 	}
 	return &Driver{engine: engine, config: config, images: images}, nil
 }
@@ -220,7 +247,7 @@ func (d *Driver) Create(
 	if err != nil || computed != digest {
 		return failed(deployment.EffectNotStarted, "invalid_request", errors.New("deployment digest mismatch"))
 	}
-	if err := d.requireCreateStorage(ctx, key.AgentID, value.PreparedMaterialization); err != nil {
+	if err := d.requireCreateStorage(ctx, key.AgentID, value.PreparedMaterialization, value.Resources); err != nil {
 		switch {
 		case errors.Is(err, deployment.ErrIdentityConflict):
 			return failed(deployment.EffectNotStarted, "storage_ownership_conflict", err)
@@ -247,6 +274,12 @@ func (d *Driver) Create(
 			return dockerFailure("platform_unavailable", err, true)
 		}
 	}
+	if d.config.ResolverMountGate == nil {
+		return failed(deployment.EffectNotStarted, "invalid_request", errors.New("resolver mount gate is required"))
+	}
+	if err := d.config.ResolverMountGate.Prepare(ctx, key, value.RuntimeSpec.Network.ResolverIPv4); err != nil {
+		return dockerFailure("platform_unavailable", err, true)
+	}
 
 	name := containerName(key.AgentID)
 	existing, err := d.engine.InspectContainer(telemetry.WithExpectedDockerAbsence(ctx), name)
@@ -254,7 +287,7 @@ func (d *Driver) Create(
 		return dockerFailure("platform_unavailable", err, false)
 	}
 	if err == nil {
-		return d.convergeContainer(ctx, existing, key, digest, value.PreparedMaterialization, value.RuntimeSpec.Authentication, value.ManagedMCPTemplate, value.RuntimeSpec.MCPServers)
+		return d.convergeContainer(ctx, existing, key, digest, value.PreparedMaterialization, value.RuntimeSpec.Authentication, value.ManagedMCPTemplate, value.RuntimeSpec.MCPServers, value.RuntimeSpec.Network.ResolverIPv4)
 	}
 
 	spec, err := d.containerSpec(value, digest)
@@ -265,7 +298,7 @@ func (d *Driver) Create(
 	if err != nil {
 		existing, inspectErr := d.engine.InspectContainer(ctx, name)
 		if inspectErr == nil {
-			return d.convergeContainer(ctx, existing, key, digest, value.PreparedMaterialization, value.RuntimeSpec.Authentication, value.ManagedMCPTemplate, value.RuntimeSpec.MCPServers)
+			return d.convergeContainer(ctx, existing, key, digest, value.PreparedMaterialization, value.RuntimeSpec.Authentication, value.ManagedMCPTemplate, value.RuntimeSpec.MCPServers, value.RuntimeSpec.Network.ResolverIPv4)
 		}
 		return dockerFailure(
 			"platform_unavailable", errors.Join(err, inspectErr), errors.Is(err, ErrConflict),
@@ -287,10 +320,13 @@ func (d *Driver) Create(
 			return failed(deployment.EffectUnknown, "platform_unavailable", errors.Join(err, d.removeRejectedSkillCandidate(containerID, key, digest)))
 		}
 	}
+	if err := d.config.ResolverMountGate.VerifyRuntimeMount(ctx, key, value.RuntimeSpec.Network.ResolverIPv4, containerID); err != nil {
+		return failed(deployment.EffectUnknown, "platform_unavailable", errors.Join(err, d.removeRejectedSkillCandidate(containerID, key, digest)))
+	}
 	if err := d.engine.StartContainer(ctx, containerID); err != nil {
 		existing, inspectErr := d.engine.InspectContainer(ctx, name)
 		if inspectErr == nil && d.matches(existing, key, digest) && existing.Running {
-			return d.convergeContainer(ctx, existing, key, digest, value.PreparedMaterialization, value.RuntimeSpec.Authentication, value.ManagedMCPTemplate, value.RuntimeSpec.MCPServers)
+			return d.convergeContainer(ctx, existing, key, digest, value.PreparedMaterialization, value.RuntimeSpec.Authentication, value.ManagedMCPTemplate, value.RuntimeSpec.MCPServers, value.RuntimeSpec.Network.ResolverIPv4)
 		}
 		return dockerFailure("platform_unavailable", errors.Join(err, inspectErr), true)
 	}
@@ -318,7 +354,7 @@ func (d *Driver) removeRejectedSkillCandidate(containerID string, key deployment
 }
 
 func (d *Driver) convergeContainer(
-	ctx context.Context, existing Container, key deployment.Key, digest string, prepared *skillset.PreparedMaterialization, auth *deployment.RuntimeAuthentication, source *deployment.MCPTemplateSource, servers []deployment.MCPServer,
+	ctx context.Context, existing Container, key deployment.Key, digest string, prepared *skillset.PreparedMaterialization, auth *deployment.RuntimeAuthentication, source *deployment.MCPTemplateSource, servers []deployment.MCPServer, resolverIPv4 string,
 ) deployment.EffectOutcome {
 	if !d.matches(existing, key, digest) {
 		return failed(
@@ -344,6 +380,9 @@ func (d *Driver) convergeContainer(
 		if err := d.config.MCPMountGate.VerifyRuntimeMount(ctx, key, source, servers, existing.ID); err != nil {
 			return failed(deployment.EffectUnknown, "platform_unavailable", err)
 		}
+	}
+	if err := d.config.ResolverMountGate.VerifyRuntimeMount(ctx, key, resolverIPv4, existing.ID); err != nil {
+		return failed(deployment.EffectUnknown, "platform_unavailable", err)
 	}
 	if existing.Running {
 		return completed()
@@ -396,6 +435,11 @@ func (d *Driver) Delete(
 				return dockerFailure("instance_receiver_cleanup_failed", err, true)
 			}
 		}
+		if d.config.ResolverMountGate != nil {
+			if err := d.config.ResolverMountGate.Remove(ctx, key); err != nil {
+				return dockerFailure("platform_unavailable", err, true)
+			}
+		}
 		return completed()
 	}
 	if err != nil {
@@ -409,7 +453,18 @@ func (d *Driver) Delete(
 		)
 	}
 	if container.Running {
-		if err := d.engine.StopContainer(ctx, container.ID); err != nil && !errors.Is(err, ErrNotFound) {
+		var stopErr error
+		if graceful, ok := d.engine.(interface {
+			StopContainerWithGrace(context.Context, string, int) error
+		}); ok {
+			stopErr = graceful.StopContainerWithGrace(ctx, container.ID, d.config.StopGraceSeconds)
+		} else if d.config.StopGraceSeconds == RuntimeStopGraceSeconds {
+			stopErr = d.engine.StopContainer(ctx, container.ID)
+		} else {
+			return failed(deployment.EffectNotStarted, "platform_unavailable",
+				fmt.Errorf("configured stop grace %d requires an engine supporting StopContainerWithGrace", d.config.StopGraceSeconds))
+		}
+		if err := stopErr; err != nil && !errors.Is(err, ErrNotFound) {
 			return dockerFailure("platform_unavailable", err, true)
 		}
 	}
@@ -426,14 +481,27 @@ func (d *Driver) Delete(
 			return dockerFailure("instance_receiver_cleanup_failed", err, true)
 		}
 	}
+	if d.config.ResolverMountGate != nil {
+		if err := d.config.ResolverMountGate.Remove(ctx, key); err != nil {
+			return dockerFailure("platform_unavailable", err, true)
+		}
+	}
 	return completed()
 }
 
-func (d *Driver) EnsureStorage(ctx context.Context, agentID string) deployment.EffectOutcome {
+func (d *Driver) EnsureStorage(ctx context.Context, agentID string, limits ...deployment.ResourceLimits) deployment.EffectOutcome {
 	name := workspaceVolume(agentID)
 	volume, err := d.engine.InspectVolume(telemetry.WithExpectedDockerAbsence(ctx), name)
 	if errors.Is(err, ErrNotFound) {
-		createErr := d.engine.CreateVolume(ctx, name, d.workspaceLabels(agentID))
+		labels := d.workspaceLabels(agentID)
+		var createErr error
+		if d.config.WorkspaceVolumeDriver != "" {
+			bytes := strconv.FormatUint(requestedWorkspaceBytes(limits), 10)
+			labels["io.antnest.workspace-bytes"] = bytes
+			createErr = d.engine.CreateQuotaVolume(ctx, name, labels, d.config.WorkspaceVolumeDriver, map[string]string{d.config.WorkspaceQuotaOption: bytes})
+		} else {
+			createErr = d.engine.CreateVolume(ctx, name, labels)
+		}
 		volume, err = d.engine.InspectVolume(ctx, name)
 		if err != nil {
 			possiblyExists := createErr == nil || errors.Is(createErr, ErrConflict)
@@ -447,11 +515,14 @@ func (d *Driver) EnsureStorage(ctx context.Context, agentID string) deployment.E
 		return failed(deployment.EffectNotStarted, "storage_ownership_conflict",
 			errors.New("workspace volume ownership labels differ"))
 	}
+	if err := d.workspaceQuotaMatches(volume, limits); err != nil {
+		return failed(deployment.EffectNotStarted, "storage_ownership_conflict", err)
+	}
 	return completed()
 }
 
-func (d *Driver) VerifyStorage(ctx context.Context, agentID string) deployment.EffectOutcome {
-	if err := d.requireWorkspace(ctx, agentID); err != nil {
+func (d *Driver) VerifyStorage(ctx context.Context, agentID string, limits ...deployment.ResourceLimits) deployment.EffectOutcome {
+	if err := d.requireWorkspace(ctx, agentID, limits...); err != nil {
 		switch {
 		case errors.Is(err, deployment.ErrIdentityConflict):
 			return failed(deployment.EffectNotStarted, "storage_ownership_conflict", err)
@@ -600,7 +671,7 @@ func managedIdentity(labels map[string]string) (deployment.Key, string, error) {
 	return key, digest, nil
 }
 
-func (d *Driver) requireWorkspace(ctx context.Context, agentID string) error {
+func (d *Driver) requireWorkspace(ctx context.Context, agentID string, limits ...deployment.ResourceLimits) error {
 	workspace, err := d.engine.InspectVolume(ctx, workspaceVolume(agentID))
 	if err != nil {
 		return fmt.Errorf("workspace volume: %w", err)
@@ -608,11 +679,14 @@ func (d *Driver) requireWorkspace(ctx context.Context, agentID string) error {
 	if !d.workspaceOwnedBy(workspace, agentID) {
 		return fmt.Errorf("workspace volume: %w", deployment.ErrIdentityConflict)
 	}
+	if err := d.workspaceQuotaMatches(workspace, limits); err != nil {
+		return fmt.Errorf("workspace volume: %w", deployment.ErrIdentityConflict)
+	}
 	return nil
 }
 
-func (d *Driver) requireCreateStorage(ctx context.Context, agentID string, prepared *skillset.PreparedMaterialization) error {
-	if err := d.requireWorkspace(ctx, agentID); err != nil {
+func (d *Driver) requireCreateStorage(ctx context.Context, agentID string, prepared *skillset.PreparedMaterialization, limits ...deployment.ResourceLimits) error {
+	if err := d.requireWorkspace(ctx, agentID, limits...); err != nil {
 		return err
 	}
 	if prepared != nil {
@@ -663,6 +737,11 @@ func (d *Driver) containerSpec(value deployment.Deployment, digest string) (Cont
 			skillsVolume = value.PreparedMaterialization.VolumeName
 		}
 	}
+	cpuMillis := value.Resources.EffectiveCPUMillis()
+	backend := d.config.WorkspaceVolumeDriver
+	if backend == "" {
+		backend = "local"
+	}
 	spec := ContainerSpec{
 		Name: containerName(value.RuntimeSpec.AgentID), Image: value.ImageRef, User: "0:0",
 		Environment: environment,
@@ -671,6 +750,9 @@ func (d *Driver) containerSpec(value deployment.Deployment, digest string) (Cont
 			labelAgentID:    value.RuntimeSpec.AgentID,
 			labelGeneration: strconv.FormatUint(value.RuntimeSpec.Generation, 10),
 			labelSpecDigest: digest, "io.antnest.runtime-port": port,
+			"io.antnest.workspace-backend":      backend,
+			"io.antnest.workspace-quota-option": d.config.WorkspaceQuotaOption,
+			"io.antnest.workspace-bytes":        strconv.FormatUint(value.Resources.EffectiveWorkspaceBytes(), 10),
 		},
 		Mounts: map[string]Mount{
 			value.RuntimeSpec.Filesystem.Workspace: {
@@ -679,17 +761,26 @@ func (d *Driver) containerSpec(value deployment.Deployment, digest string) (Cont
 			value.RuntimeSpec.Filesystem.SystemSkills: {
 				Source: skillsVolume, ReadOnly: true, NoCopy: skillsNoCopy,
 			},
+			"/etc/resolv.conf": {
+				Source:   resolverVolumeName(d.config.ControllerScope, value.RuntimeSpec.AgentID, value.RuntimeSpec.Generation),
+				ReadOnly: true, NoCopy: true, Subpath: "resolv.conf",
+			},
 		},
 		Capabilities: []string{
 			"CHOWN", "DAC_OVERRIDE", "KILL", "NET_ADMIN", "SETGID", "SETPCAP", "SETUID",
 		},
 		DNS: []string{value.RuntimeSpec.Network.ResolverIPv4}, DNSOptions: []string{"use-vc"},
-		Devices: []string{"/dev/net/tun"}, ReadOnlyRootFS: false,
+		Devices: []string{"/dev/net/tun"}, ReadOnlyRootFS: true,
 		Tmpfs: map[string]string{
-			"/tmp": fmt.Sprintf("rw,exec,nosuid,nodev,size=%d", value.Resources.TmpfsBytes),
+			"/tmp":         fmt.Sprintf("rw,noexec,nosuid,nodev,size=%d", value.Resources.TmpfsBytes),
+			"/run/antnest": "rw,noexec,nosuid,nodev,size=16777216,mode=0700,uid=0,gid=0",
 		},
 		Networks:  []string{d.config.ManagementNetwork},
 		PidsLimit: int64(value.Resources.PidsLimit), MemoryBytes: int64(value.Resources.MemoryBytes),
+		NanoCPUs:      int64(cpuMillis) * 1000000,
+		CPUShares:     max(int64(2), int64(cpuMillis)*1024/1000),
+		StopTimeout:   d.config.StopGraceSeconds,
+		SecurityOpt:   []string{"no-new-privileges=true", runtimeSeccompOption()},
 		RestartPolicy: "unless-stopped",
 		Healthcheck: Healthcheck{
 			Test:          []string{"CMD", "curl", "--fail", "--silent", "http://127.0.0.1:" + port + "/status"},
@@ -751,6 +842,11 @@ func observationKind(action string) (deployment.ObservationKind, bool) {
 func containerName(agentID string) string   { return "antnest-runtime-" + strings.TrimSpace(agentID) }
 func workspaceVolume(agentID string) string { return "antnest-workspace-" + strings.TrimSpace(agentID) }
 
+func resolverVolumeName(scope, agentID string, generation uint64) string {
+	digest := instanceauth.Digest([]byte(strconv.Itoa(len(scope)) + ":" + scope + "\x00" + agentID + "\x00" + strconv.FormatUint(generation, 10)))
+	return "antnest-runtime-resolver-" + digest[7:39]
+}
+
 func (d *Driver) workspaceLabels(agentID string) map[string]string {
 	return map[string]string{
 		labelManaged: "workspace", labelScope: d.config.ControllerScope, labelAgentID: agentID,
@@ -762,6 +858,41 @@ func (d *Driver) workspaceOwnedBy(volume Volume, agentID string) bool {
 		volume.Labels[labelManaged] == "workspace" &&
 		volume.Labels[labelScope] == d.config.ControllerScope &&
 		volume.Labels[labelAgentID] == agentID
+}
+
+func (d *Driver) DiskQuotaEnforced() bool {
+	return d.config.WorkspaceVolumeDriver != ""
+}
+
+func requestedWorkspaceBytes(limits []deployment.ResourceLimits) uint64 {
+	if len(limits) == 0 {
+		return deployment.ResourceLimits{}.EffectiveWorkspaceBytes()
+	}
+	return limits[0].EffectiveWorkspaceBytes()
+}
+
+func (d *Driver) workspaceQuotaMatches(volume Volume, limits []deployment.ResourceLimits) error {
+	if d.config.WorkspaceVolumeDriver == "" {
+		if (volume.Driver != "" && volume.Driver != "local") || len(volume.Options) > 0 {
+			return fmt.Errorf("workspace volume backend %q is not the default local driver", volume.Driver)
+		}
+		return nil
+	}
+	if volume.Driver != d.config.WorkspaceVolumeDriver {
+		return fmt.Errorf("workspace volume driver %q does not match the configured quota backend", volume.Driver)
+	}
+	raw := volume.Labels["io.antnest.workspace-bytes"]
+	declared, err := strconv.ParseUint(raw, 10, 64)
+	if err != nil || declared < 67108864 || declared > 1099511627776 {
+		return errors.New("workspace volume byte limit label is missing or out of range")
+	}
+	if volume.Options[d.config.WorkspaceQuotaOption] != raw {
+		return errors.New("workspace volume quota option does not match the declared byte limit")
+	}
+	if len(limits) > 0 && declared != limits[0].EffectiveWorkspaceBytes() {
+		return errors.New("workspace volume byte limit differs from the requested resources")
+	}
+	return nil
 }
 
 func completed() deployment.EffectOutcome {
