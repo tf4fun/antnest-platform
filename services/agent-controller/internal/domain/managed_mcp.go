@@ -63,6 +63,7 @@ func CloneMCPServers(servers []MCPServer) []MCPServer {
 }
 
 func cloneRuntime(runtime RuntimeSpecInput) RuntimeSpecInput {
+	runtime.Resources = runtime.Resources.Clone()
 	runtime.MCPServers = CloneMCPServers(runtime.MCPServers)
 	return runtime
 }

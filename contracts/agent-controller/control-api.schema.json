@@ -768,6 +768,18 @@
         "tmpfs_bytes": {
           "type": "integer",
           "minimum": 16777216
+        },
+        "cpu_millis": {
+          "type": "integer",
+          "minimum": 100,
+          "maximum": 16000,
+          "default": 1000
+        },
+        "workspace_bytes": {
+          "type": "integer",
+          "minimum": 67108864,
+          "maximum": 1099511627776,
+          "default": 10737418240
         }
       }
     },
