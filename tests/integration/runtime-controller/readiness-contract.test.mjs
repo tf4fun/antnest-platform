@@ -32,6 +32,7 @@ const ready = {
   platform_ready: true,
   observation_ready: true,
   monitor_ready: true,
+  disk_quota_enforced: false,
 };
 
 test("the current RC contract retains revision 14's required monitor boolean", () => {
@@ -53,4 +54,29 @@ test("the current RC contract retains revision 14's required monitor boolean", (
       false,
     );
   }
+});
+
+test("disk_quota_enforced is a required capability boolean, never a readiness blocker", () => {
+  const unavailable = {
+    ...ready,
+    status: "not_ready",
+    ready: false,
+    monitor_ready: false,
+  };
+  for (const response of [ready, unavailable]) {
+    for (const value of [false, true]) {
+      assert(
+        validate({ ...response, disk_quota_enforced: value }),
+        `disk_quota_enforced=${value} must validate: ${JSON.stringify(validate.errors)}`,
+      );
+    }
+    for (const value of [undefined, null, "false", 0]) {
+      assert.equal(
+        validate({ ...response, disk_quota_enforced: value }),
+        false,
+        `disk_quota_enforced=${JSON.stringify(value)} must not validate`,
+      );
+    }
+  }
+  assert(validate(ready), "an unbounded local backend must not fail readiness");
 });
