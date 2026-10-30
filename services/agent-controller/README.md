@@ -171,6 +171,12 @@ re-admitted or stranded by a worker replacement. `WORKER_BUILD_ID`
 records deployment identity only and never turns on task-queue routing
 versioning by itself.
 
+Phase deadlines include exhausted retry backoff: Temporal may retain the last
+retryable application failure and report `RETRY_STATE_TIMEOUT` on its activity
+error. The Controller treats that outcome as a phase deadline and persists the
+same atomic termination as a timeout failure. A separate workflow version marker
+preserves the original failure path when replaying older closed histories.
+
 `--healthcheck` probes the configured IPv4/IPv6 `/status` directly, bypassing
 environment proxies and refusing redirects while preserving TLS service identity.
 An empty TLS CA setting does not switch opted-in token/HTTP development probes

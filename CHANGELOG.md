@@ -339,6 +339,11 @@ native Runtime retains its separate per-instance token profile.
 
 ### Fixed
 
+Controller lifecycle phases terminate atomically when Temporal exhausts their
+retry budget while retaining the last retryable application error. Explicit
+retry timeout state is classified alongside timeout failures; older closed
+workflow histories retain their original replay behavior.
+
 Two-ACP survivor E2E verifies its ordinary idempotency header without waiting
 for unrelated full security-header metadata. Original Prompt body/identity
 checks remain required; browser phase and nested source-only failure records
