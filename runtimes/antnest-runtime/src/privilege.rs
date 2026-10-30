@@ -405,6 +405,56 @@ mod platform {
             );
         }
 
+        #[test]
+        fn supervisor_requires_dac_override_for_cross_uid_private_paths() {
+            let mut snapshot = supervisor_snapshot();
+            let without_dac_override =
+                u64::from_str_radix(&snapshot.effective_capabilities, 16).unwrap() & !(1_u64 << 1);
+            snapshot.effective_capabilities = format!("{without_dac_override:016x}");
+            assert!(
+                verify_supervisor(&snapshot)
+                    .expect_err("CAP_DAC_OVERRIDE must be required in effective")
+                    .to_string()
+                    .contains("CAP_DAC_OVERRIDE")
+            );
+
+            let mut snapshot = supervisor_snapshot();
+            let without_dac_override =
+                u64::from_str_radix(&snapshot.permitted_capabilities, 16).unwrap() & !(1_u64 << 1);
+            snapshot.permitted_capabilities = format!("{without_dac_override:016x}");
+            assert!(
+                verify_supervisor(&snapshot)
+                    .expect_err("CAP_DAC_OVERRIDE must be required in permitted")
+                    .to_string()
+                    .contains("CAP_DAC_OVERRIDE")
+            );
+        }
+
+        #[test]
+        fn supervisor_requires_setpcap_to_empty_the_executor_bounding_set() {
+            let mut snapshot = supervisor_snapshot();
+            let without_setpcap =
+                u64::from_str_radix(&snapshot.effective_capabilities, 16).unwrap() & !(1_u64 << 8);
+            snapshot.effective_capabilities = format!("{without_setpcap:016x}");
+            assert!(
+                verify_supervisor(&snapshot)
+                    .expect_err("CAP_SETPCAP must be required in effective")
+                    .to_string()
+                    .contains("CAP_SETPCAP")
+            );
+
+            let mut snapshot = supervisor_snapshot();
+            let without_setpcap =
+                u64::from_str_radix(&snapshot.permitted_capabilities, 16).unwrap() & !(1_u64 << 8);
+            snapshot.permitted_capabilities = format!("{without_setpcap:016x}");
+            assert!(
+                verify_supervisor(&snapshot)
+                    .expect_err("CAP_SETPCAP must be required in permitted")
+                    .to_string()
+                    .contains("CAP_SETPCAP")
+            );
+        }
+
         fn supervisor_snapshot() -> ProcessSnapshot {
             let capabilities = (1_u64 << 0)
                 | (1_u64 << 1)

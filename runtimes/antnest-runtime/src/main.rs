@@ -42,6 +42,7 @@ mod service_admission_component_tests {
         "/../../tests/integration/antnest-runtime/service_admission_http.rs"
     ));
 }
+mod shutdown;
 mod skill_install;
 #[cfg(all(test, target_os = "linux"))]
 mod skill_install_tests;
@@ -620,8 +621,6 @@ async fn serve_runtime(
     metrics: telemetry::RuntimeMetrics,
     shutdown: tokio_util::sync::CancellationToken,
 ) -> Result<(), RuntimeFailure> {
-    use std::time::Duration;
-
     let identity = spec.identity().clone();
     let descriptor = spec.authentication().ok_or_else(|| {
         runtime_failure(
@@ -742,7 +741,6 @@ async fn serve_runtime(
     let exit = exit.normalize(shutdown.is_cancelled());
     actor.close();
     service_shutdown.cancel();
-    const STOP_TIMEOUT: Duration = Duration::from_secs(8);
     let (mut stop_failures, managed_stop) = tokio::join!(
         stop_runtime_services(
             wait_http,
@@ -750,7 +748,7 @@ async fn serve_runtime(
             &mut http_task,
             &mut network_task,
             &actor,
-            STOP_TIMEOUT,
+            shutdown::DRAIN_TIMEOUT,
         ),
         managed.shutdown()
     );

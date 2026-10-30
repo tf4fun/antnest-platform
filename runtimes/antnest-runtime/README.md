@@ -138,7 +138,10 @@ reserved `ANTNEST_` prefix:
   elsewhere fails closed.
 - Container capabilities and mounts described in
   [Security and operations](docs/security-and-operations.md): `/dev/net/tun`,
-  a writable `/workspace` volume, a read-only `/skills` mount, and bounded `/tmp`.
+  the exact seven-capability Supervisor set, a recommended read-only root
+  filesystem, a writable `/workspace` volume, a read-only `/skills` mount,
+  bounded `noexec` `/tmp`, and a bounded `exec` `/run/antnest-mcp-home` tmpfs
+  for managed MCP homes.
 - Runtime Egress: the packet path must answer a readiness probe before
   `/status` is served. An established Runtime survives UDP `ConnectionRefused`
   during Egress restart; other socket errors and TUN failures remain fatal.
