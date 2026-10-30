@@ -2,12 +2,14 @@
 
 The [proposal](live-model-semantics-proposal.json) defines how Agents follow
 live Model Profiles and Provider connections while Template prompt, runtime,
-MCP and Skill inputs stay immutable. It is planned, not active: routes, schema
-fragments and publication fields land only when the owning producers publish
-Controller control revision 48 and the ACP/Console consumer batches. The
-proposal does not extend active catalogs or the Agent `event_type` enum, and it
-introduces no optional model revision pinning. Issue #72 catalog and default
-ownership stays out of scope.
+MCP and Skill inputs stay immutable. Controller control revision 48 activates
+the proposal: the usage and event routes, the `effective_models` reader
+projection, the model-scoped revision journal and the optional
+`model_profile_revision` on published models. ACP and Console consumer batches
+remain separate deliveries and deploy before any reliance on the new fields.
+The model journal does not extend the Agent `event_type` enum, and the
+proposal introduces no optional model revision pinning. Issue #72 catalog and
+default ownership stays out of scope.
 
 ## Live versus immutable inputs
 

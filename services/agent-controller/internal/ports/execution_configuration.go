@@ -62,12 +62,13 @@ type ExecutionProvider struct {
 
 type ExecutionModel struct {
 	domain.ModelParameters
-	ModelProfileID      string                      `json:"model_profile_id"`
-	ConnectionID        string                      `json:"connection_id"`
-	DisplayName         string                      `json:"display_name"`
-	Enabled             bool                        `json:"enabled"`
-	ProviderTokenLimits *domain.ProviderTokenLimits `json:"provider_token_limits,omitempty"`
-	SupportsTools       *bool                       `json:"supports_tools,omitempty"`
+	ModelProfileID       string                      `json:"model_profile_id"`
+	ModelProfileRevision int64                       `json:"model_profile_revision,omitempty"`
+	ConnectionID         string                      `json:"connection_id"`
+	DisplayName          string                      `json:"display_name"`
+	Enabled              bool                        `json:"enabled"`
+	ProviderTokenLimits  *domain.ProviderTokenLimits `json:"provider_token_limits,omitempty"`
+	SupportsTools        *bool                       `json:"supports_tools,omitempty"`
 }
 
 type ExecutionRuntime struct {

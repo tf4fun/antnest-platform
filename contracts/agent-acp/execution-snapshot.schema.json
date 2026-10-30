@@ -271,6 +271,11 @@
             "minLength": 1,
             "maxLength": 200
           },
+          "model_profile_revision": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9007199254740991
+          },
           "connection_id": {
             "type": "string",
             "minLength": 1,

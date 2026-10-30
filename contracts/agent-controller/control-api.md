@@ -303,6 +303,29 @@ The endpoint comes from its connection, which is immutable.
 `after_id` plus bounded `limit` pagination. It never returns encrypted
 credential bytes or plaintext secrets.
 
+`GET /internal/model-profiles/{model_profile_id}/usage` requires the verified
+`organization_id` and returns `{templates, agents}`: unique current Template
+heads (including disabled heads, primary or ordered fallback) and unique
+non-deleted Agents referencing the profile in the effective spec or a running
+lifecycle target spec, with primary/fallback references deduplicated. Counts
+are a complete informational snapshot, never truncated and never aggregated
+across organizations; an unknown or cross-organization profile returns 404.
+`GET /internal/model-profiles/{model_profile_id}/events` pages the durable
+model-scoped revision journal in ascending revision order using
+`after_revision` and a `limit` that defaults to 50 and is capped at 100.
+Every committed revision writes exactly one `model_profile_revised` event in
+the same transaction as the revision and the request receipt — none on create,
+none on a rejected CAS, no duplicate on replay — carrying only `request_id`,
+`organization_id`, `model_profile_id`, `revision_id`, `previous_revision`,
+`revision` (exactly `previous_revision` plus one) and `occurred_at`, never
+credentials or settings. The journal starts with the migration; historical
+pre-migration revisions have no events. Agent detail additionally projects
+`effective_models`: the current revision of the primary and ordered fallback
+profiles from the executable spec, a live read that never rewrites frozen
+configuration lineage. Published execution snapshots carry the optional
+`model_profile_revision` on each model entry; every accepted profile revision,
+including metadata-only changes, advances the execution publication revision.
+
 ## Templates
 
 `POST /internal/agent-templates` creates a Template and immutable revision.
@@ -318,6 +341,17 @@ freezes Registry-owned metadata into the revision. Responses expose those frozen
 records; they do not contain ZIP bytes, a mutable download URL or a token.
 An omitted list is empty. Exact command replay and historical Template reads
 use the stored frozen records without re-resolving Registry state.
+
+Template prompt, runtime, MCP and Skill inputs are immutable once frozen into a
+revision, but the referenced Model Profiles and Provider connections are live:
+each revision stores stable model identities, not pinned model revisions, so
+Agents always execute the current profile head. Agent detail exposes that live
+head through `effective_models` (the current revision of the primary and
+ordered fallback profiles) without rewriting the frozen spec; a spec-less
+Agent omits the field. `GET /internal/model-profiles/{id}/usage` exposes the
+complete reference count an edit would affect, and every committed revision
+appends one `model_profile_revised` event to the model-scoped journal paged by
+`GET /internal/model-profiles/{id}/events`.
 The `skill_set_digest` is derived from the complete frozen set, organization,
 and `layout_version=1`. Its canonical byte stream starts with ASCII
 `antnest-skill-set-v1` and one zero byte, then big-endian uint32 layout version,

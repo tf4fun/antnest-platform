@@ -704,6 +704,17 @@ type catalogServiceStub struct {
 	templateRevisionOrganizationID string
 	templateRevisionTemplateID     string
 	templateRevision               int64
+
+	usage               ports.ModelProfileUsage
+	usageErr            error
+	usageOrganizationID string
+	usageModelProfileID string
+	eventPage           ports.ModelProfileEventPage
+	eventErr            error
+	eventOrganizationID string
+	eventModelProfileID string
+	eventAfterRevision  int64
+	eventLimit          int
 }
 
 type lifecycleServiceStub struct {
@@ -828,6 +839,21 @@ func (service *catalogServiceStub) ListModelProfiles(
 	context.Context, application.ListCatalogInput,
 ) (application.ModelProfilePage, error) {
 	return application.ModelProfilePage{}, nil
+}
+
+func (service *catalogServiceStub) GetModelProfileUsage(
+	_ context.Context, organizationID, modelProfileID string,
+) (ports.ModelProfileUsage, error) {
+	service.usageOrganizationID, service.usageModelProfileID = organizationID, modelProfileID
+	return service.usage, service.usageErr
+}
+
+func (service *catalogServiceStub) ListModelProfileEvents(
+	_ context.Context, organizationID, modelProfileID string, afterRevision int64, limit int,
+) (ports.ModelProfileEventPage, error) {
+	service.eventOrganizationID, service.eventModelProfileID = organizationID, modelProfileID
+	service.eventAfterRevision, service.eventLimit = afterRevision, limit
+	return service.eventPage, service.eventErr
 }
 
 func (service *catalogServiceStub) CreateTemplate(

@@ -1,6 +1,6 @@
 {
   "contract": "antnest.agent-controller.lifecycle",
-  "revision": 47,
+  "revision": 48,
   "transport": "json-over-http",
   "trust": "verified-workload-and-caller-context",
   "authentication": "service-authentication.md",
@@ -171,6 +171,20 @@
         "query": ["organization_id", "after_id", "limit"],
         "success_status": 200,
         "response": "control-api.schema.json#/$defs/model_profile_list"
+      },
+      "usage": {
+        "method": "GET",
+        "path": "/internal/model-profiles/{model_profile_id}/usage",
+        "query": ["organization_id"],
+        "success_status": 200,
+        "response": "control-api.schema.json#/$defs/model_profile_usage"
+      },
+      "events": {
+        "method": "GET",
+        "path": "/internal/model-profiles/{model_profile_id}/events",
+        "query": ["organization_id", "after_revision", "limit"],
+        "success_status": 200,
+        "response": "control-api.schema.json#/$defs/model_profile_event_list"
       }
     },
     "agent_templates": {
@@ -516,5 +530,12 @@
     ],
     "failed_create_ttl_seconds": 604800,
     "cancel_update": "cancel_lifecycle_operation"
+  },
+  "live_model_semantics": {
+    "event_type": "model_profile_revised",
+    "events_default_limit": 50,
+    "events_max_limit": 100,
+    "usage_counts_complete": true,
+    "usage_truncated": false
   }
 }

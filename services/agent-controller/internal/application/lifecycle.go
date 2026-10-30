@@ -100,6 +100,7 @@ type CreateAgentInput struct {
 }
 
 type AgentView struct {
+	EffectiveModels                   []ports.EffectiveModel
 	Readiness                         string
 	RuntimeRecovery                   *ports.RuntimeBarrierRecoveryProjection
 	ActivationState                   domain.ActivationState

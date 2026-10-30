@@ -124,6 +124,13 @@ func (service *AgentQueryService) agentProjection(
 			"%w: mismatched executable configuration for Agent %s", ErrQueryContract, record.AgentID,
 		)
 	}
+	models, err := effectiveModels(configuration)
+	if err != nil {
+		return AgentView{}, fmt.Errorf(
+			"%w: effective model projection for Agent %s", err, record.AgentID,
+		)
+	}
+	view.EffectiveModels = models
 	snapshot := configuration.Snapshot
 	view.Configuration = &AgentConfigurationView{
 		TemplateID: snapshot.TemplateID, TemplateRevision: snapshot.TemplateRevision,

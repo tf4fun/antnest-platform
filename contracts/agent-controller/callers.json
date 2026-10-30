@@ -155,6 +155,22 @@
       },
       "request_body": "none"
     },
+    "GET /internal/model-profiles/{model_profile_id}/usage": {
+      "callers": ["admin-console"],
+      "authentication": "workload",
+      "caller_context": {
+        "admin-console": "required"
+      },
+      "request_body": "none"
+    },
+    "GET /internal/model-profiles/{model_profile_id}/events": {
+      "callers": ["admin-console"],
+      "authentication": "workload",
+      "caller_context": {
+        "admin-console": "required"
+      },
+      "request_body": "none"
+    },
     "GET /internal/provider-connections": {
       "callers": ["admin-console"],
       "authentication": "workload",

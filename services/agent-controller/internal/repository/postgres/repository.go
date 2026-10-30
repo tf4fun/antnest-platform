@@ -111,11 +111,10 @@ func (repository *Repository) persistModelProfile(
 	if err := lockExecutionOrganization(ctx, transaction, record.OrganizationID); err != nil {
 		return ports.ModelProfileRecord{}, err
 	}
-	executionChanged := true
 	if kind == ports.CreateModelProfileRequest {
 		err = insertModelProfile(ctx, transaction, record)
 	} else {
-		executionChanged, err = reviseModelProfile(ctx, transaction, expectedRevision, &record)
+		err = reviseModelProfile(ctx, transaction, expectedRevision, &record)
 	}
 	if err != nil {
 		return ports.ModelProfileRecord{}, catalogConflict(err)
@@ -130,10 +129,13 @@ func (repository *Repository) persistModelProfile(
 	); err != nil {
 		return ports.ModelProfileRecord{}, err
 	}
-	if executionChanged {
-		if err := repository.advanceExecutionRevision(ctx, transaction, record.OrganizationID); err != nil {
+	if kind == ports.ReviseModelProfileRequest {
+		if err := insertModelProfileEvent(ctx, transaction, expectedRevision, record); err != nil {
 			return ports.ModelProfileRecord{}, err
 		}
+	}
+	if err := repository.advanceExecutionRevision(ctx, transaction, record.OrganizationID); err != nil {
+		return ports.ModelProfileRecord{}, err
 	}
 	if err := transaction.Commit(ctx); err != nil {
 		return ports.ModelProfileRecord{}, fmt.Errorf("commit ModelProfile transaction: %w", err)

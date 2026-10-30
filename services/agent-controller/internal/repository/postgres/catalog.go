@@ -178,17 +178,16 @@ func reviseModelProfile(
 	transaction *databaseTransaction,
 	expectedRevision int64,
 	record *ports.ModelProfileRecord,
-) (bool, error) {
+) error {
 	modelPayload, err := json.Marshal(record.Revision.Snapshot().Model.Parameters())
 	if err != nil {
-		return false, fmt.Errorf("encode ModelProfile model: %w", err)
+		return fmt.Errorf("encode ModelProfile model: %w", err)
 	}
-	changed, err := lockModelProfileHead(ctx, transaction, expectedRevision, record, modelPayload)
-	if err != nil {
-		return false, err
+	if err := lockModelProfileHead(ctx, transaction, expectedRevision, record); err != nil {
+		return err
 	}
 	if err := lockModelProvider(ctx, transaction, *record); err != nil {
-		return false, err
+		return err
 	}
 	result, err := transaction.Exec(ctx, `
 UPDATE agent_controller.model_profiles
@@ -204,12 +203,12 @@ WHERE id = $1
 		record.Revision.Revision(), record.UpdatedAt, record.OrganizationID, expectedRevision, modelPayload,
 	)
 	if err != nil {
-		return false, fmt.Errorf("advance ModelProfile head: %w", err)
+		return fmt.Errorf("advance ModelProfile head: %w", err)
 	}
 	if result.RowsAffected() != 1 {
-		return false, ports.ErrConcurrentChange
+		return ports.ErrConcurrentChange
 	}
-	return changed, nil
+	return nil
 }
 
 func lockModelProfileHead(
@@ -217,25 +216,23 @@ func lockModelProfileHead(
 	transaction *databaseTransaction,
 	expectedRevision int64,
 	record *ports.ModelProfileRecord,
-	modelPayload []byte,
-) (bool, error) {
+) error {
 	var currentRevision int64
-	var changed bool
 	err := transaction.QueryRow(ctx, `
-SELECT version, display_name IS DISTINCT FROM $3 OR model IS DISTINCT FROM $4::jsonb, enabled
+SELECT version, enabled
 FROM agent_controller.model_profiles
 WHERE id = $1 AND organization_id = $2
-FOR UPDATE`, record.ModelProfileID, record.OrganizationID, record.DisplayName, modelPayload).Scan(&currentRevision, &changed, &record.Enabled)
+FOR UPDATE`, record.ModelProfileID, record.OrganizationID).Scan(&currentRevision, &record.Enabled)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return false, ports.ErrNotFound
+		return ports.ErrNotFound
 	}
 	if err != nil {
-		return false, fmt.Errorf("lock ModelProfile head: %w", err)
+		return fmt.Errorf("lock ModelProfile head: %w", err)
 	}
 	if currentRevision != expectedRevision || record.Revision.Revision() != expectedRevision+1 {
-		return false, ports.ErrConcurrentChange
+		return ports.ErrConcurrentChange
 	}
-	return changed, nil
+	return nil
 }
 
 func loadTemplateRequest(
