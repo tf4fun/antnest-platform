@@ -35,6 +35,13 @@ Route authorization and management projections remain Console-owned.
 - Static application delivery and lifecycle event forwarding (SSE).
 - Browser activity reporting, self session controls through Gateway, and organization session administration through Identity.
 - [OIDC policy review, SCIM pairing and external login controls](docs/oidc-linking.md), including personal binding notices.
+- Template `runtime.resources` passthrough for optional `cpu_millis`
+  (100..16000, default 1000) and `workspace_bytes`
+  (67108864..1099511627776, default 10737418240): explicit `null`, zero,
+  fractional or out-of-range values are rejected with HTTP 400 before the
+  backend call; omission stays absent in projections and forwards. The
+  console displays the bounds but makes no enforcement claim — workspace
+  enforcement depends on the Runtime Controller storage backend.
 
 ## Non-responsibilities
 

@@ -565,6 +565,8 @@ function TemplateDetail({ templateID, revisionID }: { templateID: string; revisi
     ["Preset Skills", String(template.skill_refs.length)],
     ["Runtime memory", bytes(template.runtime.resources.memory_bytes)],
     ["PID limit", template.runtime.resources.pids_limit.toLocaleString()],
+    ["CPU limit", `${template.runtime.resources.cpu_millis ?? 1000} mCPU`],
+    ["Workspace request", bytes(template.runtime.resources.workspace_bytes ?? 10737418240)],
     ["Template updated", dateTime(template.updated_at)],
   ];
   return (
@@ -590,6 +592,7 @@ function TemplateDetail({ templateID, revisionID }: { templateID: string; revisi
         <div className="grid gap-px overflow-hidden rounded-md border border-border bg-border shadow-xs sm:grid-cols-2 lg:grid-cols-3">
           {facts.map(([label, value]) => <div className="bg-white p-4" key={label}><p className="text-xs text-muted-foreground">{label}</p><p className="mt-1 break-words text-sm font-medium">{value}</p></div>)}
         </div>
+        <p className="mt-3 text-xs text-muted-foreground">Workspace enforcement depends on the Runtime Controller storage backend.</p>
       </Section>
       <Section title="System prompt">
         <pre className="whitespace-pre-wrap rounded-md border border-border bg-white p-4 font-sans text-sm leading-6 shadow-xs">{template.system_prompt || "No system prompt."}</pre>
