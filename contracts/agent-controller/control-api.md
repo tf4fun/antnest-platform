@@ -796,3 +796,63 @@ policy then appears as the execution snapshot's `organization_budget`
 (`revision`, `unknown_cost`, `run_caps`, `daily`, `monthly`; no embedded
 organization) through the ordinary ACP Apply/ACK path. Console controls and the
 cross-service consumer/integration batches remain pending.
+## Lifecycle reliability, cancellation and quarantine repair (#45)
+
+This section specifies the additive revision 47 proposal in
+`lifecycle-reliability-proposal.json`. While the active control catalog is
+revision 46, these routes, request definitions and events are not advertised
+by the live catalogs. The Controller implementation batch publishes revision
+47 together with its handlers, producers and strict contract readers.
+
+Lifecycle operations are bounded. Each phase has a deadline in seconds:
+`network_ensure` 600, `runtime_initialize` 1800, `publish` 600, and a 600
+default for every other phase. An operation that exceeds its phase deadline
+ends `failed` with the persisted operation `error_code`
+`phase_deadline_exceeded`. `phase_deadline_exceeded`, `lifecycle_cancelled`
+and `lifecycle_invariant_failed` are durable operation error codes recorded on
+the operation and its events; they are not HTTP error codes and carry no
+`status_by_code` entry. Operation state stays
+`running`/`completed`/`failed`; cancellation and invariant failure are
+represented by the error code, never by a new state.
+
+`POST /internal/agents/{agent_id}/lifecycle-operation/cancel` requests
+cancellation of one durable lifecycle operation. The request carries
+`organization_id`, `actor_principal_id` and the original
+`operation_request_id`; HTTP admission returns `202` with the current
+operation. Cancellation stops the heartbeat activity through
+`WaitForCancellation` before any cleanup phase runs.
+
+Cancelling a create starts a deterministic child operation running the normal
+Delete workflow; the create's failure status remains `lifecycle_cancelled`.
+Cancelling a non-create operation stops it at a safe point and invalidates its
+executable state; the Controller never reconstructs an unsafe inverse, and
+disable/delete recovery stays on the normal recovery path. Successful
+cancellation records `agent_lifecycle_cancelled`.
+
+Retained failed creates are collected by the garbage collector only through
+the normal delete workflow. An Agent is eligible only when its failed-create
+retention TTL has expired (`failed_create_ttl_seconds`, default 604800; 0
+disables collection), the failed create is its sole lifecycle record, and it
+has never become ready. The sweep rechecks every condition under row lock/CAS
+before deleting, and a recorded failure is never proof of absence. Scheduling
+a collection emits `agent_gc_scheduled`.
+
+`POST /internal/agents/{agent_id}/lifecycle-quarantine/clear` is the
+administrator repair path out of lifecycle quarantine. It is restricted to the
+`admin-console` workload with a required trusted-user caller context. The
+request carries `organization_id`, `actor_principal_id` and
+`expected_aggregate_sequence`; the expected sequence is checked
+transactionally against the Agent's current concurrency revision. Before
+clearing, the Controller verifies that the Runtime is currently non-running
+with no active lifecycle operation and that the exact configured source is
+still consistent; any failed invariant returns `409 lifecycle_conflict` and
+nothing is cleared blindly. A successful clear returns `200` with the Agent
+projection and records `agent_lifecycle_quarantine_cleared`.
+
+### Replay and worker versioning
+
+Legacy lifecycle operations carry no version marker and keep their original
+replay semantics. New code freezes its versioned options through a SideEffect
+inside the workflow, never through environment reads at replay time. The
+worker BuildID is deployment identity and release-compatible workers are
+retained; this contract does not claim full task-queue routing versioning.

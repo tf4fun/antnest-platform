@@ -1,0 +1,97 @@
+{
+  "contract": "antnest.agent-controller.lifecycle-reliability.proposal",
+  "revision": 1,
+  "status": "proposed",
+  "base_control_revision": 46,
+  "target_control_revision": 47,
+  "activation": "Publish with the Controller implementation, strict readers, handlers and event producers; this proposal does not extend active catalogs.",
+  "routes": {
+    "cancel_lifecycle_operation": {
+      "method": "POST",
+      "path": "/internal/agents/{agent_id}/lifecycle-operation/cancel",
+      "request": "control-api.schema.json#/$defs/cancel_lifecycle_operation_request",
+      "success_status": 202,
+      "response": "control-api.schema.json#/$defs/operation"
+    },
+    "clear_lifecycle_quarantine": {
+      "method": "POST",
+      "path": "/internal/agents/{agent_id}/lifecycle-quarantine/clear",
+      "request": "control-api.schema.json#/$defs/clear_lifecycle_quarantine_request",
+      "success_status": 200,
+      "response": "control-api.schema.json#/$defs/agent"
+    }
+  },
+  "caller_policy": {
+    "callers": ["admin-console"],
+    "authentication": "workload",
+    "caller_context": {
+      "admin-console": "required"
+    },
+    "request_body": "json"
+  },
+  "schema_base": "control-api.schema.json",
+  "schema_definitions": {
+    "cancel_lifecycle_operation_request": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "organization_id",
+        "actor_principal_id",
+        "operation_request_id"
+      ],
+      "properties": {
+        "organization_id": {
+          "$ref": "#/$defs/id"
+        },
+        "actor_principal_id": {
+          "$ref": "#/$defs/id"
+        },
+        "operation_request_id": {
+          "$ref": "#/$defs/id"
+        }
+      }
+    },
+    "clear_lifecycle_quarantine_request": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "organization_id",
+        "actor_principal_id",
+        "expected_aggregate_sequence"
+      ],
+      "properties": {
+        "organization_id": {
+          "$ref": "#/$defs/id"
+        },
+        "actor_principal_id": {
+          "$ref": "#/$defs/id"
+        },
+        "expected_aggregate_sequence": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        }
+      }
+    }
+  },
+  "event_types": [
+    "agent_lifecycle_cancelled",
+    "agent_lifecycle_quarantine_cleared",
+    "agent_gc_scheduled"
+  ],
+  "lifecycle_reliability": {
+    "phase_deadlines_seconds": {
+      "network_ensure": 600,
+      "runtime_initialize": 1800,
+      "publish": 600,
+      "default": 600
+    },
+    "failure_codes": [
+      "phase_deadline_exceeded",
+      "lifecycle_cancelled",
+      "lifecycle_invariant_failed"
+    ],
+    "failed_create_ttl_seconds": 604800,
+    "cancel_update": "cancel_lifecycle_operation"
+  }
+}
