@@ -12,6 +12,8 @@ import (
 	"regexp"
 	"strconv"
 
+	"github.com/tf4fun/antnest-platform/modules/service-authentication/serviceauth"
+
 	"go.opentelemetry.io/otel/attribute"
 
 	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/ports"
@@ -37,9 +39,12 @@ func (client *Client) GetPolicyRevision(ctx context.Context, ref ports.NetworkPo
 	path := "/internal/policies/" + url.PathEscape(ref.PolicyID) + "/revisions/" + strconv.FormatUint(ref.Revision, 10)
 	var revision ports.NetworkPolicyRevision
 	err := client.policyRequest(ctx, http.MethodGet, path, "get_policy_revision", "", nil, func(payload []byte) error {
-		if json.Unmarshal(payload, &revision) != nil || revision.NetworkPolicyReference != ref ||
-			revision.Spec.SchemaVersion != 1 || (revision.Spec.Action != "allow_all" && revision.Spec.Action != "deny_all") ||
-			!policyDigestPattern.MatchString(revision.Digest) {
+		var decodeErr error
+		revision, decodeErr = decodePolicyRevision(payload)
+		if decodeErr != nil {
+			return decodeErr
+		}
+		if revision.NetworkPolicyReference != ref {
 			return dependencyFailure("invalid_response", true)
 		}
 		return nil
@@ -76,6 +81,58 @@ func (client *Client) SetAgentPolicyAssignment(ctx context.Context, agentID stri
 		return ports.NetworkPolicyAssignment{}, err
 	}
 	return assignment, nil
+}
+
+func (client *Client) PutPolicyRevision(ctx context.Context, ref ports.NetworkPolicyReference, spec ports.NetworkPolicySpec) (ports.NetworkPolicyRevision, error) {
+	if !ref.Valid() || !spec.Valid() {
+		return ports.NetworkPolicyRevision{}, dependencyFailure("invalid_request", false)
+	}
+	body, err := json.Marshal(struct {
+		Spec ports.NetworkPolicySpec `json:"spec"`
+	}{Spec: spec})
+	if err != nil {
+		return ports.NetworkPolicyRevision{}, dependencyFailure("invalid_request", false)
+	}
+	path := "/internal/policies/" + url.PathEscape(ref.PolicyID) + "/revisions/" + strconv.FormatUint(ref.Revision, 10)
+	var revision ports.NetworkPolicyRevision
+	err = client.policyRequest(ctx, http.MethodPut, path, "put_policy_revision", "", body, func(payload []byte) error {
+		var decodeErr error
+		revision, decodeErr = decodePolicyRevision(payload)
+		if decodeErr != nil {
+			return decodeErr
+		}
+		if revision.NetworkPolicyReference != ref || !revision.Spec.Equal(spec) {
+			return dependencyFailure("invalid_response", true)
+		}
+		return nil
+	})
+	if err != nil {
+		return ports.NetworkPolicyRevision{}, err
+	}
+	return revision, nil
+}
+
+func decodePolicyRevision(payload []byte) (ports.NetworkPolicyRevision, error) {
+	var wire struct {
+		PolicyID string          `json:"policy_id"`
+		Revision uint64          `json:"revision"`
+		Spec     json.RawMessage `json:"spec"`
+		Digest   string          `json:"digest"`
+	}
+	var revision ports.NetworkPolicyRevision
+	if err := serviceauth.DecodeObject(payload, &wire); err != nil {
+		return revision, dependencyFailure("invalid_response", true)
+	}
+	revision.PolicyID = wire.PolicyID
+	revision.Revision = wire.Revision
+	revision.Digest = wire.Digest
+	if err := json.Unmarshal(wire.Spec, &revision.Spec); err != nil {
+		return revision, dependencyFailure("invalid_response", true)
+	}
+	if !revision.Valid() || !revision.Spec.Valid() || !policyDigestPattern.MatchString(revision.Digest) {
+		return revision, dependencyFailure("invalid_response", true)
+	}
+	return revision, nil
 }
 
 func decodePolicyAssignment(payload []byte, agentID string) (ports.NetworkPolicyAssignment, error) {
@@ -141,7 +198,7 @@ func decodePolicyFailure(body []byte, status int) error {
 		expectedStatus = http.StatusBadRequest
 	case "agent_network_not_found", "policy_revision_not_found":
 		expectedStatus = http.StatusNotFound
-	case "resource_version_conflict", "agent_network_unavailable":
+	case "resource_version_conflict", "agent_network_unavailable", "policy_revision_conflict":
 		expectedStatus = http.StatusConflict
 	case "cleanup_failed", "operation_failed", "control_plane_unavailable":
 		expectedStatus = http.StatusServiceUnavailable
@@ -153,3 +210,4 @@ func decodePolicyFailure(body []byte, status int) error {
 }
 
 var _ ports.NetworkPolicyClient = (*Client)(nil)
+var _ ports.NetworkPolicyRevisionWriter = (*Client)(nil)

@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"log/slog"
 	"net/http"
@@ -39,8 +40,13 @@ func (h *handler) setAgentNetworkPolicy(response http.ResponseWriter, request *h
 	if _, ok := strictQuery(response, request, map[string]struct{}{}); !ok {
 		return
 	}
+	var raw json.RawMessage
+	if !decodeJSON(response, request, &raw) {
+		return
+	}
 	var input application.SetAgentNetworkPolicyInput
-	if !decodeJSON(response, request, &input) {
+	if err := json.Unmarshal(raw, &input); err != nil {
+		writeJSON(response, http.StatusBadRequest, errorResponse{Code: "invalid_request", Message: "Network policy request is invalid"})
 		return
 	}
 	input.AgentID = request.PathValue("agent_id")
@@ -74,6 +80,8 @@ func publicNetworkPolicyError(err error) (int, errorResponse) {
 		return http.StatusBadRequest, errorResponse{Code: "invalid_request", Message: "Network policy request is invalid"}
 	case "resource_version_conflict":
 		return http.StatusConflict, errorResponse{Code: failure.Code, Message: "Network policy changed; reload before choosing a new update"}
+	case "policy_revision_conflict":
+		return http.StatusConflict, errorResponse{Code: failure.Code, Message: "Network policy revision already exists with different content"}
 	case "policy_revision_not_found":
 		return http.StatusNotFound, errorResponse{Code: failure.Code, Message: "Network policy revision was not found"}
 	case "agent_network_not_found":

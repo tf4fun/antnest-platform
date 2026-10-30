@@ -31,11 +31,19 @@ routes cannot start with a missing implementation.
   the assignment's exact immutable policy revision, spec, digest and resource
   version, plus the independent lifecycle attachment state and version.
 - `PUT /internal/agents/{agent_id}/network-policy` requires `request_id`,
-  `organization_id`, `actor_principal_id`, `policy_id`, `revision` and
-  `expected_resource_version`; it returns the acknowledged assignment.
+  `organization_id`, `actor_principal_id` and `expected_resource_version`,
+  plus exactly one of the `(policy_id, revision)` reference tuple or a `spec`
+  document; it returns the acknowledged assignment.
 
-Only schema-1 `allow_all` and `deny_all` specs are supported. Behavior comes
-from the exact revision's spec, never from its name or the latest revision.
+Schema-1 `allow_all`/`deny_all` and schema-2 `default`+ordered `rules` specs
+are supported; writes accept a reference tuple or a `spec` document. Spec-only
+writes derive a content-addressed `custom/<sha256>` revision-1 ID from the
+canonical JSON bytes `["<organization_id>","<agent_id>",<spec>]` — compact
+serialization, spec fields in order `schema_version`,`action`/`default`/`rules`,
+rule fields `action`,`cidrs`,`domains`,`ports`,`protocol` (omitted when absent),
+and port ranges as `{"from":…,"to":…}` with scalar equality preserved — publish
+the immutable Egress revision once, then CAS the assignment. The Console consumer must implement the same recipe to verify acknowledgments without the ID. Behavior
+comes from the exact revision's spec, never from its name or the latest revision.
 Policy IDs are opaque visible-ASCII keys and are URL-escaped as one path
 segment. Agent identifiers follow the existing Controller identifier contract.
 
