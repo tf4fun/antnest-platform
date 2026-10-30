@@ -739,7 +739,11 @@ func (e *fakeEngine) StartContainer(context.Context, string) error {
 	return e.startErr
 }
 
-func (e *fakeEngine) StopContainer(_ context.Context, _ string, graceSeconds int) error {
+func (e *fakeEngine) StopContainer(ctx context.Context, identifier string) error {
+	return e.StopContainerWithGrace(ctx, identifier, RuntimeStopGraceSeconds)
+}
+
+func (e *fakeEngine) StopContainerWithGrace(_ context.Context, _ string, graceSeconds int) error {
 	e.stopCalls++
 	e.lastStopGrace = graceSeconds
 	if e.container != nil {

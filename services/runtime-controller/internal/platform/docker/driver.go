@@ -73,7 +73,7 @@ type Engine interface {
 	InspectNetwork(context.Context, string) error
 	CreateContainer(context.Context, ContainerSpec) (string, error)
 	StartContainer(context.Context, string) error
-	StopContainer(context.Context, string, int) error
+	StopContainer(context.Context, string) error
 	RemoveContainer(context.Context, string) error
 	RemoveVolume(context.Context, string) error
 }
@@ -181,7 +181,7 @@ func NewDriver(engine Engine, config Config) (*Driver, error) {
 		config.StopGraceSeconds = RuntimeStopGraceSeconds
 	}
 	if config.StopGraceSeconds < 20 || config.StopGraceSeconds > 120 {
-		return nil, fmt.Errorf("Runtime stop grace %d must be a whole second value within [20, 120]", config.StopGraceSeconds)
+		return nil, fmt.Errorf("runtime stop grace %d must be a whole second value within [20, 120]", config.StopGraceSeconds)
 	}
 	return &Driver{engine: engine, config: config, images: images}, nil
 }
@@ -453,7 +453,18 @@ func (d *Driver) Delete(
 		)
 	}
 	if container.Running {
-		if err := d.engine.StopContainer(ctx, container.ID, d.config.StopGraceSeconds); err != nil && !errors.Is(err, ErrNotFound) {
+		var stopErr error
+		if graceful, ok := d.engine.(interface {
+			StopContainerWithGrace(context.Context, string, int) error
+		}); ok {
+			stopErr = graceful.StopContainerWithGrace(ctx, container.ID, d.config.StopGraceSeconds)
+		} else if d.config.StopGraceSeconds == RuntimeStopGraceSeconds {
+			stopErr = d.engine.StopContainer(ctx, container.ID)
+		} else {
+			return failed(deployment.EffectNotStarted, "platform_unavailable",
+				fmt.Errorf("configured stop grace %d requires an engine supporting StopContainerWithGrace", d.config.StopGraceSeconds))
+		}
+		if err := stopErr; err != nil && !errors.Is(err, ErrNotFound) {
 			return dockerFailure("platform_unavailable", err, true)
 		}
 	}
