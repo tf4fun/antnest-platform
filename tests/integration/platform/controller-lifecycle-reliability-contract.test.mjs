@@ -69,7 +69,10 @@ test("the proposal stays separate until the owning producer publishes its target
   assert.equal(proposal.base_control_revision, 46);
   assert.equal(proposal.target_control_revision, 47);
   assert.equal(proposal.schema_base, "control-api.schema.json");
-  assert([46, 47, 48, 49].includes(activeRevision), "unknown publication revision");
+  assert(
+    [46, 47, 48, 49].includes(activeRevision),
+    "unknown publication revision",
+  );
   const contract = readRaw("agent-controller/control-contract.json");
   const callers = readRaw("agent-controller/callers.json");
   const schema = readRaw("agent-controller/control-api.schema.json");
