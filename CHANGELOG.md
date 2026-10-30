@@ -339,6 +339,11 @@ native Runtime retains its separate per-instance token profile.
 
 ### Fixed
 
+Two-ACP survivor E2E verifies its ordinary idempotency header without waiting
+for unrelated full security-header metadata. Original Prompt body/identity
+checks remain required; browser phase and nested source-only failure records
+make stalled steps diagnosable without publishing credentials.
+
 Controller can close v2 execution admission for lifecycle recovery when the
 previous accepting owner cannot prove its digest. Only an unavailable owner
 triggers the current operation's full closure snapshot; healthy retries retain
