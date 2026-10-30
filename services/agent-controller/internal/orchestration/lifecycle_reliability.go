@@ -5,6 +5,7 @@ import (
 	"reflect"
 	"time"
 
+	enums "go.temporal.io/api/enums/v1"
 	"go.temporal.io/sdk/temporal"
 	"go.temporal.io/sdk/workflow"
 
@@ -14,9 +15,15 @@ import (
 
 const (
 	lifecycleReliabilityVersionID = "lifecycle-reliability-v1"
+	retryBudgetDeadlineVersionID  = "lifecycle-retry-budget-deadline-v1"
 	terminationActivityName       = "terminate_lifecycle"
 	cancelUpdateName              = "cancel_lifecycle_operation"
 )
+
+func activityRetryBudgetExpired(err error) bool {
+	var activityErr *temporal.ActivityError
+	return errors.As(err, &activityErr) && activityErr.RetryState() == enums.RETRY_STATE_TIMEOUT
+}
 
 type WorkerConfiguration struct {
 	PhaseDeadlines map[string]time.Duration
@@ -180,7 +187,14 @@ func runReliableWorkflow[I any, R any](ctx workflow.Context, command I, requestI
 			break
 		}
 		var timeoutErr *temporal.TimeoutError
-		if errors.As(phaseErr, &timeoutErr) {
+		deadlineExpired := errors.As(phaseErr, &timeoutErr)
+		if !deadlineExpired && activityRetryBudgetExpired(phaseErr) {
+			// The engine can exhaust ScheduleToClose while retaining the last
+			// retryable application error. Old closed histories must keep their
+			// original failure path when replayed without this marker.
+			deadlineExpired = workflow.GetVersion(ctx, retryBudgetDeadlineVersionID, workflow.DefaultVersion, 1) == 1
+		}
+		if deadlineExpired {
 			terminated, terminateErr := executeLifecycleTermination(ctx, requestID, phase,
 				"phase_deadline_exceeded", "phase "+string(phase)+" exceeded its deadline")
 			if terminateErr != nil {

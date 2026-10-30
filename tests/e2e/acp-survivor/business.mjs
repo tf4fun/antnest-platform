@@ -213,7 +213,15 @@ export async function runSurvivorBusiness(
   }
   await withSurvivorBrowser(
     config,
-    { signal, member, ownerId: owner.user.id },
+    {
+      signal,
+      member,
+      ownerId: owner.user.id,
+      onPhase: async (name) => {
+        report.browser_phase = { name, at: Date.now() };
+        await checkpoint();
+      },
+    },
     async (browser) => {
       report.browser_receipts = browser.receipts;
       const pageA = await browser.openAgent(agentA.id);

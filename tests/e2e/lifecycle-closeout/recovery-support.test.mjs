@@ -178,20 +178,22 @@ const journalCases = [
   ["lossBinding", ["agent"], "agent_controller", "agents"],
   ["lossObservation", [1], "runtime_controller", "observations"],
   ["lossEvent", ["event"], "agent_controller", "agent_events"],
+  ["lifecycleEvent", ["event"], "agent_controller", "agent_events"],
   ["ac", ["request"], "agent_controller", "agent_lifecycle_operations"],
   ["rc", ["request"], "runtime_controller", "operations"],
   ["publications", ["agent"], "agent_controller", "execution_revisions"],
   ["claims", ["agent"], "runtime_controller", "generation_claims"],
   ["updated", ["agent", "revision"], "runtime_controller", "observations"],
+  ["egressClosed", ["agent"], "egress", "agent_networks", "runtime_egress"],
 ];
-for (const [name, args, service, table] of journalCases)
+for (const [name, args, service, table, schema = service] of journalCases)
   test(`${name} reads evidence through its owning database role`, async () => {
     const reader = journalReader(async (command) => {
       assert.deepEqual(command.slice(0, 3), ["exec", "postgres", "psql"]);
       assert.equal(command[command.indexOf("-U") + 1], `antnest_${service}`);
       assert.equal(command[command.indexOf("-d") + 1], `antnest_${service}`);
-      assert(command.at(-1).startsWith("SELECT row_to_json(e) FROM (SELECT "));
-      assert(command.at(-1).includes(`FROM ${service}.${table}`));
+      assert.match(command.at(-1), /^SELECT row_to_json\(e\) FROM \(SELECT\s/u);
+      assert(command.at(-1).includes(`FROM ${schema}.${table}`));
       return '{"evidence":true}';
     }, "postgres");
     assert.deepEqual(await reader[name](...args), { evidence: true });

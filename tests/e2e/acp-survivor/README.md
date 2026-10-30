@@ -21,6 +21,18 @@ and networks are gone. Failures retain private partial evidence under
 `artifacts/verification/acp-survivor/` and return a nonzero exit status.
 Trace identifiers are retained when available and are auxiliary diagnostics.
 
+Prompt receipts validate the original response body, request frame, Agent,
+Session, prompt and ordinary `Idempotency-Key` header. The ordinary sent header
+comes from `Request.headers()`; unrelated full security-header metadata must
+not hold business admission open after that information is already available.
+Missing or different idempotency keys remain failures.
+
+The uploaded report retains a safe `browser_phase` checkpoint and bounded
+nested error types/source locations. Raw messages, assertion values, Cookies
+and request headers remain excluded; the original errors stay in private
+evidence. The original total budget and all eleven business/cleanup checks are
+unchanged.
+
 Acceptance requires evidence for the exact candidate commit and CI run: every
 required business check, `business_completed: true`, the survivor's normal exit
 code `0`, and `cleanup: verified`. Fixture tests and Compose rendering alone do
