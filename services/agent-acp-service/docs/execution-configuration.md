@@ -560,7 +560,12 @@ ACP accepts both the legacy full snapshot and the versioned v2 contract
   projection, hashed under canonical JSON (sorted keys, U+2028/U+2029
   escaped). Absent organization returns the `schema_version: 0` shape;
   proof/ACK barriers (`beforeAck`, `beforePeerAck`, `assertCurrent`) run on
-  every digest so a lost owner or failed proof fails closed.
+  every digest so a lost owner or failed proof fails closed. If the captured
+  authority needs owner preparation (for example, after a cold restart loses
+  to an unexpired predecessor lease), digest retries reconcile ownership under
+  the publication queue before those barriers. Reconciliation retains the
+  same sealed publication and Runtime connections, confirms the durable
+  authority again, and never acknowledges a failed owner preparation.
 
 Equal-revision one-way upgrade: a sealed v1 authority may be replaced by an
 equivalent v2 authority at the same revision only when the public projection,

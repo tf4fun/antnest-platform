@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 
-const scenarios = [
+export const stage2Scenarios = [
   "create",
   "same-run-credential-rotation",
   "controller-offline-execution",
@@ -82,7 +82,7 @@ export function assertStage2Inventory(value) {
   const { agentId, audits, execution, interrupted, management, workflows } =
     value;
   assert(typeof agentId === "string" && agentId);
-  assert.deepEqual(value.scenarios, scenarios);
+  assert.deepEqual(value.scenarios, stage2Scenarios);
   const completed = stage2CompletedTraceIDs(value.modelCalls, interrupted);
   unique(audits, "run_id", 7);
   unique(execution, "run_id", 6);

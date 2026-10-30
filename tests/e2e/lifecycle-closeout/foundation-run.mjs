@@ -20,6 +20,7 @@ import {
 } from "./foundation-private-deployment.mjs";
 import { foundationPublicResult } from "./foundation-private-evidence.mjs";
 import { admitFoundationBusiness } from "./foundation-completion.mjs";
+import { admitRecoveryBusiness } from "./recovery-completion.mjs";
 import { admitLossBusiness } from "./loss-completion.mjs";
 import { createTraceDiagnostics } from "../../support/trace-diagnostics.mjs";
 import {
@@ -40,18 +41,9 @@ import {
   workspacePublicResult,
 } from "../workspace-closeout/private-flow.mjs";
 import { admitWorkspaceBusiness } from "../workspace-closeout/business-completion.mjs";
-import {
-  shutdownPrivateAdmission,
-  shutdownPublicResult,
-} from "./shutdown-private-evidence.mjs";
-import {
-  skillRestorePrivateAdmission,
-  skillRestorePublicResult,
-} from "./skill-restore-private-evidence.mjs";
-import {
-  restorePrivateAdmission,
-  restorePublicResult,
-} from "./restore-private-evidence.mjs";
+import { shutdownPublicResult } from "./shutdown-private-evidence.mjs";
+import { skillRestorePublicResult } from "./skill-restore-private-evidence.mjs";
+import { restorePublicResult } from "./restore-private-evidence.mjs";
 import { lossPublicResult } from "./loss-private-evidence.mjs";
 import {
   networkPrivateAdmission,
@@ -273,7 +265,13 @@ export async function runFoundation(
                               await import("../workspace-closeout/browser-current-flow.mjs")
                             ).runBrowserProfile
                           : undefined;
-    const foundationDiagnostics = ["foundation", "loss"].includes(profile)
+    const foundationDiagnostics = [
+      "foundation",
+      "loss",
+      "restore",
+      "skill-restore",
+      "shutdown",
+    ].includes(profile)
       ? createTraceDiagnostics({
           directory: config.evidence,
           signal: abort.signal,
@@ -302,15 +300,21 @@ export async function runFoundation(
     }
     if (profile === "restore") {
       restoreFailures(result.restoreErrors);
-      admission = restorePrivateAdmission(result);
+      admission = await admitRecoveryBusiness(profile, result, {
+        traceDiagnostics: foundationDiagnostics,
+      });
     }
     if (profile === "skill-restore") {
       restoreFailures(result.restoreErrors);
-      admission = skillRestorePrivateAdmission(result);
+      admission = await admitRecoveryBusiness(profile, result, {
+        traceDiagnostics: foundationDiagnostics,
+      });
     }
     if (profile === "shutdown") {
       shutdownFailures(result.shutdownErrors);
-      admission = shutdownPrivateAdmission(result);
+      admission = await admitRecoveryBusiness(profile, result, {
+        traceDiagnostics: foundationDiagnostics,
+      });
     }
     if (profile === "workspace") {
       workspaceFailures(result.workspaceErrors);
@@ -458,9 +462,15 @@ export async function runFoundation(
     !["foundation", "loss"].includes(profile) && strictCode === 2 && code === 0;
   console.log(
     JSON.stringify({
-      status: ["workspace", "foundation", "loss", "reliability"].includes(
-        profile,
-      )
+      status: [
+        "workspace",
+        "foundation",
+        "loss",
+        "restore",
+        "skill-restore",
+        "shutdown",
+        "reliability",
+      ].includes(profile)
         ? "business_passed"
         : code === 1
           ? "business_passed_trace_failed"
@@ -485,7 +495,14 @@ export async function runFoundation(
                       ? workspacePublicResult(result)
                       : result),
       ...(admission ? { private_admission: admission } : {}),
-      ...(["workspace", "foundation", "loss"].includes(profile)
+      ...([
+        "workspace",
+        "foundation",
+        "loss",
+        "restore",
+        "skill-restore",
+        "shutdown",
+      ].includes(profile)
         ? { trace_diagnostics: admission.trace_diagnostics }
         : {}),
       deployment,

@@ -360,11 +360,17 @@ export async function runFoundationFlow(
       const errors = [];
       const traces = await collectRestoreTraces(
         admitted,
-        (operation) =>
-          collectFoundationLifecycle(config, operation, traceSecrets, signal),
+        (operation, localSignal = signal) =>
+          collectFoundationLifecycle(
+            config,
+            operation,
+            traceSecrets,
+            localSignal,
+          ),
         (operation, error) => saveFoundationFailure(config, operation, error),
         signal,
         errors,
+        traceDiagnostics,
       );
       recordShutdownFailures(result, errors);
       return recordShutdownFailures(
@@ -381,11 +387,17 @@ export async function runFoundationFlow(
       const errors = [];
       const traces = await collectRestoreTraces(
         admitted,
-        (operation) =>
-          collectFoundationLifecycle(config, operation, traceSecrets, signal),
+        (operation, localSignal = signal) =>
+          collectFoundationLifecycle(
+            config,
+            operation,
+            traceSecrets,
+            localSignal,
+          ),
         (operation, error) => saveFoundationFailure(config, operation, error),
         signal,
         errors,
+        traceDiagnostics,
       );
       recordRestoreFailures(result, errors);
       return recordRestoreFailures(

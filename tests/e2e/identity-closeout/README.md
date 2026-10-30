@@ -315,8 +315,12 @@ serial fixture performs no restoration inside the window, so a removed Agent
 must not reappear. Healthy rename/bootstrap/SSR reads still require the exact
 fixture directory. Cold workspace scopes reject immediately, and warm reads
 must converge to 401 within the existing TTL admission bound. Every transitional
-response is retained privately; successful 200 request/source Trace closures
-are validated and included in the final strict result.
+response is retained privately. Successful 200 request/source Trace closures
+are collected as auxiliary diagnostics. Missing or invalid Trace evidence is
+archived with a warning and does not interrupt the remaining business checks.
+Actual HTTP responses must independently establish renamed labels after TTL,
+unchanged cookies and identity scope on all six display scopes; stale labels,
+failed reads and missing scopes still fail the suite.
 
 Gateway's Go real-output schema tests use `santhosh-tekuri/jsonschema` with the
 default Go regexp engine, whose `\s` whitespace class is ASCII-only (`\S` is

@@ -114,7 +114,7 @@ export async function runtimeExitEvidence(config, docker, id, since) {
   assertRuntimeExited(events, id, config.project);
 }
 
-export async function flushTraceProducers(config, docker) {
+export async function flushTraceProducers(config, docker, signal) {
   const services = [
     "edge-gateway",
     "admin-console",
@@ -127,12 +127,19 @@ export async function flushTraceProducers(config, docker) {
   await docker(
     composeArgs(config.project, ["stop", "-t", "30", ...services]),
     true,
+    { signal },
   );
   const ids = lines(
-    await docker(composeArgs(config.project, ["ps", "-a", "-q", ...services])),
+    await docker(
+      composeArgs(config.project, ["ps", "-a", "-q", ...services]),
+      false,
+      { signal },
+    ),
   );
   assert.equal(ids.length, services.length);
-  for (const container of JSON.parse(await docker(["inspect", ...ids])))
+  for (const container of JSON.parse(
+    await docker(["inspect", ...ids], false, { signal }),
+  ))
     assertProducerStopped(container, config.project);
   return services.length;
 }

@@ -26,7 +26,10 @@ test("runner merge retains main recovery profiles in auxiliary diagnostics", () 
   const definition = source.match(
     /const foundationDiagnostics = (\[[\s\S]*?\])\.includes\(profile\)/u,
   );
-  assert(definition, "runner must explicitly select auxiliary diagnostic profiles");
+  assert(
+    definition,
+    "runner must explicitly select auxiliary diagnostic profiles",
+  );
   assert.deepEqual(
     [...definition[1].matchAll(/"([^"]+)"/gu)].map((match) => match[1]),
     ["foundation", "loss", "restore", "skill-restore", "shutdown"],
@@ -132,7 +135,10 @@ test("Foundation public summary excludes original RPC and state bodies without c
   assert(
     shutdownFailureIndex > archiveIndex &&
       shutdownFailureIndex <
-        source.indexOf("admission = shutdownPrivateAdmission(result)"),
+        source.indexOf(
+          "admission = await admitRecoveryBusiness(profile, result, {",
+          shutdownFailureIndex,
+        ),
     "Shutdown must preserve raw evidence before propagating original failures",
   );
   const lossFailureIndex = source.indexOf("lossFailures(result.lossErrors)");
@@ -142,7 +148,10 @@ test("Foundation public summary excludes original RPC and state bodies without c
   assert(
     restoreFailureIndex > archiveIndex &&
       restoreFailureIndex <
-        source.indexOf("admission = restorePrivateAdmission(result)"),
+        source.indexOf(
+          "admission = await admitRecoveryBusiness(profile, result, {",
+          restoreFailureIndex,
+        ),
     "Restore must preserve raw evidence before propagating original failures",
   );
   assert(
