@@ -1,3 +1,4 @@
+import { readReliabilityEvents as eventsOf } from "./reliability-events.mjs";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
@@ -129,13 +130,6 @@ async function operationMaybe(api, requestID, { timeoutMs } = {}) {
   return response.status === 200 ? response.body : null;
 }
 
-async function eventsOf(json, agentID) {
-  const page = await json(
-    `/api/admin/agents/${encodeURIComponent(agentID)}/events?after_sequence=0&limit=100`,
-  );
-  return page.events ?? page.items ?? page;
-}
-
 async function admit(api, pathname, body, extra = {}) {
   const key = randomUUID();
   const response = await api(pathname, {
@@ -190,7 +184,7 @@ export async function runReliability({
         {
           operation: failed,
           agent: agentNow,
-          events: await eventsOf(json, agentID),
+          events: await eventsOf(json, journal, agentID),
         },
         {
           agentID,
@@ -284,7 +278,7 @@ export async function runReliability({
       assertDeleteCleanupEvidence(
         {
           operation: await operationAt(json, deleted.request_id),
-          events: await eventsOf(json, agentID),
+          events: await eventsOf(json, journal, agentID),
           physical: await physical(agentID),
           egress: await egress(agentID),
         },
@@ -341,7 +335,7 @@ export async function runReliability({
       { signal },
     );
     const proxyState = await proxyStatus(config, docker, signal);
-    const events = await eventsOf(json, agentID);
+    const events = await eventsOf(json, journal, agentID);
     assertCancellationEvidence(
       { operation: cancelled, events, proxy: proxyState },
       {
@@ -383,7 +377,7 @@ export async function runReliability({
     const controlBefore = {
       agent: await json(`/api/admin/agents/${encodeURIComponent(controlID)}`),
       physical: await physical(controlID),
-      events: await eventsOf(json, controlID),
+      events: await eventsOf(json, journal, controlID),
     };
     assert(controlReady.container?.Id, "control must have a real container");
     config.env.ANTNEST_RELIABILITY_FAILED_CREATE_TTL = "2s";
@@ -422,7 +416,7 @@ export async function runReliability({
     );
     assert.equal(gcDelete.kind, "delete", "GC must schedule a normal delete");
     await waitForDeletedRuntimeResources(() => physical(agentID), { signal });
-    const events = await eventsOf(json, agentID);
+    const events = await eventsOf(json, journal, agentID);
     assertGCEvidence(
       { operation: failedCreate, events },
       { agentID, createRequestID },
@@ -439,7 +433,7 @@ export async function runReliability({
     const controlAfter = {
       agent: await json(`/api/admin/agents/${encodeURIComponent(controlID)}`),
       physical: await physical(controlID),
-      events: await eventsOf(json, controlID),
+      events: await eventsOf(json, journal, controlID),
     };
     assertGCProtectedAgent(controlBefore, controlAfter);
     const controlDeleteAdmit = await admit(

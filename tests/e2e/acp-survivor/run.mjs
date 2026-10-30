@@ -24,6 +24,7 @@ import {
 import { prepareSurvivorProfile } from "./profile.mjs";
 import { runSurvivorBusiness, requiredChecks } from "./business.mjs";
 import { partitionSurvivorDeployment } from "./deployment.mjs";
+import { survivorFailure } from "./failure.mjs";
 
 const root = fileURLToPath(new URL("../../../", import.meta.url));
 process.chdir(root);
@@ -40,33 +41,7 @@ function recordFailure(error, stage) {
   errors.push(error);
   // Messages, assertion values and command arguments can contain credentials.
   // Keep the original private error separately; publish only safe source facts.
-  const frames = String(error?.stack ?? "")
-    .split("\n")
-    .flatMap((line) => {
-      const prefix = `file://${root}`;
-      const index = line.indexOf(prefix);
-      if (index === -1) return [];
-      const location = line.slice(index + prefix.length).replace(/\)$/, "");
-      return /^[\w./-]+\.(?:mjs|js|ts):\d+:\d+$/u.test(location)
-        ? [location]
-        : [];
-    });
-  failures.push({
-    stage,
-    type: [
-      "AssertionError",
-      "AggregateError",
-      "AbortError",
-      "TypeError",
-      "RangeError",
-    ].includes(error?.name)
-      ? error.name
-      : "Error",
-    code: ["ERR_ASSERTION", "ABORT_ERR", "ENOENT"].includes(error?.code)
-      ? error.code
-      : undefined,
-    frames,
-  });
+  failures.push(survivorFailure(error, stage, root));
 }
 const report = {
   status: "running",

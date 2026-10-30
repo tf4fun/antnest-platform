@@ -107,6 +107,13 @@ export function journalReader(docker, postgres) {
         `SELECT event_id, global_sequence, agent_id, event_type,
       operation_request_id, admission_id, data FROM agent_controller.agent_events WHERE event_id=${safe(id)}`,
       ),
+    lifecycleEvent: (id) =>
+      query(
+        "agent_controller",
+        `SELECT event_id, global_sequence, aggregate_sequence, schema_version,
+      agent_id, event_type, operation_request_id, data
+      FROM agent_controller.agent_events WHERE event_id=${safe(id)}`,
+      ),
     ac: (id) =>
       query(
         "agent_controller",
@@ -142,7 +149,7 @@ export function journalReader(docker, postgres) {
       ),
     egressClosed: (agentID) =>
       query(
-        "runtime_egress",
+        "egress",
         `SELECT
           (SELECT n.state FROM runtime_egress.agent_networks n
            WHERE n.agent_id=${safe(agentID)}) AS allocation_state,

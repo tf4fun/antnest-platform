@@ -518,8 +518,17 @@ fixture tests still belong to the PR component checks:
 full non-truncated event pages, exact request/child/GC identities, no
 ready/runtime_bound on failed creates, empty containers+volumes, and the
 read-only `egressClosed` proof (allocation absent-or-quarantined — never
-inferred from events). The unit fixtures exercise proxy/evidence/deployment on
-local loopback sockets only; **the Docker system scenarios are UNEXECUTED
-locally — remote CI owns the complete gate.** Fixture passes do not establish
-system or version-set acceptance and do not close issue #45. Quarantine-clear
-E2E is not manufactured by editing a live database.
+inferred from events). Console event pages expose metadata only: the profile
+correlates each original event ID, Agent, sequence, schema, type and operation
+with the owning database's audit row before checking its private payload.
+Egress evidence uses the `antnest_egress` role/database and the
+`runtime_egress` schema; it still requires closed attachments and absent keys.
+
+Failure artifacts retain only allowlisted error types and transport/status
+metadata in `failure.json`. Raw exception messages and both service output
+streams stay in private diagnostics excluded from CI upload.
+
+The unit fixtures exercise proxy/evidence/deployment on local loopback sockets
+only. Fixture passes and partial checks do not establish system or version-set
+acceptance and do not close issue #45; remote CI owns the complete gate.
+Quarantine-clear E2E is not manufactured by editing a live database.
