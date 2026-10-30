@@ -183,6 +183,14 @@
       },
       "request_body": "none"
     },
+    "GET /api/admin/model-profiles/{model_profile_id}/usage": {
+      "callers": ["edge-gateway"],
+      "authentication": "workload",
+      "caller_context": {
+        "edge-gateway": "required"
+      },
+      "request_body": "none"
+    },
     "GET /api/admin/operations/{request_id}": {
       "callers": ["edge-gateway"],
       "authentication": "workload",

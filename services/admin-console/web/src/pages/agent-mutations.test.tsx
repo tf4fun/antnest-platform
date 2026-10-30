@@ -324,6 +324,26 @@ describe("Agent lifecycle command boundaries", () => {
     expect(screen.getByRole("link", { name: /Frozen template/ }).getAttribute("href")).toBe("#templates/template-1/revisions/1");
     expect(screen.queryByRole("button", { name: "Add MCP server" })).toBeNull();
   });
+  it("shows live model revisions beside the frozen build configuration", async () => {
+    const { state } = mockWorkflow("rebuild", async () => Response.json({}));
+    state.read = async () => Response.json({ ...agent,
+      effective_models: [{ model_profile_id: "model-1", revision: 2 }, { model_profile_id: "model-2", revision: 5 }],
+      configuration: {
+        template: { template_id: "template-1", revision: 1, name: "Frozen template" },
+        model_profile: { model_profile_id: "model-1", revision_id: "model-rev-1", revision: 1, name: "Model", model: { model: "support", context_window: 8192, max_output_tokens: 1024 } },
+        runtime: { ...template.runtime, mcp_servers: [] },
+        max_model_requests: 32, context_policy_version: "context-v1",
+      } });
+    render(<AgentsPage agentID="agent-1" />);
+    expect(await screen.findByRole("heading", { name: "Live model revisions" })).toBeTruthy();
+    const section = screen.getByRole("heading", { name: "Live model revisions" }).closest("section")!;
+    expect(within(section).getByRole("link", { name: "model-1" }).getAttribute("href")).toBe("#models/model-1");
+    expect(within(section).getByText("revision 2")).toBeTruthy();
+    expect(within(section).getByText("revision 5")).toBeTruthy();
+    const build = screen.getByRole("heading", { name: "Build configuration" }).closest("section")!;
+    expect(within(build).getByText("revision 1")).toBeTruthy();
+    expect(within(build).getByRole("link", { name: /Model/ }).getAttribute("href")).toBe("#models/model-1");
+  });
   it("does not carry a pending dialog or its late rejection into another Agent", async () => {
     const command = deferred<Response>();
     mockWorkflow("rebuild", () => command.promise);

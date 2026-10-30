@@ -35,9 +35,16 @@ function mockModels(rejectFirst = false, value = profile) {
     if (path === "/api/admin/model-catalog") return Response.json(catalog);
     if (path === "/api/admin/model-profiles") return Response.json({ items: [value] });
     if (path === "/api/admin/model-profiles/native") return Response.json(value);
+    if (path === "/api/admin/model-profiles/native/usage") return Response.json({ templates: 0, agents: 0 });
     throw new Error(`Unexpected request: ${path}`);
   }));
   return writes;
+}
+
+async function saveAndConfirm(form: ReturnType<typeof within>) {
+  await form.findByText(/Used by \d+ Agents in \d+ Templates/);
+  fireEvent.click(form.getByRole("button", { name: "Save changes" }));
+  fireEvent.click(await form.findByRole("button", { name: "Confirm changes" }));
 }
 
 async function openEditor(edit = false) {
@@ -72,10 +79,11 @@ it("preserves revision flags through a rejected publication and identical retry"
   const form = await openEditor(true);
   expect((form.getByRole("checkbox", { name: "Audio input" }) as HTMLInputElement).checked).toBe(true);
   expect((form.getByRole("checkbox", { name: "PDF input" }) as HTMLInputElement).checked).toBe(true);
-  fireEvent.click(form.getByRole("button", { name: "Save changes" }));
+  await saveAndConfirm(form);
   await form.findByRole("alert");
+  fireEvent.click(form.getByRole("button", { name: "Back to edit" }));
   expect((form.getByRole("checkbox", { name: "Audio input" }) as HTMLInputElement).checked).toBe(true);
-  fireEvent.click(form.getByRole("button", { name: "Save changes" }));
+  await saveAndConfirm(form);
   await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
   expect(writes).toHaveLength(2);
   expect(writes[1]).toEqual(writes[0]);
@@ -89,7 +97,7 @@ it("explicitly clears native flags in a new revision", async () => {
   const form = await openEditor(true);
   fireEvent.click(form.getByRole("checkbox", { name: "Audio input" }));
   fireEvent.click(form.getByRole("checkbox", { name: "PDF input" }));
-  fireEvent.click(form.getByRole("button", { name: "Save changes" }));
+  await saveAndConfirm(form);
   await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
   expect(writes[0]?.body.model).toMatchObject({ supports_audio: false, supports_pdf: false });
   expect(screen.getByText("Text")).toBeTruthy();
@@ -131,7 +139,7 @@ it("does not reset saved builtin metadata to newer defaults when publishing", as
     context_window: 4096, max_output_tokens: 512, temperature: 0.3 } };
   const writes = mockModels(false, stored);
   const form = await openEditor(true);
-  fireEvent.click(form.getByRole("button", { name: "Save changes" }));
+  await saveAndConfirm(form);
   await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
   const { base_url: _endpoint, ...parameters } = stored.model;
   expect(writes[0]?.body.model).toEqual(parameters);

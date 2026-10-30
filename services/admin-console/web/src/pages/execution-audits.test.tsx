@@ -46,6 +46,18 @@ function stubAuditFetch(reply: (url: URL) => Response | Promise<Response>) {
   return fetch;
 }
 
+it("shows the admitted model profile revision or Not recorded", async () => {
+  for (const [revision, label] of [[7, "7"], [undefined, "Not recorded"]] as const) {
+    cleanup();
+    stubAuditFetch((url) => url.pathname.endsWith("/events")
+      ? Response.json({ items: [], next_cursor: null })
+      : Response.json({ ...detail, model_profile_revision: revision }));
+    render(<ExecutionAuditsPage runID={summary.run_id} />);
+    const row = (await screen.findByText("Model profile revision")).parentElement!;
+    expect(row.textContent).toContain(label);
+  }
+});
+
 it("reads retained Agent history directly, with opaque pagination and original date filters", async () => {
   const fetch = stubAuditFetch((url) =>
     Response.json({

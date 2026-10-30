@@ -133,6 +133,7 @@ func (h *handler) routes() {
 	h.mux.HandleFunc("GET /api/admin/model-profiles", h.withPrincipal(h.listModelProfiles))
 	h.mux.HandleFunc("POST /api/admin/model-profiles", h.withPrincipal(h.createModelProfile))
 	h.mux.HandleFunc("GET /api/admin/model-profiles/{model_profile_id}", h.withPrincipal(h.getModelProfile))
+	h.mux.HandleFunc("GET /api/admin/model-profiles/{model_profile_id}/usage", h.withPrincipal(h.getModelProfileUsage))
 	h.mux.HandleFunc("POST /api/admin/model-profiles/{model_profile_id}/revisions", h.withPrincipal(h.reviseModelProfile))
 	h.mux.HandleFunc("GET /api/admin/templates", h.withPrincipal(h.listTemplates))
 	h.registerSkillRoutes()
@@ -561,6 +562,17 @@ func (h *handler) getModelProfile(response http.ResponseWriter, request *http.Re
 	h.forwardProjected(response, request, upstream.AgentController, http.MethodGet,
 		"/internal/model-profiles/"+url.PathEscape(request.PathValue("model_profile_id")),
 		organizationScopeQuery(actor.OrganizationID), nil, projectModelProfile)
+}
+
+func (h *handler) getModelProfileUsage(response http.ResponseWriter, request *http.Request, actor principal.Principal) {
+	response.Header().Set("Cache-Control", "no-store")
+	if request.URL.RawQuery != "" || request.ContentLength != 0 || len(request.TransferEncoding) != 0 {
+		writeError(response, http.StatusBadRequest, "invalid_request", "Request is invalid")
+		return
+	}
+	h.forwardProjected(response, request, upstream.AgentController, http.MethodGet,
+		"/internal/model-profiles/"+url.PathEscape(request.PathValue("model_profile_id"))+"/usage",
+		organizationScopeQuery(actor.OrganizationID), nil, projectModelProfileUsage)
 }
 
 type reviseModelProfileInput struct {

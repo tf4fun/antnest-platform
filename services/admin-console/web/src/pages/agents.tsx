@@ -1283,6 +1283,13 @@ function AgentDetail({ agentID, networkScope }: { agentID: string; networkScope?
           />
         )}
       </Section>
+      {agent.effective_models && agent.effective_models.length > 0 ? (
+        <Section title="Live model revisions" detail="Current Model Profile revisions used for new executions; the frozen Build configuration above is unchanged.">
+          <div className="grid gap-px overflow-hidden rounded-md border border-border bg-border shadow-xs sm:grid-cols-2 lg:grid-cols-3">
+            {agent.effective_models.map((model) => <div className="bg-white p-4" key={model.model_profile_id}><p className="text-xs text-muted-foreground"><a href={`#models/${encodeURIComponent(model.model_profile_id)}`}>{model.model_profile_id}</a></p><p className="mt-1 text-sm font-medium">revision {model.revision}</p></div>)}
+          </div>
+        </Section>
+      ) : null}
       {agent.configuration ? <Section title="Deployed MCP servers"><ManagedMCPSummary servers={agent.configuration.runtime.mcp_servers} /></Section> : null}
       <AgentNetworkPolicy agent={agent} scope={networkScope} refreshRevision={networkRefreshRevision} />
       <div className="grid gap-px overflow-hidden rounded-md border border-border bg-border shadow-xs sm:grid-cols-2 lg:grid-cols-3">

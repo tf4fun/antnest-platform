@@ -253,6 +253,16 @@ export type ModelProfileList = {
   next_after_id?: string | null;
 };
 
+export type ModelProfileUsage = {
+  templates: number;
+  agents: number;
+};
+
+export type EffectiveModel = {
+  model_profile_id: string;
+  revision: number;
+};
+
 export type ManagedMCPSummary = { id: string; command: string };
 export type ManagedMCPSecret = { set: true; fingerprint: string };
 export type ManagedMCPSecretWrite = { value: string } | { keep: true };
@@ -329,6 +339,7 @@ export type Agent = {
   agent_spec_revision?: string;
   last_successful_execution_revision?: string;
   executable_execution_revision?: string;
+  effective_models?: EffectiveModel[];
   configuration?: {
     template: {
       template_id: string;

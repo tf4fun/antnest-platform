@@ -1,6 +1,6 @@
 {
   "contract": "antnest.admin-console.bff",
-  "version": 58,
+  "version": 59,
   "scim_lifecycle_policy": "../identity/scim-lifecycle-policy.json",
   "base_path": "/api/admin",
   "authentication_contract": "service-authentication.md",
@@ -202,6 +202,13 @@
     "revise_model_profile": {
       "method": "POST",
       "path": "/model-profiles/{model_profile_id}/revisions"
+    },
+    "get_model_profile_usage": {
+      "method": "GET",
+      "response_schema": "live-model-semantics.schema.json#/$defs/model_profile_usage",
+      "path": "/model-profiles/{model_profile_id}/usage",
+      "query": "reject_all",
+      "cache_control": "no-store"
     },
     "list_templates": {
       "method": "GET",

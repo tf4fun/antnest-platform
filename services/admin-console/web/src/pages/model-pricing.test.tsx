@@ -32,6 +32,7 @@ function backend(first?: "503" | "malformed", value = profile, catalogFailure = 
     }
     if (path === "/api/admin/model-catalog") return catalogFailure ? Response.json({ message: "Catalog unavailable" }, { status: 503 }) : Response.json(catalog);
     if (path === "/api/admin/model-profiles") return Response.json({ items: [value] });
+    if (path === "/api/admin/model-profiles/priced/usage") return Response.json({ templates: 0, agents: 0 });
     return Response.json(value);
   }));
   return writes;
@@ -43,12 +44,17 @@ async function editor(edit = false) {
     const button = await screen.findByRole("button", { name: "Edit model" });
     await waitFor(() => expect(button.matches(":disabled")).toBe(false));
     fireEvent.click(button);
+    const dialog = within(await screen.findByRole("dialog"));
+    await dialog.findByText(/Used by \d+ Agents in \d+ Templates/);
+    return dialog;
   }
   return within(await screen.findByRole("dialog"));
 }
 
-function publish(form: ReturnType<typeof within>, edit = false) {
-  fireEvent.click(form.getByRole("button", { name: edit ? "Save changes" : "Add model" }));
+async function publish(form: ReturnType<typeof within>, edit = false) {
+  const save = form.queryByRole("button", { name: edit ? "Save changes" : "Add model" });
+  if (save) fireEvent.click(save);
+  if (edit) fireEvent.click(await form.findByRole("button", { name: "Confirm changes" }));
 }
 
 it("prefills and submits catalogue prices explicitly", async () => {
@@ -66,10 +72,10 @@ it.each(["503", "malformed"] as const)("preserves saved prices, draft and retry 
   const form = await editor(true);
   expect((form.getByLabelText("Input (USD / 1M tokens)") as HTMLInputElement).value).toBe(String(saved.input_per_million));
   expect((form.getByLabelText("Cache write (USD / 1M tokens)") as HTMLInputElement).value).toBe("");
-  publish(form, true);
+  await publish(form, true);
   await form.findByRole("alert");
   expect(JSON.stringify({ ...sessionStorage })).not.toContain("synthetic-price-key");
-  publish(form, true);
+  await publish(form, true);
   await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
   expect(writes[0]?.body.model.pricing).toEqual(saved);
   expect(writes[1]).toEqual(writes[0]);
@@ -80,7 +86,7 @@ it("can remove pricing without a hidden catalogue fallback", async () => {
   const form = await editor(true);
   fireEvent.click(form.getByRole("checkbox", { name: "Set rates" }));
   expect(form.getByText("Not configured")).toBeTruthy();
-  publish(form, true);
+  await publish(form, true);
   await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
   expect(writes[0]?.body.model).not.toHaveProperty("pricing");
   expect(screen.getByText("Not configured")).toBeTruthy();
@@ -90,12 +96,12 @@ it("keeps zero distinct from blank and rejects incomplete edits before publishin
   const writes = backend();
   const form = await editor(true);
   fireEvent.change(form.getByLabelText("Input (USD / 1M tokens)"), { target: { value: "" } });
-  fireEvent.submit(form.getByRole("button", { name: "Save changes" }).closest("form")!);
+  fireEvent.submit(form.getByRole("button", { name: "Save changes", hidden: true }).closest("form")!);
   expect(await form.findByRole("alert")).toBeTruthy();
   expect(writes).toHaveLength(0);
   expect(document.activeElement).toBe(form.getByLabelText("Input (USD / 1M tokens)"));
   for (const label of ["Input", "Output", "Cache read"]) fireEvent.change(form.getByLabelText(`${label} (USD / 1M tokens)`), { target: { value: "0" } });
-  publish(form, true);
+  await publish(form, true);
   await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
   expect(writes[0]?.body.model.pricing).toEqual({ currency: "USD", input_per_million: 0, output_per_million: 0, cache_read_per_million: 0 });
 });
@@ -147,13 +153,13 @@ it("locks publication controls and does not project a late revision into another
   await waitFor(() => expect((open as HTMLButtonElement).disabled).toBe(false));
   fireEvent.click(open);
   const form = within(await screen.findByRole("dialog"));
-  publish(form, true);
+  await publish(form, true);
   await waitFor(() => expect(writes).toHaveLength(1));
   for (const control of [form.getByLabelText("Model ID"), form.getByLabelText("Input (USD / 1M tokens)")]) {
     expect(control.matches(":disabled")).toBe(true);
   }
   expect((form.getByRole("button", { name: "Cancel" }) as HTMLButtonElement).disabled).toBe(true);
-  fireEvent.submit(form.getByRole("button", { name: "Save changes" }).closest("form")!);
+  fireEvent.submit(form.getByRole("button", { name: "Save changes", hidden: true }).closest("form")!);
   expect(writes).toHaveLength(1);
   view.rerender(<ModelsPage modelID="another" />);
   await screen.findByRole("heading", { name: "another-model" });
@@ -180,10 +186,11 @@ it("keeps an unlisted model unpriced unless rates are supplied", async () => {
 it("treats a changed rate after rejection as a new publication intent", async () => {
   const writes = backend("503");
   const form = await editor(true);
-  publish(form, true);
+  await publish(form, true);
   await form.findByRole("alert");
+  fireEvent.click(form.getByRole("button", { name: "Back to edit" }));
   fireEvent.change(form.getByLabelText("Output (USD / 1M tokens)"), { target: { value: "9" } });
-  publish(form, true);
+  await publish(form, true);
   await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
   expect(writes).toHaveLength(2);
   expect(writes[1]?.key).not.toBe(writes[0]?.key);
@@ -195,7 +202,7 @@ it("does not replace unknown saved prices while editing an existing builtin mode
   const writes = backend(undefined, { ...profile, model });
   const form = await editor(true);
   expect((form.getByRole("checkbox", { name: "Set rates" }) as HTMLInputElement).checked).toBe(false);
-  publish(form, true);
+  await publish(form, true);
   await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
   expect(writes[0]?.body.model).not.toHaveProperty("pricing");
 });

@@ -586,7 +586,7 @@ function TemplateDetail({ templateID, revisionID }: { templateID: string; revisi
       {!historical ? <CatalogAvailabilityControl kind="templates" resourceID={templateID} enabled={template.enabled} disabled={open || pending || Boolean(publishedReadFailure)}
         onBusyChange={setAvailabilityBusy} onReload={readCurrent} /> : null}
       {modelFailure ? <ResourceFailureNotice failure={modelFailure} message={`Model choices could not be loaded: ${modelFailure.message}`} retryLabel="Retry model choices" onRetry={retryModels} /> : null}
-      <Section title="Configuration">
+      <Section title="Configuration" detail="This Template revision pins its prompt, runtime image, MCP servers and Preset Skills. The Model Profile and Provider references stay live: the linked profile can change until an execution admits a Run, which then records the selected revision in its immutable snapshot.">
         <div className="grid gap-px overflow-hidden rounded-md border border-border bg-border shadow-xs sm:grid-cols-2 lg:grid-cols-3">
           {facts.map(([label, value]) => <div className="bg-white p-4" key={label}><p className="text-xs text-muted-foreground">{label}</p><p className="mt-1 break-words text-sm font-medium">{value}</p></div>)}
         </div>

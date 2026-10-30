@@ -18,6 +18,7 @@ export type ExecutionAuditDetail = ExecutionAuditSummary & {
   tool_effect_state: string | null;
   stop_reason: string | null;
   error_class: string | null;
+  model_profile_revision?: number | null;
   unknown_effect_source?: string | null;
   usage_measurements: unknown[];
 };

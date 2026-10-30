@@ -191,6 +191,8 @@ the web application; `make test-integration-node` runs the browser tests;
 - [Operations](docs/operations.md) - configuration, outbound network access, shutdown and recovery.
 - [Observability](docs/observability.md) - tracing scope, content policy and limits.
 - [Provider management](docs/provider-management.md) - connections, credential rotation, discovery and BFF routes.
+Model Profiles and Provider connections are live configuration: Agent builds, Template revisions, MCP and Skill references stay frozen, while each admitted Run records the selected primary plus fallback/compaction revisions in its immutable execution snapshot. Model edits require an explicit confirmation step with informational usage counts before the live profile is revised.
+
 - [Model pricing](docs/model-pricing.md) - pricing contract, editing rules and builtin estimates.
 - [Native model inputs](docs/multimodal-models.md) - Image, Audio and PDF capability flags.
 - [Catalog availability](docs/catalog-availability.md) - enable/disable commands and configuration delivery status.

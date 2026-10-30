@@ -25,8 +25,8 @@ const controller = JSON.parse(
   ),
 );
 
-test("admin contract version 58 publishes both policy routes", () => {
-  assert.equal(contract.version, 58);
+test("admin contract version 59 publishes both policy routes", () => {
+  assert.equal(contract.version, 59);
   assert.deepEqual(contract.routes.get_model_call_policy, {
     method: "GET",
     path: "/model-call-policy",
