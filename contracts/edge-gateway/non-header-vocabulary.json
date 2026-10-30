@@ -274,5 +274,30 @@
     "purpose": "Multipart boundary template; exact expression in the maintenance client only",
     "source": "services/agent-acp-service/src/adapters/runtime-skill-maintenance-client.ts",
     "template": true
+  },
+  {
+    "value": "antnest-runtime-resolver-",
+    "purpose": "Per-generation Runtime resolver volume name prefix",
+    "source": "services/runtime-controller/internal/platform/docker/driver.go"
+  },
+  {
+    "value": "antnest-resolver-preparer-",
+    "purpose": "Runtime resolver preparation container prefix",
+    "source": "services/runtime-controller/internal/platform/docker/resolver_volume.go"
+  },
+  {
+    "value": "antnest-resolver",
+    "purpose": "Runtime resolver archive directory",
+    "source": "services/runtime-controller/internal/platform/docker/resolver_volume.go"
+  },
+  {
+    "value": "antnest-resolver/",
+    "purpose": "Runtime resolver archive directory prefix",
+    "source": "services/runtime-controller/internal/platform/docker/resolver_volume.go"
+  },
+  {
+    "value": "antnest-resolver/resolv.conf",
+    "purpose": "Runtime immutable resolver archive file",
+    "source": "services/runtime-controller/internal/platform/docker/resolver_volume.go"
   }
 ]
