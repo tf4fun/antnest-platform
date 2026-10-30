@@ -326,6 +326,7 @@ export async function runPrivateShutdown(input, scenario, overrides = {}) {
     signal?.throwIfAborted();
     access = await dependencies.createAccess(config, {
       signal,
+      traceDiagnostics: input.traceDiagnostics,
       secrets: traceSecrets,
       watchFactory: openShutdownPrivateWatch,
       collectTrace: collectPrivateShutdownTrace,

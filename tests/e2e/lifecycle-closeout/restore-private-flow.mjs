@@ -196,6 +196,7 @@ export async function runPrivateRestore(input, scenario, overrides = {}) {
     directory = await dependencies.createDirectory();
     access = await dependencies.createAccess(config, {
       signal,
+      traceDiagnostics: input.traceDiagnostics,
       secrets: input.traceSecrets,
       collectTrace: collectPrivateRestoreTrace,
     });

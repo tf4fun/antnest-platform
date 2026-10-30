@@ -186,6 +186,12 @@ test(titles[name], { timeout: 720_000 }, async (t) => {
     }
     diagnostics.advance("fixture-configuration");
     Object.assign(config.env, {
+      // Exercise normal digest reconciliation after the predecessor lease
+      // expires inside this fixture's 60 s recovery window. Production's 5 m
+      // full-resync cadence otherwise outlives the entire observation window.
+      ...(scenario.owned
+        ? { ANTNEST_AGENT_CONTROLLER_EXECUTION_RESYNC_INTERVAL: "2s" }
+        : {}),
       ANTNEST_C4_AGENT_ACP_IMAGE: image,
       ANTNEST_C4_CONTROL_DYNAMIC_RANGE:
         config.env.ANTNEST_EGRESS_CONTROL_SUBNET.replace(".0/24", ".128/25"),
