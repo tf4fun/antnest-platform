@@ -323,6 +323,7 @@ type agentProjectionSource struct {
 	FailureStage                    string                     `json:"failure_stage,omitempty"`
 	FailureCode                     string                     `json:"failure_code,omitempty"`
 	Configuration                   *agentConfigurationSource  `json:"configuration,omitempty"`
+	EffectiveModels                 []effectiveModelSource     `json:"effective_models,omitempty"`
 	AggregateSequence               int64                      `json:"aggregate_sequence"`
 	CreatedAt                       string                     `json:"created_at"`
 	UpdatedAt                       string                     `json:"updated_at"`
@@ -544,8 +545,55 @@ func projectTemplateList(payload []byte) ([]byte, error) {
 	return encodeBrowserResponse(result)
 }
 
+const maximumSafeJSONInteger = 9007199254740991
+
 func projectAgent(payload []byte) ([]byte, error) {
-	return projectPayload[agentProjectionSource](payload)
+	var source agentProjectionSource
+	if err := json.Unmarshal(payload, &source); err != nil {
+		return nil, fmt.Errorf("decode internal response: %w", err)
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(payload, &fields); err != nil {
+		return nil, fmt.Errorf("decode internal response: %w", err)
+	}
+	if raw, present := fields["effective_models"]; present && string(raw) == "null" {
+		return nil, fmt.Errorf("invalid effective model projection")
+	}
+	if source.EffectiveModels != nil && len(source.EffectiveModels) == 0 {
+		return nil, fmt.Errorf("empty effective model projection")
+	}
+	seen := make(map[string]bool, len(source.EffectiveModels))
+	for _, model := range source.EffectiveModels {
+		if model.ModelProfileID == "" || len(model.ModelProfileID) > 200 || seen[model.ModelProfileID] ||
+			model.Revision < 1 || model.Revision > maximumSafeJSONInteger {
+			return nil, fmt.Errorf("invalid effective model revision")
+		}
+		seen[model.ModelProfileID] = true
+	}
+	return encodeBrowserResponse(source)
+}
+
+type effectiveModelSource struct {
+	ModelProfileID string `json:"model_profile_id"`
+	Revision       int64  `json:"revision"`
+}
+
+func projectModelProfileUsage(payload []byte) ([]byte, error) {
+	var usage modelProfileUsageSource
+	if err := json.Unmarshal(payload, &usage); err != nil {
+		return nil, fmt.Errorf("decode Model Profile usage: %w", err)
+	}
+	if usage.Templates == nil || usage.Agents == nil ||
+		*usage.Templates < 0 || *usage.Templates > maximumSafeJSONInteger ||
+		*usage.Agents < 0 || *usage.Agents > maximumSafeJSONInteger {
+		return nil, fmt.Errorf("invalid Model Profile usage counts")
+	}
+	return encodeBrowserResponse(usage)
+}
+
+type modelProfileUsageSource struct {
+	Templates *int64 `json:"templates"`
+	Agents    *int64 `json:"agents"`
 }
 
 func projectAgentList(payload []byte) ([]byte, error) {

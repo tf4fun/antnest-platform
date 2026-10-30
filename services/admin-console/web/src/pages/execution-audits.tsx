@@ -273,6 +273,10 @@ function AuditRecord({ runID }: { runID: string }) {
           ["Stop reason", record.stop_reason],
           ["Error", record.error_class],
           ["Unknown effect source", record.unknown_effect_source],
+          [
+            "Model profile revision",
+            record.model_profile_revision ?? "Not recorded",
+          ],
         ].map(([label, value]) => (
           <div key={label} className="min-w-0">
             <dt className="text-xs text-muted-foreground">{label}</dt>

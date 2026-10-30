@@ -18,15 +18,16 @@ type executionAuditSummary struct {
 
 type executionAuditDetail struct {
 	executionAuditSummary
-	Input               json.RawMessage   `json:"input"`
-	ExecutionSnapshot   json.RawMessage   `json:"execution_snapshot"`
-	TerminalClass       *string           `json:"terminal_class"`
-	ExecutorState       *string           `json:"executor_state"`
-	ToolEffectState     *string           `json:"tool_effect_state"`
-	StopReason          *string           `json:"stop_reason"`
-	ErrorClass          *string           `json:"error_class"`
-	UnknownEffectSource *string           `json:"unknown_effect_source,omitempty"`
-	UsageMeasurements   []json.RawMessage `json:"usage_measurements"`
+	Input                json.RawMessage   `json:"input"`
+	ExecutionSnapshot    json.RawMessage   `json:"execution_snapshot"`
+	TerminalClass        *string           `json:"terminal_class"`
+	ExecutorState        *string           `json:"executor_state"`
+	ToolEffectState      *string           `json:"tool_effect_state"`
+	StopReason           *string           `json:"stop_reason"`
+	ErrorClass           *string           `json:"error_class"`
+	UnknownEffectSource  *string           `json:"unknown_effect_source,omitempty"`
+	ModelProfileRevision *int64            `json:"model_profile_revision"`
+	UsageMeasurements    []json.RawMessage `json:"usage_measurements"`
 }
 
 type executionAuditMessage struct {
@@ -117,6 +118,10 @@ func projectExecutionAuditDetail(payload []byte) ([]byte, error) {
 	if !validExecutionAuditSummary(detail.executionAuditSummary) || len(detail.Input) == 0 ||
 		len(detail.ExecutionSnapshot) == 0 || detail.UsageMeasurements == nil {
 		return nil, fmt.Errorf("incomplete execution audit detail")
+	}
+	if detail.ModelProfileRevision != nil &&
+		(*detail.ModelProfileRevision < 1 || *detail.ModelProfileRevision > maximumSafeJSONInteger) {
+		return nil, fmt.Errorf("invalid model profile revision")
 	}
 	snapshot, err := projectAuditExecutionSnapshot(detail.ExecutionSnapshot)
 	if err != nil {

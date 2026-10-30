@@ -183,6 +183,7 @@ it("preserves a stale model draft until an explicit successful reload", async ()
   fireEvent.change(dialog.getByLabelText("Input (USD / 1M tokens)"), { target: { value: "3" } });
   fireEvent.change(dialog.getByLabelText("Output (USD / 1M tokens)"), { target: { value: "4" } });
   fireEvent.click(dialog.getByRole("button", { name: "Save changes" }));
+  fireEvent.click(await dialog.findByRole("button", { name: "Confirm changes" }));
   const reload = await dialog.findByRole("button", { name: "Reload latest model" });
   expect(JSON.parse(requests.find((request) => request.method === "POST")!.body).expected_version).toBe(1);
   expect((dialog.getByRole("button", { name: "Save changes" }) as HTMLButtonElement).disabled).toBe(true);
@@ -202,6 +203,7 @@ it("preserves a stale model draft until an explicit successful reload", async ()
   expect((dialog.getByLabelText("Output (USD / 1M tokens)") as HTMLInputElement).value).toBe("9");
   fireEvent.change(dialog.getByLabelText("Maximum output"), { target: { value: "8192" } });
   fireEvent.click(dialog.getByRole("button", { name: "Save changes" }));
+  fireEvent.click(await dialog.findByRole("button", { name: "Confirm changes" }));
   await screen.findByText("Model settings saved.");
   const writes = requests.filter((request) => request.method === "POST");
   expect(writes).toHaveLength(2);
@@ -247,10 +249,12 @@ it("retries an uncertain model save with the original version and command key", 
     throw new Error("Response lost after commit");
   });
   const dialog = await openRevision(workflows[0]!);
+  await dialog.findByText(/Used by/);
   fireEvent.click(dialog.getByRole("button", { name: "Save changes" }));
+  fireEvent.click(await dialog.findByRole("button", { name: "Confirm changes" }));
   await dialog.findByText("Response lost after commit");
   expect(dialog.queryByRole("button", { name: "Reload latest model" })).toBeNull();
-  fireEvent.click(dialog.getByRole("button", { name: "Save changes" }));
+  fireEvent.click(dialog.getByRole("button", { name: "Confirm changes" }));
   await screen.findByText("Model settings saved.");
   const writes = requests.filter((request) => request.method === "POST");
   expect(writes).toHaveLength(2);
@@ -350,6 +354,7 @@ function mockCatalog(overrides: (request: Request) => Response | Promise<Respons
       case "/api/admin/model-profiles": return Response.json({ items: [model] });
       case "/api/admin/skills": return Response.json({ items: [], next_after_id: null });
       case "/api/admin/model-profiles/model-1": return Response.json(model);
+      case "/api/admin/model-profiles/model-1/usage": return Response.json({ templates: 0, agents: 0 });
       case "/api/admin/templates/template-1":
       case "/api/admin/templates/template-1/revisions/1": return Response.json(template);
       default: throw new Error(`Unexpected read: ${request.path}`);
@@ -392,6 +397,7 @@ describe.each(workflows)("$name revision workflow", (workflow) => {
       ? Response.json({ message: "Revision rejected" }, { status }) : undefined);
     const dialog = await openRevision(workflow);
     fireEvent.click(dialog.getByRole("button", { name: saveLabel(workflow) }));
+    if (workflow.name === "Model") fireEvent.click(await dialog.findByRole("button", { name: "Confirm changes" }));
     expect((await dialog.findByRole("alert")).textContent).toContain("Revision rejected");
     expect((dialog.getByLabelText(workflow.field) as HTMLInputElement).value).toBe(workflow.value);
     expect(screen.queryByText(/revision .* published/)).toBeNull();
@@ -415,9 +421,11 @@ describe.each(workflows)("$name revision workflow", (workflow) => {
     const dialog = await openRevision(workflow);
     const submit = dialog.getByRole("button", { name: saveLabel(workflow) }) as HTMLButtonElement;
     fireEvent.click(submit);
+    const confirmButton = workflow.name === "Model" ? await dialog.findByRole("button", { name: "Confirm changes" }) : submit;
+    if (workflow.name === "Model") fireEvent.click(confirmButton);
     await waitFor(() => expect(requests.filter((request) => request.method === "POST")).toHaveLength(1));
-    expect(submit.disabled).toBe(true);
-    expect(submit.getAttribute("aria-busy")).toBe("true");
+    expect((confirmButton as HTMLButtonElement).disabled).toBe(true);
+    expect(confirmButton.getAttribute("aria-busy")).toBe("true");
     expect((dialog.getByRole("button", { name: "Close dialog" }) as HTMLButtonElement).disabled).toBe(true);
     fireEvent.click(submit);
     fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });

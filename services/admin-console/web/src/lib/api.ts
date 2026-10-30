@@ -34,6 +34,7 @@ import type {
   ModelCatalog,
   ModelProfile,
   ModelProfileList,
+  ModelProfileUsage,
   ModelParameters,
   ProviderConnection,
   ProviderConnectionList,
@@ -541,6 +542,8 @@ export const api = {
     provider_connection_id: string;
     model: ModelParameters;
   }) => idempotentRequest<ModelProfile>("create-model", "/api/admin/model-profiles", input),
+  modelUsage: (modelProfileID: string, signal?: AbortSignal) =>
+    request<ModelProfileUsage>(`/api/admin/model-profiles/${encodeURIComponent(modelProfileID)}/usage`, { signal }),
   reviseModel: (modelProfileID: string, input: {
     expected_version: number;
     display_name: string;

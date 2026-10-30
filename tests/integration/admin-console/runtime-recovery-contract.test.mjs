@@ -47,7 +47,7 @@ const input = () => ({
 
 test("Console freezes an administrator-only recovery extension on the existing Rebuild route", () => {
   const contract = read("admin-console/admin-contract.json");
-  assert.equal(contract.version, 58);
+  assert.equal(contract.version, 59);
   const route = contract.routes.rebuild_agent;
   assert.equal(route.method, "POST");
   assert.equal(route.path, "/agents/{agent_id}/rebuild");

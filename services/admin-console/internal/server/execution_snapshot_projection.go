@@ -1,10 +1,14 @@
 package server
 
-import "encoding/json"
+import (
+	"encoding/json"
+	"fmt"
+)
 
 type auditExecutionSnapshot struct {
 	ProviderConnectionID     string              `json:"providerConnectionId,omitempty"`
 	ModelProfileID           string              `json:"modelProfileId,omitempty"`
+	ModelProfileRevision     *int64              `json:"modelProfileRevision,omitempty"`
 	ConfigurationRevision    *int64              `json:"configurationRevision,omitempty"`
 	AgentSpecRevision        string              `json:"agentSpecRevision,omitempty"`
 	ExecutionRevision        string              `json:"executionRevision,omitempty"`
@@ -18,7 +22,16 @@ type auditExecutionSpec struct {
 	ContextPolicyVersion string                     `json:"contextPolicyVersion,omitempty"`
 	MaxModelRequests     *int64                     `json:"maxModelRequests,omitempty"`
 	Model                *auditModelSpec            `json:"model,omitempty"`
+	FallbackModels       []auditModelCandidate      `json:"fallbackModels,omitempty"`
+	CompactionModel      *auditModelCandidate       `json:"compactionModel,omitempty"`
 	Configuration        *auditSessionConfiguration `json:"configuration,omitempty"`
+}
+
+type auditModelCandidate struct {
+	ModelProfileID       string          `json:"modelProfileId,omitempty"`
+	ProviderConnectionID string          `json:"providerConnectionId,omitempty"`
+	ModelProfileRevision *int64          `json:"modelProfileRevision,omitempty"`
+	Model                *auditModelSpec `json:"model,omitempty"`
 }
 
 type auditModelSpec struct {
@@ -63,5 +76,26 @@ func projectAuditExecutionSnapshot(payload []byte) ([]byte, error) {
 	if err := json.Unmarshal(payload, &snapshot); err != nil {
 		return nil, err
 	}
+	if snapshot == nil {
+		return json.Marshal(snapshot)
+	}
+	if !validOptionalModelRevision(snapshot.ModelProfileRevision) {
+		return nil, fmt.Errorf("invalid model profile revision")
+	}
+	if snapshot.ExecutionSpec != nil {
+		for _, candidate := range snapshot.ExecutionSpec.FallbackModels {
+			if !validOptionalModelRevision(candidate.ModelProfileRevision) {
+				return nil, fmt.Errorf("invalid model profile revision")
+			}
+		}
+		if snapshot.ExecutionSpec.CompactionModel != nil &&
+			!validOptionalModelRevision(snapshot.ExecutionSpec.CompactionModel.ModelProfileRevision) {
+			return nil, fmt.Errorf("invalid model profile revision")
+		}
+	}
 	return json.Marshal(snapshot)
+}
+
+func validOptionalModelRevision(revision *int64) bool {
+	return revision == nil || (*revision >= 1 && *revision <= maximumSafeJSONInteger)
 }
