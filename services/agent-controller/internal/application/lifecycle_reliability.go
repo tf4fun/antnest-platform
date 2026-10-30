@@ -37,7 +37,7 @@ func (service *LifecycleService) TerminateLifecycle(
 		return OperationView{}, fmt.Errorf("%w: lifecycle termination scope", ErrInvalidInput)
 	}
 	if operation.State != domain.OperationRunning {
-		return lifecycleOperationView(operation), nil
+		return service.terminatedLifecycleResult(ctx, operation, input.Code)
 	}
 	plan, err := domain.OperationPlan(operation.Kind)
 	if err != nil || !slices.Contains(plan, input.Phase) {
@@ -58,6 +58,18 @@ func (service *LifecycleService) TerminateLifecycle(
 	})
 	if err != nil {
 		return OperationView{}, err
+	}
+	return service.terminatedLifecycleResult(ctx, record, input.Code)
+}
+
+func (service *LifecycleService) terminatedLifecycleResult(ctx context.Context, record ports.LifecycleOperationRecord, code string) (OperationView, error) {
+	if record.State == domain.OperationFailed && record.ErrorCode == code &&
+		(record.Kind == domain.OperationCreate || record.Kind == domain.OperationRebuild || record.Kind == domain.OperationEnable) {
+		// Commit the terminal operation before releasing the RC preparation.
+		// Replayed termination must finish an unconfirmed release as well.
+		if err := service.releasePreparedSkills(ctx, record.RequestID, record.RequestFingerprint); err != nil {
+			return OperationView{}, err
+		}
 	}
 	return lifecycleOperationView(record), nil
 }
