@@ -61,6 +61,13 @@ real publication worker or Temporal; the proxy never retries.
 
 ## Evidence
 
+Public execution snapshots may include `modelProfileRevision` (#46). The business
+checker accepts only a positive safe integer and, when the audit supplies
+`model_profile_revision`, requires equality with that captured snapshot. Legacy
+snapshots may omit the revision (with a null audit revision); unknown public
+snapshot fields remain rejected. Replay still compares the complete original
+Run, so a later live Model edit cannot rewrite an admitted revision.
+
 The client uses public Admin Console audits plus read-only Runtime operation and
 identity inspection. Neither the client nor the proxy has database access or a
 Docker socket. Receipts contain only bounded identities and canonical hashes,
