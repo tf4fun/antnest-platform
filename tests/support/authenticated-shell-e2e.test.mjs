@@ -64,6 +64,18 @@ test("Loss gets fresh candidate images and preserves its two Runtime-loss cases"
   ]);
 });
 
+test("Lifecycle reliability keeps fresh candidate images and a dedicated business profile", () => {
+  assert.deepEqual(
+    shellComposeFiles("lifecycle-reliability"),
+    shellComposeFiles("lifecycle-health"),
+  );
+  assert.deepEqual(shell.shellEntrypoint("lifecycle-reliability"), [
+    "node",
+    "tests/e2e/lifecycle-closeout/run.mjs",
+    "reliability",
+  ]);
+});
+
 test("Network gets fresh candidate images and its original business profile", () => {
   assert.deepEqual(
     shellComposeFiles("lifecycle-network"),

@@ -112,7 +112,7 @@ export function journalReader(docker, postgres) {
         "agent_controller",
         `SELECT request_id,agent_id,kind,state,phase,
       source_runtime_revision,target_spec_revision_id,child_request_id,runtime_result,
-      updated_at
+      updated_at,source_failed_create_request_id
       FROM agent_controller.agent_lifecycle_operations WHERE request_id=${safe(id)}`,
       ),
     rc: (id) =>
@@ -139,6 +139,21 @@ export function journalReader(docker, postgres) {
         "runtime_controller",
         `SELECT count(*)::int AS count
       FROM runtime_controller.observations WHERE agent_id=${safe(agentID)} AND runtime_revision=${safe(revision)} AND kind='updated'`,
+      ),
+    egressClosed: (agentID) =>
+      query(
+        "runtime_egress",
+        `SELECT
+          (SELECT n.state FROM runtime_egress.agent_networks n
+           WHERE n.agent_id=${safe(agentID)}) AS allocation_state,
+          (SELECT a.state FROM runtime_egress.runtime_attachments a
+           WHERE a.agent_id=${safe(agentID)}) AS attachment_state,
+          NOT EXISTS (SELECT 1 FROM runtime_egress.runtime_tunnel_keys k
+                      WHERE k.agent_id=${safe(agentID)}) AS keys_absent,
+          NOT EXISTS (SELECT 1 FROM runtime_egress.runtime_attachments a
+                      WHERE a.agent_id=${safe(agentID)} AND
+                        (a.state <> 'closed' OR a.runtime_endpoint IS NOT NULL
+                         OR a.tunnel_key_id IS NOT NULL)) AS attachment_safe`,
       ),
   };
 }
