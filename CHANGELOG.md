@@ -339,6 +339,27 @@ native Runtime retains its separate per-instance token profile.
 
 ### Fixed
 
+Lifecycle reliability E2E correlates public event metadata with persisted audit
+payloads and reads Egress cleanup through its actual owning database role.
+Safe failure summaries survive CI filtering while raw diagnostics stay private.
+
+Controller event readers recognize the contract's schema-1 cancellation,
+quarantine-clear and GC-scheduled events instead of failing their event pages.
+
+Controller lifecycle termination releases its owned Skill preparation after
+committing the failure, including retries after a lost release confirmation.
+This frees the original preparation reservation before a failed-create Rebuild.
+
+Controller lifecycle phases terminate atomically when Temporal exhausts their
+retry budget while retaining the last retryable application error. Explicit
+retry timeout state is classified alongside timeout failures; older closed
+workflow histories retain their original replay behavior.
+
+Two-ACP survivor E2E verifies its ordinary idempotency header without waiting
+for unrelated full security-header metadata. Original Prompt body/identity
+checks remain required; browser phase and nested source-only failure records
+make stalled steps diagnosable without publishing credentials.
+
 Controller can close v2 execution admission for lifecycle recovery when the
 previous accepting owner cannot prove its digest. Only an unavailable owner
 triggers the current operation's full closure snapshot; healthy retries retain
