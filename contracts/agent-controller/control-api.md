@@ -798,6 +798,12 @@ organization) through the ordinary ACP Apply/ACK path. Console controls and the
 cross-service consumer/integration batches remain pending.
 ## Lifecycle reliability, cancellation and quarantine repair (#45)
 
+This section specifies the additive revision 47 proposal in
+`lifecycle-reliability-proposal.json`. While the active control catalog is
+revision 46, these routes, request definitions and events are not advertised
+by the live catalogs. The Controller implementation batch publishes revision
+47 together with its handlers, producers and strict contract readers.
+
 Lifecycle operations are bounded. Each phase has a deadline in seconds:
 `network_ensure` 600, `runtime_initialize` 1800, `publish` 600, and a 600
 default for every other phase. An operation that exceeds its phase deadline

@@ -42,7 +42,7 @@ func TestTerminateLifecycleOperationMarksTerminalWithPhaseCAS(t *testing.T) {
 	termination := ports.TerminateLifecycleOperation{
 		RequestID: operation.RequestID, Fingerprint: operation.RequestFingerprint,
 		ExpectedPhase: domain.PhaseNetworkEnsure, ErrorCode: "lifecycle_cancelled",
-		ErrorDetail: "administrator cancelled create", EventID: "event-terminate-agent",
+		ErrorDetail: "administrator cancelled create", EventID: "event-termination-terminate-agent",
 	}
 	record, err := repository.TerminateLifecycleOperation(ctx, termination)
 	if err != nil {

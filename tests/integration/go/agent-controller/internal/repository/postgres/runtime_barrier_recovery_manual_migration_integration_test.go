@@ -3,6 +3,7 @@ package postgres
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -95,9 +96,27 @@ DROP COLUMN model_retry, DROP COLUMN failover, DROP COLUMN run_budget`)
 DROP TABLE agent_controller.model_call_policy_requests;
 DROP TABLE agent_controller.model_call_policies`)
 	require.NoError(t, err)
-	removed, err := tx.Exec(ctx, `DELETE FROM agent_controller.schema_migrations WHERE version IN (29,30,31,32,33,34)`)
+	var failedCreateMarkers int64
+	require.NoError(t, tx.QueryRow(ctx, `SELECT count(*) FROM agent_controller.agent_lifecycle_operations
+WHERE source_failed_create_request_id <> ''`).Scan(&failedCreateMarkers))
+	require.Zero(t, failedCreateMarkers, "the predecessor must contain no failed-create retry markers")
+	var restoredSourceConstraint bool
+	for _, migration := range schemaMigrations {
+		if migration.version != 10 {
+			continue
+		}
+		sourceConstraint, _, found := strings.Cut(migration.sql, "\nALTER TABLE agent_controller.agent_events")
+		require.True(t, found, "migration 0010 must keep its historical source constraint")
+		_, err = tx.Exec(ctx, sourceConstraint)
+		require.NoError(t, err)
+		restoredSourceConstraint = true
+	}
+	require.True(t, restoredSourceConstraint)
+	_, err = tx.Exec(ctx, `ALTER TABLE agent_controller.agent_lifecycle_operations DROP COLUMN source_failed_create_request_id`)
 	require.NoError(t, err)
-	require.EqualValues(t, 6, removed.RowsAffected())
+	removed, err := tx.Exec(ctx, `DELETE FROM agent_controller.schema_migrations WHERE version IN (29,30,31,32,33,34,35)`)
+	require.NoError(t, err)
+	require.EqualValues(t, 7, removed.RowsAffected())
 	require.NoError(t, tx.Commit(ctx))
 
 	var version int64
@@ -120,7 +139,7 @@ FROM agent_controller.runtime_barrier_recovery_receipts WHERE request_id=$1`, or
 	require.NoError(t, fixture.store.Migrate(ctx))
 	require.NoError(t, fixture.store.pool.QueryRow(ctx, `SELECT max(version)
 FROM agent_controller.schema_migrations`).Scan(&version))
-	require.EqualValues(t, 34, version)
+	require.EqualValues(t, 35, version)
 	assertModelPolicyLegacyColumnsNull(t, ctx, fixture.store)
 	assertRuntimeBarrierManualTestRow(t, ctx, fixture.store, original.Command.RequestID, false)
 	require.Equal(t, original, runtimeBarrierAdmissionReceipt(t, ctx, fixture.store, fixture.begin))

@@ -44,8 +44,8 @@ func (dependency *failedCreateRebuildDependencies) InspectRuntime(
 func (dependency *failedCreateRebuildDependencies) EnsureAgentNetwork(
 	_ context.Context, agentID string,
 ) (ports.NetworkAttachment, error) {
-	dependency.rebuildDependenciesStub.calls = append(
-		dependency.rebuildDependenciesStub.calls, "egress.ensure")
+	dependency.calls = append(
+		dependency.calls, "egress.ensure")
 	if len(dependency.ensureErrs) > 0 {
 		err := dependency.ensureErrs[0]
 		dependency.ensureErrs = dependency.ensureErrs[1:]
@@ -195,9 +195,9 @@ func TestFailedCreateRebuildRetriesTransientEgressFailure(t *testing.T) {
 		t.Fatal("the fenced ensure attempt must surface the transient egress failure")
 	}
 	dependency := dependencies
-	if len(dependency.rebuildDependenciesStub.calls) == 0 ||
-		dependency.rebuildDependenciesStub.calls[0] != "egress.ensure" {
-		t.Fatalf("expected ensure attempt: %v", dependency.rebuildDependenciesStub.calls)
+	if len(dependency.calls) == 0 ||
+		dependency.calls[0] != "egress.ensure" {
+		t.Fatalf("expected ensure attempt: %v", dependency.calls)
 	}
 	if dependency.initializeCalls != nil {
 		t.Fatal("runtime must not initialize before the network is fenced")
