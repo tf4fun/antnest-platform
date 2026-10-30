@@ -255,6 +255,8 @@ func (repository *Repository) BeginAgentRebuild(
 	if err := insertLifecycleOperationAt(ctx, transaction, input.Operation, acceptedAt); err != nil {
 		return ports.AgentRebuildState{}, false, err
 	}
+	// The validated logical source may come from a failed create's target.
+	// Compare the actual locked pointer for legacy Agents whose stored spec is blank.
 	result, err := transaction.Exec(ctx, `
 UPDATE agent_controller.agents
 SET active_operation_request_id = $2, aggregate_sequence = $3, updated_at = $4
@@ -264,7 +266,7 @@ WHERE id = $1 AND active_operation_request_id = '' AND aggregate_sequence = $5
   AND executable_execution_revision_id = $7 AND runtime_revision = $8
   AND last_successful_execution_revision_id = $10`,
 		input.AgentID, input.Operation.RequestID, input.RequestedEvent.AggregateSequence,
-		input.Now, input.ExpectedAggregateSequence, input.ExpectedSpecRevisionID,
+		input.Now, input.ExpectedAggregateSequence, agent.AgentSpecRevisionID,
 		agent.ExecutionRevisionID, input.ExpectedRuntimeRevision,
 		agent.LifecycleState, agent.LastSuccessfulExecutionRevisionID,
 	)

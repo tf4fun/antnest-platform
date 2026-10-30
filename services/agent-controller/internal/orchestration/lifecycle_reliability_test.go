@@ -138,10 +138,6 @@ func onCreateActivity(env *testsuite.TestWorkflowEnvironment, name string, fn fu
 	env.OnActivity(name, mock.Anything, mock.Anything).Return(fn)
 }
 
-func onLifecycleActivity(env *testsuite.TestWorkflowEnvironment, name string, fn func(context.Context, application.LifecycleCommand) (application.OperationView, error)) {
-	env.OnActivity(name, mock.Anything, mock.Anything).Return(fn)
-}
-
 func reliabilityEnvironment(t *testing.T, probe *reliabilityProbe, configuration ...WorkerConfiguration) *testsuite.TestWorkflowEnvironment {
 	t.Helper()
 	suite := testsuite.WorkflowTestSuite{}
@@ -280,35 +276,52 @@ func TestCreateWorkflowCancelDuringActivityRequestsTermination(t *testing.T) {
 func TestLifecycleWorkflowCancelDoesNotStartChild(t *testing.T) {
 	probe := &reliabilityProbe{}
 	env := reliabilityEnvironment(t, probe)
-	release := make(chan struct{})
-	t.Cleanup(func() { close(release) })
+	admissionReleased := make(chan struct{})
+	var once sync.Once
+	unblock := func() { once.Do(func() { close(admissionReleased) }) }
+	t.Cleanup(unblock)
+	var cancelApplied atomic.Bool
 	command := application.LifecycleCommand{
 		Kind: domain.OperationDisable, RequestID: "request-lifecycle",
 		AgentID: "agent-test", OrganizationID: "org-1", ActorPrincipalID: "admin-1",
 	}
-	probe.lifecycleStubs = map[string]func(context.Context, application.LifecycleCommand) (application.OperationView, error){
-		lifecycleActivity(domain.PhaseDrain): func(ctx context.Context, _ application.LifecycleCommand) (application.OperationView, error) {
-			probe.record(lifecycleActivity(domain.PhaseDrain))
+	env.OnActivity(lifecycleAdmission, mock.Anything, mock.Anything).Return(
+		func(ctx context.Context, _ application.LifecycleCommand) (application.LifecycleResult, error) {
 			select {
 			case <-ctx.Done():
-				return application.OperationView{}, ctx.Err()
-			case <-release:
-				return application.OperationView{State: domain.OperationRunning}, nil
+				return application.LifecycleResult{}, ctx.Err()
+			case <-admissionReleased:
+				return application.LifecycleResult{Operation: application.OperationView{
+					RequestID: "request-lifecycle", AgentID: "agent-test",
+					State: domain.OperationRunning,
+				}}, nil
 			}
-		},
-	}
-	env.SetOnActivityCompletedListener(func(info *activity.Info, _ converter.EncodedValue, _ error) {
-		if info.ActivityType.Name == lifecycleAdmission {
-			go env.UpdateWorkflow("cancel_lifecycle_operation", "", &testsuite.TestUpdateCallback{
-				OnAccept:   func() {},
-				OnReject:   func(err error) { t.Errorf("cancel rejected: %v", err) },
-				OnComplete: func(interface{}, error) {},
-			}, "request-lifecycle")
+		})
+	env.SetOnActivityStartedListener(func(info *activity.Info, _ context.Context, _ converter.EncodedValues) {
+		if info.ActivityType.Name != lifecycleAdmission {
+			return
 		}
+		env.UpdateWorkflow("cancel_lifecycle_operation", "", &testsuite.TestUpdateCallback{
+			OnAccept: func() {},
+			OnReject: func(err error) {
+				t.Errorf("cancel rejected: %v", err)
+				unblock()
+			},
+			OnComplete: func(_ interface{}, err error) {
+				if err != nil {
+					t.Errorf("cancel update failed: %v", err)
+					unblock()
+					return
+				}
+				cancelApplied.Store(true)
+				unblock()
+			},
+		}, "request-lifecycle")
 	})
 	env.ExecuteWorkflow(LifecycleWorkflow, command)
 	require.True(t, env.IsWorkflowCompleted())
 	require.Error(t, env.GetWorkflowError())
+	require.True(t, cancelApplied.Load(), "the cancel update must apply before the admission receipt")
 	require.Len(t, probe.terminations, 1)
 	require.Equal(t, "lifecycle_cancelled", probe.terminations[0].Code)
 	require.Empty(t, probe.children)

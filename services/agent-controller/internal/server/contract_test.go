@@ -51,6 +51,17 @@ type machineControlContract struct {
 		SecretsInLogsTracesEvents  bool   `json:"secrets_in_logs_traces_events"`
 		CrossServiceDatabaseAccess bool   `json:"cross_service_database_access"`
 	} `json:"compatibility"`
+	LifecycleReliability struct {
+		PhaseDeadlinesSeconds struct {
+			NetworkEnsure     int `json:"network_ensure"`
+			RuntimeInitialize int `json:"runtime_initialize"`
+			Publish           int `json:"publish"`
+			Default           int `json:"default"`
+		} `json:"phase_deadlines_seconds"`
+		FailureCodes           []string `json:"failure_codes"`
+		FailedCreateTTLSeconds int      `json:"failed_create_ttl_seconds"`
+		CancelUpdate           string   `json:"cancel_update"`
+	} `json:"lifecycle_reliability"`
 }
 
 type controlContractRoute struct {
@@ -82,7 +93,7 @@ func TestMachineControlContractMatchesRegisteredBoundary(t *testing.T) {
 	readStrictContractJSON(t, filepath.Join(root, "contracts/agent-controller/control-contract.json"), &contract)
 	var schema machineControlSchema
 	readContractJSON(t, filepath.Join(root, "contracts/agent-controller/control-api.schema.json"), &schema)
-	if contract.Revision != 46 || contract.Trust != "verified-workload-and-caller-context" || contract.Authentication != "service-authentication.md" {
+	if contract.Revision != 47 || contract.Trust != "verified-workload-and-caller-context" || contract.Authentication != "service-authentication.md" {
 		t.Fatalf("control contract revision = %d", contract.Revision)
 	}
 	if contract.MediaTypes.Request != "application/json" ||
@@ -382,8 +393,13 @@ func TestMachineControlContractValidatesSuccessfulHTTPBoundary(t *testing.T) {
 	events := &agentEventServiceStub{
 		page: application.AgentEventPage{Events: []application.AgentEventView{event}, NextSequence: 1},
 	}
+	reliability := &reliabilityLifecycleStub{
+		lifecycleServiceStub: lifecycle,
+		cancelResult:         operation,
+		clearResult:          agent,
+	}
 	boundary, err := newBusinessHandler(t,
-		catalog, lifecycle, &agentConfigurationServiceStub{}, queries, events, &networkPolicyServiceStub{},
+		catalog, reliability, &agentConfigurationServiceStub{}, queries, events, &networkPolicyServiceStub{},
 		func(context.Context) error { return nil },
 	)
 	if err != nil {
@@ -404,6 +420,12 @@ func TestMachineControlContractValidatesSuccessfulHTTPBoundary(t *testing.T) {
 		"PUT /internal/agent-templates/{template_id}/availability":            map[string]any{"request_id": "template-disable", "organization_id": "org-1", "expected_enabled": true, "enabled": false},
 		"POST /internal/provider-connections":                                 sampleCreateProviderRequest(),
 		"POST /internal/provider-connections/{connection_id}/credentials":     sampleRotateProviderRequest(),
+		"POST /internal/agents/{agent_id}/lifecycle-operation/cancel": cancelLifecycleOperationRequest{
+			OrganizationID: "org-1", ActorPrincipalID: "admin-1", OperationRequestID: operation.RequestID,
+		},
+		"POST /internal/agents/{agent_id}/lifecycle-quarantine/clear": clearLifecycleQuarantineRequest{
+			OrganizationID: "org-1", ActorPrincipalID: "admin-1", ExpectedAggregateSequence: agent.AggregateSequence,
+		},
 		"PUT /internal/agents/{agent_id}/network-policy": application.SetAgentNetworkPolicyInput{
 			RequestID: "request-network", OrganizationID: "org-1", ActorPrincipalID: "admin-1",
 			SetNetworkPolicy: ports.SetNetworkPolicy{NetworkPolicyReference: ports.NetworkPolicyReference{PolicyID: "builtin/allow-all", Revision: 1}, ExpectedResourceVersion: 7},
@@ -724,6 +746,9 @@ func TestMachineEventTypesMatchProducerContract(t *testing.T) {
 		ports.EventAgentDeleteRequested,
 		ports.EventAgentDeleted,
 		ports.EventAgentLifecycleQuarantined,
+		ports.EventAgentLifecycleCancelled,
+		ports.EventAgentLifecycleQuarantineCleared,
+		ports.EventAgentGCScheduled,
 		ports.EventAgentRuntimeRestarted,
 		ports.EventAgentRuntimeMissing,
 		ports.EventAgentRuntimeConditionChanged,
