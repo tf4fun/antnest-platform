@@ -42,7 +42,12 @@ canonical JSON bytes `["<organization_id>","<agent_id>",<spec>]` — compact
 serialization, spec fields in order `schema_version`,`action`/`default`/`rules`,
 rule fields `action`,`cidrs`,`domains`,`ports`,`protocol` (omitted when absent),
 and port ranges as `{"from":…,"to":…}` with scalar equality preserved — publish
-the immutable Egress revision once, then CAS the assignment. The Console consumer must implement the same recipe to verify acknowledgments without the ID. Behavior
+the immutable Egress revision once, then CAS the assignment. The Egress
+revision PUT acknowledges metadata only
+(`policy_id`,`revision`,`schema_version`,`digest`); Controller verifies the
+ack digest equals `sha256` over the canonical spec bytes and the echoed
+reference and schema version before the single assignment CAS — reads still
+return the full spec and digest through the GET detail route. The Console consumer must implement the same recipe to verify acknowledgments without the ID. Behavior
 comes from the exact revision's spec, never from its name or the latest revision.
 Policy IDs are opaque visible-ASCII keys and are URL-escaped as one path
 segment. Agent identifiers follow the existing Controller identifier contract.

@@ -3,6 +3,8 @@ package egressclient
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"io"
@@ -96,13 +98,29 @@ func (client *Client) PutPolicyRevision(ctx context.Context, ref ports.NetworkPo
 	path := "/internal/policies/" + url.PathEscape(ref.PolicyID) + "/revisions/" + strconv.FormatUint(ref.Revision, 10)
 	var revision ports.NetworkPolicyRevision
 	err = client.policyRequest(ctx, http.MethodPut, path, "put_policy_revision", "", body, func(payload []byte) error {
-		var decodeErr error
-		revision, decodeErr = decodePolicyRevision(payload)
-		if decodeErr != nil {
-			return decodeErr
+		var metadata struct {
+			PolicyID      string `json:"policy_id"`
+			Revision      uint64 `json:"revision"`
+			SchemaVersion int    `json:"schema_version"`
+			Digest        string `json:"digest"`
 		}
-		if revision.NetworkPolicyReference != ref || !revision.Spec.Equal(spec) {
+		if err := serviceauth.DecodeObject(payload, &metadata); err != nil {
 			return dependencyFailure("invalid_response", true)
+		}
+		canonical, err := json.Marshal(spec)
+		if err != nil {
+			return dependencyFailure("invalid_response", true)
+		}
+		sum := sha256.Sum256(canonical)
+		expected := "sha256:" + hex.EncodeToString(sum[:])
+		if metadata.PolicyID != ref.PolicyID || metadata.Revision != ref.Revision ||
+			metadata.SchemaVersion != spec.SchemaVersion || metadata.Digest != expected {
+			return dependencyFailure("invalid_response", true)
+		}
+		revision = ports.NetworkPolicyRevision{
+			NetworkPolicyReference: ref,
+			Spec:                   spec,
+			Digest:                 metadata.Digest,
 		}
 		return nil
 	})
