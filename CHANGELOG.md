@@ -339,6 +339,10 @@ native Runtime retains its separate per-instance token profile.
 
 ### Fixed
 
+Lifecycle reliability E2E correlates public event metadata with persisted audit
+payloads and reads Egress cleanup through its actual owning database role.
+Safe failure summaries survive CI filtering while raw diagnostics stay private.
+
 Controller event readers recognize the contract's schema-1 cancellation,
 quarantine-clear and GC-scheduled events instead of failing their event pages.
 

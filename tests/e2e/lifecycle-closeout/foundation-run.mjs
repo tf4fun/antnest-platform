@@ -23,6 +23,7 @@ import { admitFoundationBusiness } from "./foundation-completion.mjs";
 import { admitRecoveryBusiness } from "./recovery-completion.mjs";
 import { admitLossBusiness } from "./loss-completion.mjs";
 import { createTraceDiagnostics } from "../../support/trace-diagnostics.mjs";
+import { summarizeFailure } from "../../support/verification/failure.mjs";
 import {
   configureHealthPrivate,
   inspectHealthPrivateDeployment,
@@ -93,6 +94,7 @@ export async function runFoundation(
           "deployment.private.json",
           "business.json",
           "failure.private.txt",
+          "failure.json",
           "services.private.json",
         ])
           evidenceFilePath(directory, name);
@@ -381,12 +383,11 @@ export async function runFoundation(
         );
         for (const id of ids) {
           try {
-            diagnostics[id] = await diagnosticDocker([
-              "logs",
-              "--tail",
-              "1000",
-              id,
-            ]);
+            diagnostics[id] = await diagnosticDocker(
+              ["logs", "--tail", "1000", id],
+              false,
+              { captureStderr: true },
+            );
           } catch {
             diagnostics[id] = "diagnostic retrieval failed";
           }
@@ -430,6 +431,11 @@ export async function runFoundation(
           config.evidence,
           "failure.private.txt",
           inspect(failure, { depth: 12 }),
+        );
+        writeEvidenceFile(
+          config.evidence,
+          "failure.json",
+          JSON.stringify(summarizeFailure(failure)),
         );
       } catch {
         /* The original archive error remains in the failure above. */

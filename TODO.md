@@ -20,6 +20,8 @@ Issue 状态最后核对于 2026-10-28：141 个 issue，87 个已关闭，54 �
 
 ## 当前批次
 
+- **可靠性 harness 真实取证（2026-10-30，#377／#406）**：Console 公开事件按设计无私有 data，改为逐个公开事件与 owning-role 审计行严格匹配 ID／Agent／全局和聚合序号／schema／类型／操作，再检查真实 payload；缺失或异作用域证据仍失败，不合成公开字段。修正 Egress 证据角色／库名 `antnest_egress`（schema 仍为 `runtime_egress`），容器／卷／附件／密钥清理断言保留。新增关联与真实角色回归先红后绿，连同完整 scripted flow 的 GC 保护／泄漏反例、既有安全摘要和 foundation 状态共 53 项通过，零跳过；scripted API 只返回公开元数据，SQL 对应私有原行。新增允许列表失败摘要 `failure.json`，原始异常和服务 stdout/stderr 留在私有排除产物。真实 Docker 完整 reliability 场景 `antnest-lifecycle-67ddf86b` 的原始 5 项通过，含同 Agent 重建／删除、真实挂起初始化取消、GC 与 ready 对照保护，deployment 通过、strict/accepted exit=0、cleanup verified；全部本地容器已回收。新精确候选远程门待核对。
+
 - **可靠性事件读取修复（2026-10-30，#377／#406）**：原场景已完成失败创建重建／删除、真实挂起初始化后的取消与子 Delete，随后公开事件页 500。Controller `validAgentEventType` 未包含契约已有的取消／解除隔离／GC 调度三种 schema-1 事件，写入成功后读取被自身校验拒绝。新增 Agent／global 页面读取回归三项先红；仅补三种已声明类型，错误 schema 和未知类型继续拒绝，事件相关 race 单元通过。继续完整原场景复验及精确候选远程门，不把已执行的局部检查记为完整通过。
 
 - **终止后 Skill 准备释放（2026-10-30，#377／#406）**：继续真实 reliability 场景发现 Create 已 failed 后 Rebuild admission 反复 `reserve Skill preparation: concurrent catalog change`。原始 ready intent 仍占用 `agent_skill_preparation_one_active_per_agent`；阶段终止漏掉正常失败路径的真实释放。新增单元与 PostgreSQL 回归均先红；终止提交后复用现有 RC 释放与确认落库，已 failed 的幂等重试继续未确认释放，完成／其他原因失败不误释放，原准备未获确认前仍保持占用。定向 race 单元及真实 PostgreSQL 的释放前排他、确认后 Rebuild 准备、已失败终止重试和原子审计回归均通过，组件清理通过；原场景继续复验。不增加重试或时限、不把 ready 标志直接改成 released。
