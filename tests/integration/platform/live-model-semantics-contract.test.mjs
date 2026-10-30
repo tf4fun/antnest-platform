@@ -9,9 +9,7 @@ const require = createRequire(
 const { Ajv2020 } = require("ajv/dist/2020.js");
 const root = new URL("../../../contracts/", import.meta.url);
 const readRaw = (path) => JSON.parse(readFileSync(new URL(path, root), "utf8"));
-const proposal = readRaw(
-  "agent-controller/live-model-semantics-proposal.json",
-);
+const proposal = readRaw("agent-controller/live-model-semantics-proposal.json");
 const activeRevision = readRaw(
   "agent-controller/control-contract.json",
 ).revision;
@@ -290,7 +288,13 @@ test("the agent detail envelope carries effective_models without touching frozen
   ];
   check(validators, "agent", valid, true, "agent detail with effective_models");
   const absent = agent();
-  check(validators, "agent", absent, true, "agent detail without a spec omits it");
+  check(
+    validators,
+    "agent",
+    absent,
+    true,
+    "agent detail without a spec omits it",
+  );
   for (const effective_models of [
     [],
     [{ model_profile_id: "profile-1", revision: 0 }],
@@ -308,7 +312,9 @@ test("the agent detail envelope carries effective_models without touching frozen
     );
   }
   const unknown = agent();
-  unknown.effective_model_revisions = [{ model_profile_id: "p-1", revision: 1 }];
+  unknown.effective_model_revisions = [
+    { model_profile_id: "p-1", revision: 1 },
+  ];
   check(validators, "agent", unknown, false, "agent rejects unknown fields");
 });
 
@@ -324,7 +330,13 @@ test("the revised event is a strict journal record without credentials or settin
     revision: 9,
     occurred_at: "2026-10-30T00:00:00Z",
   });
-  check(validators, "model_profile_revised_event", event(), true, "valid event");
+  check(
+    validators,
+    "model_profile_revised_event",
+    event(),
+    true,
+    "valid event",
+  );
   for (const field of [
     "event_type",
     "request_id",
@@ -398,7 +410,10 @@ test("the revised event is a strict journal record without credentials or settin
     { items: [event()], next_after_revision: 0 },
     { items: [event()], next_after_revision: "9" },
     { items: [event()], next_after_revision: null, extra: 1 },
-    { items: [{ ...event(), previous_revision: 0 }], next_after_revision: null },
+    {
+      items: [{ ...event(), previous_revision: 0 }],
+      next_after_revision: null,
+    },
     { next_after_revision: null },
     null,
     [],
@@ -458,13 +473,7 @@ test("the publication revision fragment is an optional positive safe integer", (
     null,
     "model",
   ])
-    check(
-      validators,
-      "published_model",
-      value,
-      false,
-      JSON.stringify(value),
-    );
+    check(validators, "published_model", value, false, JSON.stringify(value));
 });
 
 test("the persisted snapshot, candidate and audit fragments freeze admission revisions", () => {
@@ -519,13 +528,7 @@ test("the persisted snapshot, candidate and audit fragments freeze admission rev
     { ...candidate(), modelProfileRevision: "3" },
     { ...candidate(), modelProfileRevision: 3, credential: "secret" },
   ])
-    check(
-      validators,
-      "model_candidate",
-      value,
-      false,
-      JSON.stringify(value),
-    );
+    check(validators, "model_candidate", value, false, JSON.stringify(value));
   for (const value of [null, 1, 6, maximumSafeInteger])
     check(
       validators,
