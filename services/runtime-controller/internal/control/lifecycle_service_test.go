@@ -58,8 +58,8 @@ func TestRuntimeLifecycleCommandsHidePhysicalResourceSteps(t *testing.T) {
 		t.Fatalf("enable: operation=%+v err=%v", enabled, err)
 	}
 	ready = requireLifecycleEnvironment(t, repository, "agent-1", deployment.LifecycleProvisioned)
-	if ready.Generation != 3 || platform.verifyStorageCalls != 0 {
-		t.Fatalf("enable did not reuse workspace with a new private generation: env=%+v verify=%d",
+	if ready.Generation != 3 || platform.verifyStorageCalls != 1 {
+		t.Fatalf("update must verify the bounded workspace once and enable must not add another: env=%+v verify=%d",
 			ready, platform.verifyStorageCalls)
 	}
 
@@ -696,11 +696,11 @@ func (*lifecyclePlatform) DeploymentDigest(value deployment.Deployment) (string,
 		Deployment      deployment.Deployment
 	}{MappingRevision: 1, Deployment: value})
 }
-func (p *lifecyclePlatform) EnsureStorage(context.Context, string) deployment.EffectOutcome {
+func (p *lifecyclePlatform) EnsureStorage(context.Context, string, ...deployment.ResourceLimits) deployment.EffectOutcome {
 	p.ensureStorageCalls++
 	return deployment.EffectOutcome{State: deployment.EffectCompleted}
 }
-func (p *lifecyclePlatform) VerifyStorage(context.Context, string) deployment.EffectOutcome {
+func (p *lifecyclePlatform) VerifyStorage(context.Context, string, ...deployment.ResourceLimits) deployment.EffectOutcome {
 	p.verifyStorageCalls++
 	return p.verifyStorageOutcome
 }

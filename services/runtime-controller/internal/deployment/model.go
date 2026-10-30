@@ -81,7 +81,7 @@ func (c Configuration) Resolve(agentID string, generation uint64) (Deployment, e
 			Network:    c.Network,
 			Filesystem: FilesystemSpec{Workspace: "/workspace", SystemSkills: "/skills"},
 		},
-		Resources: c.Resources,
+		Resources: c.Resources.Clone(),
 	}
 	if c.ManagedMCPTemplate != nil {
 		source := *c.ManagedMCPTemplate
@@ -162,9 +162,38 @@ type FilesystemSpec struct {
 }
 
 type ResourceLimits struct {
-	MemoryBytes uint64 `json:"memory_bytes"`
-	PidsLimit   uint32 `json:"pids_limit"`
-	TmpfsBytes  uint64 `json:"tmpfs_bytes"`
+	MemoryBytes    uint64  `json:"memory_bytes"`
+	PidsLimit      uint32  `json:"pids_limit"`
+	TmpfsBytes     uint64  `json:"tmpfs_bytes"`
+	CPUMillis      *uint64 `json:"cpu_millis,omitempty"`
+	WorkspaceBytes *uint64 `json:"workspace_bytes,omitempty"`
+}
+
+func (r ResourceLimits) Clone() ResourceLimits {
+	clone := r
+	if r.CPUMillis != nil {
+		value := *r.CPUMillis
+		clone.CPUMillis = &value
+	}
+	if r.WorkspaceBytes != nil {
+		value := *r.WorkspaceBytes
+		clone.WorkspaceBytes = &value
+	}
+	return clone
+}
+
+func (r ResourceLimits) EffectiveCPUMillis() uint64 {
+	if r.CPUMillis == nil {
+		return 1000
+	}
+	return *r.CPUMillis
+}
+
+func (r ResourceLimits) EffectiveWorkspaceBytes() uint64 {
+	if r.WorkspaceBytes == nil {
+		return 10737418240
+	}
+	return *r.WorkspaceBytes
 }
 
 func (d Deployment) ValidateFor(key Key) error {
@@ -224,6 +253,14 @@ func (d Deployment) ValidateFor(key Key) error {
 	}
 	if d.Resources.TmpfsBytes > math.MaxInt64 {
 		return invalid("resources.tmpfs_bytes exceeds the deployment platform range")
+	}
+	if d.Resources.CPUMillis != nil &&
+		(*d.Resources.CPUMillis < 100 || *d.Resources.CPUMillis > 16000) {
+		return invalid("resources.cpu_millis must be between 100 and 16000")
+	}
+	if d.Resources.WorkspaceBytes != nil &&
+		(*d.Resources.WorkspaceBytes < 67108864 || *d.Resources.WorkspaceBytes > 1099511627776) {
+		return invalid("resources.workspace_bytes must be between 67108864 and 1099511627776")
 	}
 	return nil
 }

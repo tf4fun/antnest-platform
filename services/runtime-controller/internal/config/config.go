@@ -51,6 +51,9 @@ type Config struct {
 	RuntimeOTEL               map[string]string
 	MaintenanceVerifiers      deployment.MaintenanceVerifiers
 	ACPMembers                []acpincarnation.Member
+	StopGraceSeconds          int
+	WorkspaceVolumeDriver     string
+	WorkspaceQuotaOption      string
 }
 
 func Load(environment serviceauth.LookupEnv) (Config, error) {
@@ -111,6 +114,17 @@ func Load(environment serviceauth.LookupEnv) (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
+	stopGraceDuration, err := duration(lookup, "ANTNEST_RUNTIME_STOP_GRACE", 20*time.Second)
+	if err != nil {
+		return Config{}, err
+	}
+	if stopGraceDuration%time.Second != 0 || stopGraceDuration < 20*time.Second || stopGraceDuration > 120*time.Second {
+		return Config{}, fmt.Errorf("ANTNEST_RUNTIME_STOP_GRACE must be whole seconds between 20 and 120")
+	}
+	stopGrace := int(stopGraceDuration / time.Second)
+	if mutationTimeout <= stopGraceDuration+5*time.Second {
+		return Config{}, fmt.Errorf("ANTNEST_RUNTIME_MUTATION_TIMEOUT must exceed ANTNEST_RUNTIME_STOP_GRACE plus the 5s stop client margin")
+	}
 	maintenanceVerifiers, err := parseMaintenanceVerifiers(lookup("ANTNEST_RUNTIME_SKILL_MAINTENANCE_VERIFIERS"))
 	if err != nil {
 		return Config{}, err
@@ -147,6 +161,9 @@ func Load(environment serviceauth.LookupEnv) (Config, error) {
 		RuntimeOTEL:              runtimeTelemetryEnvironment(lookup),
 		MaintenanceVerifiers:     maintenanceVerifiers,
 		ACPMembers:               acpMembers,
+		StopGraceSeconds:         stopGrace,
+		WorkspaceVolumeDriver:    strings.TrimSpace(lookup("ANTNEST_RUNTIME_WORKSPACE_VOLUME_DRIVER")),
+		WorkspaceQuotaOption:     strings.TrimSpace(lookup("ANTNEST_RUNTIME_WORKSPACE_QUOTA_OPTION")),
 	}
 	if capture := config.RuntimeOTEL["ANTNEST_TELEMETRY_CAPTURE_RPC_CONTENT"]; capture != "true" && capture != "false" {
 		return Config{}, fmt.Errorf("ANTNEST_TELEMETRY_CAPTURE_RPC_CONTENT must be true or false")
@@ -175,6 +192,17 @@ func Load(environment serviceauth.LookupEnv) (Config, error) {
 	}
 	if config.ListenAddress == config.HealthListenAddress {
 		return Config{}, fmt.Errorf("control and local health listeners must differ")
+	}
+	if (config.WorkspaceVolumeDriver == "") != (config.WorkspaceQuotaOption == "") {
+		return Config{}, fmt.Errorf("ANTNEST_RUNTIME_WORKSPACE_VOLUME_DRIVER and ANTNEST_RUNTIME_WORKSPACE_QUOTA_OPTION must be configured together")
+	}
+	if config.WorkspaceVolumeDriver != "" {
+		if config.WorkspaceVolumeDriver == "local" || strings.ContainsAny(config.WorkspaceVolumeDriver, " \t\n/") {
+			return Config{}, fmt.Errorf("ANTNEST_RUNTIME_WORKSPACE_VOLUME_DRIVER must name a trusted external driver, not local or a path")
+		}
+		if strings.ContainsAny(config.WorkspaceQuotaOption, " \t\n=") {
+			return Config{}, fmt.Errorf("ANTNEST_RUNTIME_WORKSPACE_QUOTA_OPTION must be a driver option name")
+		}
 	}
 	if raw, present := environment("ANTNEST_RUNTIME_ALLOWED_IMAGES"); present && raw != "" {
 		if err := json.Unmarshal([]byte(raw), &config.AllowedImages); err != nil {

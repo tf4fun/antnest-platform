@@ -35,7 +35,7 @@ identity or physical generation.
 | `ANTNEST_RUNTIME_MANAGEMENT_NETWORK`                 | yes      | Existing outbound private Docker network shared with Runtime; control binds a separate purpose address         |
 | `ANTNEST_RUNTIME_SYSTEM_SKILLS_VOLUME`               | no       | Existing read-only system-Skill volume name; defaults to `antnest-system-skills`                               |
 | `ANTNEST_RUNTIME_STATUS_TIMEOUT`                     | no       | Go duration; one `/status` bound; default `5s`                                                                 |
-| `ANTNEST_RUNTIME_MUTATION_TIMEOUT`                   | no       | Go duration; complete mutation bound including lock wait; default `2m`                                         |
+| `ANTNEST_RUNTIME_MUTATION_TIMEOUT`                   | no       | Go duration; complete mutation bound including lock wait; default `2m`; must exceed `ANTNEST_RUNTIME_STOP_GRACE` plus the 5s stop client margin and be exceeded by `ANTNEST_RUNTIME_RPC_TIMEOUT` |
 | `ANTNEST_RUNTIME_RPC_TIMEOUT`                        | no       | Go duration; finite internal RPC execution bound; default `3m` and must exceed mutation timeout                |
 | `ANTNEST_RUNTIME_RECONCILIATION_TIMEOUT`             | no       | Go duration; complete physical/logical inventory reconciliation bound; default `2m`                            |
 | `ANTNEST_RUNTIME_CONTROLLER_MONITOR_MAX_RETRY_DELAY` | no       | Go duration; observation retry cap including jitter; default `30s`, minimum `1s`                               |
@@ -43,6 +43,9 @@ identity or physical generation.
 | `ANTNEST_OBSERVATION_MAX_ROWS`                       | no       | Positive int64; asynchronous journal row-count target; default `1,000,000`                                     |
 | `ANTNEST_OBSERVATION_PRUNE_INTERVAL`                 | no       | Positive Go duration; interval between cleanup cycles; default `1m`                                            |
 | `ANTNEST_RUNTIME_SSE_HEARTBEAT`                      | no       | Go duration; internal SSE heartbeat; default `15s`                                                             |
+| `ANTNEST_RUNTIME_STOP_GRACE`                         | no       | Whole-second Go duration sent as the Docker stop `t=` value and container `StopTimeout`; 20..120, default `20s` |
+| `ANTNEST_RUNTIME_WORKSPACE_VOLUME_DRIVER`            | no       | Trusted external size-enforcing Docker volume driver; must be set together with the quota option; unset means unbounded local storage |
+| `ANTNEST_RUNTIME_WORKSPACE_QUOTA_OPTION`             | no       | Driver option name receiving the decimal workspace byte limit; must be set together with the driver              |
 
 Workload configuration is mandatory: follow the [exact authentication and listening profile](../api/service-authentication.md) and shared [token/mTLS contract](../../../contracts/platform/service-authentication.md). Existing lifecycle, Runtime inspection, image, observation/SSE and all three Skill preparation routes remain Controller-only. Only incarnation registration and inspection admit the ACP workload, without CCT; raw user/CCT headers authorize neither surface. Registry downloads use receiver-specific sender files and no environment proxy or redirects. Remove the retired `ANTNEST_SKILL_REGISTRY_API_TOKEN`, which now fails startup when nonempty.
 

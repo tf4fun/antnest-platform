@@ -85,11 +85,12 @@ func TestHTTPClientMapsDockerResourcesAndHardening(t *testing.T) {
 				body.Healthcheck.Timeout != int64(2*time.Second) || body.Healthcheck.Retries != 3 {
 				t.Fatalf("health cadence was lost at the Engine API boundary: %+v", body.Healthcheck)
 			}
-			if body.HostConfig.ReadonlyRootfs || len(body.HostConfig.CapDrop) != 1 ||
+			if !body.HostConfig.ReadonlyRootfs || len(body.HostConfig.CapDrop) != 1 ||
 				body.HostConfig.CapDrop[0] != "ALL" || body.HostConfig.RestartPolicy.Name != "unless-stopped" ||
-				len(body.HostConfig.SecurityOpt) != 1 || body.HostConfig.SecurityOpt[0] != "no-new-privileges=true" ||
+				len(body.HostConfig.SecurityOpt) != 2 || body.HostConfig.SecurityOpt[0] != "no-new-privileges=true" ||
+				!strings.HasPrefix(body.HostConfig.SecurityOpt[1], "seccomp={\"defaultAction\":\"SCMP_ACT_ERRNO\"") ||
 				len(body.HostConfig.Devices) != 1 || body.HostConfig.Devices[0].CgroupPermissions != "rwm" ||
-				len(body.HostConfig.Mounts) != 2 || body.HostConfig.Mounts[0].Type != "volume" ||
+				len(body.HostConfig.Mounts) != 3 || body.HostConfig.Mounts[0].Type != "volume" ||
 				len(body.Healthcheck.Test) == 0 || len(body.Env) == 0 {
 				t.Fatalf("hardened container settings missing: %+v", body)
 			}
@@ -139,7 +140,7 @@ func TestHTTPClientMapsDockerResourcesAndHardening(t *testing.T) {
 	if err := client.StartContainer(ctx, containerID); err != nil {
 		t.Fatal(err)
 	}
-	if err := client.StopContainer(ctx, containerID); err != nil {
+	if err := client.StopContainer(ctx, containerID, 20); err != nil {
 		t.Fatal(err)
 	}
 	if err := client.RemoveContainer(ctx, containerID); err != nil {
@@ -309,6 +310,150 @@ func TestHTTPClientDoesNotAnnounceWatchBeforeResponseHeaders(t *testing.T) {
 	}, func(ContainerEvent) error { return nil })
 	if err == nil || ready {
 		t.Fatalf("failed Watch announced readiness: ready=%t err=%v", ready, err)
+	}
+}
+
+func TestHTTPClientStopContainerSendsConfiguredGrace(t *testing.T) {
+	for _, test := range []struct {
+		grace int
+		wantT string
+	}{
+		{20, "20"},
+		{90, "90"},
+		{0, "20"},
+	} {
+		var query string
+		transport := roundTripFunc(func(request *http.Request) (*http.Response, error) {
+			query = request.URL.RawQuery
+			return responseWith(http.StatusNoContent, ""), nil
+		})
+		client, err := NewHTTPClient(&http.Client{Transport: transport}, "http://docker")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := client.StopContainer(context.Background(), "container-1", test.grace); err != nil {
+			t.Fatalf("stop with grace %d: %v", test.grace, err)
+		}
+		if query != "t="+test.wantT {
+			t.Fatalf("grace %d produced query %q, want t=%s", test.grace, query, test.wantT)
+		}
+	}
+}
+
+func TestUnixTransportCoversTheMaximumStopGrace(t *testing.T) {
+	transport := unixTransport("/var/run/docker.sock")
+	if transport.ResponseHeaderTimeout != 125*time.Second {
+		t.Fatalf("unix transport header timeout %s must cover the 120s maximum grace", transport.ResponseHeaderTimeout)
+	}
+}
+
+func TestCreateRequestPlacesStopTimeoutAtTopLevel(t *testing.T) {
+	driver := newTestDriver(t, newFakeEngine())
+	spec, err := driver.containerSpec(testDeployment(), testDigest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded, err := json.Marshal(dockerCreateRequest(spec))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var body map[string]any
+	if err := json.Unmarshal(encoded, &body); err != nil {
+		t.Fatal(err)
+	}
+	if body["StopTimeout"] != float64(RuntimeStopGraceSeconds) {
+		t.Fatalf("top-level StopTimeout missing: %v", body["StopTimeout"])
+	}
+	hostConfig, _ := body["HostConfig"].(map[string]any)
+	if _, misplaced := hostConfig["StopTimeout"]; misplaced {
+		t.Fatalf("StopTimeout belongs to the container Config, not HostConfig: %v", hostConfig)
+	}
+}
+
+func TestCreateRequestAlwaysAppliesNoNewPrivileges(t *testing.T) {
+	bare := ContainerSpec{Name: "helper", Image: "antnest/runtime-controller:local"}
+	helper := dockerCreateRequest(bare)
+	if len(helper.HostConfig.SecurityOpt) != 1 || helper.HostConfig.SecurityOpt[0] != "no-new-privileges=true" {
+		t.Fatalf("bare helper spec lost no-new-privileges: %+v", helper.HostConfig.SecurityOpt)
+	}
+	runtimeSpec, err := newTestDriver(t, newFakeEngine()).containerSpec(testDeployment(), testDigest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtime := dockerCreateRequest(runtimeSpec)
+	if len(runtime.HostConfig.SecurityOpt) != 2 || runtime.HostConfig.SecurityOpt[0] != "no-new-privileges=true" ||
+		!strings.HasPrefix(runtime.HostConfig.SecurityOpt[1], "seccomp=") {
+		t.Fatalf("Runtime security options must be exactly NNP plus seccomp: %+v", runtime.HostConfig.SecurityOpt)
+	}
+}
+
+func TestHTTPClientMapsQuotaVolumeAndMountSubpath(t *testing.T) {
+	var createBody map[string]any
+	transport := roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		switch request.Method + " " + request.URL.Path {
+		case "GET /v1.47/volumes/antnest-workspace-agent-1":
+			return jsonResponse(http.StatusOK, map[string]any{
+				"Name": "antnest-workspace-agent-1", "Driver": "example-quota",
+				"Options": map[string]string{"size": "10737418240"},
+				"Labels":  map[string]string{labelManaged: "workspace"},
+			}), nil
+		case "POST /v1.47/volumes/create":
+			if err := json.NewDecoder(request.Body).Decode(&createBody); err != nil {
+				t.Fatalf("decode volume create: %v", err)
+			}
+			return jsonResponse(http.StatusCreated, map[string]string{"Name": "antnest-workspace-agent-1"}), nil
+		case "POST /v1.47/containers/create":
+			var body map[string]any
+			if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
+				t.Fatalf("decode container create: %v", err)
+			}
+			hostConfig, _ := body["HostConfig"].(map[string]any)
+			mounts, _ := hostConfig["Mounts"].([]any)
+			found := false
+			for _, raw := range mounts {
+				mount, _ := raw.(map[string]any)
+				if mount["Target"] == "/etc/resolv.conf" {
+					options, _ := mount["VolumeOptions"].(map[string]any)
+					if options["Subpath"] != "resolv.conf" || options["NoCopy"] != true {
+						t.Fatalf("resolver mount options lost at the API boundary: %+v", mount)
+					}
+					found = true
+				}
+			}
+			if !found {
+				t.Fatalf("resolver subpath mount missing: %v", hostConfig)
+			}
+			return jsonResponse(http.StatusCreated, map[string]string{"Id": "created"}), nil
+		}
+		return responseWith(http.StatusNoContent, ""), nil
+	})
+	client, err := NewHTTPClient(&http.Client{Transport: transport}, "http://docker")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	volume, err := client.InspectVolume(ctx, "antnest-workspace-agent-1")
+	if err != nil || volume.Driver != "example-quota" || volume.Options["size"] != "10737418240" {
+		t.Fatalf("volume backend not surfaced: %+v err=%v", volume, err)
+	}
+	if err := client.CreateQuotaVolume(ctx, "antnest-workspace-agent-1",
+		map[string]string{labelManaged: "workspace"}, "example-quota",
+		map[string]string{"size": "10737418240"}); err != nil {
+		t.Fatal(err)
+	}
+	if createBody["Driver"] != "example-quota" {
+		t.Fatalf("Driver missing from volume create: %v", createBody)
+	}
+	options, _ := createBody["DriverOpts"].(map[string]any)
+	if options["size"] != "10737418240" {
+		t.Fatalf("DriverOpts missing from volume create: %v", createBody)
+	}
+	spec, err := newTestDriver(t, newFakeEngine()).containerSpec(testDeployment(), testDigest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.CreateContainer(ctx, spec); err != nil {
+		t.Fatal(err)
 	}
 }
 

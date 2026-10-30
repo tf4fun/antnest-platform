@@ -118,10 +118,10 @@ func (*sessionPlatform) Inspect(context.Context, deployment.Key) (deployment.Ins
 func (*sessionPlatform) Delete(context.Context, deployment.Key, string) deployment.EffectOutcome {
 	return deployment.EffectOutcome{State: deployment.EffectCompleted}
 }
-func (*sessionPlatform) EnsureStorage(context.Context, string) deployment.EffectOutcome {
+func (*sessionPlatform) EnsureStorage(context.Context, string, ...deployment.ResourceLimits) deployment.EffectOutcome {
 	return deployment.EffectOutcome{State: deployment.EffectCompleted}
 }
-func (*sessionPlatform) VerifyStorage(context.Context, string) deployment.EffectOutcome {
+func (*sessionPlatform) VerifyStorage(context.Context, string, ...deployment.ResourceLimits) deployment.EffectOutcome {
 	return deployment.EffectOutcome{State: deployment.EffectCompleted}
 }
 func (*sessionPlatform) DeleteStorage(context.Context, string) deployment.EffectOutcome {

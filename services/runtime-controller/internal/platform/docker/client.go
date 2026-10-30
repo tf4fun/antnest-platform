@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/url"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -21,8 +22,19 @@ import (
 const dockerAPIVersion = "v1.47"
 
 type Client struct {
-	httpClient *http.Client
-	baseURL    string
+	httpClient    *http.Client
+	baseTransport http.RoundTripper
+	baseURL       string
+}
+
+func unixTransport(socketPath string) *http.Transport {
+	return &http.Transport{
+		DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+			return (&net.Dialer{Timeout: 10 * time.Second}).DialContext(ctx, "unix", socketPath)
+		},
+		DisableCompression:    true,
+		ResponseHeaderTimeout: 125 * time.Second,
+	}
 }
 
 func NewUnixClient(socketPath string) (*Client, error) {
@@ -30,14 +42,7 @@ func NewUnixClient(socketPath string) (*Client, error) {
 	if socketPath == "" {
 		return nil, fmt.Errorf("docker socket path is required")
 	}
-	transport := &http.Transport{
-		DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
-			return (&net.Dialer{Timeout: 10 * time.Second}).DialContext(ctx, "unix", socketPath)
-		},
-		DisableCompression:    true,
-		ResponseHeaderTimeout: 30 * time.Second,
-	}
-	return NewHTTPClient(&http.Client{Transport: transport, Timeout: 30 * time.Second}, "http://docker")
+	return NewHTTPClient(&http.Client{Transport: unixTransport(socketPath), Timeout: 30 * time.Second}, "http://docker")
 }
 
 func NewHTTPClient(httpClient *http.Client, baseURL string) (*Client, error) {
@@ -46,7 +51,10 @@ func NewHTTPClient(httpClient *http.Client, baseURL string) (*Client, error) {
 	}
 	observed := *httpClient
 	observed.Transport = telemetry.NewTransport(httpClient.Transport, "docker")
-	return &Client{httpClient: &observed, baseURL: strings.TrimRight(baseURL, "/")}, nil
+	return &Client{
+		httpClient: &observed, baseTransport: httpClient.Transport,
+		baseURL: strings.TrimRight(baseURL, "/"),
+	}, nil
 }
 
 func (c *Client) Ping(ctx context.Context) error {
@@ -84,6 +92,7 @@ func observedMounts(actual []dockerObservedMount, requested []dockerMount) []Obs
 		for _, wanted := range requested {
 			if wanted.Target == mount.Destination && wanted.Source == mount.Name && wanted.VolumeOptions != nil {
 				observed.NoCopy = wanted.VolumeOptions.NoCopy
+				observed.Subpath = wanted.VolumeOptions.Subpath
 			}
 		}
 		result = append(result, observed)
@@ -210,13 +219,15 @@ func (c *Client) WatchManagedEvents(
 
 func (c *Client) InspectVolume(ctx context.Context, name string) (Volume, error) {
 	var response struct {
-		Name   string            `json:"Name"`
-		Labels map[string]string `json:"Labels"`
+		Name    string            `json:"Name"`
+		Driver  string            `json:"Driver"`
+		Options map[string]string `json:"Options"`
+		Labels  map[string]string `json:"Labels"`
 	}
 	if err := c.do(ctx, http.MethodGet, "/volumes/"+url.PathEscape(name), nil, &response); err != nil {
 		return Volume{}, err
 	}
-	return Volume{Name: response.Name, Labels: response.Labels}, nil
+	return Volume{Name: response.Name, Driver: response.Driver, Options: response.Options, Labels: response.Labels}, nil
 }
 
 func (c *Client) CreateVolume(ctx context.Context, name string, labels map[string]string) error {
@@ -224,6 +235,15 @@ func (c *Client) CreateVolume(ctx context.Context, name string, labels map[strin
 		Name   string            `json:"Name"`
 		Labels map[string]string `json:"Labels"`
 	}{Name: name, Labels: labels}, nil)
+}
+
+func (c *Client) CreateQuotaVolume(ctx context.Context, name string, labels map[string]string, driver string, options map[string]string) error {
+	return c.do(ctx, http.MethodPost, "/volumes/create", struct {
+		Name       string            `json:"Name"`
+		Driver     string            `json:"Driver"`
+		DriverOpts map[string]string `json:"DriverOpts"`
+		Labels     map[string]string `json:"Labels"`
+	}{Name: name, Driver: driver, DriverOpts: options, Labels: labels}, nil)
 }
 
 func (c *Client) InspectNetwork(ctx context.Context, name string) error {
@@ -264,14 +284,23 @@ func dockerCreateRequest(spec ContainerSpec) createContainerRequest {
 		item := dockerMount{
 			Type: "volume", Source: mount.Source, Target: target, ReadOnly: mount.ReadOnly,
 		}
-		if mount.NoCopy {
-			item.VolumeOptions = &dockerVolumeOptions{NoCopy: true}
+		if mount.NoCopy || mount.Subpath != "" {
+			item.VolumeOptions = &dockerVolumeOptions{NoCopy: mount.NoCopy, Subpath: mount.Subpath}
 		}
 		mounts = append(mounts, item)
 	}
 	sort.Slice(mounts, func(left, right int) bool { return mounts[left].Target < mounts[right].Target })
+	securityOpts := make([]string, 0, len(spec.SecurityOpt)+1)
+	seen := map[string]bool{}
+	for _, option := range append([]string{"no-new-privileges=true"}, spec.SecurityOpt...) {
+		if !seen[option] {
+			seen[option] = true
+			securityOpts = append(securityOpts, option)
+		}
+	}
 	return createContainerRequest{
 		Image: spec.Image, User: spec.User, Env: environment, Labels: spec.Labels,
+		StopTimeout: spec.StopTimeout,
 		Healthcheck: dockerHealthcheck{
 			Test: spec.Healthcheck.Test, Interval: int64(spec.Healthcheck.Interval),
 			Timeout: int64(spec.Healthcheck.Timeout), StartPeriod: int64(spec.Healthcheck.StartPeriod),
@@ -284,7 +313,8 @@ func dockerCreateRequest(spec ContainerSpec) createContainerRequest {
 			CapDrop:     []string{"ALL"}, CapAdd: spec.Capabilities, Tmpfs: spec.Tmpfs,
 			Dns: spec.DNS, DnsOptions: spec.DNSOptions, Devices: dockerDevices(spec.Devices),
 			PidsLimit: spec.PidsLimit, Memory: spec.MemoryBytes,
-			SecurityOpt:   []string{"no-new-privileges=true"},
+			NanoCpus: spec.NanoCPUs, CpuShares: spec.CPUShares,
+			SecurityOpt:   securityOpts,
 			RestartPolicy: dockerRestartPolicy{Name: spec.RestartPolicy},
 		},
 	}
@@ -294,8 +324,51 @@ func (c *Client) StartContainer(ctx context.Context, identifier string) error {
 	return c.do(ctx, http.MethodPost, "/containers/"+url.PathEscape(identifier)+"/start", nil, nil)
 }
 
-func (c *Client) StopContainer(ctx context.Context, identifier string) error {
-	return c.do(ctx, http.MethodPost, "/containers/"+url.PathEscape(identifier)+"/stop?t=10", nil, nil)
+func (c *Client) StopContainer(ctx context.Context, identifier string, graceSeconds int) (resultErr error) {
+	if graceSeconds <= 0 {
+		graceSeconds = RuntimeStopGraceSeconds
+	}
+	requestPath := "/containers/" + url.PathEscape(identifier) + "/stop?t=" + strconv.Itoa(graceSeconds)
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/"+dockerAPIVersion+requestPath, nil)
+	if err != nil {
+		return fmt.Errorf("create Docker request: %w", err)
+	}
+	stopClient := *c.httpClient
+	required := time.Duration(graceSeconds+5) * time.Second
+	if stopClient.Timeout < required {
+		stopClient.Timeout = required
+	}
+	if base, ok := c.baseTransport.(*http.Transport); ok {
+		transport := base.Clone()
+		if transport.ResponseHeaderTimeout < required {
+			transport.ResponseHeaderTimeout = required
+		}
+		defer transport.CloseIdleConnections()
+		stopClient.Transport = telemetry.NewTransport(transport, "docker")
+	}
+	response, err := stopClient.Do(request)
+	if err != nil {
+		return Uncertain(fmt.Errorf("docker %s %s: %w", http.MethodPost, requestPath, err))
+	}
+	defer joinResponseCloseError(&resultErr, response.Body.Close)
+	if response.StatusCode == http.StatusNotFound {
+		_, _ = io.Copy(io.Discard, response.Body)
+		return ErrNotFound
+	}
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		detail, _ := io.ReadAll(io.LimitReader(response.Body, 4096))
+		err := fmt.Errorf("docker %s %s returned %s: %s",
+			http.MethodPost, requestPath, response.Status, strings.TrimSpace(string(detail)))
+		if response.StatusCode == http.StatusConflict {
+			return errors.Join(ErrConflict, err)
+		}
+		if response.StatusCode >= 500 {
+			return Uncertain(err)
+		}
+		return err
+	}
+	_, _ = io.Copy(io.Discard, response.Body)
+	return nil
 }
 
 func (c *Client) RemoveContainer(ctx context.Context, identifier string) error {
@@ -487,7 +560,8 @@ type dockerMount struct {
 }
 
 type dockerVolumeOptions struct {
-	NoCopy bool `json:"NoCopy"`
+	NoCopy  bool   `json:"NoCopy"`
+	Subpath string `json:"Subpath,omitempty"`
 }
 
 type dockerDevice struct {
@@ -521,6 +595,7 @@ type createContainerRequest struct {
 	User             string                 `json:"User"`
 	Env              []string               `json:"Env"`
 	Labels           map[string]string      `json:"Labels"`
+	StopTimeout      int                    `json:"StopTimeout,omitempty"`
 	Healthcheck      dockerHealthcheck      `json:"Healthcheck"`
 	HostConfig       dockerHostConfig       `json:"HostConfig"`
 	NetworkingConfig dockerNetworkingConfig `json:"NetworkingConfig"`
@@ -553,6 +628,8 @@ type dockerHostConfig struct {
 	Devices        []dockerDevice      `json:"Devices"`
 	PidsLimit      int64               `json:"PidsLimit"`
 	Memory         int64               `json:"Memory"`
+	NanoCpus       int64               `json:"NanoCpus,omitempty"`
+	CpuShares      int64               `json:"CpuShares,omitempty"`
 	SecurityOpt    []string            `json:"SecurityOpt"`
 	RestartPolicy  dockerRestartPolicy `json:"RestartPolicy"`
 }
