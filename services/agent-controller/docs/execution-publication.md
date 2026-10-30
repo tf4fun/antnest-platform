@@ -844,11 +844,14 @@ error propagates and v2 never downgrades to plaintext v1. The per-request
 payload cap still bounds full recovery.
 
 Lifecycle settlement first reads and validates its current active operation,
-then publishes a full v2 closure snapshot before requesting settlement. It does
-not require a digest proof from the old accepting owner: that owner may already
-be unavailable or protected by an unresolved Runtime install. ACP still validates
-the snapshot and returns its real ACK; Controller records that ACK before the
-settlement request, retaining operation, revision and drain-deadline checks.
+then uses the normal digest/delta path. A matching acknowledged revision is
+reused without replaying a full snapshot over sealed private authority. Only an
+ACP `configuration_unavailable` response permits publishing the full v2 closure
+before proof: the old accepting owner may be unavailable or protected by an
+unresolved Runtime install. Other proof failures propagate. ACP still validates
+the snapshot and returns its real ACK; Controller records the real digest or
+publication ACK before settlement, retaining operation, revision and deadline
+checks.
 
 Delta upserts/deletes are chosen by comparing remote per-document public
 digests (Provider credential and Runtime token removed, `principal_ids`

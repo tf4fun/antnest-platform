@@ -340,8 +340,10 @@ native Runtime retains its separate per-instance token profile.
 ### Fixed
 
 Controller can close v2 execution admission for lifecycle recovery when the
-previous accepting owner cannot prove its digest. It publishes the current
-operation's full closure snapshot and waits for ACP's real ACK before settlement.
+previous accepting owner cannot prove its digest. Only an unavailable owner
+triggers the current operation's full closure snapshot; healthy retries retain
+digest/delta publication and sealed private authority. ACP's real ACK remains
+required before settlement.
 
 ACP v2 digest retries reconcile an unavailable owner against the unchanged
 sealed authority before acknowledging it. A cold restart that initially loses

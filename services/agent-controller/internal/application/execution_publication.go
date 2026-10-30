@@ -103,10 +103,17 @@ func (publisher *ExecutionPublisher) publishCurrent(ctx context.Context, organiz
 	}
 	if publisher.wireVersion == ports.ExecutionSchemaVersion2 {
 		if settlement != nil {
-			// The old accepting owner may be unavailable or Runtime-protected.
-			// Publish its authoritative closure before requiring the new ACK;
-			// proof of the old open publication cannot gate lifecycle recovery.
-			return publisher.publishFullV2(ctx, source)
+			remote, err := publisher.executionRemoteDigest(ctx, source.OrganizationID)
+			if err != nil {
+				var dependency *ports.DependencyError
+				if !errors.As(err, &dependency) || dependency.Service != "agent-acp-service" || dependency.Code != "configuration_unavailable" {
+					return ports.ExecutionAcknowledgement{}, err
+				}
+				// Only an unavailable old owner can require closure before proof.
+				// Healthy retries retain the already sealed v2 authority below.
+				return publisher.publishFullV2(ctx, source)
+			}
+			return publisher.publishCurrentV2(ctx, source, remote, true)
 		}
 		return publisher.publishCurrentV2(ctx, source, remote, remoteKnown)
 	}
