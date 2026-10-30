@@ -1,6 +1,6 @@
 {
   "contract": "antnest.agent-controller.lifecycle",
-  "revision": 47,
+  "revision": 46,
   "transport": "json-over-http",
   "trust": "verified-workload-and-caller-context",
   "authentication": "service-authentication.md",
@@ -275,20 +275,6 @@
         "request": "control-api.schema.json#/$defs/lifecycle_request",
         "success_status": 202,
         "response": "control-api.schema.json#/$defs/operation"
-      },
-      "cancel_lifecycle_operation": {
-        "method": "POST",
-        "path": "/internal/agents/{agent_id}/lifecycle-operation/cancel",
-        "request": "control-api.schema.json#/$defs/cancel_lifecycle_operation_request",
-        "success_status": 202,
-        "response": "control-api.schema.json#/$defs/operation"
-      },
-      "clear_lifecycle_quarantine": {
-        "method": "POST",
-        "path": "/internal/agents/{agent_id}/lifecycle-quarantine/clear",
-        "request": "control-api.schema.json#/$defs/clear_lifecycle_quarantine_request",
-        "success_status": 200,
-        "response": "control-api.schema.json#/$defs/agent"
       }
     },
     "operations": {
@@ -406,9 +392,6 @@
       "agent_delete_requested",
       "agent_deleted",
       "agent_lifecycle_quarantined",
-      "agent_lifecycle_cancelled",
-      "agent_lifecycle_quarantine_cleared",
-      "agent_gc_scheduled",
       "agent_runtime_restarted",
       "agent_runtime_missing",
       "agent_runtime_condition_changed",
@@ -501,20 +484,5 @@
     "unknown_response_fields": "clients_may_ignore",
     "secrets_in_logs_traces_events": false,
     "cross_service_database_access": false
-  },
-  "lifecycle_reliability": {
-    "phase_deadlines_seconds": {
-      "network_ensure": 600,
-      "runtime_initialize": 1800,
-      "publish": 600,
-      "default": 600
-    },
-    "failure_codes": [
-      "phase_deadline_exceeded",
-      "lifecycle_cancelled",
-      "lifecycle_invariant_failed"
-    ],
-    "failed_create_ttl_seconds": 604800,
-    "cancel_update": "cancel_lifecycle_operation"
   }
 }
