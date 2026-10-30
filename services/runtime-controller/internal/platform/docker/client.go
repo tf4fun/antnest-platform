@@ -324,7 +324,11 @@ func (c *Client) StartContainer(ctx context.Context, identifier string) error {
 	return c.do(ctx, http.MethodPost, "/containers/"+url.PathEscape(identifier)+"/start", nil, nil)
 }
 
-func (c *Client) StopContainer(ctx context.Context, identifier string, graceSeconds int) (resultErr error) {
+func (c *Client) StopContainer(ctx context.Context, identifier string) error {
+	return c.StopContainerWithGrace(ctx, identifier, RuntimeStopGraceSeconds)
+}
+
+func (c *Client) StopContainerWithGrace(ctx context.Context, identifier string, graceSeconds int) (resultErr error) {
 	if graceSeconds <= 0 {
 		graceSeconds = RuntimeStopGraceSeconds
 	}

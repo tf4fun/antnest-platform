@@ -140,7 +140,7 @@ func TestHTTPClientMapsDockerResourcesAndHardening(t *testing.T) {
 	if err := client.StartContainer(ctx, containerID); err != nil {
 		t.Fatal(err)
 	}
-	if err := client.StopContainer(ctx, containerID, 20); err != nil {
+	if err := client.StopContainer(ctx, containerID); err != nil {
 		t.Fatal(err)
 	}
 	if err := client.RemoveContainer(ctx, containerID); err != nil {
@@ -331,7 +331,7 @@ func TestHTTPClientStopContainerSendsConfiguredGrace(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err := client.StopContainer(context.Background(), "container-1", test.grace); err != nil {
+		if err := client.StopContainerWithGrace(context.Background(), "container-1", test.grace); err != nil {
 			t.Fatalf("stop with grace %d: %v", test.grace, err)
 		}
 		if query != "t="+test.wantT {
