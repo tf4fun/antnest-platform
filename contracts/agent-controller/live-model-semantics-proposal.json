@@ -1,0 +1,281 @@
+{
+  "contract": "antnest.agent-controller.live-model-semantics.proposal",
+  "revision": 1,
+  "status": "proposed",
+  "issue": 46,
+  "base_control_revision": 47,
+  "target_control_revision": 48,
+  "activation": "Publish with the Controller implementation: the usage and event routes, the effective_models reader projection and the model profile revision journal. ACP and Console consumers deploy before Controller emits model_profile_revision in execution publications because snapshot readers reject unknown fields. This proposal does not extend active catalogs or the Agent event_type enum; the model profile journal is a separate model-scoped stream.",
+  "independent_scope": "Models and Provider connections stay live-followed; Template prompt, runtime, MCP and Skill inputs stay immutable. Issue #72 catalog and default ownership is untouched by this proposal.",
+  "optional_model_pinning": false,
+  "route_resource": "model_profiles",
+  "routes": {
+    "usage": {
+      "method": "GET",
+      "path": "/internal/model-profiles/{model_profile_id}/usage",
+      "query": ["organization_id"],
+      "success_status": 200,
+      "response": "control-api.schema.json#/$defs/model_profile_usage"
+    },
+    "events": {
+      "method": "GET",
+      "path": "/internal/model-profiles/{model_profile_id}/events",
+      "query": ["organization_id", "after_revision", "limit"],
+      "success_status": 200,
+      "response": "control-api.schema.json#/$defs/model_profile_event_list"
+    }
+  },
+  "caller_policy": {
+    "callers": ["admin-console"],
+    "authentication": "workload",
+    "caller_context": {
+      "admin-console": "required"
+    },
+    "request_body": "none"
+  },
+  "live_model_semantics": {
+    "event_type": "model_profile_revised",
+    "events_default_limit": 50,
+    "events_max_limit": 100,
+    "usage_counts_complete": true,
+    "usage_truncated": false
+  },
+  "shared_defs": {
+    "id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$"
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time"
+    }
+  },
+  "schema_definitions": {
+    "model_profile_usage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["templates", "agents"],
+      "properties": {
+        "templates": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "agents": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        }
+      }
+    },
+    "effective_model": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["model_profile_id", "revision"],
+      "properties": {
+        "model_profile_id": {
+          "$ref": "#/$defs/id"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        }
+      }
+    },
+    "model_profile_revised_event": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "event_type",
+        "request_id",
+        "organization_id",
+        "model_profile_id",
+        "revision_id",
+        "previous_revision",
+        "revision",
+        "occurred_at"
+      ],
+      "properties": {
+        "event_type": {
+          "const": "model_profile_revised"
+        },
+        "request_id": {
+          "$ref": "#/$defs/id"
+        },
+        "organization_id": {
+          "$ref": "#/$defs/id"
+        },
+        "model_profile_id": {
+          "$ref": "#/$defs/id"
+        },
+        "revision_id": {
+          "$ref": "#/$defs/id"
+        },
+        "previous_revision": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 2,
+          "maximum": 9007199254740991
+        },
+        "occurred_at": {
+          "$ref": "#/$defs/timestamp"
+        }
+      }
+    },
+    "model_profile_event_list": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["items", "next_after_revision"],
+      "properties": {
+        "items": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/model_profile_revised_event"
+          }
+        },
+        "next_after_revision": {
+          "type": ["integer", "null"],
+          "minimum": 1,
+          "maximum": 9007199254740991
+        }
+      }
+    }
+  },
+  "agent_properties": {
+    "effective_models": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/effective_model"
+      }
+    }
+  },
+  "publication": {
+    "files": [
+      "agent-acp/execution-snapshot.schema.json",
+      "agent-acp/execution-publication-v2.schema.json"
+    ],
+    "property": "model_profile_revision",
+    "writer": "The new Controller writer always sets the actual current model profile revision on every published model entry, including pricing-only and name-only revisions, and advances the publication revision whenever published metadata changes.",
+    "reader_compatibility": "The property is optional: snapshots written before the writer lands remain valid. Strict readers reject unknown fields, so every consumer deploys before the producer starts emission; this proposal does not claim that old consumers accept the new property.",
+    "schema_definitions": {
+      "model_profile_revision": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 9007199254740991
+      },
+      "published_model": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["model_profile_id"],
+        "properties": {
+          "model_profile_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "model_profile_revision": {
+            "$ref": "#/$defs/model_profile_revision"
+          }
+        }
+      }
+    }
+  },
+  "acp": {
+    "files": [
+      "services/agent-acp-service (Run persisted snapshot, ModelCandidate, execution audit detail)"
+    ],
+    "frozen_at_admission": "Run persisted snapshots and ModelCandidate entries (primary, ordered fallbacks and the compactor) carry modelProfileRevision frozen at Run admission. Existing active Runs keep their frozen snapshots; the next accepted Run uses the newly published revision. The audit detail adds an optional nullable model_profile_revision: null marks unknown historical snapshots and is never fabricated from the current Controller row or configurationRevision. The audit top level represents the primary admitted profile; fallback and compactor revisions remain inside the immutable candidate snapshot.",
+    "schema_definitions": {
+      "persisted_snapshot_model": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["modelProfileId"],
+        "properties": {
+          "modelProfileId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "modelProfileRevision": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9007199254740991
+          }
+        }
+      },
+      "model_candidate": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["modelProfileId", "providerConnectionId", "model"],
+        "properties": {
+          "modelProfileId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "providerConnectionId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "modelProfileRevision": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9007199254740991
+          },
+          "model": {
+            "type": "object"
+          }
+        }
+      },
+      "audit_model_profile_revision": {
+        "type": ["integer", "null"],
+        "minimum": 1,
+        "maximum": 9007199254740991
+      },
+      "audit_detail_model_revision": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["run_id"],
+        "properties": {
+          "run_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "model_profile_revision": {
+            "$ref": "#/$defs/audit_model_profile_revision"
+          }
+        }
+      }
+    }
+  },
+  "console": {
+    "bff_route": "GET /api/admin/model-profiles/{model_profile_id}/usage",
+    "verified_scope": "The Console BFF verifies the admin scope and organization before forwarding to the Controller usage route.",
+    "edit_confirmation": "Editing a model profile requires a successful usage count load and an explicit operator confirmation before POST revisions, including when both counts are zero. A cancelled or failed count load never saves. Counts are an informational snapshot, not a transaction fence."
+  },
+  "usage_semantics": {
+    "templates": "Unique current Template heads, including disabled heads, that reference the profile as primary or as an ordered fallback.",
+    "agents": "Unique non-deleted Agents that reference the profile in the effective spec or in an active lifecycle target spec; primary and fallback references are deduplicated.",
+    "boundaries": "Counts are an informational snapshot: complete integers with no list truncation, never aggregated across organizations. An unknown or cross-organization model_profile_id fails closed with 404."
+  },
+  "event_semantics": {
+    "journal": "model_profile_revised is a durable model-scoped journal event emitted for every committed revision, independent of Agents and including unused profiles. It is written exactly once in the same transaction as the revision and the request receipt: no event on profile create, none on a rejected CAS, and no duplicate on receipt replay. revision equals previous_revision plus one. The event never carries credentials or model settings.",
+    "pagination": "The events route is keyset-paginated by profile revision in ascending order: after_revision returns entries with a strictly larger revision, limit defaults to 50 and is capped at 100, and next_after_revision is the cursor for the next page or null at the end."
+  },
+  "non_goals": [
+    "Optional model revision pinning on Templates or Agents",
+    "Model history browsing or a per-revision resource",
+    "Extending the Agent event_type enum or the Agent event journal",
+    "Issue #72 catalog/default ownership changes"
+  ]
+}
