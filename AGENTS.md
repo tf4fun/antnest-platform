@@ -18,6 +18,17 @@ services' unit, contract and component checks. The required Integration
 checks status includes those selected service checks. Docker E2E is
 post-merge system integration evidence, not a PR merge gate.
 
+Docker E2E scenarios, execution, acceptance, and failure follow-up belong to
+a dedicated workflow, not the development agent. Unless explicitly assigned
+by the user, do not add or maintain those scenarios, arrange or run them,
+wait for or poll their results, or take on their failures. Do not list pending
+Docker E2E as development-agent follow-up or mark service development and PR
+delivery incomplete because of it; hand off relevant context when needed.
+This does not exempt required service unit, contract, or component checks,
+including Docker-backed PostgreSQL or Temporal component checks. CI triggers
+and release-capability criteria remain unchanged, and unexecuted E2E must
+never be reported as passed.
+
 Every CI suite has one kind: `component` suites gate pull requests, `system`
 suites run on main, and `stress` suites run nightly. Do not use the retired
 Tier A/B/C terms.
@@ -43,8 +54,10 @@ Large features must be split into service-owned delivery batches followed by
 an explicit integration batch. Define the shared contract first, then change
 one owning service with its documentation and tests at a time. Record pending
 consumer work instead of editing multiple service implementations in one batch.
-Run cross-service integration after the service batches have passed their local
-gates; do not describe one completed producer as a complete business workflow.
+The explicit integration batch covers required contract/component integration
+and handoff after the service batches' local gates. Docker E2E remains with
+the dedicated workflow; do not describe one completed producer as a complete
+business workflow.
 
 Focus delivery work on logic owned by Antnest services. Confirmed external SDK
 issues are non-blocking: retain their diagnostics and continue internal-service

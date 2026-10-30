@@ -191,6 +191,8 @@ func (h *handler) routes() []routeDefinition {
 		{pattern: "POST /internal/agents/{agent_id}/disable", handler: h.disableAgent},
 		{pattern: "POST /internal/agents/{agent_id}/enable", handler: h.enableAgent},
 		{pattern: "POST /internal/agents/{agent_id}/delete", handler: h.deleteAgent},
+		{pattern: "POST /internal/agents/{agent_id}/lifecycle-operation/cancel", handler: h.cancelLifecycleOperation},
+		{pattern: "POST /internal/agents/{agent_id}/lifecycle-quarantine/clear", handler: h.clearLifecycleQuarantine},
 		{pattern: "GET /internal/agent-operations/{request_id}", handler: h.getLifecycleOperation},
 		{pattern: "GET /internal/agent-skill-preparations/{request_id}", handler: h.getSkillPreparationStatus},
 		{pattern: "GET /internal/agent-events", handler: h.listGlobalAgentEvents},

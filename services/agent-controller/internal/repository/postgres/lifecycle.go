@@ -446,12 +446,12 @@ func insertLifecycleOperationAt(
     request_id, request_fingerprint, agent_id, kind, phase, state,
     source_spec_revision_id, source_execution_revision_id,
     source_runtime_revision, source_runtime_absent,
-    target_spec_revision_id, child_request_id,
+    target_spec_revision_id, source_failed_create_request_id, child_request_id,
     source_runtime_inspection, source_runtime_absence_proof, network_release_outcome,
     created_at, updated_at, owner_revocation_sequence, drain_deadline_at
 ) VALUES (
     $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
-    $11, $12, $13, $14, $15,
+    $11, $19, $12, $13, $14, $15,
     COALESCE($18::timestamptz, clock_timestamp()), COALESCE($18::timestamptz, clock_timestamp()), $16, $17
 )`,
 		record.RequestID, record.RequestFingerprint, record.AgentID, record.Kind,
@@ -463,6 +463,7 @@ func insertLifecycleOperationAt(
 		record.OwnerRevocationSequence,
 		record.DrainDeadlineAt,
 		acceptedAt,
+		record.SourceFailedCreateRequestID,
 	)
 	if err != nil {
 		return fmt.Errorf("insert Agent lifecycle operation: %w", err)
@@ -677,7 +678,7 @@ func loadLifecycleOperation(
 SELECT request_id, request_fingerprint, agent_id, kind, phase, state,
 	       source_spec_revision_id, source_execution_revision_id,
 	       source_runtime_revision, source_runtime_absent,
-	       target_spec_revision_id, child_request_id, network_attachment,
+	       target_spec_revision_id, source_failed_create_request_id, child_request_id, network_attachment,
 	       source_runtime_inspection,
 	       source_runtime_absence_proof, runtime_result, network_release_outcome,
 	       error_code, error_detail, retryable,
@@ -699,7 +700,7 @@ func scanLifecycleOperation(scanner lifecycleRowScanner) (ports.LifecycleOperati
 		&record.SourceSpecRevisionID, &record.SourceExecutionRevisionID,
 		&record.SourceRuntimeRevision,
 		&record.SourceRuntimeAbsent, &record.TargetSpecRevisionID,
-		&record.ChildRequestID, &networkPayload,
+		&record.SourceFailedCreateRequestID, &record.ChildRequestID, &networkPayload,
 		&inspectionPayload, &absenceProofPayload, &runtimePayload,
 		&record.NetworkReleaseOutcome,
 		&record.ErrorCode,

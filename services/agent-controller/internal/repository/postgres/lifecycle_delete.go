@@ -85,8 +85,50 @@ func (repository *Repository) BeginAgentDelete(
 	if !validDeleteBegin(agent, input) {
 		return ports.AgentDeleteState{}, false, ports.ErrConcurrentChange
 	}
+	if (input.FailedCreate != nil) != (input.GCEvent != nil) ||
+		(input.FailedCreate == nil && !input.FailedCreateCutoff.IsZero()) {
+		return ports.AgentDeleteState{}, false, ports.ErrConcurrentChange
+	}
+	if input.FailedCreate != nil {
+		candidate := input.FailedCreate
+		if candidate.AgentID != agent.AgentID || candidate.OrganizationID != agent.OrganizationID ||
+			candidate.AggregateSequence != agent.AggregateSequence ||
+			candidate.AggregateSequence != input.ExpectedAggregateSequence ||
+			candidate.CreateRequestID == "" || input.FailedCreateCutoff.IsZero() ||
+			input.GCEvent.EventID != domain.DeriveResourceID("event", "failed-create-gc", candidate.CreateRequestID) ||
+			input.GCEvent.Data["create_request_id"] != candidate.CreateRequestID ||
+			input.GCEvent.Data["delete_request_id"] != input.Operation.RequestID ||
+			!validDeleteEvent(*input.GCEvent, input.Operation, ports.EventAgentGCScheduled, agent.AggregateSequence+2) {
+			return ports.AgentDeleteState{}, false, ports.ErrConcurrentChange
+		}
+		var eligible bool
+		if err := transaction.QueryRow(ctx, `
+SELECT EXISTS (
+ SELECT 1 FROM agent_controller.agents a
+ JOIN agent_controller.agent_lifecycle_operations o ON o.agent_id = a.id
+ WHERE a.id = $2 AND a.organization_id = $3 AND a.aggregate_sequence = $4 AND o.request_id = $5
+ AND o.kind = 'create' AND o.state = 'failed' AND o.updated_at <= $1
+ AND a.lifecycle_state = 'not_created' AND a.desired_state <> 'deleted'
+ AND a.active_operation_request_id = '' AND a.executable_execution_revision_id = ''
+ AND a.last_successful_execution_revision_id = ''
+ AND NOT EXISTS (SELECT 1 FROM agent_controller.agent_lifecycle_operations other WHERE other.agent_id = a.id AND other.request_id <> o.request_id)
+ AND NOT EXISTS (SELECT 1 FROM agent_controller.execution_revisions e WHERE e.agent_id = a.id)
+ AND NOT EXISTS (SELECT 1 FROM agent_controller.agent_events ev WHERE ev.agent_id = a.id AND ev.event_type IN ('agent_ready', 'runtime_bound'))
+)`,
+			input.FailedCreateCutoff, candidate.AgentID, candidate.OrganizationID,
+			candidate.AggregateSequence, candidate.CreateRequestID).Scan(&eligible); err != nil {
+			return ports.AgentDeleteState{}, false, fmt.Errorf("failed-create GC eligibility: %w", err)
+		}
+		if !eligible {
+			return ports.AgentDeleteState{}, false, ports.ErrConcurrentChange
+		}
+	}
 	if err := insertLifecycleOperation(ctx, transaction, input.Operation); err != nil {
 		return ports.AgentDeleteState{}, false, err
+	}
+	agentSequence := input.RequestedEvent.AggregateSequence
+	if input.GCEvent != nil {
+		agentSequence = input.GCEvent.AggregateSequence
 	}
 	result, err := transaction.Exec(ctx, `
 UPDATE agent_controller.agents
@@ -95,7 +137,7 @@ SET desired_state = 'deleted',
     failure_detail = '', aggregate_sequence = $3, updated_at = $4
 WHERE id = $1 AND active_operation_request_id = '' AND aggregate_sequence = $5
   AND desired_state = $6 AND lifecycle_state = $7 AND runtime_revision = $8`,
-		input.AgentID, input.Operation.RequestID, input.RequestedEvent.AggregateSequence,
+		input.AgentID, input.Operation.RequestID, agentSequence,
 		input.Now, input.ExpectedAggregateSequence, input.ExpectedDesiredState,
 		input.ExpectedLifecycleState, input.ExpectedRuntimeRevision,
 	)
@@ -108,12 +150,17 @@ WHERE id = $1 AND active_operation_request_id = '' AND aggregate_sequence = $5
 	if err := repository.insertAgentEvent(ctx, transaction, input.RequestedEvent); err != nil {
 		return ports.AgentDeleteState{}, false, err
 	}
+	if input.GCEvent != nil {
+		if err := repository.insertAgentEvent(ctx, transaction, *input.GCEvent); err != nil {
+			return ports.AgentDeleteState{}, false, err
+		}
+	}
 	agent.DesiredState = domain.DesiredDeleted
 	agent.ActiveOperationRequestID = input.Operation.RequestID
 	agent.FailureStage = ""
 	agent.FailureCode = ""
 	agent.FailureDetail = ""
-	agent.AggregateSequence = input.RequestedEvent.AggregateSequence
+	agent.AggregateSequence = agentSequence
 	agent.UpdatedAt = input.Now
 	state := ports.AgentDeleteState{Agent: agent, Operation: input.Operation}
 	if err := repository.advanceExecutionRevision(ctx, transaction, agent.OrganizationID); err != nil {
@@ -123,6 +170,9 @@ WHERE id = $1 AND active_operation_request_id = '' AND aggregate_sequence = $5
 		return ports.AgentDeleteState{}, false, fmt.Errorf("commit Agent delete transaction: %w", err)
 	}
 	repository.recordEventAppend(ctx, input.RequestedEvent.EventType)
+	if input.GCEvent != nil {
+		repository.recordEventAppend(ctx, input.GCEvent.EventType)
+	}
 	return state, false, nil
 }
 

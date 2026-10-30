@@ -12,6 +12,7 @@ import (
 	"go.temporal.io/sdk/interceptor"
 	temporallog "go.temporal.io/sdk/log"
 	"go.temporal.io/sdk/worker"
+	"go.temporal.io/sdk/workflow"
 
 	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/application"
 )
@@ -39,24 +40,40 @@ func Open(ctx context.Context, address string, logger *slog.Logger) (client.Clie
 	}, nil
 }
 
-func NewWorker(temporalClient client.Client, service *application.LifecycleService, stopTimeout time.Duration) worker.Worker {
-	w := worker.New(temporalClient, TaskQueue, worker.Options{
+func lifecycleWorkerOptions(stopTimeout time.Duration, configuration WorkerConfiguration) worker.Options {
+	options := worker.Options{
 		WorkerStopTimeout:                      stopTimeout,
 		MaxConcurrentActivityExecutionSize:     4,
 		MaxConcurrentWorkflowTaskExecutionSize: 4,
-	})
-	Register(w, service)
+	}
+	if configuration.BuildID != "" {
+		options.DeploymentOptions.Version = worker.WorkerDeploymentVersion{
+			DeploymentName: "agent-controller",
+			BuildID:        configuration.BuildID,
+		}
+	}
+	return options
+}
+
+func NewWorker(temporalClient client.Client, service *application.LifecycleService, stopTimeout time.Duration, configurations ...WorkerConfiguration) worker.Worker {
+	configuration := normalizeWorkerConfiguration(configurations)
+	w := worker.New(temporalClient, TaskQueue, lifecycleWorkerOptions(stopTimeout, configuration))
+	Register(w, service, configuration)
 	return w
 }
 
 type Registry interface {
 	RegisterWorkflow(interface{})
+	RegisterWorkflowWithOptions(interface{}, workflow.RegisterOptions)
 	RegisterActivityWithOptions(interface{}, activity.RegisterOptions)
 }
 
-func Register(registry Registry, service *application.LifecycleService) {
-	registerLifecycle(registry, service)
-	registry.RegisterWorkflow(CreateAgentWorkflow)
+func Register(registry Registry, service *application.LifecycleService, configurations ...WorkerConfiguration) {
+	configuration := normalizeWorkerConfiguration(configurations)
+	registerLifecycle(registry, service, configuration)
+	registry.RegisterWorkflowWithOptions(func(ctx workflow.Context, command application.CreateAgentInput) error {
+		return createAgentWorkflow(ctx, command, configuration)
+	}, workflow.RegisterOptions{Name: "CreateAgentWorkflow"})
 	registry.RegisterActivityWithOptions(func(ctx context.Context, input application.CreateAgentInput) (application.CreateAgentResult, error) {
 		ctx, stop := activityLifetime(ctx)
 		defer stop()

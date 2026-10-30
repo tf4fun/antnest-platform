@@ -732,6 +732,11 @@ function platformScenarios() {
       ["e2e-lifecycle", "lifecycle"],
     ],
     Lifecycle: [
+      [
+        "e2e-lifecycle-reliability",
+        "lifecycle-reliability",
+        { run: "node tests/e2e/lifecycle-closeout/run.mjs reliability" },
+      ],
       ...[
         ["lifecycle-loss", "run.mjs loss"],
         ["lifecycle-restore", "run.mjs restore"],
@@ -1461,7 +1466,12 @@ export const shards = [
   {
     id: "c-lifecycle",
     name: "Agent lifecycle",
-    suites: ["c-stage2", "c-lifecycle", "c-lifecycle-loss"],
+    suites: [
+      "c-stage2",
+      "c-lifecycle",
+      "c-lifecycle-loss",
+      "c-lifecycle-reliability",
+    ],
   },
   {
     id: "c-operations",

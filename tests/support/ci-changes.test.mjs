@@ -1051,7 +1051,7 @@ test("ACP authentication runs in the required auth shard with its CI-built image
 
 test("platform scenarios get every local image and no rebuilding target", () => {
   const platform = suites.filter((suite) => /^(?:c|stress)-/u.test(suite.id));
-  assert.equal(platform.length, 53);
+  assert.equal(platform.length, 54);
   const makefile = readFileSync(resolve(root, "Makefile"), "utf8");
   const primary = Object.keys(images).filter(
     (name) => typeof images[name] === "string",
@@ -1239,6 +1239,27 @@ test("foundation runners report strict-only findings through exit 2", () => {
     assert.equal(entry.strict_exit, true, suite.id);
     // make reports every failed recipe as 2, which would hide the runner's code.
     assert.equal(entry.run, `node tests/e2e/${foundation[suite.id]}`);
+  }
+});
+
+test("lifecycle reliability is a business-only system suite, not a PR or stress gate", () => {
+  const suite = suites.find((item) => item.id === "c-lifecycle-reliability");
+  assert(suite);
+  assert.equal(suite.kind, "system");
+  assert.deepEqual(suite.run, [
+    "node tests/e2e/lifecycle-closeout/run.mjs reliability",
+  ]);
+  assert.deepEqual(
+    suite.images,
+    suites.find((item) => item.id === "c-lifecycle-loss").images,
+  );
+  assert.equal(matrixEntry(suite).strict_exit, false);
+  const files = ["services/agent-controller/internal/orchestration/create.go"];
+  for (const scope of ["component", "system", "stress"]) {
+    assert.equal(
+      selectSuites(files, { scope }).some((item) => item.id === suite.id),
+      scope === "system",
+    );
   }
 });
 

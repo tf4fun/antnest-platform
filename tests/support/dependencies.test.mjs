@@ -1,9 +1,23 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import test from "node:test";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { fileURLToPath } from "node:url";
 import { dependencyPlan, withDependencies } from "./dependencies.mjs";
+
+async function withFixtureDependencies(options) {
+  const inheritedOutcomes = process.env.ANTNEST_CI_OUTCOMES;
+  // Mock setup/cleanup failures must never become real CI shard outcomes.
+  process.env.ANTNEST_CI_OUTCOMES = join(options.output, "components.jsonl");
+  try {
+    return await withDependencies(options);
+  } finally {
+    if (inheritedOutcomes === undefined) delete process.env.ANTNEST_CI_OUTCOMES;
+    else process.env.ANTNEST_CI_OUTCOMES = inheritedOutcomes;
+  }
+}
 
 test("dependency plans explicitly select loopback diagnostics", () => {
   for (const profile of ["postgres", "temporal"]) {
@@ -91,7 +105,7 @@ test("dependency children use explicit cwd and the disposable ACP database inste
       ]);
     return "";
   };
-  const result = await withDependencies({
+  const result = await withFixtureDependencies({
     profile: "postgres",
     output,
     cwd: output,
@@ -123,7 +137,7 @@ test("dependency setup and cleanup failures retain both causes and private evide
     throw args.includes("down") ? cleanup : setup;
   };
   await assert.rejects(
-    withDependencies({
+    withFixtureDependencies({
       profile: "postgres",
       command: [process.execPath, "-e", "process.exit()"],
       output,
@@ -183,7 +197,7 @@ test("dependency profiles preserve startup, command and cleanup limits and a dis
       ]);
     return "";
   };
-  const result = await withDependencies({
+  const result = await withFixtureDependencies({
     profile: "postgres",
     output,
     name: "timed",
@@ -205,5 +219,39 @@ test("dependency profiles preserve startup, command and cleanup limits and a dis
   assert.equal(
     JSON.parse(readFileSync(join(output, "timed.cleanup.json"))).cleanup,
     true,
+  );
+});
+
+test("dependency fixtures do not publish simulated component outcomes", (t) => {
+  const output = mkdtempSync(join(tmpdir(), "antnest-dependency-outcomes-"));
+  t.after(() => rmSync(output, { recursive: true, force: true }));
+  const outcomes = join(output, "outer-components.jsonl");
+  writeFileSync(outcomes, "", { flag: "wx", mode: 0o600 });
+  const env = {
+    ...process.env,
+    ANTNEST_CI_DIAGNOSTICS: "1",
+    ANTNEST_CI_OUTCOMES: outcomes,
+  };
+  delete env.NODE_TEST_CONTEXT;
+  const child = spawnSync(
+    process.execPath,
+    [
+      "--test",
+      "--test-concurrency=1",
+      "--test-reporter=tap",
+      "--test-name-pattern=^dependency (children use explicit cwd|setup and cleanup failures|profiles preserve startup)",
+      fileURLToPath(import.meta.url),
+    ],
+    { env, encoding: "utf8", timeout: 30000, maxBuffer: 1024 * 1024 },
+  );
+  assert.equal(child.error, undefined);
+  assert.equal(child.status, 0, `${child.stdout}\n${child.stderr}`);
+  assert.match(child.stdout, /^# tests 3$/mu);
+  assert.match(child.stdout, /^# fail 0$/mu);
+  assert.match(child.stdout, /^# skipped 0$/mu);
+  assert.equal(
+    readFileSync(outcomes, "utf8"),
+    "",
+    "simulated business and cleanup outcomes must not reach the real CI shard",
   );
 });
