@@ -199,6 +199,7 @@ test("RPC loss accepts only the actual public Admin snapshot shape and separatel
         [
           "providerConnectionId",
           "modelProfileId",
+          "modelProfileRevision",
           "configurationRevision",
           "agentSpecRevision",
           "executionRevision",
@@ -803,5 +804,50 @@ test("RPC business rejects a second model attempt started before the first usage
   assert.throws(
     () => inspect(evidence),
     "later attempt must wait for the original durable usage receipt",
+  );
+});
+
+test("RPC legacy audits remain valid without model revision evidence", () => {
+  const evidence = fixture();
+  for (const { run } of executionCopies(evidence)) {
+    delete run.execution_snapshot.modelProfileRevision;
+    run.model_profile_revision = null;
+  }
+  assert.deepEqual(inspect(evidence), summary);
+});
+
+test("RPC model revisions must be positive safe integers and agree with the audit", () => {
+  for (const revision of [
+    null,
+    0,
+    -1,
+    1.5,
+    "1",
+    true,
+    Number.MAX_SAFE_INTEGER + 1,
+  ]) {
+    const evidence = fixture();
+    for (const { run } of executionCopies(evidence)) {
+      run.execution_snapshot.modelProfileRevision = revision;
+      run.model_profile_revision = revision;
+    }
+    assert.throws(() => inspect(evidence), /model.*revision/iu);
+  }
+  const boundary = fixture();
+  for (const { run } of executionCopies(boundary)) {
+    run.execution_snapshot.modelProfileRevision = Number.MAX_SAFE_INTEGER;
+    run.model_profile_revision = Number.MAX_SAFE_INTEGER;
+  }
+  assert.deepEqual(inspect(boundary), summary);
+  const changed = fixture();
+  for (const { run } of executionCopies(changed))
+    run.model_profile_revision += 1;
+  assert.throws(() => inspect(changed), /model.*revision/iu);
+  const unknown = fixture();
+  for (const { run } of executionCopies(unknown))
+    run.execution_snapshot.runtimeToken = "private";
+  assert.throws(
+    () => inspect(unknown),
+    /Unexpected public RPC execution snapshot field/u,
   );
 });
