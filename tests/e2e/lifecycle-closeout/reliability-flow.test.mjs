@@ -30,9 +30,10 @@ async function scenario(mutate) {
   const event = (agentID, type, requestID, data = {}) => {
     const list = state.events.get(agentID) ?? [];
     list.push({
-      event_id: `event-${list.length + 1}`,
+      event_id: `event-${agentID}-${list.length + 1}`,
       global_sequence: list.length + 1,
       aggregate_sequence: list.length + 1,
+      schema_version: 1,
       agent_id: agentID,
       event_type: type,
       operation_request_id: requestID,
@@ -69,6 +70,15 @@ async function scenario(mutate) {
       return JSON.stringify(state.proxyStatus);
     }
     if (joined.includes("psql")) {
+      if (joined.includes("FROM agent_controller.agent_events")) {
+        const id = joined.match(/WHERE event_id='([a-zA-Z0-9_-]+)'/u)?.[1];
+        assert(id, "audit reads must select an exact original event identity");
+        return JSON.stringify(
+          [...state.events.values()]
+            .flat()
+            .find((row) => row.event_id === id) ?? null,
+        );
+      }
       if (joined.includes("egress")) {
         return JSON.stringify(
           state.openEgress
@@ -241,6 +251,7 @@ async function scenario(mutate) {
               event_id: eventID,
               global_sequence: state.events.get(agentID).length + 1,
               aggregate_sequence: state.events.get(agentID).length + 1,
+              schema_version: 1,
               agent_id: agentID,
               event_type: "agent_gc_scheduled",
               operation_request_id: deleteID,
@@ -312,7 +323,13 @@ async function scenario(mutate) {
     }
     if (path.includes("/events")) {
       const agentID = path.split("/")[4];
-      return { events: state.events.get(agentID) ?? [] };
+      return {
+        events: (state.events.get(agentID) ?? []).map((row) => {
+          const publicEvent = { ...row };
+          delete publicEvent.data;
+          return publicEvent;
+        }),
+      };
     }
     if (path.startsWith("/api/admin/agents/")) {
       const agentID = path.split("/")[4];
