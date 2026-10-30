@@ -616,6 +616,14 @@ export const api = {
     request<LifecycleOperation>(`/api/admin/agents/${encodeURIComponent(agentID)}/rebuild`, {
       method: "POST", headers: { "Idempotency-Key": requestID }, body: json(input), signal,
     }),
+  cancelLifecycleOperation: (agentID: string, operationRequestID: string, signal?: AbortSignal) =>
+    request<LifecycleOperation>(`/api/admin/agents/${encodeURIComponent(agentID)}/lifecycle-operation/cancel`, {
+      method: "POST", body: json({ operation_request_id: operationRequestID }), signal,
+    }),
+  clearLifecycleQuarantine: (agentID: string, expectedAggregateSequence: number, signal?: AbortSignal) =>
+    request<Agent>(`/api/admin/agents/${encodeURIComponent(agentID)}/lifecycle-quarantine/clear`, {
+      method: "POST", body: json({ expected_aggregate_sequence: expectedAggregateSequence }), signal,
+    }),
   operation: (requestID: string, signal?: AbortSignal) =>
     request<LifecycleOperation>(`/api/admin/operations/${encodeURIComponent(requestID)}`, { signal }),
   events: (agentID: string, afterSequence = 0) =>

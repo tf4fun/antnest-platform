@@ -152,6 +152,8 @@ func (h *handler) routes() {
 	for _, action := range []string{"rebuild", "disable", "enable", "delete"} {
 		h.mux.HandleFunc("POST /api/admin/agents/{agent_id}/"+action, h.withPrincipal(h.lifecycle(action)))
 	}
+	h.mux.HandleFunc("POST /api/admin/agents/{agent_id}/lifecycle-operation/cancel", h.withPrincipal(h.cancelLifecycleOperation))
+	h.mux.HandleFunc("POST /api/admin/agents/{agent_id}/lifecycle-quarantine/clear", h.withPrincipal(h.clearLifecycleQuarantine))
 	h.mux.HandleFunc("GET /api/admin/operations/{request_id}", h.withPrincipal(h.getOperation))
 	h.mux.HandleFunc("GET /api/admin/agents/{agent_id}/events", h.withPrincipal(h.listAgentEvents))
 	h.mux.HandleFunc("GET /api/admin/agents/{agent_id}/events/watch", h.withPrincipal(h.watchAgentEvents))

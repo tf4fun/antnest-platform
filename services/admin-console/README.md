@@ -223,3 +223,21 @@ Identity and Gateway must deploy before Console. Controller, ACP and Registry
 consumption, deployment provisioning and complete token-profile Docker acceptance
 passed their separate batches in the
 [rollout ledger](../../contracts/platform/service-authentication-rollout.json).
+
+## Lifecycle reliability controls
+
+Agent detail exposes two session-bound Controller controls for lifecycle
+operations that are running or quarantined:
+
+- **Cancel operation** — forwards `POST /internal/agents/{id}/lifecycle-operation/cancel`
+  with the session's organization and actor; a 202 means the request was
+  accepted, not that resources are cleaned. A committed cancelled create
+  starts one deterministic delete whose own phases prove Runtime and Egress
+  cleanup.
+- **Clear quarantine** — forwards `POST /internal/agents/{id}/lifecycle-quarantine/clear`
+  with the captured `expected_aggregate_sequence`. A 409 means the sequence
+  moved — reread the Agent and confirm again; the Console never retries a
+  stale sequence automatically. The Controller accepts a clear only with matching
+  non-running Runtime proof; operators fix the root cause first. Clearing
+  leaves the Agent not-ready. Both controls require organization-admin
+  access through the signed caller context.

@@ -1,5 +1,6 @@
 import { AgentNetworkPolicy } from "../components/agent-network-policy";
 import { AgentRuntimeRecovery } from "../components/agent-runtime-recovery";
+import { AgentLifecycleReliability } from "../components/agent-lifecycle-reliability";
 import {
   Archive,
   ArrowLeft,
@@ -1172,6 +1173,10 @@ function AgentDetail({ agentID, networkScope }: { agentID: string; networkScope?
           Boolean(agent.active_operation_request_id) || Boolean(stateFailure) || agentStateRetryPending}
         acquireMutation={() => acquireMutation("runtime-recovery")}
         onOperation={acceptOperation} onRefresh={() => refreshAgent(true)} />
+      <AgentLifecycleReliability agent={agent} operation={visibleOperation}
+        blocked={(pending !== "" && pending !== "lifecycle-repair") || Boolean(stateFailure) || agentStateRetryPending}
+        acquireMutation={() => acquireMutation("lifecycle-repair")}
+        onOperation={acceptOperation} onAgent={applyAgentSnapshot} onRefresh={() => refreshAgent(true)} />
       {skillLifecycle?.action === "enable" ? <SkillPreparationPanel status={skillLifecycle.status} rebuild={false} failure={skillLifecycleReadError} /> : null}
       {stateFailure ? <ResourceFailureNotice failure={stateFailure} pending={agentStateRetryPending} retryLabel="Retry Agent state" onRetry={() => void retryAgentState()} /> : null}
       {templateOptionFailure ? <ResourceFailureNotice failure={templateOptionFailure} message={`Rebuild options could not be loaded: ${templateOptionFailure.message}`} retryLabel="Retry template choices" onRetry={retryTemplates} /> : null}
