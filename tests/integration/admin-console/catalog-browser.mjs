@@ -117,6 +117,25 @@ function fixtures() {
         },
       };
     }
+    if (
+      method === "POST" &&
+      path === "/api/admin/model-profiles/model-1/revisions"
+    ) {
+      assert.equal(body.expected_version, 1);
+      assert.equal(body.model.max_output_tokens, 4096);
+      assert.deepEqual(Object.keys(body).sort(), [
+        "display_name",
+        "expected_version",
+        "model",
+      ]);
+      resources["model-profiles/model-1"] = {
+        ...resources["model-profiles/model-1"],
+        revision: 2,
+        revision_id: "model-revision-2",
+        model: { ...model.model, ...body.model },
+      };
+      return { status: 201, json: resources["model-profiles/model-1"] };
+    }
     assert.equal(method, "GET");
     if (path === "/api/session")
       return {
@@ -197,6 +216,8 @@ function fixtures() {
       };
     if (path === "/api/admin/model-profiles")
       return { json: { items: [resources["model-profiles/model-1"]] } };
+    if (path === "/api/admin/model-profiles/model-1/usage")
+      return { json: { templates: 2, agents: 3 } };
     if (path === "/api/admin/templates/template-1/revisions/1")
       return { json: template };
     const resource = resources[path.slice("/api/admin/".length)];
@@ -293,6 +314,35 @@ async function exercise(browser, origin, viewport, label) {
       .getByText("Configuration acknowledged", { exact: true })
       .waitFor();
     await page.goto(`${origin}/#models/model-1`);
+    await page.getByRole("button", { name: "Edit model" }).click();
+    const editor = page.getByRole("dialog");
+    await editor
+      .getByText("Used by 3 Agents in 2 Templates", { exact: false })
+      .waitFor();
+    await editor.getByText("Model settings").click();
+    await editor.getByLabel("Maximum output").fill("4096");
+    await editor.getByRole("button", { name: "Save changes" }).click();
+    await editor.getByText("Confirm model changes").waitFor();
+    assert.equal(writes.length, 2);
+    await page.screenshot({
+      path: resolve(output, `${label}-edit-confirmation.png`),
+      fullPage: true,
+    });
+    await assertNoOverflow(page);
+    await editor.getByRole("button", { name: "Cancel" }).click();
+    await page.getByRole("button", { name: "Edit model" }).click();
+    const reopened = page.getByRole("dialog");
+    await reopened
+      .getByText("Used by 3 Agents in 2 Templates", { exact: false })
+      .waitFor();
+    await reopened.getByText("Model settings").click();
+    await reopened.getByLabel("Maximum output").fill("4096");
+    await reopened.getByRole("button", { name: "Save changes" }).click();
+    await reopened.getByText("Confirm model changes").waitFor();
+    assert.equal(writes.length, 2);
+    await reopened.getByRole("button", { name: "Confirm changes" }).click();
+    await page.getByText("Model settings saved.", { exact: true }).waitFor();
+    assert.equal(writes.length, 3);
     await page.getByRole("switch", { name: "Model enabled" }).click();
     await page
       .getByText("Availability change saved.", { exact: true })
@@ -324,6 +374,7 @@ async function exercise(browser, origin, viewport, label) {
     assert.deepEqual(writes, [
       "/api/admin/provider-connections/connection-1/availability",
       "/api/admin/templates/template-1/availability",
+      "/api/admin/model-profiles/model-1/revisions",
       "/api/admin/model-profiles/model-1/availability",
       "/api/admin/provider-connections/connection-1/availability",
     ]);
