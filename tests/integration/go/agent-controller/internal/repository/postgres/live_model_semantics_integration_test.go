@@ -144,8 +144,10 @@ func TestLiveModelUsageCountsCurrentReferences(t *testing.T) {
 	require.NoError(t, err)
 	otherParameters := usedParameters
 	otherParameters.Model = "other-api"
+	otherProvider, err := service.CreateProviderConnection(ctx, providerTestInput("other-provider", "org-usage"))
+	require.NoError(t, err)
 	other, err := service.CreateModelProfile(ctx, application.CreateModelProfileInput{
-		RequestID: "create-other", OrganizationID: "org-usage", ProviderConnectionID: provider.ConnectionID,
+		RequestID: "create-other", OrganizationID: "org-usage", ProviderConnectionID: otherProvider.ConnectionID,
 		ProfileKey: "other", DisplayName: "Other", Model: otherParameters,
 	})
 	require.NoError(t, err)
@@ -166,7 +168,12 @@ func TestLiveModelUsageCountsCurrentReferences(t *testing.T) {
 		RequestID: "revise-template", OrganizationID: "org-usage", TemplateID: "template-primary",
 		Name: "primary", ModelProfileID: other.ModelProfileID,
 		SystemPrompt: "prompt", MaxModelRequests: 4, ContextPolicyVersion: domain.ContextPolicyV1,
-		Runtime: domain.RuntimeSpecInput{ImageRef: "antnest/runtime@sha256:" + strings.Repeat("a", 64)},
+		Runtime: domain.RuntimeSpecInput{
+			ImageRef: "antnest/runtime@sha256:" + strings.Repeat("a", 64),
+			Resources: domain.RuntimeResources{
+				MemoryBytes: 536870912, PIDsLimit: 256, TmpfsBytes: 67108864,
+			},
+		},
 	})
 	require.NoError(t, err)
 	require.NotNil(t, revised)
@@ -215,7 +222,7 @@ func TestLiveModelUsageIncludesAgentsAndEffectiveModelsFollowHead(t *testing.T) 
 			"fallback JSON %s must still resolve effective models", nullFallback)
 	}
 
-	deleted, err := repository.pool.Exec(ctx, `UPDATE agent_controller.agents SET lifecycle_state='deleted' WHERE id=$1`, base.Agent.AgentID)
+	deleted, err := repository.pool.Exec(ctx, `UPDATE agent_controller.agents SET lifecycle_state='deleted', activation_state='' WHERE id=$1`, base.Agent.AgentID)
 	require.NoError(t, err)
 	require.EqualValues(t, 1, deleted.RowsAffected())
 	usage, err = repository.GetModelProfileUsage(ctx, seed.Model.OrganizationID, seed.Model.ModelProfileID)
@@ -246,9 +253,9 @@ func TestLiveModelUsageIncludesRunningLifecycleTargets(t *testing.T) {
 	_, err = repository.pool.Exec(ctx, `INSERT INTO agent_controller.agent_lifecycle_operations
  (request_id, request_fingerprint, agent_id, kind, phase, state,
   source_spec_revision_id, source_execution_revision_id, source_runtime_revision, target_spec_revision_id,
-  recovery_after, created_at, updated_at)
+  created_at, updated_at)
  VALUES ('op-live-target', $2, $1, 'rebuild', 'publish', 'running',
-  $3, $4, $5, 'spec-target-live', NOW(), NOW(), NOW())`,
+  $3, $4, $5, 'spec-target-live', NOW(), NOW())`,
 		base.Agent.AgentID, strings.Repeat("e", 64),
 		base.Agent.AgentSpecRevisionID, base.Agent.ExecutionRevisionID, base.Agent.RuntimeRevision)
 	require.NoError(t, err)
