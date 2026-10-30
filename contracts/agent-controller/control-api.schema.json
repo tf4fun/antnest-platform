@@ -1758,9 +1758,6 @@
             "agent_delete_requested",
             "agent_deleted",
             "agent_lifecycle_quarantined",
-            "agent_lifecycle_cancelled",
-            "agent_lifecycle_quarantine_cleared",
-            "agent_gc_scheduled",
             "agent_runtime_restarted",
             "agent_runtime_missing",
             "agent_runtime_condition_changed",
@@ -2344,48 +2341,6 @@
         "secret": {
           "type": "string",
           "minLength": 1
-        }
-      }
-    },
-    "cancel_lifecycle_operation_request": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "organization_id",
-        "actor_principal_id",
-        "operation_request_id"
-      ],
-      "properties": {
-        "organization_id": {
-          "$ref": "#/$defs/id"
-        },
-        "actor_principal_id": {
-          "$ref": "#/$defs/id"
-        },
-        "operation_request_id": {
-          "$ref": "#/$defs/id"
-        }
-      }
-    },
-    "clear_lifecycle_quarantine_request": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "organization_id",
-        "actor_principal_id",
-        "expected_aggregate_sequence"
-      ],
-      "properties": {
-        "organization_id": {
-          "$ref": "#/$defs/id"
-        },
-        "actor_principal_id": {
-          "$ref": "#/$defs/id"
-        },
-        "expected_aggregate_sequence": {
-          "type": "integer",
-          "minimum": 1,
-          "maximum": 9007199254740991
         }
       }
     }

@@ -8,7 +8,39 @@ const require = createRequire(
 );
 const { Ajv2020 } = require("ajv/dist/2020.js");
 const root = new URL("../../../contracts/", import.meta.url);
-const read = (path) => JSON.parse(readFileSync(new URL(path, root), "utf8"));
+const readRaw = (path) => JSON.parse(readFileSync(new URL(path, root), "utf8"));
+const proposal = readRaw(
+  "agent-controller/lifecycle-reliability-proposal.json",
+);
+const activeRevision = readRaw(
+  "agent-controller/control-contract.json",
+).revision;
+
+// Compile the proposed additions without advertising unsupported live routes.
+// Once the producer publishes revision 47, validate its actual files instead.
+function read(path) {
+  const value = readRaw(path);
+  if (activeRevision !== proposal.base_control_revision) return value;
+  if (path === "agent-controller/control-contract.json") {
+    value.revision = proposal.target_control_revision;
+    Object.assign(value.resources.agents, structuredClone(proposal.routes));
+    value.enums.event_type.push(...proposal.event_types);
+    value.lifecycle_reliability = structuredClone(
+      proposal.lifecycle_reliability,
+    );
+  } else if (path === "agent-controller/callers.json") {
+    for (const route of Object.values(proposal.routes))
+      value.routes[`${route.method} ${route.path}`] = structuredClone(
+        proposal.caller_policy,
+      );
+  } else if (path === "agent-controller/control-api.schema.json") {
+    Object.assign(value.$defs, structuredClone(proposal.schema_definitions));
+    value.$defs.agent_event.properties.event_type.enum.push(
+      ...proposal.event_types,
+    );
+  }
+  return value;
+}
 
 const cancelPath = "/internal/agents/{agent_id}/lifecycle-operation/cancel";
 const quarantinePath = "/internal/agents/{agent_id}/lifecycle-quarantine/clear";
@@ -26,6 +58,53 @@ const failureCodes = [
 ];
 const operationStates = ["running", "completed", "failed"];
 const maximumSequence = 9007199254740991;
+
+test("the proposal stays separate until the owning producer publishes its target revision", () => {
+  assert.equal(
+    proposal.contract,
+    "antnest.agent-controller.lifecycle-reliability.proposal",
+  );
+  assert.equal(proposal.revision, 1);
+  assert.equal(proposal.status, "proposed");
+  assert.equal(proposal.base_control_revision, 46);
+  assert.equal(proposal.target_control_revision, 47);
+  assert.equal(proposal.schema_base, "control-api.schema.json");
+  assert([46, 47].includes(activeRevision), "unknown publication revision");
+  const contract = readRaw("agent-controller/control-contract.json");
+  const callers = readRaw("agent-controller/callers.json");
+  const schema = readRaw("agent-controller/control-api.schema.json");
+  if (activeRevision === proposal.base_control_revision) {
+    assert.equal(contract.lifecycle_reliability, undefined);
+    for (const [name, route] of Object.entries(proposal.routes)) {
+      assert.equal(contract.resources.agents[name], undefined);
+      assert.equal(callers.routes[`${route.method} ${route.path}`], undefined);
+    }
+    for (const name of Object.keys(proposal.schema_definitions))
+      assert.equal(schema.$defs[name], undefined);
+    for (const event of proposal.event_types) {
+      assert(!contract.enums.event_type.includes(event));
+      assert(
+        !schema.$defs.agent_event.properties.event_type.enum.includes(event),
+      );
+    }
+  } else {
+    assert.deepEqual(
+      contract.lifecycle_reliability,
+      proposal.lifecycle_reliability,
+    );
+    for (const [name, route] of Object.entries(proposal.routes)) {
+      assert.deepEqual(contract.resources.agents[name], route);
+      assert.deepEqual(
+        callers.routes[`${route.method} ${route.path}`],
+        proposal.caller_policy,
+      );
+    }
+    for (const [name, definition] of Object.entries(
+      proposal.schema_definitions,
+    ))
+      assert.deepEqual(schema.$defs[name], definition);
+  }
+});
 
 const samples = {
   cancel_lifecycle_operation_request: () => ({

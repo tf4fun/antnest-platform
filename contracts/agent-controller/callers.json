@@ -259,22 +259,6 @@
       },
       "request_body": "json"
     },
-    "POST /internal/agents/{agent_id}/lifecycle-operation/cancel": {
-      "callers": ["admin-console"],
-      "authentication": "workload",
-      "caller_context": {
-        "admin-console": "required"
-      },
-      "request_body": "json"
-    },
-    "POST /internal/agents/{agent_id}/lifecycle-quarantine/clear": {
-      "callers": ["admin-console"],
-      "authentication": "workload",
-      "caller_context": {
-        "admin-console": "required"
-      },
-      "request_body": "json"
-    },
     "POST /internal/agents/{agent_id}/rebuild": {
       "callers": ["admin-console"],
       "authentication": "workload",
