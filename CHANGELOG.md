@@ -339,6 +339,9 @@ native Runtime retains its separate per-instance token profile.
 
 ### Fixed
 
+Controller event readers recognize the contract's schema-1 cancellation,
+quarantine-clear and GC-scheduled events instead of failing their event pages.
+
 Controller lifecycle termination releases its owned Skill preparation after
 committing the failure, including retries after a lost release confirmation.
 This frees the original preparation reservation before a failed-create Rebuild.

@@ -182,6 +182,10 @@ after the failure is committed. A lost RC release confirmation keeps the intent
 owned; retrying the already failed termination finishes that same idempotent
 release before a new preparation can occupy the Agent.
 
+Event readers accept the existing schema-1 lifecycle cancellation,
+quarantine-clear and GC-scheduled records in Agent and global event pages.
+Unknown event types and invalid schema versions remain rejected.
+
 `--healthcheck` probes the configured IPv4/IPv6 `/status` directly, bypassing
 environment proxies and refusing redirects while preserving TLS service identity.
 An empty TLS CA setting does not switch opted-in token/HTTP development probes

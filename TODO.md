@@ -20,6 +20,8 @@ Issue 状态最后核对于 2026-10-28：141 个 issue，87 个已关闭，54 �
 
 ## 当前批次
 
+- **可靠性事件读取修复（2026-10-30，#377／#406）**：原场景已完成失败创建重建／删除、真实挂起初始化后的取消与子 Delete，随后公开事件页 500。Controller `validAgentEventType` 未包含契约已有的取消／解除隔离／GC 调度三种 schema-1 事件，写入成功后读取被自身校验拒绝。新增 Agent／global 页面读取回归三项先红；仅补三种已声明类型，错误 schema 和未知类型继续拒绝，事件相关 race 单元通过。继续完整原场景复验及精确候选远程门，不把已执行的局部检查记为完整通过。
+
 - **终止后 Skill 准备释放（2026-10-30，#377／#406）**：继续真实 reliability 场景发现 Create 已 failed 后 Rebuild admission 反复 `reserve Skill preparation: concurrent catalog change`。原始 ready intent 仍占用 `agent_skill_preparation_one_active_per_agent`；阶段终止漏掉正常失败路径的真实释放。新增单元与 PostgreSQL 回归均先红；终止提交后复用现有 RC 释放与确认落库，已 failed 的幂等重试继续未确认释放，完成／其他原因失败不误释放，原准备未获确认前仍保持占用。定向 race 单元及真实 PostgreSQL 的释放前排他、确认后 Rebuild 准备、已失败终止重试和原子审计回归均通过，组件清理通过；原场景继续复验。不增加重试或时限、不把 ready 标志直接改成 released。
 
 - **最新 main 生命周期 E2E 修复（2026-10-30，#377／#406）**：同步 #45 后，main `07b0b5c1` 的 [41021069851](https://github.com/tf4fun/antnest-platform/actions/runs/41021069851) 与候选 `a8325433` 的 [41023498943](https://github.com/tf4fun/antnest-platform/actions/runs/41023498943) 均为 19/20 组通过，只有新增 reliability 场景失败，survivor 的 11 项和实际清理均通过。真实镜像复现创建在 `network_ensure` 保持 running；Temporal 历史证明 8s 预算已生效，但因下一次重试越过预算，以最后应用错误＋`RETRY_STATE_TIMEOUT` 结束，原 Controller 只识别 `TimeoutError`，漏掉原子终止。新增真实引擎回归先红后绿；按明确的 activity retry timeout 状态补分类，其他重试结束状态／取消不扩大归类，以独立版本标记保持旧已结束历史回放。定向 race 单元、旧原始历史回放和 4 项真实 Temporal 组件通过，组件清理通过；新镜像的创建已 durable failed 并清空活动绑定；后续测试误从 Console 公开事件投影索取私有 data，需在共享 harness 批次用事件身份关联真实审计行修正，原失败码／取消／GC／清理断言不放宽。新的精确候选远程门尚待核对，不宣称 main 通过。
