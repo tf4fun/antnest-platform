@@ -15,6 +15,10 @@ type DeleteAgentInput struct {
 	OrganizationID   string
 	ActorPrincipalID string
 	AgentID          string
+	// FailedCreate carries the internal GC snapshot when the sweep admits a
+	// failed-create delete. It is never populated from HTTP payloads.
+	FailedCreate       *ports.FailedCreateGCCandidate
+	FailedCreateCutoff time.Time
 }
 
 type DeleteAgentResult struct {
@@ -56,6 +60,19 @@ func (service *LifecycleService) DeleteAgent(
 	if err := validateDeleteSource(base.Agent); err != nil {
 		return DeleteAgentResult{}, err
 	}
+	if input.FailedCreate != nil {
+		candidate := input.FailedCreate
+		if candidate.AgentID != input.AgentID || candidate.OrganizationID != input.OrganizationID ||
+			candidate.AggregateSequence <= 0 || input.FailedCreateCutoff.IsZero() ||
+			candidate.CreateRequestID == "" {
+			return DeleteAgentResult{}, fmt.Errorf("%w: failed-create GC candidate", ErrInvalidInput)
+		}
+		if base.Agent.LifecycleState != domain.AgentNotCreated ||
+			base.Agent.AggregateSequence != candidate.AggregateSequence ||
+			base.Agent.ActiveOperationRequestID != "" {
+			return DeleteAgentResult{}, fmt.Errorf("%w: failed-create GC eligibility", ErrLifecycleConflict)
+		}
+	}
 	sourceRuntime := base.Agent.RuntimeRevision
 	if base.Agent.DesiredState == domain.DesiredDeleted {
 		// A new deletion attempt must inspect the current physical state after fencing.
@@ -70,6 +87,21 @@ func (service *LifecycleService) DeleteAgent(
 	})
 	if err != nil {
 		return DeleteAgentResult{}, fmt.Errorf("%w: %v", ErrInvalidInput, err)
+	}
+	var gcEvent *ports.AgentEventRecord
+	if input.FailedCreate != nil {
+		gcEvent = &ports.AgentEventRecord{
+			EventID: domain.DeriveResourceID("event", "failed-create-gc", input.FailedCreate.CreateRequestID),
+			AgentID: base.Agent.AgentID, AggregateSequence: base.Agent.AggregateSequence + 2,
+			SchemaVersion: 1, EventType: ports.EventAgentGCScheduled,
+			OperationRequestID: input.RequestID, TraceID: currentTraceID(ctx),
+			Data: map[string]any{
+				"create_request_id":  input.FailedCreate.CreateRequestID,
+				"delete_request_id":  input.RequestID,
+				"actor_principal_id": input.ActorPrincipalID,
+			},
+			OccurredAt: now,
+		}
 	}
 	state, _, err = service.store.BeginAgentDelete(ctx, ports.BeginAgentDelete{
 		AgentID: base.Agent.AgentID, ExpectedAggregateSequence: base.Agent.AggregateSequence,
@@ -96,7 +128,8 @@ func (service *LifecycleService) DeleteAgent(
 			},
 			OccurredAt: now,
 		},
-		Now: now,
+		Now: now, FailedCreate: input.FailedCreate,
+		FailedCreateCutoff: input.FailedCreateCutoff, GCEvent: gcEvent,
 	})
 	if err != nil {
 		return DeleteAgentResult{}, fmt.Errorf("begin Agent delete: %w", err)

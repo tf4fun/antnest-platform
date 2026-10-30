@@ -247,8 +247,17 @@ func run(ctx context.Context, environment serviceauth.LookupEnv) (resultErr erro
 		return classifyFailure("workflow_startup", err)
 	}
 	defer closeWorkflowClient()
-	workflowWorker := orchestration.NewWorker(workflowClient, lifecycle, cfg.ShutdownTimeout)
+	workflowWorker := orchestration.NewWorker(workflowClient, lifecycle, cfg.ShutdownTimeout,
+		orchestration.WorkerConfiguration{
+			PhaseDeadlines: cfg.LifecycleReliability.PhaseDeadlines,
+			BuildID:        cfg.LifecycleReliability.WorkerBuildID,
+		})
 	commands := orchestration.NewService(lifecycle, workflowClient)
+	failedCreateGC, err := application.NewFailedCreateGCWorker(
+		repository, commands, systemClock{}, cfg.LifecycleReliability.FailedCreateTTL, 100)
+	if err != nil {
+		return classifyFailure("service_composition", err)
+	}
 	barrierObservation, barrierStarts, err := configureRuntimeBarrierRecovery(repository, cfg, lifecycle, commands, logger)
 	if err != nil {
 		return classifyFailure("service_composition", err)
@@ -307,6 +316,9 @@ func run(ctx context.Context, environment serviceauth.LookupEnv) (resultErr erro
 		controllerBackgroundWorker{name: "execution_publication", run: executionWorker.Run},
 		controllerBackgroundWorker{name: "runtime_barrier_recovery_observation", run: barrierObservation.Run},
 		controllerBackgroundWorker{name: "runtime_barrier_recovery_start", run: barrierStarts.Run},
+		controllerBackgroundWorker{name: "failed_create_gc", run: func(ctx context.Context) {
+			failedCreateGC.Run(ctx, cfg.LifecycleReliability.FailedCreateGCInterval)
+		}},
 	)
 }
 

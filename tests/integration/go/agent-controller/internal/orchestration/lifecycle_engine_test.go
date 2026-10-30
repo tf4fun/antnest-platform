@@ -2,6 +2,7 @@ package orchestration
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -61,10 +62,18 @@ func checkEngineReplacement(t *testing.T, address string, kind domain.OperationK
 				attempt := count(string(phase))
 				if phase == runtimePhase && attempt == 1 {
 					close(entered)
-					<-ctx.Done()
-					return application.OperationView{}, ctx.Err()
+					select {
+					case <-ctx.Done():
+						return application.OperationView{}, ctx.Err()
+					case <-activity.GetWorkerStopChannel(ctx):
+						return application.OperationView{}, errors.New("worker replaced during dependency call")
+					}
 				}
-				return application.OperationView{State: domain.OperationCompleted}, nil
+				state := domain.OperationRunning
+				if phase == phases[len(phases)-1] {
+					state = domain.OperationCompleted
+				}
+				return application.OperationView{State: state}, nil
 			}, activity.RegisterOptions{Name: lifecycleActivity(phase)})
 		}
 		return w

@@ -20,6 +20,7 @@ type PublishRuntimeBinding struct {
 
 func (agent AgentRecord) AwaitingRuntimeBinding() bool {
 	return agent.DesiredState == domain.DesiredEnabled && !agent.IdentityRevoked() &&
+		!agent.LifecycleTerminated() &&
 		agent.LifecycleState == domain.AgentCreated && agent.ActivationState == domain.ActivationEnabled &&
 		agent.ExecutionRevisionID == "" && agent.FailureStage != "runtime_observation" && agent.ActiveOperationRequestID == "" &&
 		agent.HasConfiguredRuntime()
@@ -37,5 +38,6 @@ func (agent AgentRecord) RuntimePreparing() bool {
 
 func (agent AgentRecord) CanObserveRuntime() bool {
 	return agent.DesiredState == domain.DesiredEnabled && !agent.IdentityRevoked() &&
+		!agent.LifecycleTerminated() &&
 		agent.ActiveOperationRequestID == "" && agent.HasConfiguredRuntime()
 }

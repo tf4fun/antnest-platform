@@ -6,6 +6,7 @@ import (
 	"reflect"
 	"time"
 
+	enums "go.temporal.io/api/enums/v1"
 	"go.temporal.io/sdk/temporal"
 	"go.temporal.io/sdk/workflow"
 
@@ -24,10 +25,39 @@ var createPhases = []domain.OperationPhase{
 }
 
 func CreateAgentWorkflow(ctx workflow.Context, command application.CreateAgentInput) error {
-	return runWorkflow[application.CreateAgentInput, application.CreateAgentResult](ctx, command, command.RequestID, AdmitActivity, createPhases, func(phase domain.OperationPhase) string { return string(phase) })
+	return createAgentWorkflow(ctx, command, defaultWorkerConfiguration())
 }
 
-func runWorkflow[I any, R any](ctx workflow.Context, command I, requestID string, admit string, phases []domain.OperationPhase, activityName func(domain.OperationPhase) string) error {
+func createAgentWorkflow(ctx workflow.Context, command application.CreateAgentInput, configuration WorkerConfiguration) error {
+	return runWorkflow[application.CreateAgentInput, application.CreateAgentResult](ctx, command, command.RequestID, AdmitActivity, createPhases, func(phase domain.OperationPhase) string { return string(phase) }, configuration, createCancellationCleanup)
+}
+
+func createCancellationCleanup(ctx workflow.Context, admission application.CreateAgentResult, command application.CreateAgentInput) error {
+	deleteRequestID := domain.DeriveResourceID("request", "lifecycle-cancel-delete", command.RequestID)
+	childCtx := workflow.WithChildOptions(workflow.WithTaskQueue(ctx, workflow.GetInfo(ctx).TaskQueueName), workflow.ChildWorkflowOptions{
+		WorkflowID:            "agent-delete/" + deleteRequestID,
+		ParentClosePolicy:     enums.PARENT_CLOSE_POLICY_ABANDON,
+		WorkflowIDReusePolicy: enums.WORKFLOW_ID_REUSE_POLICY_REJECT_DUPLICATE,
+	})
+	return workflow.ExecuteChildWorkflow(childCtx, LifecycleWorkflow, application.LifecycleCommand{
+		Kind: domain.OperationDelete, RequestID: deleteRequestID,
+		AgentID: admission.Agent.AgentID, OrganizationID: command.OrganizationID,
+		ActorPrincipalID: command.ActorPrincipalID,
+	}).GetChildWorkflowExecution().Get(ctx, nil)
+}
+
+var lifecycleRetryPolicy = &temporal.RetryPolicy{
+	InitialInterval: time.Second, BackoffCoefficient: 2, MaximumInterval: time.Minute,
+}
+
+func runWorkflow[I any, R any](ctx workflow.Context, command I, requestID string, admit string, phases []domain.OperationPhase, activityName func(domain.OperationPhase) string, configuration WorkerConfiguration, onCancelled func(workflow.Context, R, I) error) error {
+	if workflow.GetVersion(ctx, lifecycleReliabilityVersionID, workflow.DefaultVersion, 1) == workflow.DefaultVersion {
+		return runLegacyWorkflow[I, R](ctx, command, requestID, admit, phases, activityName)
+	}
+	return runReliableWorkflow(ctx, command, requestID, admit, phases, activityName, configuration, onCancelled)
+}
+
+func runLegacyWorkflow[I any, R any](ctx workflow.Context, command I, requestID string, admit string, phases []domain.OperationPhase, activityName func(domain.OperationPhase) string) error {
 	ctx = workflow.WithActivityOptions(ctx, workflow.ActivityOptions{
 		StartToCloseTimeout: 15 * time.Minute,
 		HeartbeatTimeout:    30 * time.Second,

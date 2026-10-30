@@ -15,6 +15,7 @@ type Config struct {
 	DevelopmentSecretWarnings      []string
 	Execution                      ExecutionConfiguration
 	RuntimeBarrierRecovery         RuntimeBarrierRecoveryConfiguration
+	LifecycleReliability           LifecycleReliabilityConfiguration
 	ListenAddress                  string
 	TemporalAddress                string
 	DatabaseURL                    string
@@ -55,6 +56,10 @@ func Load(environment serviceauth.LookupEnv) (Config, error) {
 		return Config{}, err
 	}
 	recovery, err := loadRuntimeBarrierRecoveryConfiguration(lookup)
+	if err != nil {
+		return Config{}, err
+	}
+	reliability, err := loadLifecycleReliabilityConfiguration(lookup)
 	if err != nil {
 		return Config{}, err
 	}
@@ -100,6 +105,7 @@ func Load(environment serviceauth.LookupEnv) (Config, error) {
 	config := Config{
 		Execution:                      execution,
 		RuntimeBarrierRecovery:         recovery,
+		LifecycleReliability:           reliability,
 		TemporalAddress:                strings.TrimSpace(lookup("ANTNEST_TEMPORAL_ADDRESS")),
 		ListenAddress:                  strings.TrimSpace(lookup("ANTNEST_AGENT_CONTROLLER_LISTEN")),
 		DatabaseURL:                    strings.TrimSpace(lookup("ANTNEST_AGENT_CONTROLLER_DATABASE_URL")),

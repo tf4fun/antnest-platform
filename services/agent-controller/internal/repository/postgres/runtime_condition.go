@@ -43,7 +43,7 @@ func (repository *Repository) RecordRuntimeCondition(ctx context.Context, input 
 
 func acceptsRuntimeCondition(agent ports.AgentRecord, current ports.RuntimeInspection) bool {
 	return agent.LifecycleState == domain.AgentCreated && agent.ActivationState == domain.ActivationEnabled &&
-		agent.FailureCode != "lifecycle_invariant_failed" &&
+		!agent.LifecycleTerminated() &&
 		agent.ActiveOperationRequestID == "" && agent.RuntimeRevision != "" &&
 		agent.AgentID == current.AgentID && agent.RuntimeRevision == current.RuntimeRevision &&
 		!current.ObservedAt.IsZero() && (agent.RuntimeObservedAt == nil || !current.ObservedAt.Before(*agent.RuntimeObservedAt))

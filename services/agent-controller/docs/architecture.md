@@ -769,3 +769,25 @@ reopened by observation. Lost-open recovery cannot borrow a later lifecycle
 cycle, even when only the key changed at the same address. Controller owns no
 private key delivery; see the
 [shared contract](../../../docs/authenticated-runtime-tunnel.md).
+
+## Lifecycle Reliability Rollout
+
+New workflow histories carry a `lifecycle-reliability-v1` `GetVersion` marker
+and record the worker configuration through `SideEffect`, so replayed phases
+always use the deadlines captured at workflow start, not current worker
+configuration. Phase activities are bounded by per-phase `ScheduleToClose`
+deadlines (see `ANTNEST_AGENT_CONTROLLER_PHASE_DEADLINES`) with
+`StartToClose` clamped to 15 minutes and `WaitForCancellation` enabled. A
+`cancel_lifecycle_operation` Workflow Update terminates the operation;
+committed `lifecycle_cancelled` creates launch one deterministic child delete.
+
+The worker `BuildID` is deployment identity only — it does not enable
+task-queue routing versioning and does not separate old from new histories.
+Replacement workers built on this version serve both branches: drain or stop
+incompatible pre-feature binaries before admitting new histories, since an
+older binary picking up a `lifecycle-reliability-v1` history would diverge.
+Histories written before this version deliberately retain their unbounded
+options and no cancel handler until they finish. Replacement and replay are
+safe because version markers and `SideEffect` data, not process config,
+govern resumed histories. The failed-create GC sweep runs independently of
+workflow versions and is unaffected.
