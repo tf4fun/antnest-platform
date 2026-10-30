@@ -78,15 +78,16 @@ var operationPlans = map[OperationKind][]OperationPhase{
 }
 
 type NewLifecycleOperationInput struct {
-	RequestID               string
-	RequestFingerprint      string
-	AgentID                 string
-	Kind                    OperationKind
-	SourceSpecRevision      string
-	SourceExecutionRevision string
-	SourceRuntimeRevision   string
-	SourceRuntimeAbsent     bool
-	TargetSpecRevision      string
+	RequestID                   string
+	RequestFingerprint          string
+	AgentID                     string
+	Kind                        OperationKind
+	SourceSpecRevision          string
+	SourceExecutionRevision     string
+	SourceRuntimeRevision       string
+	SourceRuntimeAbsent         bool
+	TargetSpecRevision          string
+	SourceFailedCreateRequestID string
 
 	Now time.Time
 }
@@ -201,6 +202,10 @@ func validateOperationInput(input NewLifecycleOperationInput) error {
 	sourceExecution := strings.TrimSpace(input.SourceExecutionRevision)
 	sourceRuntime := strings.TrimSpace(input.SourceRuntimeRevision)
 	targetSpec := strings.TrimSpace(input.TargetSpecRevision)
+	marker := strings.TrimSpace(input.SourceFailedCreateRequestID)
+	if marker != "" && input.Kind != OperationRebuild {
+		return fmt.Errorf("failed-create marker requires a rebuild operation")
+	}
 	switch input.Kind {
 	case OperationCreate:
 		if targetSpec == "" || sourceSpec != "" || sourceExecution != "" ||
@@ -208,7 +213,12 @@ func validateOperationInput(input NewLifecycleOperationInput) error {
 			return fmt.Errorf("create operation requires only a target Agent spec revision")
 		}
 	case OperationRebuild:
-		if sourceSpec == "" || sourceRuntime == "" ||
+		if marker != "" {
+			if sourceSpec == "" || targetSpec == "" || sourceRuntime != "" ||
+				sourceExecution != "" || input.SourceRuntimeAbsent {
+				return fmt.Errorf("failed-create rebuild requires only source Agent spec and target Agent spec revisions")
+			}
+		} else if sourceSpec == "" || sourceRuntime == "" ||
 			targetSpec == "" || input.SourceRuntimeAbsent {
 			return fmt.Errorf("rebuild operation requires source Agent spec, source Runtime, and target Agent spec revisions")
 		}

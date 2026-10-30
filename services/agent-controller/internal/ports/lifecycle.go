@@ -19,27 +19,30 @@ const (
 	NetworkReleaseQuarantined       = "quarantined"
 	NetworkReleaseAuthoritativeNone = "authoritative_absent"
 
-	EventAgentCreateRequested         = "agent_create_requested"
-	EventRuntimeBound                 = "runtime_bound"
-	EventAgentReady                   = "agent_ready"
-	EventAgentCreated                 = "agent_created"
-	EventAgentBuildFailed             = "agent_build_failed"
-	EventAgentRebuildRequested        = "agent_rebuild_requested"
-	EventAgentRebuilt                 = "agent_rebuilt"
-	EventAgentDisableRequested        = "agent_disable_requested"
-	EventAgentDisabled                = "agent_disabled"
-	EventAgentDisableFailed           = "agent_disable_failed"
-	EventAgentEnableRequested         = "agent_enable_requested"
-	EventAgentEnabled                 = "agent_enabled"
-	EventAgentEnableFailed            = "agent_enable_failed"
-	EventAgentDeleteRequested         = "agent_delete_requested"
-	EventAgentDeleted                 = "agent_deleted"
-	EventAgentLifecycleQuarantined    = "agent_lifecycle_quarantined"
-	EventAgentRuntimeRestarted        = "agent_runtime_restarted"
-	EventAgentRuntimeMissing          = "agent_runtime_missing"
-	EventAgentRuntimeConditionChanged = "agent_runtime_condition_changed"
-	EventAgentOwnerRevoked            = "agent_owner_revoked"
-	EventAgentRuntimeBarrierRequired  = "agent_runtime_barrier_required"
+	EventAgentCreateRequested            = "agent_create_requested"
+	EventRuntimeBound                    = "runtime_bound"
+	EventAgentReady                      = "agent_ready"
+	EventAgentCreated                    = "agent_created"
+	EventAgentBuildFailed                = "agent_build_failed"
+	EventAgentRebuildRequested           = "agent_rebuild_requested"
+	EventAgentRebuilt                    = "agent_rebuilt"
+	EventAgentDisableRequested           = "agent_disable_requested"
+	EventAgentDisabled                   = "agent_disabled"
+	EventAgentDisableFailed              = "agent_disable_failed"
+	EventAgentEnableRequested            = "agent_enable_requested"
+	EventAgentEnabled                    = "agent_enabled"
+	EventAgentEnableFailed               = "agent_enable_failed"
+	EventAgentDeleteRequested            = "agent_delete_requested"
+	EventAgentDeleted                    = "agent_deleted"
+	EventAgentLifecycleQuarantined       = "agent_lifecycle_quarantined"
+	EventAgentRuntimeRestarted           = "agent_runtime_restarted"
+	EventAgentRuntimeMissing             = "agent_runtime_missing"
+	EventAgentRuntimeConditionChanged    = "agent_runtime_condition_changed"
+	EventAgentOwnerRevoked               = "agent_owner_revoked"
+	EventAgentRuntimeBarrierRequired     = "agent_runtime_barrier_required"
+	EventAgentLifecycleCancelled         = "agent_lifecycle_cancelled"
+	EventAgentLifecycleQuarantineCleared = "agent_lifecycle_quarantine_cleared"
+	EventAgentGCScheduled                = "agent_gc_scheduled"
 )
 
 type AgentSpecSource interface {
@@ -207,31 +210,32 @@ type AgentSpecRecord struct {
 }
 
 type LifecycleOperationRecord struct {
-	DrainDeadlineAt           *time.Time
-	SettlementOutcome         string
-	OwnerRevocationSequence   int64
-	RequestID                 string
-	RequestFingerprint        string
-	AgentID                   string
-	Kind                      domain.OperationKind
-	Phase                     domain.OperationPhase
-	State                     domain.OperationState
-	SourceSpecRevisionID      string
-	SourceExecutionRevisionID string
-	SourceRuntimeRevision     string
-	SourceRuntimeAbsent       bool
-	TargetSpecRevisionID      string
-	ChildRequestID            string
-	NetworkAttachment         *NetworkAttachment
-	SourceRuntimeInspection   *RuntimeInspection
-	SourceRuntimeAbsenceProof *RuntimeAbsenceProof
-	RuntimeResult             *RuntimeOperation
-	NetworkReleaseOutcome     string
-	ErrorCode                 string
-	ErrorDetail               string
-	Retryable                 bool
-	CreatedAt                 time.Time
-	UpdatedAt                 time.Time
+	DrainDeadlineAt             *time.Time
+	SettlementOutcome           string
+	OwnerRevocationSequence     int64
+	RequestID                   string
+	RequestFingerprint          string
+	AgentID                     string
+	Kind                        domain.OperationKind
+	Phase                       domain.OperationPhase
+	State                       domain.OperationState
+	SourceSpecRevisionID        string
+	SourceExecutionRevisionID   string
+	SourceRuntimeRevision       string
+	SourceRuntimeAbsent         bool
+	TargetSpecRevisionID        string
+	SourceFailedCreateRequestID string
+	ChildRequestID              string
+	NetworkAttachment           *NetworkAttachment
+	SourceRuntimeInspection     *RuntimeInspection
+	SourceRuntimeAbsenceProof   *RuntimeAbsenceProof
+	RuntimeResult               *RuntimeOperation
+	NetworkReleaseOutcome       string
+	ErrorCode                   string
+	ErrorDetail                 string
+	Retryable                   bool
+	CreatedAt                   time.Time
+	UpdatedAt                   time.Time
 }
 
 type AgentEventRecord struct {
@@ -273,6 +277,7 @@ type AgentLifecycleBase struct {
 	SourceExecution       ExecutionRecord
 	NextSpecRevision      int64
 	NextExecutionRevision int64
+	FailedCreateOperation *LifecycleOperationRecord
 }
 
 // AgentRuntimeSource is immutable lineage, not permission to execute a Run.
@@ -493,6 +498,9 @@ type BeginAgentDelete struct {
 	Operation                 LifecycleOperationRecord
 	RequestedEvent            AgentEventRecord
 	Now                       time.Time
+	FailedCreate              *FailedCreateGCCandidate
+	FailedCreateCutoff        time.Time
+	GCEvent                   *AgentEventRecord
 }
 
 type AdvanceAgentDelete struct {

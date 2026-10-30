@@ -27,6 +27,21 @@ func (repository *Repository) GetAgentLifecycleBase(
 	base := ports.AgentLifecycleBase{
 		Agent: agent, NextSpecRevision: nextSpec, NextExecutionRevision: nextExecution,
 	}
+	failedCreate, err := loadFailedCreateRebuildSource(ctx, repository.pool, agent)
+	if err != nil {
+		return ports.AgentLifecycleBase{}, err
+	}
+	if failedCreate != nil {
+		base.FailedCreateOperation = failedCreate
+		if agent.AgentSpecRevisionID != "" && agent.AgentSpecRevisionID != failedCreate.TargetSpecRevisionID {
+			return ports.AgentLifecycleBase{}, ports.ErrConcurrentChange
+		}
+		base.ConfiguredSpec, err = loadAgentSpec(ctx, repository.pool, failedCreate.TargetSpecRevisionID)
+		if err != nil {
+			return ports.AgentLifecycleBase{}, err
+		}
+		return base, nil
+	}
 	if agent.AgentSpecRevisionID == "" {
 		return base, nil
 	}
@@ -155,21 +170,53 @@ func (repository *Repository) BeginAgentRebuild(
 	if err != nil {
 		return ports.AgentRebuildState{}, false, err
 	}
-	if !matchesRebuildSource(agent, input) {
-		return ports.AgentRebuildState{}, false, ports.ErrConcurrentChange
+	marker := input.Operation.SourceFailedCreateRequestID
+	if marker != "" && input.Recovery != nil {
+		return ports.AgentRebuildState{}, false, ports.ErrRequestConflict
 	}
-	sourceSpec, err := loadAgentSpec(ctx, transaction, input.ExpectedSpecRevisionID)
-	if err != nil {
-		return ports.AgentRebuildState{}, false, err
-	}
-	sourceExecution, err := loadOptionalExecutionRevision(
-		ctx, transaction, input.ExpectedExecutionRevisionID,
-	)
-	if err != nil {
-		return ports.AgentRebuildState{}, false, err
-	}
-	if !(ports.AgentRuntimeSource{Spec: sourceSpec, Execution: sourceExecution}).MatchesAgent(agent) {
-		return ports.AgentRebuildState{}, false, ports.ErrConcurrentChange
+	var sourceSpec ports.AgentSpecRecord
+	var sourceExecution ports.ExecutionRecord
+	if marker != "" {
+		if !failedCreateRebuildMatches(agent, input) ||
+			input.ExpectedExecutionRevisionID != "" || input.ExpectedRuntimeRevision != "" ||
+			input.Operation.SourceSpecRevisionID != input.ExpectedSpecRevisionID ||
+			input.Operation.SourceRuntimeRevision != "" ||
+			input.Operation.SourceExecutionRevisionID != "" ||
+			input.Operation.SourceRuntimeAbsent {
+			return ports.AgentRebuildState{}, false, ports.ErrConcurrentChange
+		}
+		failedCreate, err := loadFailedCreateRebuildSource(ctx, transaction, agent)
+		if err != nil {
+			return ports.AgentRebuildState{}, false, err
+		}
+		if failedCreate == nil || failedCreate.RequestID != marker ||
+			failedCreate.TargetSpecRevisionID != input.ExpectedSpecRevisionID {
+			return ports.AgentRebuildState{}, false, ports.ErrConcurrentChange
+		}
+		sourceSpec, err = loadAgentSpec(ctx, transaction, input.ExpectedSpecRevisionID)
+		if err != nil {
+			return ports.AgentRebuildState{}, false, err
+		}
+		if sourceSpec.AgentID != agent.AgentID {
+			return ports.AgentRebuildState{}, false, ports.ErrConcurrentChange
+		}
+	} else {
+		if !matchesRebuildSource(agent, input) {
+			return ports.AgentRebuildState{}, false, ports.ErrConcurrentChange
+		}
+		sourceSpec, err = loadAgentSpec(ctx, transaction, input.ExpectedSpecRevisionID)
+		if err != nil {
+			return ports.AgentRebuildState{}, false, err
+		}
+		sourceExecution, err = loadOptionalExecutionRevision(
+			ctx, transaction, input.ExpectedExecutionRevisionID,
+		)
+		if err != nil {
+			return ports.AgentRebuildState{}, false, err
+		}
+		if !(ports.AgentRuntimeSource{Spec: sourceSpec, Execution: sourceExecution}).MatchesAgent(agent) {
+			return ports.AgentRebuildState{}, false, ports.ErrConcurrentChange
+		}
 	}
 	if input.Recovery != nil {
 		if err := guardRuntimeBarrierRecovery(ctx, transaction, input, agent, sourceSpec); err != nil {

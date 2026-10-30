@@ -386,3 +386,95 @@ retry/failover defaults while preserving immutable history and existing ACKs.
 Stop old Controller publishers before the migration, and deploy the ACP consumer
 first. The [model-call policy guide](model-call-policy.md) specifies rollout,
 revision exhaustion, explicit opt-outs and remaining consumer work.
+
+## Lifecycle Reliability Runbook
+
+### Bounded phases and legacy histories
+
+New lifecycle histories record the worker configuration at start
+(`lifecycle-reliability-v1` version marker + `SideEffect`) and apply bounded
+per-phase `ScheduleToClose` deadlines: `network_ensure`, `publish` and the
+`default` admission bound are 10 minutes, `runtime_initialize` 30 minutes.
+Overrides come from `ANTNEST_AGENT_CONTROLLER_PHASE_DEADLINES`. A phase that
+exhausts retries inside its deadline terminates the operation with
+`phase_deadline_exceeded` and emits the operation's normal kind-specific
+failure event (`agent_build_failed`, `agent_disable_failed` and so on); a
+durable `agent_lifecycle_quarantined` event is emitted only when a definite
+`lifecycle_invariant_failed` invariant quarantines the operation. A
+delete-operation deadline fallback also uses the retained quarantine event —
+it is not proof that a Tunnel allocation was actually quarantined.
+
+Histories started before this version intentionally keep their original
+unbounded options and have no cancellation update handler; they still replay
+under a replacement worker until they complete. Replacement workers built on
+this version serve both legacy and new branches — drain or stop incompatible
+pre-feature binaries before admitting new histories; BuildID is deployment
+identity only and does not route tasks. Recover dependencies so old histories
+finish — do not kill workflows or edit the database. A permanently stuck
+legacy history is handled by a separate explicit migration outside this
+feature.
+
+### Cancellation
+
+`POST /internal/agents/{agent_id}/lifecycle-operation/cancel` takes
+`organization_id`, `actor_principal_id` and `operation_request_id`; HTTP 202
+means the cancellation was **requested**, not that resources are cleaned. A
+committed `lifecycle_cancelled` termination on a create operation starts one
+deterministic child delete (`agent-delete/<derived-request-id>`); the child
+starting is start proof only — verify the normal delete phases completed and
+Runtime compute/storage are actually gone AND the Egress allocation was
+quarantined/released as a closed attachment with no active attachment —
+the event fallback alone is not proof of Egress cleanup — before reporting
+cleanup done. A completed publish racing cancellation wins and must not be
+deleted. Non-create operations never start a child.
+
+### Quarantine metric and alert
+
+`antnest_agent_lifecycle_quarantined_total` counts committed
+`agent_lifecycle_quarantined` event occurrences — deadline-quarantine events
+count only when the emitted event type is the quarantine event itself (the
+delete fallback); it does not track HTTP attempts, clears or cancels. Example alert:
+`increase(antnest_agent_lifecycle_quarantined_total[5m]) > 0` for 1m, operator
+severity. The metric is event volume, not backlog; telemetry loss does not
+block business checks.
+
+### Quarantine clearing
+
+`POST /internal/agents/{agent_id}/lifecycle-quarantine/clear` requires
+`organization_id`, `actor_principal_id` and the current
+`expected_aggregate_sequence`. Clear only when the root cause is fixed: no
+active operation, matching Runtime evidence that is actually `absent` (for
+`disabled`/`deleted`) or `exited`+`unhealthy` (for `failed`) — `unknown` or
+any other platform phase is never non-running proof — and intact configured
+source. A `failed` Runtime with `unknown` phase must be repaired or stopped
+through the normal controlled path first; do not clear quarantine from a
+health value alone. HTTP 409 means the aggregate moved —
+reread the Agent and resubmit with the fresh sequence, never blindly repeat.
+A successful clear leaves the Agent `unknown`/not-ready; drive a fresh normal
+rebuild or enable afterwards. Do not edit the database to clear quarantine.
+
+### Failed-create initialization retry
+
+A create that failed at `network_ensure` (for example while Runtime Egress
+was down) and never reached Runtime initialization, readiness or execution
+history can be retried by submitting a normal `POST /internal/agents/{agent_id}/rebuild`
+for the same Agent. The rebuild carries the failed create's request ID as a
+retry marker — it is never a resource-absence claim. The retry skips the
+drain/Egress-probe path: it ensures a fresh network attachment, closes it,
+calls `InitializeRuntime` (never `UpdateRuntime` on the absent revision) and
+publishes the target spec. A failed create that advanced past
+`network_ensure`, became ready, was cancelled or was quarantined is not
+eligible — use normal delete or recovery instead.
+
+### Failed-create GC
+
+A background sweep admits failed creates older than
+`ANTNEST_AGENT_CONTROLLER_FAILED_CREATE_TTL` (default 7 days; `0` disables)
+into the normal delete lifecycle with a deterministic request ID. Eligibility
+requires exactly one failed create that never became ready: no execution
+revisions, no `agent_ready`/`runtime_bound` events, no active operation, no
+additional lifecycle operations, desired state not deleted. Admission
+rechecks every predicate under the row lock and emits one
+`agent_gc_scheduled` event. Sweep errors mean the deterministic delete
+operation must be inspected and retried — a failed build is never proof of
+resource absence. Never delete a running or ever-ready Agent manually.

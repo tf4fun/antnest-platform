@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"slices"
+	"time"
 
 	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/domain"
 	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/ports"
@@ -20,6 +21,8 @@ type LifecycleCommand struct {
 	TemplateID              string
 	TemplateRevision        int64
 	OwnerRevocationSequence int64
+	FailedCreate            *ports.FailedCreateGCCandidate
+	FailedCreateCutoff      time.Time
 }
 
 type LifecycleResult struct {
@@ -66,7 +69,11 @@ func (command LifecycleCommand) enable() EnableAgentInput {
 	return EnableAgentInput{RequestID: command.RequestID, OrganizationID: command.OrganizationID, ActorPrincipalID: command.ActorPrincipalID, AgentID: command.AgentID}
 }
 func (command LifecycleCommand) delete() DeleteAgentInput {
-	return DeleteAgentInput{RequestID: command.RequestID, OrganizationID: command.OrganizationID, ActorPrincipalID: command.ActorPrincipalID, AgentID: command.AgentID}
+	return DeleteAgentInput{
+		RequestID: command.RequestID, OrganizationID: command.OrganizationID,
+		ActorPrincipalID: command.ActorPrincipalID, AgentID: command.AgentID,
+		FailedCreate: command.FailedCreate, FailedCreateCutoff: command.FailedCreateCutoff,
+	}
 }
 
 func (service *LifecycleService) AdmitLifecycle(ctx context.Context, command LifecycleCommand) (LifecycleResult, error) {
