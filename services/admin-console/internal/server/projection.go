@@ -221,9 +221,11 @@ type agentModelSpecSource struct {
 }
 
 type agentRuntimeResourcesSource struct {
-	MemoryBytes int64 `json:"memory_bytes"`
-	PIDsLimit   int   `json:"pids_limit"`
-	TmpfsBytes  int64 `json:"tmpfs_bytes"`
+	MemoryBytes    int64  `json:"memory_bytes"`
+	PIDsLimit      int    `json:"pids_limit"`
+	TmpfsBytes     int64  `json:"tmpfs_bytes"`
+	CPUMillis      *int64 `json:"cpu_millis,omitempty"`
+	WorkspaceBytes *int64 `json:"workspace_bytes,omitempty"`
 }
 
 type runtimeConfigurationSource struct {

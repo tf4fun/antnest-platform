@@ -2,6 +2,7 @@ package server
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -668,9 +669,36 @@ type runtimeInput struct {
 }
 
 type resourceInput struct {
-	MemoryBytes int64 `json:"memory_bytes,omitempty"`
-	PIDsLimit   int64 `json:"pids_limit,omitempty"`
-	TmpfsBytes  int64 `json:"tmpfs_bytes,omitempty"`
+	MemoryBytes    int64  `json:"memory_bytes,omitempty"`
+	PIDsLimit      int64  `json:"pids_limit,omitempty"`
+	TmpfsBytes     int64  `json:"tmpfs_bytes,omitempty"`
+	CPUMillis      *int64 `json:"cpu_millis,omitempty"`
+	WorkspaceBytes *int64 `json:"workspace_bytes,omitempty"`
+}
+
+func (input *resourceInput) UnmarshalJSON(raw []byte) error {
+	type wire resourceInput
+	var decoded wire
+	if err := serviceauth.DecodeObject(raw, &decoded); err != nil {
+		return err
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &fields); err != nil {
+		return err
+	}
+	for _, name := range []string{"cpu_millis", "workspace_bytes"} {
+		if value, present := fields[name]; present && string(bytes.TrimSpace(value)) == "null" {
+			return fmt.Errorf("resource field %q must not be null", name)
+		}
+	}
+	*input = resourceInput(decoded)
+	if input.CPUMillis != nil && (*input.CPUMillis < 100 || *input.CPUMillis > 16000) {
+		return fmt.Errorf("cpu_millis must be between 100 and 16000")
+	}
+	if input.WorkspaceBytes != nil && (*input.WorkspaceBytes < 67108864 || *input.WorkspaceBytes > 1099511627776) {
+		return fmt.Errorf("workspace_bytes must be between 67108864 and 1099511627776")
+	}
+	return nil
 }
 
 func (h *handler) createTemplate(response http.ResponseWriter, request *http.Request, actor principal.Principal) {

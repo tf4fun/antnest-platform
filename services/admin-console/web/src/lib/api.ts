@@ -41,6 +41,7 @@ import type {
   ProviderCredential,
   ProviderModelInput,
   ManagedMCPServerWrite,
+  RuntimeResources,
   Overview,
   OIDCLoginStart,
   OIDCProviderList,
@@ -569,7 +570,7 @@ export const api = {
     system_prompt: string;
     max_model_requests: number;
     skill_refs?: SkillReference[];
-    runtime?: { image_ref?: string; mcp_servers?: ManagedMCPServerWrite[] };
+    runtime?: { image_ref?: string; resources?: Partial<RuntimeResources>; mcp_servers?: ManagedMCPServerWrite[] };
   } & TemplateModelPolicy) => idempotentRequest<AgentTemplate>("create-template", "/api/admin/templates", input),
   reviseTemplate: (templateID: string, input: {
     fallback_model_profile_ids?: string[];
@@ -580,7 +581,7 @@ export const api = {
     skill_refs?: SkillReference[];
     runtime: {
       image_ref: string;
-      resources: { memory_bytes: number; pids_limit: number; tmpfs_bytes: number };
+      resources: RuntimeResources;
       mcp_servers?: ManagedMCPServerWrite[];
     };
   } & TemplateModelPolicy) => idempotentRequest<AgentTemplate>(
