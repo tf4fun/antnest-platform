@@ -22,7 +22,6 @@ type inspectionCatalogStoreStub struct {
 	eventsModel string
 	eventsAfter int64
 	eventsLimit int
-	unsupported bool
 }
 
 func (store *inspectionCatalogStoreStub) GetModelProfileUsage(
