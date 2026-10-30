@@ -214,6 +214,10 @@ e2e-lifecycle-shutdown:
 e2e-lifecycle-health:
 	node tests/support/authenticated-shell-e2e.mjs lifecycle-health
 
+.PHONY: e2e-lifecycle-reliability
+e2e-lifecycle-reliability:
+	node tests/support/authenticated-shell-e2e.mjs lifecycle-reliability
+
 .PHONY: e2e-lifecycle-restore
 e2e-lifecycle-restore:
 	node tests/support/authenticated-shell-e2e.mjs lifecycle-restore

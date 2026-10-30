@@ -339,6 +339,8 @@ export async function runFoundationFlow(
       traceSecrets,
       traceDiagnostics,
     });
+    // Reliability has its own business evidence; Trace collection is auxiliary.
+    if (result.profile === "lifecycle-reliability") return result;
     if (result.profile === "workspace-protocol")
       return collectWorkspaceLifecycles(
         result,

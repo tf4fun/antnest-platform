@@ -1,0 +1,28 @@
+services:
+  reliability-proxy:
+    image: antnest/agent-acp-service:${ANTNEST_ADMISSION_TAG:-local}
+    command: ["node", "/fixtures/reliability-proxy.mjs"]
+    volumes:
+      - ./tests/e2e/lifecycle-closeout:/fixtures:ro
+    depends_on:
+      runtime-controller:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8080/status').then(r=>{if(!r.ok)process.exit(1)})"]
+      interval: 30s
+      start_interval: 1s
+      start_period: 10s
+      timeout: 3s
+      retries: 3
+    networks:
+      controller-runtime:
+        ipv4_address: ${ANTNEST_SERVICE_NETWORK_PREFIX:-10.241.0}.60
+  agent-controller:
+    environment:
+      ANTNEST_RUNTIME_CONTROLLER_URL: http://reliability-proxy:8080
+      ANTNEST_AGENT_CONTROLLER_PHASE_DEADLINES: '{"network_ensure":"8s","runtime_initialize":"30s","runtime_update":"60s","publish":"30s","default":"60s"}'
+      ANTNEST_AGENT_CONTROLLER_FAILED_CREATE_TTL: ${ANTNEST_RELIABILITY_FAILED_CREATE_TTL:-0}
+      ANTNEST_AGENT_CONTROLLER_FAILED_CREATE_GC_INTERVAL: 500ms
+    depends_on:
+      reliability-proxy:
+        condition: service_healthy

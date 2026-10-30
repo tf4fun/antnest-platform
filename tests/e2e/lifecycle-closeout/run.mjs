@@ -10,6 +10,7 @@ assert(
     "restore",
     "skill-restore",
     "loss",
+    "reliability",
     "shutdown",
   ].includes(profile) && process.argv.length <= 3,
 );

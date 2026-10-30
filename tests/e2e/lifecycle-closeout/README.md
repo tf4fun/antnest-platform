@@ -476,3 +476,43 @@ disposable Runtime Controller at real Docker mutation boundaries while Agent
 Controller and Temporal stay alive. It then checks immutable retries, workspace
 retention and single publication. The diagnostic target can exit 2 for strict
 timing warnings. See [crash-contract.md](crash-contract.md).
+
+## Lifecycle Reliability
+
+`make e2e-lifecycle-reliability` runs a business-only system profile (main or
+explicit E2E, not a PR component or nightly stress suite; no Trace collection)
+covering three issue-45 flows against the real disposable deployment. Its
+fixture tests still belong to the PR component checks:
+
+1. **Failed-create rebuild** — with the owned Runtime Egress stopped, a create
+   fails durably at `network_ensure` with `phase_deadline_exceeded` and never
+   becomes ready. Restoring the same Egress and issuing a normal same-Agent
+   Rebuild completes through the failed-create retry marker
+   (`source_failed_create_request_id`) and produces a real ready Agent, which
+   is then removed by a normal delete with physical + Egress proof.
+
+2. **Cancellation after a real initialize effect** — `reliability-proxy.mjs`
+   transparently holds only the genuine 200/completed `initialize_runtime`
+   receipt for the frozen Agent/request identity (45s cap) while every other
+   request and auth/Idempotency-Key header passes unchanged. Cancelling the
+   original request records `lifecycle_cancelled`, launches the deterministic
+   child delete and completes only after containers, volumes and the Egress
+   allocation are actually gone/quarantined.
+
+3. **Failed-create GC** — recreating only the owned agent-controller with a
+   2s TTL, a held create timed out at `runtime_initialize` is collected by the
+   sweep through the deterministic normal delete, emits exactly one
+   `agent_gc_scheduled` event with the derived ID, and the ready control Agent
+   retains its physical identities until explicitly deleted.
+
+`reliability.compose.yaml` is a test-only overlay (private controller-runtime
+.60 proxy, read-only fixture mount, bounded phase deadlines). `reliability-`
+`evidence.mjs` derives identities matching `domain/resource_id.go` and asserts
+full non-truncated event pages, exact request/child/GC identities, no
+ready/runtime_bound on failed creates, empty containers+volumes, and the
+read-only `egressClosed` proof (allocation absent-or-quarantined — never
+inferred from events). The unit fixtures exercise proxy/evidence/deployment on
+local loopback sockets only; **the Docker system scenarios are UNEXECUTED
+locally — remote CI owns the complete gate.** Fixture passes do not establish
+system or version-set acceptance and do not close issue #45. Quarantine-clear
+E2E is not manufactured by editing a live database.

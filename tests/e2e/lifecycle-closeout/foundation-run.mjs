@@ -75,6 +75,7 @@ export async function runFoundation(
       "restore",
       "skill-restore",
       "loss",
+      "reliability",
       "interrupted",
       "crash",
       "workspace",
@@ -111,6 +112,8 @@ export async function runFoundation(
       config.env.ANTNEST_ADMISSION_TAG = candidateTag;
     }
     configureFoundation(config);
+    if (profile === "reliability")
+      config.env.ANTNEST_RELIABILITY_FAILED_CREATE_TTL = "0";
     if (profile === "foundation") configureFoundationPrivate(config);
     if (profile === "network") configureFoundationPrivate(config);
     if (profile === "loss") configureFoundationPrivate(config);
@@ -125,6 +128,7 @@ export async function runFoundation(
         "restore",
         "skill-restore",
         "loss",
+        "reliability",
         "interrupted",
         "crash",
         "workspace",
@@ -212,6 +216,11 @@ export async function runFoundation(
       const peer = inspectCrashProxyDeployment(rows, config);
       baseRows = rows.filter((r) => r !== peer);
     }
+    if (profile === "reliability") {
+      const { inspectReliabilityDeployment } =
+        await import("./reliability-deployment.mjs");
+      baseRows = inspectReliabilityDeployment(rows, config);
+    }
     deployment = {
       ...inspectFoundationDeployment(baseRows, config),
       services: rows.length,
@@ -238,29 +247,32 @@ export async function runFoundation(
       images,
     );
     const scenario =
-      profile === "crash"
-        ? (await import("./crash-flow.mjs")).runCrash
-        : profile === "network"
-          ? (await import("./network-flow.mjs")).runNetwork
-          : profile === "shutdown"
-            ? (await import("./shutdown.mjs")).runShutdown
-            : profile === "health"
-              ? (await import("./health-flow.mjs")).runHealth
-              : profile === "restore" || profile === "skill-restore"
-                ? (await import("./restore-flow.mjs")).runRestore
-                : profile === "loss"
-                  ? (await import("./loss-flow.mjs")).runLoss
-                  : profile === "interrupted"
-                    ? (await import("./update-receipt-flow.mjs"))
-                        .runUpdateReceipt
-                    : profile === "workspace"
-                      ? (await import("../workspace-closeout/current-flow.mjs"))
-                          .workspaceProtocol
-                      : profile === "workspace-browser"
+      profile === "reliability"
+        ? (await import("./reliability-flow.mjs")).runReliability
+        : profile === "crash"
+          ? (await import("./crash-flow.mjs")).runCrash
+          : profile === "network"
+            ? (await import("./network-flow.mjs")).runNetwork
+            : profile === "shutdown"
+              ? (await import("./shutdown.mjs")).runShutdown
+              : profile === "health"
+                ? (await import("./health-flow.mjs")).runHealth
+                : profile === "restore" || profile === "skill-restore"
+                  ? (await import("./restore-flow.mjs")).runRestore
+                  : profile === "loss"
+                    ? (await import("./loss-flow.mjs")).runLoss
+                    : profile === "interrupted"
+                      ? (await import("./update-receipt-flow.mjs"))
+                          .runUpdateReceipt
+                      : profile === "workspace"
                         ? (
-                            await import("../workspace-closeout/browser-current-flow.mjs")
-                          ).runBrowserProfile
-                        : undefined;
+                            await import("../workspace-closeout/current-flow.mjs")
+                          ).workspaceProtocol
+                        : profile === "workspace-browser"
+                          ? (
+                              await import("../workspace-closeout/browser-current-flow.mjs")
+                            ).runBrowserProfile
+                          : undefined;
     const foundationDiagnostics = ["foundation", "loss"].includes(profile)
       ? createTraceDiagnostics({
           directory: config.evidence,
@@ -446,7 +458,9 @@ export async function runFoundation(
     !["foundation", "loss"].includes(profile) && strictCode === 2 && code === 0;
   console.log(
     JSON.stringify({
-      status: ["workspace", "foundation", "loss"].includes(profile)
+      status: ["workspace", "foundation", "loss", "reliability"].includes(
+        profile,
+      )
         ? "business_passed"
         : code === 1
           ? "business_passed_trace_failed"
