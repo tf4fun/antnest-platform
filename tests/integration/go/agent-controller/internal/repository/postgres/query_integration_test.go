@@ -85,8 +85,17 @@ UPDATE agent_controller.agents SET executable_spec_revision_id = $1 WHERE id = $
 	}
 	reviseProfilePricing(t, repository, model, 3, 9)
 	afterEdit, err := repository.GetAgentConfiguration(ctx, "agent-lineage", "spec-lineage")
-	if err != nil || !reflect.DeepEqual(configuration, afterEdit) {
-		t.Fatalf("model edit rewrote Agent build snapshot: configuration=%+v error=%v", afterEdit, err)
+	if err != nil {
+		t.Fatalf("get Agent configuration after model edit: %v", err)
+	}
+	if !reflect.DeepEqual([]ports.EffectiveModel{{ModelProfileID: "model_integration", Revision: 1}}, configuration.EffectiveModels) ||
+		!reflect.DeepEqual([]ports.EffectiveModel{{ModelProfileID: "model_integration", Revision: 2}}, afterEdit.EffectiveModels) {
+		t.Fatalf("live effective models did not follow head: before=%+v after=%+v", configuration.EffectiveModels, afterEdit.EffectiveModels)
+	}
+	before, after := configuration, afterEdit
+	before.EffectiveModels, after.EffectiveModels = nil, nil
+	if !reflect.DeepEqual(before, after) {
+		t.Fatalf("model edit rewrote Agent build snapshot: configuration=%+v", afterEdit)
 	}
 	_, err = repository.GetAgentConfiguration(ctx, "agent-lineage", "spec-missing")
 	if !errors.Is(err, ports.ErrNotFound) {
