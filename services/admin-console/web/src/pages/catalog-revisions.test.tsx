@@ -161,6 +161,9 @@ it("changes Provider availability without cascading to its models", async () => 
 
 it("preserves a stale model draft until an explicit successful reload", async () => {
   let reads = 0;
+  let usageReads = 0;
+  let finishUsage: (response: Response) => void = () => {};
+  const deferredUsage = new Promise<Response>((resolve) => { finishUsage = resolve; });
   const latest: ModelProfile = { ...model, revision: 2, model: { ...model.model, max_output_tokens: 4096,
     pricing: { currency: "USD", input_per_million: 8, output_per_million: 9 } } };
   const requests = mockCatalog((request) => {
@@ -174,6 +177,11 @@ it("preserves a stale model draft until an explicit successful reload", async ()
       if (reads === 1) return Response.json(model);
       if (reads === 2) return Response.json({ message: "Temporary read failure" }, { status: 503 });
       return Response.json(latest);
+    }
+    if (request.path === "/api/admin/model-profiles/model-1/usage") {
+      usageReads++;
+      if (usageReads === 1) return Response.json({ templates: 0, agents: 0 });
+      return deferredUsage;
     }
     return undefined;
   });
@@ -201,6 +209,13 @@ it("preserves a stale model draft until an explicit successful reload", async ()
   expect((dialog.getByLabelText("Image input") as HTMLInputElement).checked).toBe(false);
   expect((dialog.getByLabelText("Input (USD / 1M tokens)") as HTMLInputElement).value).toBe("8");
   expect((dialog.getByLabelText("Output (USD / 1M tokens)") as HTMLInputElement).value).toBe("9");
+  await waitFor(() => expect(usageReads).toBe(2));
+  expect((dialog.getByRole("button", { name: "Save changes" }) as HTMLButtonElement).disabled).toBe(true);
+  fireEvent.click(dialog.getByRole("button", { name: "Save changes" }));
+  expect(dialog.queryByRole("button", { name: "Confirm changes" })).toBeNull();
+  expect(requests.filter((request) => request.method === "POST")).toHaveLength(1);
+  await act(async () => { finishUsage(Response.json({ templates: 0, agents: 0 })); });
+  await waitFor(() => expect((dialog.getByRole("button", { name: "Save changes" }) as HTMLButtonElement).disabled).toBe(false));
   fireEvent.change(dialog.getByLabelText("Maximum output"), { target: { value: "8192" } });
   fireEvent.click(dialog.getByRole("button", { name: "Save changes" }));
   fireEvent.click(await dialog.findByRole("button", { name: "Confirm changes" }));
@@ -387,6 +402,9 @@ async function openRevision(workflow: Workflow) {
   await waitFor(() => expect((screen.getByRole("button", { name: editLabel(workflow) }) as HTMLButtonElement).disabled).toBe(false));
   fireEvent.click(screen.getByRole("button", { name: editLabel(workflow) }));
   const dialog = within(await screen.findByRole("dialog"));
+  if (workflow.name === "Model") {
+    await waitFor(() => expect((dialog.getByRole("button", { name: "Save changes" }) as HTMLButtonElement).disabled).toBe(false));
+  }
   fireEvent.change(dialog.getByLabelText(workflow.field), { target: { value: workflow.value } });
   return dialog;
 }
