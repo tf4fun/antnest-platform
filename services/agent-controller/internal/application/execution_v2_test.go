@@ -283,7 +283,7 @@ func TestExecutionPublisherV2OtherDeltaFailuresNeverDowngrade(t *testing.T) {
 	}
 }
 
-func TestExecutionPublisherV2SettlementStillReadsSourceBeforeAuthority(t *testing.T) {
+func TestExecutionPublisherV2SettlementReadsSourceAndPublishesClosure(t *testing.T) {
 	source := executionSource(t)
 	source.Agents[0].Agent.ActiveOperationRequestID = "operation-close"
 	remote := currentV2Digest(t, source)
@@ -296,7 +296,7 @@ func TestExecutionPublisherV2SettlementStillReadsSourceBeforeAuthority(t *testin
 	settlement := ports.LifecycleSettlementRequest{OrganizationID: "org-1", AgentID: "agent-1", OperationID: "operation-close", Mode: "wait"}
 	_, err := publisher.publish(t.Context(), "org-1", &settlement)
 	require.NoError(t, err)
-	require.Equal(t, []string{"read", "digest", "record"}, *stages, "settlement validates the source before any remote shortcut")
+	require.Equal(t, []string{"read", "apply", "record"}, *stages, "settlement validates the source and publishes closure before owner proof")
 	*stages = nil
 	stale := settlement
 	stale.OperationID = "operation-stale"

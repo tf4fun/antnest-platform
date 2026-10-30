@@ -339,6 +339,10 @@ native Runtime retains its separate per-instance token profile.
 
 ### Fixed
 
+Controller can close v2 execution admission for lifecycle recovery when the
+previous accepting owner cannot prove its digest. It publishes the current
+operation's full closure snapshot and waits for ACP's real ACK before settlement.
+
 ACP v2 digest retries reconcile an unavailable owner against the unchanged
 sealed authority before acknowledging it. A cold restart that initially loses
 to an unexpired predecessor lease can recover its abandoned Learning claim

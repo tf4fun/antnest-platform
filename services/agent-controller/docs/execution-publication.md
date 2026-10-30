@@ -843,6 +843,13 @@ versions and Runtime private authority match). Only
 error propagates and v2 never downgrades to plaintext v1. The per-request
 payload cap still bounds full recovery.
 
+Lifecycle settlement first reads and validates its current active operation,
+then publishes a full v2 closure snapshot before requesting settlement. It does
+not require a digest proof from the old accepting owner: that owner may already
+be unavailable or protected by an unresolved Runtime install. ACP still validates
+the snapshot and returns its real ACK; Controller records that ACK before the
+settlement request, retaining operation, revision and drain-deadline checks.
+
 Delta upserts/deletes are chosen by comparing remote per-document public
 digests (Provider credential and Runtime token removed, `principal_ids`
 canonically sorted, SHA-256 over sorted-key UTF-8 JSON with minimal

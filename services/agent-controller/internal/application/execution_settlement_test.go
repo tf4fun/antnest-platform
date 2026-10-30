@@ -25,6 +25,58 @@ func settlementRequest() ports.LifecycleSettlementRequest {
 	return ports.LifecycleSettlementRequest{OrganizationID: "org-1", AgentID: "agent-1", OperationID: "operation-1", Mode: "wait", DeadlineAt: time.Now().Add(time.Minute)}
 }
 
+type settlementV2ClientStub struct {
+	*executionV2ClientStub
+	settle func(context.Context, ports.AgentSettlementRequest) (ports.AgentSettlementResult, error)
+}
+
+func (client settlementV2ClientStub) SettleAgent(ctx context.Context, request ports.AgentSettlementRequest) (ports.AgentSettlementResult, error) {
+	return client.settle(ctx, request)
+}
+
+func TestExecutionSettlementV2ClosesAdmissionWithoutOldOwnerDigestProof(t *testing.T) {
+	request := settlementRequest()
+	source := executionSource(t)
+	source.Agents[0].Agent.ActiveOperationRequestID = request.OperationID
+	var stages []string
+	store := &executionPublicationStoreStub{
+		read: func(context.Context, string) (ports.ExecutionSource, error) {
+			stages = append(stages, "read")
+			return source, nil
+		},
+		record: func(context.Context, ports.ExecutionAcknowledgement) error {
+			stages = append(stages, "record")
+			return nil
+		},
+	}
+	client := settlementV2ClientStub{
+		executionV2ClientStub: &executionV2ClientStub{
+			executionPublicationClientStub: executionPublicationClientStub{apply: func(_ context.Context, snapshot ports.ExecutionSnapshot) (ports.ExecutionAcknowledgement, error) {
+				stages = append(stages, "apply")
+				require.Equal(t, 2, snapshot.SchemaVersion)
+				require.False(t, snapshot.Agents[0].AcceptingRuns)
+				require.Equal(t, &request.OperationID, snapshot.Agents[0].OperationID)
+				return ports.ExecutionAcknowledgement{OrganizationID: source.OrganizationID, AppliedRevision: source.Revision}, nil
+			}},
+			digest: func(context.Context, string) (ports.ExecutionDigest, error) {
+				stages = append(stages, "digest")
+				return ports.ExecutionDigest{}, &ports.DependencyError{Service: "agent-acp-service", Code: "configuration_unavailable", Retryable: true}
+			},
+		},
+		settle: func(_ context.Context, input ports.AgentSettlementRequest) (ports.AgentSettlementResult, error) {
+			stages = append(stages, "settle")
+			require.Equal(t, source.Revision, input.MinimumRevision)
+			require.Equal(t, request.OperationID, input.OperationID)
+			return ports.AgentSettlementResult{AppliedRevision: source.Revision, Outcome: ports.ExecutionRuntimeBarrierRequired}, nil
+		},
+	}
+	publisher := NewExecutionPublisher(store, &executionCredentialOpener{}, client, WithExecutionWireVersion(2))
+	result, err := publisher.CloseAndSettle(t.Context(), request)
+	require.NoError(t, err)
+	require.Equal(t, ports.ExecutionRuntimeBarrierRequired, result.Outcome)
+	require.Equal(t, []string{"read", "apply", "record", "settle"}, stages)
+}
+
 func TestExecutionSettlementPublishesClosedCurrentOperationBeforeWaiting(t *testing.T) {
 	for _, outcome := range []string{ports.ExecutionSettled, ports.ExecutionNotSettled, ports.ExecutionRuntimeBarrierRequired} {
 		t.Run(outcome, func(t *testing.T) {

@@ -102,9 +102,30 @@ func (publisher *ExecutionPublisher) publishCurrent(ctx context.Context, organiz
 		return ports.ExecutionAcknowledgement{}, ports.ErrConcurrentChange
 	}
 	if publisher.wireVersion == ports.ExecutionSchemaVersion2 {
+		if settlement != nil {
+			// The old accepting owner may be unavailable or Runtime-protected.
+			// Publish its authoritative closure before requiring the new ACK;
+			// proof of the old open publication cannot gate lifecycle recovery.
+			return publisher.publishFullV2(ctx, source)
+		}
 		return publisher.publishCurrentV2(ctx, source, remote, remoteKnown)
 	}
 	snapshot, err := BuildExecutionSnapshot(ctx, source, publisher.opener)
+	if err != nil {
+		return ports.ExecutionAcknowledgement{}, err
+	}
+	if err := publisher.resolveRuntimeAuthority(ctx, &snapshot); err != nil {
+		return ports.ExecutionAcknowledgement{}, err
+	}
+	acknowledgement, err := publisher.client.ApplyExecutionSnapshot(ctx, snapshot)
+	if err != nil {
+		return ports.ExecutionAcknowledgement{}, err
+	}
+	return publisher.acknowledge(ctx, source, acknowledgement)
+}
+
+func (publisher *ExecutionPublisher) publishFullV2(ctx context.Context, source ports.ExecutionSource) (ports.ExecutionAcknowledgement, error) {
+	snapshot, err := BuildExecutionSnapshotV2(ctx, source)
 	if err != nil {
 		return ports.ExecutionAcknowledgement{}, err
 	}
