@@ -69,6 +69,7 @@ pub(crate) struct ExecutionActor {
     fatal: mpsc::UnboundedSender<ExecutionFatal>,
     children: crate::processes::ChildRegistry,
     temporary: TemporaryScopes,
+    shutdown_cleanup_deadline: Option<tokio::time::Instant>,
 }
 
 impl ExecutionActor {
@@ -91,6 +92,7 @@ impl ExecutionActor {
                 fatal,
                 children: crate::processes::ChildRegistry::default(),
                 temporary: TemporaryScopes::default(),
+                shutdown_cleanup_deadline: None,
             },
             failures,
         )
@@ -391,6 +393,9 @@ impl ExecutionActor {
         let cleanup = Self {
             gate: SingleFlight::new(),
             shutdown: CancellationToken::new(),
+            shutdown_cleanup_deadline: Some(
+                tokio::time::Instant::now() + crate::shutdown::CLEANUP_TIMEOUT,
+            ),
             ..self.clone()
         };
         cleanup
@@ -399,7 +404,7 @@ impl ExecutionActor {
                 b"{}".to_vec(),
                 decode_temporary_released_reply,
                 CancellationToken::new(),
-                Duration::from_secs(5),
+                crate::shutdown::CLEANUP_EXECUTION_TIMEOUT,
                 ProgressSink::default(),
             )
             .await
@@ -531,6 +536,7 @@ impl ExecutionActor {
             cancel,
             shutdown: self.shutdown.clone(),
             timeout,
+            shutdown_cleanup_deadline: self.shutdown_cleanup_deadline,
             fatal: self.fatal.clone(),
             gate: self.gate.clone(),
             _lease: lease,
@@ -795,6 +801,7 @@ struct ExecutorCall {
     cancel: CancellationToken,
     shutdown: CancellationToken,
     timeout: Duration,
+    shutdown_cleanup_deadline: Option<tokio::time::Instant>,
     fatal: mpsc::UnboundedSender<ExecutionFatal>,
     gate: SingleFlight,
     _lease: ExecutionLease,
@@ -869,6 +876,7 @@ impl ExecutorCall {
         ));
         let diagnostics = tokio::spawn(read_bounded(stderr, MAX_EXECUTOR_DIAGNOSTIC_BYTES));
         let mut io = ExecutorIo::new(input, output, diagnostics);
+        io.cleanup_deadline = self.shutdown_cleanup_deadline;
 
         // Keep all Result exits inside this scope so the invocation lease is
         // not released until the owned I/O has completed its bounded cleanup.
@@ -962,7 +970,7 @@ impl ExecutorCall {
                 false
             };
             let (output, output_truncated, diagnostics, diagnostics_truncated) =
-                tokio::time::timeout(PROCESS_STOP_TIMEOUT, io.finish())
+                tokio::time::timeout_at(self.response_drain_deadline(), io.finish())
                     .await
                     .map_err(|error| {
                         self.unobserved_error("executor response drain timed out")
@@ -1012,6 +1020,12 @@ impl ExecutorCall {
         // failures; this final exit must not grant another stop budget.
         let cleanup = io.abort_and_join().await;
         self.with_io_cleanup(result, cleanup)
+    }
+
+    fn response_drain_deadline(&self) -> tokio::time::Instant {
+        let bounded = tokio::time::Instant::now() + PROCESS_STOP_TIMEOUT;
+        self.shutdown_cleanup_deadline
+            .map_or(bounded, |deadline| bounded.min(deadline))
     }
 
     fn temporary_containment_failure(&self, error: impl std::fmt::Display) -> ToolError {
@@ -1718,6 +1732,7 @@ mod tests {
             cancel: CancellationToken::new(),
             shutdown: actor.shutdown.clone(),
             timeout: std::time::Duration::from_secs(5),
+            shutdown_cleanup_deadline: None,
             fatal: actor.fatal.clone(),
             gate: actor.gate.clone(),
             _lease: actor.gate.try_acquire().expect("test invocation lease"),
@@ -1949,6 +1964,7 @@ mod tests {
             cancel: CancellationToken::new(),
             shutdown: actor.shutdown.clone(),
             timeout: std::time::Duration::from_secs(5),
+            shutdown_cleanup_deadline: None,
             fatal: actor.fatal.clone(),
             gate: actor.gate.clone(),
             _lease: actor.gate.try_acquire().expect("test invocation lease"),
@@ -2083,6 +2099,7 @@ mod tests {
             cancel: CancellationToken::new(),
             shutdown: actor.shutdown.clone(),
             timeout: std::time::Duration::from_secs(5),
+            shutdown_cleanup_deadline: None,
             fatal: actor.fatal.clone(),
             gate: actor.gate.clone(),
             _lease: actor.gate.try_acquire().expect("test invocation lease"),
@@ -2591,6 +2608,441 @@ mod tests {
             error
                 .to_string()
                 .contains("executor process group unavailable")
+        );
+    }
+
+    fn shutdown_cleanup_actor(
+        suffix: &str,
+    ) -> (
+        ExecutionActor,
+        tokio::sync::mpsc::UnboundedReceiver<super::ExecutionFatal>,
+    ) {
+        ExecutionActor::new(
+            RuntimeIdentity::new(suffix, 1).unwrap(),
+            PathBuf::from("/workspace"),
+            PathBuf::from("/skills"),
+            RuntimeMetrics::default(),
+            CancellationToken::new(),
+        )
+    }
+
+    #[test]
+    fn shutdown_cleanup_execution_leaves_the_process_stop_budget_inside_cleanup() {
+        assert_eq!(
+            crate::shutdown::CLEANUP_TIMEOUT,
+            crate::shutdown::CLEANUP_EXECUTION_TIMEOUT + super::PROCESS_STOP_TIMEOUT
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn shutdown_cleanup_rejects_open_active_and_poisoned_execution() {
+        let (open, _failures) = shutdown_cleanup_actor("agent-cleanup-open");
+        assert_eq!(
+            open.clean_temporary_after_drain()
+                .await
+                .expect_err("cleanup must reject while admission is open")
+                .code,
+            ToolErrorCode::OutcomeUnknown
+        );
+
+        let (active, _failures) = shutdown_cleanup_actor("agent-cleanup-active");
+        let lease = active.gate.try_acquire().expect("active execution lease");
+        active.gate.close();
+        assert_eq!(
+            active
+                .clean_temporary_after_drain()
+                .await
+                .expect_err("cleanup must reject while an invocation is active")
+                .code,
+            ToolErrorCode::OutcomeUnknown
+        );
+        drop(lease);
+
+        let (poisoned, _failures) = shutdown_cleanup_actor("agent-cleanup-poisoned");
+        poisoned.gate.poison();
+        assert_eq!(
+            poisoned
+                .clean_temporary_after_drain()
+                .await
+                .expect_err("cleanup must reject unproven containment")
+                .code,
+            ToolErrorCode::OutcomeUnknown
+        );
+    }
+
+    #[tokio::test]
+    async fn shutdown_response_drain_prefers_the_earlier_cleanup_deadline() {
+        let (_actor, call, _failures) = executor_io_failure_call();
+        let regular = call.response_drain_deadline();
+        let remaining = regular.duration_since(tokio::time::Instant::now());
+        assert!(
+            remaining <= super::PROCESS_STOP_TIMEOUT,
+            "regular calls keep the two-second output drain"
+        );
+        let cleanup_deadline = tokio::time::Instant::now() + std::time::Duration::from_millis(50);
+        let call = super::ExecutorCall {
+            shutdown_cleanup_deadline: Some(cleanup_deadline),
+            ..call
+        };
+        assert_eq!(
+            call.response_drain_deadline(),
+            cleanup_deadline,
+            "private shutdown cleanup must not outlive its absolute deadline"
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn injected_shutdown_cleanup_deadline_is_reused_across_join_attempts() {
+        let settled = Arc::new(AtomicUsize::new(0));
+        let (started, mut starting) = tokio::sync::mpsc::unbounded_channel();
+        let (release, released) = std::sync::mpsc::channel::<()>();
+        let input_settled = settled.clone();
+        let input_started = started.clone();
+        let input = tokio::task::spawn_blocking(move || {
+            let _receipt = IoSettlementReceipt {
+                settled: input_settled,
+                bit: 0b001,
+            };
+            let _ = input_started.send(());
+            let _ = released.recv();
+            Ok(())
+        });
+        let output = pending_executor_io_task(0b010, settled.clone(), started.clone());
+        let diagnostics = pending_executor_io_task(0b100, settled.clone(), started);
+        let mut io = super::ExecutorIo::new(input, output, diagnostics);
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_millis(150);
+        io.cleanup_deadline = Some(deadline);
+        for _ in 0..3 {
+            starting
+                .recv()
+                .await
+                .expect("I/O task entered its pending read");
+        }
+        let observed = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            AssertUnwindSafe(async {
+                assert_eq!(
+                    io.cleanup_deadline(),
+                    deadline,
+                    "the injected absolute deadline must be adopted, not reminted"
+                );
+                let first_started = tokio::time::Instant::now();
+                let first = io.abort_and_join().await;
+                let first_elapsed = first_started.elapsed();
+                let repeated_started = tokio::time::Instant::now();
+                let repeated = io.abort_and_join().await;
+                let repeated_elapsed = repeated_started.elapsed();
+                (
+                    first,
+                    repeated,
+                    first_elapsed,
+                    repeated_elapsed,
+                    io.cleanup_deadline(),
+                    io.joining.is_some(),
+                )
+            })
+            .catch_unwind(),
+        )
+        .await;
+
+        let released = release.send(());
+        drop(release);
+        let joined = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            AssertUnwindSafe(io.join()).catch_unwind(),
+        )
+        .await;
+        drop(io);
+        let cleanup_settled = executor_io_receipts_settled(&settled).await;
+        assert!(
+            cleanup_settled,
+            "the released blocking future must drop before assertions"
+        );
+        released.expect("fixture must explicitly release its running blocking task");
+        let (input, output, diagnostics) = joined
+            .expect("released tasks must join within the fixture bound")
+            .unwrap_or_else(|_| panic!("joining released tasks must not panic"))
+            .expect("deadline failure must retain the original join ownership");
+        input
+            .expect("running spawn_blocking must not be cancelled by abort")
+            .expect("released blocking input must finish successfully");
+        assert!(
+            output
+                .expect_err("pending stdout must be aborted")
+                .is_cancelled()
+        );
+        assert!(
+            diagnostics
+                .expect_err("pending stderr must be aborted")
+                .is_cancelled()
+        );
+        let (first, repeated, first_elapsed, repeated_elapsed, repeated_deadline, retained) =
+            observed
+                .expect("both cleanup attempts must be bounded")
+                .unwrap_or_else(|_| panic!("cleanup timeout must be an error, not a panic"));
+        assert_eq!(
+            repeated_deadline, deadline,
+            "cleanup must reuse the injected absolute deadline"
+        );
+        assert!(
+            retained,
+            "the unfinished join future must remain owned after timeout"
+        );
+        assert!(first_elapsed >= std::time::Duration::from_millis(100));
+        assert!(
+            repeated_elapsed < std::time::Duration::from_millis(100),
+            "repeated cleanup must not mint another cleanup budget"
+        );
+        assert!(
+            first
+                .expect_err("a running blocking task must exhaust the deadline")
+                .containment_unproven()
+        );
+        assert!(
+            repeated
+                .expect_err("expired cleanup must fail again without a new budget")
+                .containment_unproven()
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn shutdown_cleanup_deadline_bounds_output_drain_and_final_join() {
+        let (actor, call, mut failures) = executor_io_failure_call();
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_millis(150);
+        let call = super::ExecutorCall {
+            shutdown_cleanup_deadline: Some(deadline),
+            ..call
+        };
+        let settled = Arc::new(AtomicUsize::new(0));
+        let (started, mut starting) = tokio::sync::mpsc::unbounded_channel();
+        let (release, released) = std::sync::mpsc::channel::<()>();
+        let input_settled = settled.clone();
+        let input_started = started.clone();
+        let input = tokio::task::spawn_blocking(move || {
+            let _receipt = IoSettlementReceipt {
+                settled: input_settled,
+                bit: 0b001,
+            };
+            let _ = input_started.send(());
+            let _ = released.recv();
+            Ok(())
+        });
+        let output = pending_executor_io_task(0b010, settled.clone(), started.clone());
+        let diagnostics = pending_executor_io_task(0b100, settled.clone(), started);
+        let aborts = [
+            input.abort_handle(),
+            output.abort_handle(),
+            diagnostics.abort_handle(),
+        ];
+        let mut io = super::ExecutorIo::new(input, output, diagnostics);
+        io.cleanup_deadline = call.shutdown_cleanup_deadline;
+        for _ in 0..3 {
+            starting
+                .recv()
+                .await
+                .expect("I/O task entered its pending read");
+        }
+        let observed = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            AssertUnwindSafe(async {
+                let drain_started = tokio::time::Instant::now();
+                let drain =
+                    tokio::time::timeout_at(call.response_drain_deadline(), io.finish()).await;
+                let drain_elapsed = drain_started.elapsed();
+                let join_started = tokio::time::Instant::now();
+                let cleanup = io.abort_and_join().await;
+                let join_elapsed = join_started.elapsed();
+                let primary = call.unobserved_error("executor response drain timed out");
+                let result = call.with_io_cleanup(Err::<(), ToolError>(primary), cleanup);
+                (
+                    result,
+                    drain.is_err(),
+                    drain_elapsed,
+                    join_elapsed,
+                    settled.load(Ordering::SeqCst),
+                    actor.gate.state.poisoned.load(Ordering::Acquire),
+                    failures.try_recv().is_ok(),
+                )
+            })
+            .catch_unwind(),
+        )
+        .await;
+
+        for abort in &aborts {
+            abort.abort();
+        }
+        let released = release.send(());
+        drop(release);
+        let joined = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            AssertUnwindSafe(io.join()).catch_unwind(),
+        )
+        .await;
+        drop(io);
+        let cleanup_settled = executor_io_receipts_settled(&settled).await;
+        assert!(
+            cleanup_settled,
+            "the released blocking future must drop before assertions"
+        );
+        released.expect("fixture must explicitly release its running blocking task");
+        let _ = joined
+            .expect("fixture I/O cleanup must be bounded")
+            .unwrap_or_else(|_| panic!("fixture I/O cleanup must not panic"));
+        let (result, drain_timed_out, drain_elapsed, join_elapsed, at_return, poisoned, fatal) =
+            observed
+                .expect("drain and join must be bounded")
+                .unwrap_or_else(|_| panic!("drain and join must not panic"));
+        assert!(
+            drain_timed_out,
+            "pending output must exhaust the shutdown cleanup deadline"
+        );
+        assert!(drain_elapsed >= std::time::Duration::from_millis(100));
+        assert!(
+            drain_elapsed < super::PROCESS_STOP_TIMEOUT,
+            "the cleanup deadline must bind the drain before the two-second budget"
+        );
+        assert!(
+            join_elapsed < std::time::Duration::from_millis(100),
+            "the final join must not mint another cleanup budget"
+        );
+        assert_eq!(
+            at_return & 0b001,
+            0,
+            "abort must not pretend the running blocking task ended"
+        );
+        assert!(poisoned, "unproven cleanup must close admission");
+        assert!(fatal, "unproven cleanup must notify the Runtime supervisor");
+        let error = result.expect_err("drain and join failures must remain failures");
+        assert_eq!(error.code, ToolErrorCode::ChildProcessContainmentUnproven);
+        assert!(
+            error
+                .to_string()
+                .contains("executor response drain timed out"),
+            "the primary drain failure must be preserved"
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn exhausted_shutdown_cleanup_deadline_fails_stop_and_join_without_new_budget() {
+        let (actor, call, mut failures) = executor_io_failure_call();
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_millis(100);
+        let call = super::ExecutorCall {
+            shutdown_cleanup_deadline: Some(deadline),
+            ..call
+        };
+        let mut child = tokio::process::Command::new("/bin/sleep")
+            .arg("60")
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .process_group(0)
+            .kill_on_drop(true)
+            .spawn()
+            .expect("spawn exhausted-deadline stop fixture");
+        let group = child
+            .id()
+            .and_then(|pid| i32::try_from(pid).ok())
+            .map(nix::unistd::Pid::from_raw);
+        let settled = Arc::new(AtomicUsize::new(0));
+        let (started, mut starting) = tokio::sync::mpsc::unbounded_channel();
+        let (release, released) = std::sync::mpsc::channel::<()>();
+        let input_settled = settled.clone();
+        let input_started = started.clone();
+        let input = tokio::task::spawn_blocking(move || {
+            let _receipt = IoSettlementReceipt {
+                settled: input_settled,
+                bit: 0b001,
+            };
+            let _ = input_started.send(());
+            let _ = released.recv();
+            Ok(())
+        });
+        let output = pending_executor_io_task(0b010, settled.clone(), started.clone());
+        let diagnostics = pending_executor_io_task(0b100, settled.clone(), started);
+        let aborts = [
+            input.abort_handle(),
+            output.abort_handle(),
+            diagnostics.abort_handle(),
+        ];
+        let mut io = super::ExecutorIo::new(input, output, diagnostics);
+        io.cleanup_deadline = call.shutdown_cleanup_deadline;
+        for _ in 0..3 {
+            starting
+                .recv()
+                .await
+                .expect("I/O task entered its pending read");
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+        let observed = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            AssertUnwindSafe(async {
+                let started_at = tokio::time::Instant::now();
+                let result = call
+                    .stop_after_error::<()>(
+                        &mut child,
+                        group,
+                        &mut io,
+                        ToolError::new(ToolErrorCode::Timeout, "controlled executor timeout"),
+                    )
+                    .await;
+                (
+                    result,
+                    started_at.elapsed(),
+                    settled.load(Ordering::SeqCst),
+                    actor.gate.state.poisoned.load(Ordering::Acquire),
+                    failures.try_recv().is_ok(),
+                )
+            })
+            .catch_unwind(),
+        )
+        .await;
+
+        for abort in &aborts {
+            abort.abort();
+        }
+        let released = release.send(());
+        drop(release);
+        let _ = child.start_kill();
+        let reaped = child.wait().await;
+        let joined = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            AssertUnwindSafe(io.join()).catch_unwind(),
+        )
+        .await;
+        drop(io);
+        let cleanup_settled = executor_io_receipts_settled(&settled).await;
+        assert!(
+            cleanup_settled,
+            "all real tasks must drop before assertions"
+        );
+        released.expect("fixture must explicitly release its running blocking task");
+        reaped.expect("fixture child must be killed and reaped before assertions");
+        let _ = joined
+            .expect("fixture I/O cleanup must be bounded")
+            .unwrap_or_else(|_| panic!("fixture I/O cleanup must not panic"));
+        let (result, elapsed, at_return, poisoned, fatal) = observed
+            .expect("stop with an expired deadline must be bounded")
+            .unwrap_or_else(|_| panic!("stop with an expired deadline must not panic"));
+        assert!(
+            elapsed < std::time::Duration::from_secs(1),
+            "terminate and final join share the expired deadline, not fresh budgets"
+        );
+        assert_eq!(
+            at_return & 0b001,
+            0,
+            "abort must not pretend the running blocking task ended"
+        );
+        assert!(poisoned, "unproven containment must poison admission");
+        assert!(fatal, "unproven containment must notify the Supervisor");
+        assert!(matches!(
+            actor.gate.try_acquire(),
+            Err(AdmissionError::Unavailable)
+        ));
+        let error = result.expect_err("the original and stop failures must remain failures");
+        assert_eq!(error.code, ToolErrorCode::ChildProcessContainmentUnproven);
+        assert!(
+            error.to_string().contains("controlled executor timeout"),
+            "the primary timeout must be preserved"
         );
     }
 }
