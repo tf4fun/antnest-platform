@@ -1,9 +1,9 @@
 {
   "contract": "antnest.runtime.container-security",
   "schema_version": 1,
-  "status": "proposal",
+  "status": "published",
   "issue": 35,
-  "activation": "Proposal only; active service schemas do not advertise these bounds until each owning service batch publishes its implementation.",
+  "activation": "Published by the owning Runtime, Runtime Controller, Agent Controller and Admin Console batches; contract/component integration verifies delivery without claiming Docker E2E acceptance.",
   "resource_properties": {
     "container": "deployment.resources",
     "legacy_fields": {
@@ -104,6 +104,7 @@
     "antnest-runtime",
     "runtime-controller",
     "agent-controller",
+    "admin-console",
     "integration"
   ],
   "docker_e2e": "dedicated-workflow-not-a-development-follow-up"

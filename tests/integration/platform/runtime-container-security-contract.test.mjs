@@ -18,30 +18,27 @@ const deniedSyscalls = [
   "mount",
 ];
 
-test("the proposal stays unadvertised until each owning service batch publishes it", () => {
+test("the published contract is advertised after every owning service batch delivered", () => {
   const contract = readContract();
   assert.equal(contract.contract, "antnest.runtime.container-security");
   assert.equal(contract.schema_version, 1);
-  assert.equal(contract.status, "proposal");
+  assert.equal(contract.status, "published");
   assert.equal(contract.issue, 35);
   assert.deepEqual(contract.delivery_batches, [
     "antnest-runtime",
     "runtime-controller",
     "agent-controller",
+    "admin-console",
     "integration",
   ]);
   assert.equal(
     contract.docker_e2e,
     "dedicated-workflow-not-a-development-follow-up",
   );
-  const active = readFileSync(
-    new URL("contracts/runtime/contract.json", root),
-    "utf8",
+  const active = JSON.parse(
+    readFileSync(new URL("contracts/runtime/contract.json", root), "utf8"),
   );
-  assert(
-    !active.includes("container-security"),
-    "active runtime contract must not advertise the proposal",
-  );
+  assert.equal(active.container_security, "container-security.json");
 });
 
 test("resource properties bound cpu and workspace and stay producer-compatible", () => {
