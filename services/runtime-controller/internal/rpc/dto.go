@@ -1,6 +1,9 @@
 package rpc
 
 import (
+	"bytes"
+	"encoding/json"
+	"fmt"
 	"slices"
 	"time"
 
@@ -34,9 +37,27 @@ type ipv4EndpointDTO struct {
 }
 
 type resourceLimitsDTO struct {
-	MemoryBytes uint64 `json:"memory_bytes"`
-	PidsLimit   uint32 `json:"pids_limit"`
-	TmpfsBytes  uint64 `json:"tmpfs_bytes"`
+	MemoryBytes    uint64  `json:"memory_bytes"`
+	PidsLimit      uint32  `json:"pids_limit"`
+	TmpfsBytes     uint64  `json:"tmpfs_bytes"`
+	CPUMillis      *uint64 `json:"cpu_millis,omitempty"`
+	WorkspaceBytes *uint64 `json:"workspace_bytes,omitempty"`
+}
+
+func (d *resourceLimitsDTO) UnmarshalJSON(data []byte) error {
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	for _, name := range []string{"cpu_millis", "workspace_bytes"} {
+		if value, present := raw[name]; present && string(value) == "null" {
+			return fmt.Errorf("resources.%s must be an integer, not null", name)
+		}
+	}
+	type alias resourceLimitsDTO
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	return decoder.Decode((*alias)(d))
 }
 
 func (d configurationDTO) domain() deployment.Configuration {
@@ -54,10 +75,12 @@ func (d configurationDTO) domain() deployment.Configuration {
 			ResolverIPv4: d.Network.ResolverIPv4,
 		},
 		Resources: deployment.ResourceLimits{
-			MemoryBytes: d.Resources.MemoryBytes,
-			PidsLimit:   d.Resources.PidsLimit,
-			TmpfsBytes:  d.Resources.TmpfsBytes,
-		},
+			MemoryBytes:    d.Resources.MemoryBytes,
+			PidsLimit:      d.Resources.PidsLimit,
+			TmpfsBytes:     d.Resources.TmpfsBytes,
+			CPUMillis:      d.Resources.CPUMillis,
+			WorkspaceBytes: d.Resources.WorkspaceBytes,
+		}.Clone(),
 		OrganizationID: d.OrganizationID, SystemSkills: slices.Clone(d.SystemSkills),
 		PreparedSkillSet: d.PreparedSkillSet, PreparedReferenceID: d.PreparedReferenceID,
 	}
@@ -77,13 +100,14 @@ type revisionConfigurationRequest struct {
 }
 
 type readinessResponse struct {
-	Status           string `json:"status"`
-	Live             bool   `json:"live"`
-	Ready            bool   `json:"ready"`
-	DatabaseReady    bool   `json:"database_ready"`
-	PlatformReady    bool   `json:"platform_ready"`
-	ObservationReady bool   `json:"observation_ready"`
-	MonitorReady     bool   `json:"monitor_ready"`
+	Status            string `json:"status"`
+	Live              bool   `json:"live"`
+	Ready             bool   `json:"ready"`
+	DatabaseReady     bool   `json:"database_ready"`
+	PlatformReady     bool   `json:"platform_ready"`
+	ObservationReady  bool   `json:"observation_ready"`
+	MonitorReady      bool   `json:"monitor_ready"`
+	DiskQuotaEnforced bool   `json:"disk_quota_enforced"`
 }
 
 func readinessFromDomain(status string, value control.Readiness) readinessResponse {
@@ -91,6 +115,7 @@ func readinessFromDomain(status string, value control.Readiness) readinessRespon
 		Status: status, Live: true, Ready: value.Ready(),
 		DatabaseReady: value.DatabaseReady, PlatformReady: value.PlatformReady,
 		ObservationReady: value.ObservationReady, MonitorReady: value.MonitorReady,
+		DiskQuotaEnforced: value.DiskQuotaEnforced,
 	}
 }
 

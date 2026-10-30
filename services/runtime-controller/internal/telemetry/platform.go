@@ -104,19 +104,26 @@ func (p *ObservedPlatform) Delete(
 }
 
 func (p *ObservedPlatform) EnsureStorage(
-	ctx context.Context, agentID string,
+	ctx context.Context, agentID string, limits ...deployment.ResourceLimits,
 ) deployment.EffectOutcome {
 	return p.mutate(ctx, "ensure_storage", deployment.Key{AgentID: agentID}, func(operationCtx context.Context) deployment.EffectOutcome {
-		return p.next.EnsureStorage(operationCtx, agentID)
+		return p.next.EnsureStorage(operationCtx, agentID, limits...)
 	})
 }
 
 func (p *ObservedPlatform) VerifyStorage(
-	ctx context.Context, agentID string,
+	ctx context.Context, agentID string, limits ...deployment.ResourceLimits,
 ) deployment.EffectOutcome {
 	return p.mutate(ctx, "verify_storage", deployment.Key{AgentID: agentID}, func(operationCtx context.Context) deployment.EffectOutcome {
-		return p.next.VerifyStorage(operationCtx, agentID)
+		return p.next.VerifyStorage(operationCtx, agentID, limits...)
 	})
+}
+
+func (p *ObservedPlatform) DiskQuotaEnforced() bool {
+	if prober, ok := p.next.(interface{ DiskQuotaEnforced() bool }); ok {
+		return prober.DiskQuotaEnforced()
+	}
+	return false
 }
 
 func (p *ObservedPlatform) DeleteStorage(

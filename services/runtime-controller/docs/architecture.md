@@ -194,10 +194,27 @@ Runtime containers intentionally run as `0:0`: the root Supervisor prepares
 TUN, routing and resolver state and drops Agent-selected processes to UID/GID
 1000 with an empty capability set. Every Runtime create request has
 `CapDrop: ALL`, exactly `CHOWN`, `DAC_OVERRIDE`, `KILL`, `NET_ADMIN`, `SETGID`,
-`SETPCAP`, `SETUID` added back, and `no-new-privileges=true`. Helpers explicitly
+`SETPCAP`, `SETUID` added back — `CHOWN` for bootstrap workspace ownership,
+`DAC_OVERRIDE` for the Supervisor's cross-UID 0700 maintenance and managed MCP
+private homes, `KILL` for cross-UID Executor cleanup, `NET_ADMIN` for TUN and
+nftables, `SETGID`/`SETUID` for the irreversible identity drops, and `SETPCAP`
+so `PR_CAPBSET_DROP` empties each Executor bounding set. Security options are
+`no-new-privileges=true` plus a deny-default seccomp profile mechanically
+derived from the published Docker default with `keyctl`, `bpf`,
+`perf_event_open`, `userfaultfd` and `mount` removed from its allow rules;
+`internal/platform/docker/antnest-runtime-seccomp.json` is the embedded source
+and `deploy/seccomp/antnest-runtime.json` symlinks to it for operators. The
+root filesystem is read-only, `/tmp` is a bounded `noexec` tmpfs, `/run/antnest`
+is a separate 16 MiB `noexec` root-owned tmpfs, and a configured managed-MCP
+home stays a distinct bounded `exec` tmpfs. Because Docker mounts its generated
+`/etc/resolv.conf` read-only under `ReadonlyRootfs`, Controller prepares a
+per-generation named volume containing the exact `options use-vc` /
+`nameserver <resolver>` file and mounts it read-only at `/etc/resolv.conf`
+with `Subpath` and `NoCopy`; a helper container writes it only when absent and
+Runtime accepts or rejects the immutable file instead of rewriting it.
+Helpers explicitly
 select their own user and restricted profiles. Changing the Controller image's
-default user does not change those explicit Runtime/helper settings. Runtime
-writable-rootfs, executable `/tmp` and resource-limit hardening remains #35.
+default user does not change those explicit Runtime/helper settings.
 
 `agent_id` identifies one Runtime Environment. `runtime_revision` is an opaque
 cross-service CAS token. An operation's `target_revision` is derived before
@@ -226,10 +243,28 @@ are observations, not Agent identity.
 Runtime containers and workspaces use deterministic private names and labels.
 Every resource also carries a stable Controller ownership scope, so independent
 Controller databases on one Docker daemon never consume each other's
-inventory. Inside a container, the trusted root Supervisor prepares TUN and the
+inventory. Inside a container, the trusted root Supervisor prepares TUN and verifies the
 resolver; Agent-selected operations always run as UID/GID 1000 with an empty
 capability set. The persistent Agent workspace and generation-scoped compute
 are separate platform resources that only Runtime Controller manipulates.
+
+Optional deployment resources `cpu_millis` (100..16000, default 1000) and
+`workspace_bytes` (67108864..1099511627776, default 10737418240) map to Docker
+`NanoCpus = cpu_millis * 1e6` and `CpuShares = max(2, cpu_millis * 1024 / 1000)`
+plus the workspace volume byte bound; omission applies the defaults for N-1
+producers while explicit zero or out-of-range values are rejected. The
+workspace quota backend is an operator choice: default local volumes stay
+unbounded (`disk_quota_enforced=false`, reported on `/status` and warned at
+startup), while `ANTNEST_RUNTIME_WORKSPACE_VOLUME_DRIVER` and
+`ANTNEST_RUNTIME_WORKSPACE_QUOTA_OPTION` together select a trusted external
+size-enforcing driver whose option receives the decimal byte limit. Only the
+operator-attested driver option is claimed — Controller inspects the returned
+Driver, Options and `io.antnest.workspace-bytes` label on every create and
+verify, and an existing unbounded or mismatched volume is rejected rather than
+silently resized, relabeled or recreated; this is configuration attestation,
+not a measured disk-fill proof. The platform stop request carries
+`ANTNEST_RUNTIME_STOP_GRACE` (whole seconds, 20..120, default 20) so the
+16-second Runtime shutdown budget completes before the engine kills it.
 
 Domain inspection, operation, and observation values store Runtime identity
 once. Flattening `agent_id` and `generation` for JSON or SQL is an adapter

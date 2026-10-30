@@ -18,8 +18,8 @@ type Lifecycle interface {
 	Create(context.Context, deployment.Deployment, string) deployment.EffectOutcome
 	Inspect(context.Context, deployment.Key) (deployment.Inspection, error)
 	Delete(context.Context, deployment.Key, string) deployment.EffectOutcome
-	EnsureStorage(context.Context, string) deployment.EffectOutcome
-	VerifyStorage(context.Context, string) deployment.EffectOutcome
+	EnsureStorage(context.Context, string, ...deployment.ResourceLimits) deployment.EffectOutcome
+	VerifyStorage(context.Context, string, ...deployment.ResourceLimits) deployment.EffectOutcome
 	DeleteStorage(context.Context, string) deployment.EffectOutcome
 }
 
