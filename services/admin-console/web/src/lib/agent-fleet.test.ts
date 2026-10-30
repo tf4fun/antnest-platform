@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   agentActionAvailability,
   agentEventLabel,
+  agentRecoveryAvailable,
   agentStatusPresentation,
   agentsForView,
   agentOwnerView,
@@ -323,3 +324,46 @@ function operation(overrides: Partial<LifecycleOperation> = {}): LifecycleOperat
     ...overrides,
   };
 }
+
+test("lifecycle reliability events are labelled", () => {
+  assert.equal(agentEventLabel("agent_lifecycle_cancelled"), "Cancellation recorded");
+  assert.equal(agentEventLabel("agent_lifecycle_quarantine_cleared"), "Quarantine cleared");
+  assert.equal(agentEventLabel("agent_gc_scheduled"), "Cleanup scheduled");
+});
+
+test("Rebuild is allowed and recoverable for an Egress-deadline failed create", () => {
+  const failedCreate = agent({
+    lifecycle_state: "not_created",
+    desired_state: "enabled",
+    failure_code: "phase_deadline_exceeded",
+    failure_stage: "network_ensure",
+    runtime: undefined,
+    executable_execution_revision: undefined,
+    last_successful_execution_revision: undefined,
+    active_operation_request_id: undefined,
+  });
+  assert.equal(agentActionAvailability(failedCreate, false).canRebuild, true);
+  assert.equal(agentRecoveryAvailable(failedCreate), true);
+});
+
+test("Rebuild rejects cancelled, quarantined, or later-stage failed creates", () => {
+  for (const failure_code of ["lifecycle_cancelled", "lifecycle_invariant_failed"]) {
+    const base = agent({
+      lifecycle_state: "not_created",
+      failure_code, failure_stage: "network_ensure",
+      runtime: undefined, executable_execution_revision: undefined,
+      last_successful_execution_revision: undefined,
+      active_operation_request_id: undefined,
+    });
+    assert.equal(agentActionAvailability(base, false).canRebuild, false);
+    assert.equal(agentRecoveryAvailable(base), false);
+  }
+  const later = agent({
+    lifecycle_state: "not_created",
+    failure_code: "build_failed", failure_stage: "runtime_initialize",
+    runtime: undefined, executable_execution_revision: undefined,
+    last_successful_execution_revision: undefined,
+    active_operation_request_id: undefined,
+  });
+  assert.equal(agentActionAvailability(later, false).canRebuild, false);
+});

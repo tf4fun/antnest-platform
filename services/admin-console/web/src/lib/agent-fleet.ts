@@ -38,6 +38,9 @@ const eventLabels: Record<string, string> = {
   agent_delete_requested: "Deletion requested",
   agent_deleted: "Agent deleted",
   agent_lifecycle_quarantined: "Lifecycle quarantined",
+  agent_lifecycle_cancelled: "Cancellation recorded",
+  agent_lifecycle_quarantine_cleared: "Quarantine cleared",
+  agent_gc_scheduled: "Cleanup scheduled",
   agent_runtime_restarted: "Runtime restarted",
   agent_runtime_missing: "Runtime missing",
 };
@@ -92,10 +95,20 @@ export function agentEventLabel(eventType: string): string {
 }
 
 export function agentRecoveryAvailable(agent: Agent): boolean {
-  return agent.desired_state === "enabled" && agent.lifecycle_state === "created" && agent.activation_state === "enabled" &&
+  return (agent.desired_state === "enabled" && agent.lifecycle_state === "created" && agent.activation_state === "enabled" &&
     Boolean(agent.agent_spec_revision && agent.runtime?.runtime_revision) &&
     !agent.executable_execution_revision &&
-    agent.failure_code !== "lifecycle_invariant_failed";
+    agent.failure_code !== "lifecycle_invariant_failed") || failedCreateRetryAvailable(agent);
+}
+
+// failedCreateRetryAvailable is an approximate UI guard only: the Controller
+// proves the sole failed create under its locks before admitting the retry.
+function failedCreateRetryAvailable(agent: Agent): boolean {
+  return agent.lifecycle_state === "not_created" && agent.desired_state === "enabled" &&
+    Boolean(agent.failure_code) && agent.failure_stage === "network_ensure" &&
+    !agent.runtime?.runtime_revision && !agent.executable_execution_revision &&
+    !agent.last_successful_execution_revision &&
+    agent.failure_code !== "lifecycle_cancelled" && agent.failure_code !== "lifecycle_invariant_failed";
 }
 
 export function agentFailureMessage(agent: Agent): string {
@@ -106,6 +119,9 @@ export function agentFailureMessage(agent: Agent): string {
   };
   const reason = observedFailures[agent.failure_code ?? ""];
   if (reason) return `${reason} Code: ${agent.failure_code}.`;
+  if (failedCreateRetryAvailable(agent)) {
+    return `Creation failed before Runtime initialization during ${agent.failure_stage?.replaceAll("_", " ")}: ${agent.failure_code}. Restore the dependency, then retry with Rebuild to attempt initialization again.`;
+  }
   return `The latest lifecycle change failed${agent.failure_stage ? ` during ${agent.failure_stage.replaceAll("_", " ")}` : ""}: ${agent.failure_code}. Review the retained lifecycle history below.`;
 }
 
@@ -130,7 +146,7 @@ export function agentActionAvailability(
   const disabled = configured && agent.desired_state === "disabled" && agent.activation_state === "disabled";
   return {
     retained: false,
-    canRebuild: enabled && agent.desired_state === "enabled",
+    canRebuild: (enabled && agent.desired_state === "enabled") || failedCreateRetryAvailable(agent),
     canEnable: disabled,
     canDisable: enabled && agent.desired_state !== "deleted",
     canDelete: created || agent.lifecycle_state === "not_created",
