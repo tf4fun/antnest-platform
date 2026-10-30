@@ -8,7 +8,7 @@ projection, the model-scoped revision journal and the optional
 `model_profile_revision` on published models. ACP and Console consumer batches
 are delivered consumers-first: the ACP reader, admission freeze and
 audit projection are implemented; the Console usage route, explicit two-step
-edit confirmation, effective-models and audit projections are implemented, and the Controller's new producer fields must deploy only after ACP.
+edit confirmation, effective-models and audit projections are implemented, and the Controller's new producer fields must deploy only after ACP and Console.
 
 The model journal does not extend the Agent `event_type` enum, and the
 proposal introduces no optional model revision pinning. Issue #72 catalog and
@@ -97,3 +97,11 @@ first and requires an explicit operator confirmation — including when both
 counts are zero — before it POSTs a revision. A cancelled or failed count load
 never saves. The counts inform the operator; they are not a precondition the
 Controller enforces.
+
+The explicit integration batch adds boundary acceptance: a platform contract parity test
+(active revisions, no proposal overlay), an ACP schema-to-consumer test, a real-HTTP BFF
+usage test, a PostgreSQL audit persistence case, and a browser-level explicit-confirmation
+scenario. Service implementations are unchanged by that batch.
+
+Deployment: ACP and the Console (which allowlists effective models and audit revisions) are
+both consumers — deploy/read them before the Controller producer emits revision fields.
