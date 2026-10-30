@@ -339,6 +339,12 @@ native Runtime retains its separate per-instance token profile.
 
 ### Fixed
 
+Execution configuration v2 can resolve Provider credential references from
+Controller's encrypted access query. Catalog metadata deliberately excludes the
+sealed secret; using it for resolution returned 503 and failed model Runs with
+`provider_unavailable` after #399. Credential version and Organization checks
+remain enforced, including after rotation.
+
 ACP legacy shutdown now waits for original background Learning model calls,
 including their native transport cleanup, before releasing Runtime connections,
 the global worker lock and PostgreSQL pool (#49). Registered-owner generations
