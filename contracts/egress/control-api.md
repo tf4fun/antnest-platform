@@ -385,3 +385,19 @@ Errors have one stable shape:
 
 Internal failures never expose SQL, credentials, packet payloads, or command
 stderr in the response.
+
+## Cross-service contract and component handoff
+
+The [frozen v2 wire fixture](../../tests/integration/runtime-egress/policy-v2-handoff.json)
+connects the owning service checks: the authenticated Egress control router
+publishes the immutable revision and applies/replays the original assignment
+CAS; Controller's HTTP consumer verifies the metadata-only PUT acknowledgement
+against the canonical spec digest before assigning; Console's BFF projects the
+same full spec without internal identifiers; the browser codec preserves that
+spec and its account-scoped pending intent. It includes ordered private-CIDR
+rules, a domain rule, scalar ports, an equal port range and explicit TCP.
+
+The [handoff contract check](../../tests/integration/runtime-egress/policy-v2-handoff.test.mjs)
+also validates the shared schema, scoped content identity and digest recipe.
+These are contract/component checks, not a deployed end-to-end or release
+claim. Exact-candidate Repository and Integration CI remain the PR gates.
