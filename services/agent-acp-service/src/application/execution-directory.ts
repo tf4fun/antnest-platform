@@ -229,6 +229,14 @@ export class ExecutionDirectory {
       return capture;
     });
     if (publication === undefined) return absentExecutionDigest(organizationId);
+    // A cold owner can initially lose to its predecessor's unexpired lease.
+    // Digest retries must reconcile that same durable publication after the
+    // lease expires, rather than checking an unavailable graph forever.
+    if (this.dependencies.needsOwnershipRefresh?.(publication.configuration) === true) {
+      const remaining = deadline.getTime() - Date.now();
+      if (remaining <= 0) throw publicationUnavailable();
+      await this.reconcileOwnership(AbortSignal.timeout(remaining), organizationId);
+    }
     await this.dependencies.beforeAck?.(publication.configuration);
     await this.dependencies.beforePeerAck?.(publication, deadline);
     publication.assertCurrent();

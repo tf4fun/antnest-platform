@@ -339,6 +339,30 @@ native Runtime retains its separate per-instance token profile.
 
 ### Fixed
 
+Controller can close v2 execution admission for lifecycle recovery when the
+previous accepting owner cannot prove its digest. Only an unavailable owner
+triggers the current operation's full closure snapshot; healthy retries retain
+digest/delta publication and sealed private authority. ACP's real ACK remains
+required before settlement.
+
+ACP v2 digest retries reconcile an unavailable owner against the unchanged
+sealed authority before acknowledging it. A cold restart that initially loses
+to an unexpired predecessor lease can recover its abandoned Learning claim
+after expiry instead of remaining unavailable until a configuration mutation.
+
+System E2E recovery checks follow v2 digest/delta publication and cold credential
+reference resolution. Stage2, restore and shutdown Trace collection is auxiliary
+while original SDK completions, durable audits, model/Tool inventory and resource
+cleanup checks remain blocking. Skill install
+failures retain sanitized phase and source-location evidence independently of
+private CI logs.
+
+Execution configuration v2 can resolve Provider credential references from
+Controller's encrypted access query. Catalog metadata deliberately excludes the
+sealed secret; using it for resolution returned 503 and failed model Runs with
+`provider_unavailable` after #399. Credential version and Organization checks
+remain enforced, including after rotation.
+
 ACP legacy shutdown now waits for original background Learning model calls,
 including their native transport cleanup, before releasing Runtime connections,
 the global worker lock and PostgreSQL pool (#49). Registered-owner generations

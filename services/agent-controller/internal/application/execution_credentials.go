@@ -13,7 +13,10 @@ func (service *CatalogService) ResolveExecutionCredential(ctx context.Context, i
 	if !validIdentifier(input.OrganizationID) || !validIdentifier(input.ConnectionID) || !validIdentifier(input.CredentialVersion) {
 		return ports.ResolvedExecutionCredential{}, ErrInvalidInput
 	}
-	connection, err := service.store.GetProviderConnection(ctx, input.OrganizationID, input.ConnectionID)
+	if service.accessReader == nil || service.opener == nil {
+		return ports.ResolvedExecutionCredential{}, fmt.Errorf("%w: execution credential opening is not configured", ErrDependencyUnavailable)
+	}
+	connection, err := service.accessReader.GetProviderAccess(ctx, input.OrganizationID, input.ConnectionID)
 	if errors.Is(err, ports.ErrNotFound) {
 		return ports.ResolvedExecutionCredential{}, ports.ErrNotFound
 	}
@@ -27,9 +30,6 @@ func (service *CatalogService) ResolveExecutionCredential(ctx context.Context, i
 	if !connection.Enabled || connection.CredentialVersion != input.CredentialVersion ||
 		!ok || connection.CredentialMethod != support.CredentialMethod {
 		return ports.ResolvedExecutionCredential{}, ports.ErrConcurrentChange
-	}
-	if service.opener == nil {
-		return ports.ResolvedExecutionCredential{}, fmt.Errorf("%w: execution credential opening is not configured", ErrDependencyUnavailable)
 	}
 	secret, err := service.opener.Open(ctx, ports.CredentialIdentity{
 		OrganizationID: input.OrganizationID, CredentialRef: input.ConnectionID, CredentialVersion: input.CredentialVersion,

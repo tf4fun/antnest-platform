@@ -77,7 +77,10 @@ function delta(overrides: object = {}) {
   };
 }
 
-function setup(repository = new MemoryConfigurationRepository()) {
+function setup(
+  repository = new MemoryConfigurationRepository(),
+  overrides: Partial<ExecutionDirectoryDependencies> = {},
+) {
   const clients = new ProviderClients({
     complete: () => Promise.reject(new Error("No model should be called")),
   });
@@ -94,6 +97,7 @@ function setup(repository = new MemoryConfigurationRepository()) {
     beforeAck,
     beforePeerAck,
     onUnavailable,
+    ...overrides,
   });
   return {
     repository,
@@ -251,6 +255,46 @@ describe("execution publication v2 consumer", () => {
     expect(onApplied).toHaveBeenCalledTimes(1);
     expect(beforeAck).toHaveBeenCalledTimes(3);
     expect(beforePeerAck).toHaveBeenCalledTimes(3);
+  });
+
+  it("reconciles an unavailable owner on an unchanged digest without replacing sealed authority", async () => {
+    let lost = false;
+    const f = setup(undefined, { needsOwnershipRefresh: () => lost });
+    await f.directory.apply(v2Fixture());
+    const publication = f.directory.capturePublication("organization-1");
+    lost = true;
+    f.beforeAck.mockImplementation(() =>
+      lost
+        ? Promise.reject(new DomainError("agent_unavailable", "Owner recovery pending"))
+        : Promise.resolve(),
+    );
+    f.onApplied.mockImplementation(() => {
+      lost = false;
+      return Promise.resolve();
+    });
+    const digest = await f.directory.getDigest({ organization_id: "organization-1" });
+    expect(digest.revision).toBe(1);
+    expect(f.onApplied).toHaveBeenCalledTimes(2);
+    expect(f.repository.save).toHaveBeenCalledTimes(1);
+    expect(f.directory.capturePublication("organization-1")).toBe(publication);
+    await f.directory.getDigest({ organization_id: "organization-1" });
+    expect(f.onApplied).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not acknowledge a digest after failed owner reconciliation", async () => {
+    let lost = false;
+    const f = setup(undefined, { needsOwnershipRefresh: () => lost });
+    await f.directory.apply(v2Fixture());
+    const proofs = f.beforePeerAck.mock.calls.length;
+    lost = true;
+    f.onApplied.mockRejectedValueOnce(
+      new DomainError("agent_unavailable", "Owner recovery pending"),
+    );
+    await expect(
+      f.directory.getDigest({ organization_id: "organization-1" }),
+    ).rejects.toMatchObject({ code: "agent_unavailable" });
+    expect(f.beforePeerAck).toHaveBeenCalledTimes(proofs);
+    expect(f.repository.save).toHaveBeenCalledTimes(1);
   });
 
   it("restores a cold durable authority for a digest and distinguishes storage failure from absence", async () => {

@@ -75,6 +75,13 @@ these options through their shared Compose override.
 
 ## Trace Checks
 
+Restore, Skill restore and shutdown validate original SDK responses, persisted
+history, physical Runtime identity, file contents, stream closure deadlines and
+cleanup independently of Trace collection. Their collectors and strict Trace
+reports share a bounded auxiliary diagnostic budget. Missing spans or exporter
+failures produce warnings after business checks complete; business and resource
+cleanup failures still fail the suite.
+
 Lifecycle traces must bind the Gateway and Console admission and the request ID
 to the Temporal workflow, its activities, committed driver writes and the
 identified Runtime and Egress mutations. Drain includes ACP snapshot publication

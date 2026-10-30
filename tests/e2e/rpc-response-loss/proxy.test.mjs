@@ -6,6 +6,15 @@ import { startProxy } from "./proxy.mjs";
 const tp = "00-11111111111111111111111111111111-2222222222222222-01";
 const auth = `Bearer ${"a".repeat(43)}`;
 const inputs = {
+  "apply-execution-delta": {
+    schema_version: 2,
+    organization_id: "org",
+    base_revision: 6,
+    revision: 7,
+    providers: { upserts: [], deletes: [] },
+    models: { upserts: [], deletes: [] },
+    agents: { upserts: [], deletes: [] },
+  },
   "apply-execution-snapshot": {
     organization_id: "org",
     revision: 7,
@@ -26,6 +35,50 @@ const selection = (method) => ({
   method,
   organization_id: "org",
   ...(method === "settle-agent" ? { agent_id: "agent" } : { revision: 7 }),
+});
+test("v2 digest is transparently forwarded while armed and proves recovery after a dropped delta", async (t) => {
+  const digest = {
+    schema_version: 2,
+    organization_id: "org",
+    revision: 7,
+    digest: "a".repeat(64),
+    providers: [],
+    models: [],
+    agents: [],
+  };
+  const f = await fixture(t, (method) => ({
+    status: 200,
+    body: method === "get-execution-digest" ? digest : output(method),
+  }));
+  await f.post("/__test/arm", selection("apply-execution-delta"));
+  assert.deepEqual(
+    await f.post("/rpc/agent-acp/get-execution-digest", {
+      organization_id: "org",
+    }),
+    digest,
+  );
+  assert.equal((await f.state()).armed, true);
+  assert.deepEqual((await f.state()).records, []);
+  const pending = f.pending("apply-execution-delta");
+  const held = await f.held();
+  await f.post("/__test/drop", { receipt_id: held.receipt_id });
+  await pending.done;
+  assert.deepEqual(
+    await f.post("/rpc/agent-acp/get-execution-digest", {
+      organization_id: "org",
+    }),
+    digest,
+  );
+  const records = (await f.state()).records;
+  assert.deepEqual(
+    records.map((r) => [r.method, r.delivery]),
+    [
+      ["apply-execution-delta", "dropped"],
+      ["get-execution-digest", "delivered"],
+    ],
+  );
+  assert.equal(records[1].applied_revision, held.applied_revision);
+  assert.equal(records[1].digest, digest.digest);
 });
 const output = (method) =>
   method === "settle-agent"
