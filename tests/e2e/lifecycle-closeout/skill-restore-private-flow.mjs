@@ -42,7 +42,8 @@ export async function runPrivateSkillRestore(input, scenario, overrides = {}) {
     removeDirectory: (directory) =>
       rm(directory, { recursive: true, force: true }),
     readTransport: () => readRestoreTransport(config, input.docker),
-    flush: () => flushTraceProducers(config, input.docker),
+    flush: (localSignal) =>
+      flushTraceProducers(config, input.docker, localSignal),
     async readModel() {
       const response = await fetch(config.model + "/status", {
         signal: AbortSignal.any([signal, AbortSignal.timeout(5000)]),
@@ -245,7 +246,11 @@ export async function runPrivateSkillRestore(input, scenario, overrides = {}) {
       }
       work.provider_requests = [...work.before_model, ...work.after_model];
       try {
-        await dependencies.flush();
+        if (input.traceDiagnostics)
+          await input.traceDiagnostics.run("recovery-flush", (localSignal) =>
+            dependencies.flush(localSignal),
+          );
+        else await dependencies.flush();
       } catch (error) {
         errors.push(error);
       }
@@ -263,17 +268,19 @@ export async function runPrivateSkillRestore(input, scenario, overrides = {}) {
           );
           requestTraces = await collectRestoreTraces(
             rows,
-            (row) =>
+            (row, localSignal = signal) =>
               access.collect(
                 row,
                 row.kind === "ordinary"
                   ? work.provider_requests.filter((c) => c.phase === row.phase)
                   : [],
+                localSignal,
               ),
             (row, error) =>
               dependencies.preserveFailure(row, error, ++failedRequests),
             signal,
             errors,
+            input.traceDiagnostics,
           );
         } catch (error) {
           errors.push(error);

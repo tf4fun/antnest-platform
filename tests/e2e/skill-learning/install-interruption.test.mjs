@@ -19,6 +19,7 @@ import { setup, until } from "../workspace-closeout/c4-setup.mjs";
 import { learningImageOverlay } from "./development-settings.mjs";
 import { skillClientArgs } from "./client-container.mjs";
 import { prepareOwnerProfile } from "../security/owner-profile.mjs";
+import { createInstallDiagnostics } from "./install-failure.mjs";
 import { verifyOwnerInstallRecovery } from "./owner-install-recovery.mjs";
 import {
   candidateCommand,
@@ -107,9 +108,11 @@ test(titles[name], { timeout: 720_000 }, async (t) => {
   t.signal.addEventListener("abort", interrupt, { once: true });
   process.once("SIGINT", interrupt);
   process.once("SIGTERM", interrupt);
+  const diagnostics = createInstallDiagnostics(evidenceDir, name);
   let config;
   const ownedImages = [];
   try {
+    diagnostics.advance("configuration");
     config = await configuration(abort.signal);
     if (scenario.owned) prepareOwnerProfile(config);
     const keys = generateKeyPairSync("ed25519");
@@ -141,6 +144,7 @@ test(titles[name], { timeout: 720_000 }, async (t) => {
       );
       ownedImages.push(tag);
     };
+    diagnostics.advance("runtime-image");
     if (scenario.runtime) {
       const runtimeImage = `antnest/antnest-runtime:skill-learning-gate-${config.project.slice(-8)}`;
       await absent(runtimeImage);
@@ -180,6 +184,7 @@ test(titles[name], { timeout: 720_000 }, async (t) => {
       config.resolvedImage = gatedImage.Id;
       config.env.ANTNEST_ADMIN_DEFAULT_RUNTIME_IMAGE_REF = config.image;
     }
+    diagnostics.advance("fixture-configuration");
     Object.assign(config.env, {
       ANTNEST_C4_AGENT_ACP_IMAGE: image,
       ANTNEST_C4_CONTROL_DYNAMIC_RANGE:
@@ -210,6 +215,7 @@ test(titles[name], { timeout: 720_000 }, async (t) => {
     });
     const docker = dockerClient(config.env, abort.signal, 720_000);
     await absent(image);
+    diagnostics.advance("acp-image");
     await docker(
       candidate("agent-acp-service", image, [
         "build",
@@ -243,6 +249,7 @@ test(titles[name], { timeout: 720_000 }, async (t) => {
       ]),
       true,
     );
+    diagnostics.advance("agent-setup");
     const fixture = await setup(config, abort.signal);
     const runtimeName = `antnest-runtime-${fixture.agentID}`;
     const workspaceVolume = `antnest-workspace-${fixture.agentID}`;
@@ -404,11 +411,13 @@ test(titles[name], { timeout: 720_000 }, async (t) => {
       .Id;
     const beforeExecutionState = await fixture.state();
 
+    diagnostics.advance("source-prompt");
     const pending = await client("source", "preempt-client.mjs", [
       "ANTNEST_E2E_STOP_AFTER_PENDING=true",
       "ANTNEST_E2E_HELD_INSTALL=true",
     ]);
     assert.equal(pending.status, "review_pending_for_install");
+    diagnostics.advance("release-review");
     const releasedReview = JSON.parse(
       await docker([
         "exec",
@@ -419,6 +428,7 @@ test(titles[name], { timeout: 720_000 }, async (t) => {
       ]),
     );
     assert.equal(releasedReview.released, "review-create");
+    diagnostics.advance("held-install");
     await until(
       async () => {
         if (!scenario.runtime) return (await gate("status")).pending || null;
@@ -437,6 +447,7 @@ test(titles[name], { timeout: 720_000 }, async (t) => {
       abort.signal,
       60_000,
     );
+    diagnostics.advance("held-install-evidence");
     const interrupted = await learning();
     assert.equal(interrupted.changes, 0);
     assert.equal(
@@ -452,11 +463,13 @@ test(titles[name], { timeout: 720_000 }, async (t) => {
     }
 
     const evidence = { scenario: name, agentId: fixture.agentID };
+    diagnostics.advance("owner-recovery");
     if (scenario.owned) {
       evidence.recovery = await verifyOwnerInstallRecovery({
         config,
         docker,
         fixture,
+        checkpoint: diagnostics.advance,
         acpContainer,
         postgres,
         modelContainer,
@@ -472,6 +485,7 @@ test(titles[name], { timeout: 720_000 }, async (t) => {
         JSON.stringify(evidence),
         { flag: "wx", mode: 0o600 },
       );
+      diagnostics.complete();
       return;
     }
     if (scenario.stop === "lost") {
@@ -479,6 +493,7 @@ test(titles[name], { timeout: 720_000 }, async (t) => {
     } else if (scenario.stop === "foreground") {
       // Nothing is released: the Run can complete only if neither ACP nor the
       // Runtime waits for the interrupted install.
+      diagnostics.advance("post-enable-prompt");
       const foreground = await client("foreground", "post-enable-client.mjs");
       assert.equal(foreground.status, "foreground_completed_after_enable");
       evidence.foregroundMs = foreground.elapsedMs;
@@ -565,6 +580,7 @@ test(titles[name], { timeout: 720_000 }, async (t) => {
         runtimeGate,
       ]);
 
+    diagnostics.advance("install-resend");
     const settled = await until(
       async () => {
         const state = await learning();
@@ -607,6 +623,10 @@ test(titles[name], { timeout: 720_000 }, async (t) => {
       JSON.stringify(evidence),
       { flag: "wx", mode: 0o600 },
     );
+    diagnostics.complete();
+  } catch (error) {
+    diagnostics.fail(error);
+    throw error;
   } finally {
     try {
       if (config) await cleanup(config);
@@ -631,6 +651,10 @@ test(titles[name], { timeout: 720_000 }, async (t) => {
           await cleanImages(["image", "rm", tag]);
         }
       }
+      diagnostics.cleanup();
+    } catch (error) {
+      diagnostics.cleanup(error);
+      throw error;
     } finally {
       process.off("SIGINT", interrupt);
       process.off("SIGTERM", interrupt);

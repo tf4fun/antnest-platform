@@ -570,8 +570,16 @@ try {
             error_class: terminal.error_class,
             trace_complete: false,
           };
-          // Controller remains stopped: only the committed local authority can
-          // admit this one explicit new Run after recovery of the interrupted Run.
+          // The cold ACP recovered its committed authority and interrupted Run
+          // while Controller was offline. v2 persists credential references;
+          // its empty process cache needs Controller for the next model call.
+          compose("up", "-d", "--no-deps", "--wait", "agent-controller");
+          await ready();
+          assert.equal(
+            (await modelState()).attempts.length,
+            held.attempts.length,
+            "Controller recovery replayed old execution",
+          );
           client = await privateClient();
           const next = await client.newSession();
           await client.prompt(next.sessionId);

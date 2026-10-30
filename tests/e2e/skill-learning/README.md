@@ -38,3 +38,8 @@ Attribution requires review of the exact initialization Link, source request
 scope and UI process in the original traces. Missing traces, query failures and
 empty searches remain explicit gaps. These artifacts are diagnostic evidence,
 not business, topology or cleanup acceptance.
+
+Install interruption scenarios retain `install-<scenario>-<id>.json` with the
+last completed checkpoint, business outcome, safe assertion source locations
+and an independent cleanup outcome. Exception messages, assertion values and
+Docker logs remain private. A missing completion record is never a pass.

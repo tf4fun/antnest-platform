@@ -56,10 +56,10 @@ export async function runPrivateShutdown(input, scenario, overrides = {}) {
   const dependencies = {
     createAccess: createFoundationPrivateAccess,
     openPublic: openShutdownWatch,
-    collectPublic: (expected) =>
+    collectPublic: (expected, localSignal = signal) =>
       collectShutdownTrace(config.jaeger, expected, traceSecrets, {
         directory: config.evidence + "/traces",
-        signal,
+        signal: localSignal,
       }),
     preservePublic: (index, value) =>
       writeEvidenceFile(
@@ -74,7 +74,8 @@ export async function runPrivateShutdown(input, scenario, overrides = {}) {
         inspect({ expected: row, error }, { depth: 8 }),
       ),
     readTransport: () => readRestoreTransport(config, input.docker),
-    flush: () => flushTraceProducers(config, input.docker),
+    flush: (localSignal) =>
+      flushTraceProducers(config, input.docker, localSignal),
     async readModel() {
       const response = await fetch(config.model + "/status", {
         signal: AbortSignal.any([signal, AbortSignal.timeout(5000)]),
@@ -196,14 +197,15 @@ export async function runPrivateShutdown(input, scenario, overrides = {}) {
       });
     watchTraces = await collectRestoreTraces(
       rows,
-      (row) =>
+      (row, localSignal = signal) =>
         row.kind === "event_watch"
-          ? dependencies.collectPublic(row)
-          : access.collect(row, []),
+          ? dependencies.collectPublic(row, localSignal)
+          : access.collect(row, [], localSignal),
       (row, error) =>
         dependencies.preserveFailure(row, error, ++failedRequests),
       signal,
       errors,
+      input.traceDiagnostics,
     );
     collectedWatches = true;
   }
@@ -352,7 +354,11 @@ export async function runPrivateShutdown(input, scenario, overrides = {}) {
         errors.push(error);
       }
       try {
-        await dependencies.flush();
+        if (input.traceDiagnostics)
+          await input.traceDiagnostics.run("recovery-flush", (localSignal) =>
+            dependencies.flush(localSignal),
+          );
+        else await dependencies.flush();
       } catch (error) {
         errors.push(error);
       }
@@ -368,11 +374,12 @@ export async function runPrivateShutdown(input, scenario, overrides = {}) {
             );
           requestTraces = await collectRestoreTraces(
             rows,
-            (row) => access.collect(row, []),
+            (row, localSignal = signal) => access.collect(row, [], localSignal),
             (row, error) =>
               dependencies.preserveFailure(row, error, ++failedRequests),
             signal,
             errors,
+            input.traceDiagnostics,
           );
         } catch (error) {
           errors.push(error);

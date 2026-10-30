@@ -339,6 +339,12 @@ native Runtime retains its separate per-instance token profile.
 
 ### Fixed
 
+System E2E recovery checks follow v2 digest/delta publication and cold credential
+reference resolution. Restore and shutdown Trace collection is auxiliary while
+original business and resource cleanup checks remain blocking. Skill install
+failures retain sanitized phase and source-location evidence independently of
+private CI logs.
+
 Execution configuration v2 can resolve Provider credential references from
 Controller's encrypted access query. Catalog metadata deliberately excludes the
 sealed secret; using it for resolution returned 503 and failed model Runs with

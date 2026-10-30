@@ -16,7 +16,12 @@ export const hash = (value) =>
   createHash("sha256")
     .update(JSON.stringify(canonical(value)))
     .digest("hex");
-const methods = ["apply-execution-snapshot", "settle-agent"];
+const methods = [
+  "apply-execution-snapshot",
+  "apply-execution-delta",
+  "settle-agent",
+];
+const forwarded = [...methods, "get-execution-digest"];
 const id = (value) =>
   typeof value === "string" && value.length > 0 && value.length <= 256;
 const revision = (value) => Number.isSafeInteger(value) && value > 0;
@@ -64,7 +69,7 @@ export function startProxy(
     )
       return;
     if (
-      method === "apply-execution-snapshot"
+      method !== "settle-agent"
         ? output.organization_id !== input.organization_id ||
           output.applied_revision < input.revision
         : !id(input.operation_id) ||
@@ -89,7 +94,12 @@ export function startProxy(
             deadline_at: input.deadline_at,
             outcome: output.outcome,
           }
-        : { revision: input.revision }),
+        : {
+            revision: input.revision,
+            ...(method === "apply-execution-delta"
+              ? { base_revision: input.base_revision }
+              : {}),
+          }),
       applied_revision: output.applied_revision,
       request_hash: hash(input),
       response_hash: hash(output),
@@ -153,7 +163,7 @@ export function startProxy(
         return json(res, 200, { dropped: true });
       }
       const method = req.url?.replace("/rpc/agent-acp/", "");
-      if (!methods.includes(method) || req.url !== `/rpc/agent-acp/${method}`)
+      if (!forwarded.includes(method) || req.url !== `/rpc/agent-acp/${method}`)
         return json(res, 404, { code: "not_found" });
       const headers = { "content-type": "application/json" };
       for (const name of [
@@ -178,7 +188,36 @@ export function startProxy(
         } catch {
           /* Forward invalid upstream output unchanged. */
         }
-        record = receipt(method, input, output, req.headers);
+        if (method === "get-execution-digest") {
+          const lost = records[0];
+          if (
+            selection?.method === "apply-execution-delta" &&
+            lost?.delivery === "dropped" &&
+            input.organization_id === selection.organization_id &&
+            output?.organization_id === lost.organization_id &&
+            output.schema_version === 2 &&
+            output.revision === lost.applied_revision &&
+            /^[a-f0-9]{64}$/u.test(output.digest ?? "")
+          ) {
+            assert(records.length < 512);
+            record = {
+              receipt_id: randomUUID(),
+              method,
+              organization_id: output.organization_id,
+              schema_version: 2,
+              revision: output.revision,
+              applied_revision: output.revision,
+              digest: output.digest,
+              recovery_of: lost.receipt_id,
+              request_hash: hash(input),
+              response_hash: hash(output),
+              traceparent: req.headers.traceparent,
+              status: 200,
+              delivery: "pending",
+            };
+            records.push(record);
+          }
+        } else record = receipt(method, input, output, req.headers);
       }
       if (record && armed) {
         armed = false;

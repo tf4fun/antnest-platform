@@ -51,6 +51,13 @@ post-recovery Prompt owns an independently observed Run trace and is included
 among all six completed Run traces; excluding the crash scenario trace must not
 silently exclude that recovery Run.
 
+With execution publication v2, the Controller-offline scenario uses a warm
+credential cache. SIGKILL recovery separately proves durable authority and the
+interrupted Run terminal state while Controller is stopped, with no model
+replay. Controller is then brought back before the explicit new Prompt: v2
+stores credential references and its process-local secret cache is empty after
+restart. The completed Run and model request inventory above remains required.
+
 Create and Rebuild retain their two original management traces. The five
 explicit Temporal histories are Create, Rebuild, Disable, Enable and Delete;
 automatic Disable is checked separately. The audit consumer retains all seven
