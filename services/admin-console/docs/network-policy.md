@@ -15,8 +15,14 @@ Console adds no service database, lifecycle mutation or Runtime generation.
 The [BFF contract](../../../contracts/admin-console/README.md) provides
 GET/PUT `/api/admin/agents/{agent_id}/network-policy`. The browser selects public
 IPv4 access on/off; deployment/control addresses remain protected by Egress.
-Only allow/deny built-in revision 1 is selected by this UI. Reads use the
-Controller's exact policy spec, not a policy ID/name heuristic.
+The toggle still maps to the allow/deny built-in revision 1 references, and
+the custom-rules editor submits an additive `spec` document
+(`{"schema_version":2,"default":"deny","rules":[]}` first-match allow/deny rules over
+TCP ports and CIDRs or domains) which the BFF forwards spec-only to
+Controller; Egress stores the immutable content-addressed revision. Reads use
+the Controller's exact policy spec, not a policy ID/name heuristic, and a
+confirmed custom policy renders as "Custom rules" with the toggle disabled so
+a stray click cannot silently replace it.
 
 ## Browser States
 
