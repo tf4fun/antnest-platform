@@ -1,12 +1,15 @@
 package server
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -38,7 +41,15 @@ func TestNetworkPolicySpecOnlyPutPublishesV2RevisionAndAssigns(t *testing.T) {
 				t.Error(err)
 				return
 			}
-			writePolicyFlowBody(t, w, `{"policy_id":"`+policyID+`","revision":1,"spec":`+string(payload["spec"])+`,"digest":"sha256:`+strings.Repeat("b", 64)+`"}`)
+			sum := sha256.Sum256(payload["spec"])
+			var specDoc struct {
+				SchemaVersion int `json:"schema_version"`
+			}
+			if err := json.Unmarshal(payload["spec"], &specDoc); err != nil {
+				t.Error(err)
+				return
+			}
+			writePolicyFlowBody(t, w, `{"policy_id":"`+policyID+`","revision":1,"schema_version":`+strconv.Itoa(specDoc.SchemaVersion)+`,"digest":"sha256:`+hex.EncodeToString(sum[:])+`"}`)
 		case r.Method == http.MethodPut && path == "/internal/agent-policy-assignments/agent-1":
 			var assignment map[string]json.RawMessage
 			if err := json.Unmarshal(body, &assignment); err != nil {
@@ -225,7 +236,15 @@ func TestNetworkPolicySpecOnlyPutPreservesPortShapesAtHTTPBoundary(t *testing.T)
 						t.Error(err)
 						return
 					}
-					writePolicyFlowBody(t, w, `{"policy_id":"`+policyID+`","revision":1,"spec":`+string(object["spec"])+`,"digest":"sha256:`+strings.Repeat("b", 64)+`"}`)
+					sum := sha256.Sum256(object["spec"])
+					var specDoc struct {
+						SchemaVersion int `json:"schema_version"`
+					}
+					if err := json.Unmarshal(object["spec"], &specDoc); err != nil {
+						t.Error(err)
+						return
+					}
+					writePolicyFlowBody(t, w, `{"policy_id":"`+policyID+`","revision":1,"schema_version":`+strconv.Itoa(specDoc.SchemaVersion)+`,"digest":"sha256:`+hex.EncodeToString(sum[:])+`"}`)
 					return
 				}
 				writePolicyFlowBody(t, w, `{"agent_id":"agent-1","policy_id":"`+policyID+`","revision":1,"resource_version":8}`)
@@ -241,5 +260,38 @@ func TestNetworkPolicySpecOnlyPutPreservesPortShapesAtHTTPBoundary(t *testing.T)
 				t.Fatalf("port shape not preserved upstream: %s", call.body)
 			}
 		})
+	}
+}
+
+func TestNetworkPolicySpecOnlyStopsCASOnWrongDigestAck(t *testing.T) {
+	requests := make(chan policyFlowRequest, 4)
+	var policyID string
+	handler, _ := policyFlowHandler(t, func(w http.ResponseWriter, r *http.Request) {
+		payload, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Error(err)
+		}
+		path := r.URL.EscapedPath()
+		requests <- policyFlowRequest{r.Method, path, string(payload), r.Header.Get("traceparent")}
+		if strings.HasPrefix(path, "/internal/policies/") {
+			escaped := strings.TrimSuffix(strings.TrimPrefix(path, "/internal/policies/"), "/revisions/1")
+			policyID, err = url.PathUnescape(escaped)
+			if err != nil {
+				t.Error(err)
+				return
+			}
+			writePolicyFlowBody(t, w, `{"policy_id":"`+policyID+`","revision":1,"schema_version":2,"digest":"sha256:`+strings.Repeat("f", 64)+`"}`)
+			return
+		}
+		t.Errorf("unexpected downstream call: %s %s", r.Method, path)
+	})
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequest(http.MethodPut, "/internal/agents/agent-1/network-policy", strings.NewReader(networkPolicyV2MutationJSON)))
+	if response.Code != http.StatusBadGateway || len(requests) != 1 {
+		t.Fatalf("wrong digest must stop before CAS: %d %s calls=%d", response.Code, response.Body.String(), len(requests))
+	}
+	call := <-requests
+	if call.method != http.MethodPut || !strings.HasPrefix(call.path, "/internal/policies/") {
+		t.Fatalf("unexpected call: %+v", call)
 	}
 }

@@ -2,11 +2,14 @@ package egressclient
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -24,6 +27,21 @@ func egressV2Spec(t *testing.T) ports.NetworkPolicySpec {
 	return spec
 }
 
+func egressSpecDigest(t *testing.T, spec ports.NetworkPolicySpec) string {
+	t.Helper()
+	canonical, err := json.Marshal(spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sum := sha256.Sum256(canonical)
+	return "sha256:" + hex.EncodeToString(sum[:])
+}
+
+func egressMetadataBody(ref ports.NetworkPolicyReference, spec ports.NetworkPolicySpec, digest string) string {
+	return `{"policy_id":"` + ref.PolicyID + `","revision":` + strconv.FormatUint(ref.Revision, 10) +
+		`,"schema_version":` + strconv.Itoa(spec.SchemaVersion) + `,"digest":"` + digest + `"}`
+}
+
 func TestPutPolicyRevisionPublishesEscapedPathAndSpecOnlyBody(t *testing.T) {
 	t.Parallel()
 	ref := ports.NetworkPolicyReference{PolicyID: "custom/" + strings.Repeat("a", 64), Revision: 1}
@@ -36,33 +54,34 @@ func TestPutPolicyRevisionPublishesEscapedPathAndSpecOnlyBody(t *testing.T) {
 		if string(body) != `{"spec":`+egressV2SpecJSON+`}` {
 			t.Errorf("body=%s", body)
 		}
-		if err := json.NewEncoder(w).Encode(map[string]any{
-			"policy_id": ref.PolicyID, "revision": 1,
-			"spec": json.RawMessage(egressV2SpecJSON), "digest": "sha256:" + strings.Repeat("b", 64),
-		}); err != nil {
-			t.Error(err)
-		}
+		_, _ = io.WriteString(w, egressMetadataBody(ref, spec, egressSpecDigest(t, spec)))
 	})
 	result, err := client.PutPolicyRevision(context.Background(), ref, spec)
-	if err != nil || result.NetworkPolicyReference != ref || !result.Spec.Equal(spec) {
+	if err != nil || result.NetworkPolicyReference != ref || !result.Spec.Equal(spec) ||
+		result.Digest != egressSpecDigest(t, spec) {
 		t.Fatalf("result=%+v error=%v", result, err)
 	}
 }
 
-func TestPutPolicyRevisionRejectsCorruptEchoAndConflictStatus(t *testing.T) {
+func TestPutPolicyRevisionRejectsCorruptMetadataAndConflict(t *testing.T) {
 	t.Parallel()
 	ref := ports.NetworkPolicyReference{PolicyID: "custom/" + strings.Repeat("c", 64), Revision: 1}
 	spec := egressV2Spec(t)
+	valid := `{"policy_id":"` + ref.PolicyID + `","revision":1,"schema_version":2,"digest":"` + egressSpecDigest(t, spec) + `"}`
 	corrupt := []struct {
 		name string
 		body string
 	}{
-		{"wrong_ref", `{"policy_id":"custom/other","revision":1,"spec":` + egressV2SpecJSON + `,"digest":"sha256:` + strings.Repeat("b", 64) + `"}`},
-		{"spec_mismatch", `{"policy_id":"` + ref.PolicyID + `","revision":1,"spec":{"schema_version":1,"action":"deny_all"},"digest":"sha256:` + strings.Repeat("b", 64) + `"}`},
-		{"bad_digest", `{"policy_id":"` + ref.PolicyID + `","revision":1,"spec":` + egressV2SpecJSON + `,"digest":"md5:abc"}`},
-		{"unknown_field", `{"policy_id":"` + ref.PolicyID + `","revision":1,"spec":` + egressV2SpecJSON + `,"digest":"sha256:` + strings.Repeat("b", 64) + `","x":1}`},
-		{"duplicate_field", `{"policy_id":"` + ref.PolicyID + `","policy_id":"` + ref.PolicyID + `","revision":1,"spec":` + egressV2SpecJSON + `,"digest":"sha256:` + strings.Repeat("b", 64) + `"}`},
-		{"null_spec", `{"policy_id":"` + ref.PolicyID + `","revision":1,"spec":null,"digest":"sha256:` + strings.Repeat("b", 64) + `"}`},
+		{"wrong_ref", strings.Replace(valid, `"policy_id":"`+ref.PolicyID+`"`, `"policy_id":"custom/other"`, 1)},
+		{"wrong_revision", strings.Replace(valid, `"revision":1`, `"revision":2`, 1)},
+		{"wrong_schema", strings.Replace(valid, `"schema_version":2`, `"schema_version":1`, 1)},
+		{"missing_schema", `{"policy_id":"` + ref.PolicyID + `","revision":1,"digest":"` + egressSpecDigest(t, spec) + `"}`},
+		{"null_schema", strings.Replace(valid, `"schema_version":2`, `"schema_version":null`, 1)},
+		{"bad_digest", strings.Replace(valid, `"digest":"sha256:`, `"digest":"md5:`, 1)},
+		{"wrong_digest", strings.Replace(valid, egressSpecDigest(t, spec), "sha256:"+strings.Repeat("f", 64), 1)},
+		{"unknown_field", strings.TrimSuffix(valid, "}") + `,"extra":1}`},
+		{"duplicate_field", `{"policy_id":"` + ref.PolicyID + `","policy_id":"` + ref.PolicyID + `","revision":1,"schema_version":2,"digest":"` + egressSpecDigest(t, spec) + `"}`},
+		{"injected_spec", strings.TrimSuffix(valid, "}") + `,"spec":` + egressV2SpecJSON + `}`},
 	}
 	for _, scenario := range corrupt {
 		t.Run(scenario.name, func(t *testing.T) {
@@ -71,7 +90,7 @@ func TestPutPolicyRevisionRejectsCorruptEchoAndConflictStatus(t *testing.T) {
 			})
 			var failure *ports.DependencyError
 			if _, err := client.PutPolicyRevision(context.Background(), ref, spec); err == nil || !errors.As(err, &failure) || failure.Code != "invalid_response" {
-				t.Fatalf("corrupt echo error=%v body=%s", err, scenario.body)
+				t.Fatalf("corrupt metadata error=%v body=%s", err, scenario.body)
 			}
 		})
 	}

@@ -22,6 +22,8 @@ Issue 状态最后核对于 2026-10-28：141 个 issue，87 个已关闭，54 �
 
 - [ ] [#40](https://github.com/tf4fun/antnest-platform/issues/40) Admin Console v2 批次：分支 fix/issue-40-admin-console，依赖 #424/#423/#422；BFF 严格 action XOR spec（原始字节解码避开 serviceauth 反射）、spec-only 转发+内容寻址 ack 校验、v2 投影白名单、409 映射；Web 端 decodeNetworkSpec/canonical/pending 联合类型、自定义规则编辑器与陈旧草稿阻断；RED 4/4 → Go NetworkPolicy 聚焦测试、TS typecheck、lib 10/10 与组件 24/24 GREEN；完整门禁留给远程 CI；集成批次待做，无 Docker E2E，#40 保持 open
 
+- [ ] [#40](https://github.com/tf4fun/antnest-platform/issues/40) Controller 元数据 ack 接线修正：Egress PUT 修订响应为 `{policy_id,revision,schema_version,digest}`（无 spec）；PutPolicyRevision 改用严格元数据解码+sha256 摘要精确校验，不再误用 GET 完整解码；RED 3/3 → egressclient/server 聚焦 NetworkPolicy/PolicyRevision 测试 GREEN，完整门禁留给远程 CI；#424 依赖真实合约形状未变，#40 保持 open
+
 - [ ] [#40](https://github.com/tf4fun/antnest-platform/issues/40) Controller v2 批次：分支 fix/issue-40-agent-controller，依赖 #423/#422；spec-only PUT→内容寻址 custom/sha256 修订发布+原版本 CAS（ports/application/egressclient/server 严格 v1/v2 解码、Range 形状保持、409 映射）；RED 2/2 → ports/application/egressclient/server 聚焦 NetworkPolicy/PolicyRevision/PolicyAssignment/PutPolicyRevision 测试全部 GREEN，完整门禁留给远程 CI；Console/集成批次待做，无 Docker E2E，#40 保持 open
 
 - [ ] [#40](https://github.com/tf4fun/antnest-platform/issues/40) Egress schema v2 批次：分支 fix/issue-40-runtime-egress，依赖合约 PR #422；测试先行 RED 5 failed/2 passed，focused cargo 113 passed/15 ignored；PostgreSQL v2 持久化用例仅远程 component 验证；Controller/Console 消费侧与集成批次待做，无 Docker E2E，#40 保持 open
