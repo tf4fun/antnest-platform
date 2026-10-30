@@ -18,7 +18,7 @@ type executionCredentialStoreStub struct {
 	calls      int
 }
 
-func (store *executionCredentialStoreStub) GetProviderConnection(_ context.Context, organizationID, connectionID string) (ports.ProviderConnectionRecord, error) {
+func (store *executionCredentialStoreStub) GetProviderAccess(_ context.Context, organizationID, connectionID string) (ports.ProviderConnectionRecord, error) {
 	store.calls++
 	if store.err != nil {
 		return ports.ProviderConnectionRecord{}, store.err
@@ -42,7 +42,7 @@ func TestResolveExecutionCredentialReturnsExactScopeSecret(t *testing.T) {
 	connection, request := executionCredentialFixture()
 	store := &executionCredentialStoreStub{connection: connection}
 	opener := &executionCredentialOpener{}
-	service := NewCatalogService(store, nil, fixedClock{now: time.Unix(1, 0).UTC()}, WithProviderCredentialReader(nil, opener))
+	service := NewCatalogService(store, nil, fixedClock{now: time.Unix(1, 0).UTC()}, WithProviderCredentialReader(store, opener))
 	resolved, err := service.ResolveExecutionCredential(t.Context(), request)
 	require.NoError(t, err)
 	require.Equal(t, ports.ResolvedExecutionCredential{OrganizationID: "org-1", ConnectionID: "provider-1",
@@ -82,7 +82,7 @@ func TestResolveExecutionCredentialRejectsScopeAndCurrentState(t *testing.T) {
 			candidate := request
 			scenario.mutate(store, &candidate)
 			opener := &executionCredentialOpener{}
-			service := NewCatalogService(store, nil, fixedClock{now: time.Unix(1, 0).UTC()}, WithProviderCredentialReader(nil, opener))
+			service := NewCatalogService(store, nil, fixedClock{now: time.Unix(1, 0).UTC()}, WithProviderCredentialReader(store, opener))
 			resolved, err := service.ResolveExecutionCredential(t.Context(), candidate)
 			require.ErrorIs(t, err, scenario.want)
 			require.Empty(t, resolved)
@@ -106,7 +106,7 @@ func TestResolveExecutionCredentialHidesDependencyAndSecretFailures(t *testing.T
 		t.Run(scenario.name, func(t *testing.T) {
 			var options []CatalogOption
 			if scenario.opener != nil {
-				options = append(options, WithProviderCredentialReader(nil, scenario.opener))
+				options = append(options, WithProviderCredentialReader(scenario.store, scenario.opener))
 			}
 			service := NewCatalogService(scenario.store, nil, fixedClock{now: time.Unix(1, 0).UTC()}, options...)
 			resolved, err := service.ResolveExecutionCredential(t.Context(), request)

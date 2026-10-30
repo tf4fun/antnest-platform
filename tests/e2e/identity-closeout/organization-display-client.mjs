@@ -15,6 +15,8 @@ import { writeEvidenceFile } from "../../support/storage.mjs";
 import { summarizeFailure } from "../../support/verification/failure.mjs";
 import { identityEvidenceExitCode, verifyIdentityEvidence } from "./trace.mjs";
 import { inspectOrganizationRead } from "./organization-freshness.mjs";
+import { collectOrganizationDisplayEvidence } from "./organization-display-evidence.mjs";
+import { createTraceDiagnostics } from "../../support/trace-diagnostics.mjs";
 import {
   assertWorkspaceBootstrap,
   assertRevokingWorkspaceBootstrap,
@@ -58,6 +60,9 @@ const idp = createFixtureClient({ issuer, port, ca: await readFile(certPath) });
 const docker = dockerClient(process.env, undefined, 480000);
 const contexts = [];
 const checks = [];
+const diagnostics = createTraceDiagnostics({
+  directory: process.env.ANTNEST_IDENTITY_EVIDENCE_DIR,
+});
 const browserProblems = [];
 const browserRequests = [];
 let browser,
@@ -553,7 +558,11 @@ try {
   step = "display-cache-read-through-expiry";
   await freshness.afterRename(changed, committedMS);
   step = "display-cache-traces";
-  freshnessEvidence = await freshness.collect(jaeger);
+  freshnessEvidence = await collectOrganizationDisplayEvidence({
+    record: freshness.snapshot(),
+    diagnostics,
+    collect: (signal) => freshness.collect(jaeger, signal),
+  });
   checks.push(
     "independent-session-bootstrap-ssr-hits-empty-feed-refresh-and-ttl-expiry",
   );
@@ -749,13 +758,15 @@ try {
       surface: "bootstrap",
       ttlMS: freshnessEvidence.timeline.ttl_ms,
     }));
-  if (admittedReads.length)
-    membershipEvidence = await verifyIdentityEvidence(
-      jaeger,
-      admittedReads,
-      secrets,
-      { inspect: inspectOrganizationRead },
+  if (admittedReads.length) {
+    const trace = await diagnostics.run("organization-membership", (signal) =>
+      verifyIdentityEvidence(jaeger, admittedReads, secrets, {
+        inspect: inspectOrganizationRead,
+        signal,
+      }),
     );
+    if (trace.status === "passed") membershipEvidence = trace.value;
+  }
   membershipRejection = {
     committed_ms: deactivatedMS,
     ttl_ms: freshnessEvidence.timeline.ttl_ms,
@@ -874,6 +885,7 @@ await writeFile(
 process.stdout.write(
   JSON.stringify({
     status: "business_passed",
+    trace_diagnostics: diagnostics.summary(),
     suite: "organization-display",
     checks,
     bootstraps,
@@ -895,9 +907,12 @@ process.stdout.write(
     },
   }) + "\n",
 );
-process.exitCode = identityEvidenceExitCode([
-  ...membershipEvidence,
-  ...freshnessEvidence.resolutions,
-  ...freshnessEvidence.feeds,
-  ...freshnessEvidence.refreshes,
-]);
+process.exitCode =
+  diagnostics.summary().status === "warning"
+    ? 2
+    : identityEvidenceExitCode([
+        ...membershipEvidence,
+        ...freshnessEvidence.resolutions,
+        ...freshnessEvidence.feeds,
+        ...freshnessEvidence.refreshes,
+      ]);
