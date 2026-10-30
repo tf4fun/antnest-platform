@@ -55,6 +55,7 @@ describe.skipIf(url === undefined)(
       organizationId = admin.organizationId,
       accept = false,
       modelProfileRevision?: number,
+      agentId = "agent-removed",
     ) {
       const id = randomUUID(),
         sessionId = randomUUID(),
@@ -65,7 +66,7 @@ describe.skipIf(url === undefined)(
           connectionId: randomUUID(),
           organizationId,
           principalId: "owner-1",
-          agentId: "agent-removed",
+          agentId,
         },
         cwd: "/workspace",
         mcpRevisionId: revisionId,
@@ -360,9 +361,14 @@ describe.skipIf(url === undefined)(
     });
 
     it("exposes admitted primary and candidate revisions on persisted audit detail", async () => {
-      const first = await create(admin.organizationId, true, 7);
-      const second = await create(admin.organizationId, true, 8);
-      const legacy = await create(admin.organizationId, true);
+      const first = await create(admin.organizationId, true, 7, randomUUID());
+      const second = await create(admin.organizationId, true, 8, randomUUID());
+      const legacy = await create(
+        admin.organizationId,
+        true,
+        undefined,
+        randomUUID(),
+      );
       const reopened = new PostgresExecutionAudits(kernel);
       const reopenedQueries = new ExecutionAudits(reopened);
       const firstDetail = await reopenedQueries.get(
