@@ -52,7 +52,9 @@ const browserUsage = ajv.compile(consoleDefs.$defs.model_profile_usage);
 const effectiveModels = ajv.compile({
   $ref: "https://antnest.local/contracts/admin-console/live-model-semantics.schema.json#/$defs/effective_models",
 });
-const auditRevision = ajv.compile(auditSchema.properties.model_profile_revision);
+const auditRevision = ajv.compile(
+  auditSchema.properties.model_profile_revision,
+);
 const modelItemRevision = ajv.compile(
   snapshotSchema.properties.models.items.properties.model_profile_revision,
 );
@@ -61,9 +63,15 @@ test("control revision 48 and admin version 59 declare the live model surface", 
   assert.equal(control.revision, 48);
   assert.equal(admin.version, 59);
   const upstream = control.resources.model_profiles.usage;
-  assert.equal(upstream.path, "/internal/model-profiles/{model_profile_id}/usage");
+  assert.equal(
+    upstream.path,
+    "/internal/model-profiles/{model_profile_id}/usage",
+  );
   assert.deepEqual(upstream.query, ["organization_id"]);
-  assert.equal(upstream.response, "control-api.schema.json#/$defs/model_profile_usage");
+  assert.equal(
+    upstream.response,
+    "control-api.schema.json#/$defs/model_profile_usage",
+  );
   const browser = admin.routes.get_model_profile_usage;
   assert.equal(browser.path, "/model-profiles/{model_profile_id}/usage");
   assert.equal(
@@ -76,23 +84,38 @@ test("control revision 48 and admin version 59 declare the live model surface", 
 
 test("caller policies scope the usage route to the verified admin chain", () => {
   const upstream =
-    controlCallers.routes["GET /internal/model-profiles/{model_profile_id}/usage"];
+    controlCallers.routes[
+      "GET /internal/model-profiles/{model_profile_id}/usage"
+    ];
   assert.deepEqual(upstream.caller_context, { "admin-console": "required" });
   assert.equal(upstream.request_body, "none");
   const browser =
-    adminCallers.routes["GET /api/admin/model-profiles/{model_profile_id}/usage"];
+    adminCallers.routes[
+      "GET /api/admin/model-profiles/{model_profile_id}/usage"
+    ];
   assert.deepEqual(browser.caller_context, { "edge-gateway": "required" });
   assert.equal(browser.request_body, "none");
 });
 
 test("Controller and BFF usage schemas accept and reject identical counts", () => {
   for (const counts of validCounts) {
-    assert.ok(controllerUsage(counts), `Controller rejected ${JSON.stringify(counts)}`);
+    assert.ok(
+      controllerUsage(counts),
+      `Controller rejected ${JSON.stringify(counts)}`,
+    );
     assert.ok(browserUsage(counts), `BFF rejected ${JSON.stringify(counts)}`);
   }
   for (const counts of invalidCounts) {
-    assert.equal(controllerUsage(counts), false, `Controller accepted ${JSON.stringify(counts)}`);
-    assert.equal(browserUsage(counts), false, `BFF accepted ${JSON.stringify(counts)}`);
+    assert.equal(
+      controllerUsage(counts),
+      false,
+      `Controller accepted ${JSON.stringify(counts)}`,
+    );
+    assert.equal(
+      browserUsage(counts),
+      false,
+      `BFF accepted ${JSON.stringify(counts)}`,
+    );
   }
 });
 
@@ -103,14 +126,16 @@ test("live revision fragments stay bounded and pinning stays absent", () => {
       { model_profile_id: "model-1", revision: 2 },
       { model_profile_id: "model-2", revision: maximumSafeInteger },
     ],
-  ]) assert.ok(effectiveModels(models));
+  ])
+    assert.ok(effectiveModels(models));
   for (const models of [
     [],
     [{ model_profile_id: "", revision: 1 }],
     [{ model_profile_id: "model-1", revision: 0 }],
     [{ model_profile_id: "model-1", revision: maximumSafeInteger + 1 }],
     [{ model_profile_id: "model-1" }],
-  ]) assert.equal(effectiveModels(models), false, JSON.stringify(models));
+  ])
+    assert.equal(effectiveModels(models), false, JSON.stringify(models));
   for (const revision of [1, 7, maximumSafeInteger, null])
     assert.ok(auditRevision(revision));
   for (const revision of [0, 1.5, "7", maximumSafeInteger + 1])
@@ -125,6 +150,10 @@ test("live revision fragments stay bounded and pinning stays absent", () => {
     assert.ok(definition, `${name} must exist`);
     const text = JSON.stringify(definition);
     for (const field of pinFields)
-      assert.equal(text.includes(`"${field}"`), false, `${field} appeared on ${name}`);
+      assert.equal(
+        text.includes(`"${field}"`),
+        false,
+        `${field} appeared on ${name}`,
+      );
   }
 });

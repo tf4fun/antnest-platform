@@ -13,7 +13,10 @@ import {
 } from "../../../../services/agent-acp-service/test/fixtures/execution-configuration.js";
 
 const ajvRequire = createRequire(
-  new URL("../../../../services/agent-acp-service/package.json", import.meta.url),
+  new URL(
+    "../../../../services/agent-acp-service/package.json",
+    import.meta.url,
+  ),
 );
 const { Ajv2020 } = ajvRequire("ajv/dist/2020.js") as {
   Ajv2020: new (options: object) => {
@@ -94,12 +97,16 @@ describe("live model revision delivery boundary", () => {
     const live = liveConfiguration();
     expect(validate(live), JSON.stringify(validate.errors)).toBe(true);
     const admitted = capture(
-      publicExecutionConfiguration(parseExecutionConfiguration(structuredClone(live))),
+      publicExecutionConfiguration(
+        parseExecutionConfiguration(structuredClone(live)),
+      ),
     );
     const stored: unknown = JSON.parse(JSON.stringify(admitted));
     const parsed = parseStoredRunSnapshot(stored);
     expect(parsed.modelProfileRevision).toBe(7);
-    expect(parsed.executionSpec.fallbackModels?.[0]?.modelProfileRevision).toBe(4);
+    expect(parsed.executionSpec.fallbackModels?.[0]?.modelProfileRevision).toBe(
+      4,
+    );
     expect(parsed.executionSpec.compactionModel?.modelProfileRevision).toBe(9);
 
     const next = structuredClone(live);
@@ -112,7 +119,9 @@ describe("live model revision delivery boundary", () => {
     expect(parsed.modelProfileRevision).toBe(7);
     expect(parsed.configurationRevision).toBe(admitted.configurationRevision);
     expect(parsed.agentSpecRevision).toBe(admitted.agentSpecRevision);
-    expect(parsed.executionSpec.systemPrompt).toBe(admitted.executionSpec.systemPrompt);
+    expect(parsed.executionSpec.systemPrompt).toBe(
+      admitted.executionSpec.systemPrompt,
+    );
   });
 
   it("keeps legacy publications without revision metadata unchanged", () => {

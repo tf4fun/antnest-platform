@@ -92,12 +92,14 @@ describe.skipIf(url === undefined)(
           admitted.executionSpec = {
             ...admitted.executionSpec,
             modelFailover: "before_output",
-            fallbackModels: [{
-              modelProfileId: "fallback-profile",
-              providerConnectionId: "fallback-connection",
-              modelProfileRevision: 4,
-              model: { ...primary, model: "fallback-model" },
-            }],
+            fallbackModels: [
+              {
+                modelProfileId: "fallback-profile",
+                providerConnectionId: "fallback-connection",
+                modelProfileRevision: 4,
+                model: { ...primary, model: "fallback-model" },
+              },
+            ],
             compactionModel: {
               modelProfileId: "compactor-profile",
               providerConnectionId: "compactor-connection",
@@ -112,8 +114,7 @@ describe.skipIf(url === undefined)(
           environmentFact: null,
           acceptedAt: new Date(),
         });
-      }
-      else await runs.rejectRun(id, "provider_unavailable", new Date());
+      } else await runs.rejectRun(id, "provider_unavailable", new Date());
       return { id, sessionId };
     }
 
@@ -364,9 +365,21 @@ describe.skipIf(url === undefined)(
       const legacy = await create(admin.organizationId, true);
       const reopened = new PostgresExecutionAudits(kernel);
       const reopenedQueries = new ExecutionAudits(reopened);
-      const firstDetail = await reopenedQueries.get(admin, { run_id: first.id }, signal);
-      const secondDetail = await reopenedQueries.get(admin, { run_id: second.id }, signal);
-      const legacyDetail = await reopenedQueries.get(admin, { run_id: legacy.id }, signal);
+      const firstDetail = await reopenedQueries.get(
+        admin,
+        { run_id: first.id },
+        signal,
+      );
+      const secondDetail = await reopenedQueries.get(
+        admin,
+        { run_id: second.id },
+        signal,
+      );
+      const legacyDetail = await reopenedQueries.get(
+        admin,
+        { run_id: legacy.id },
+        signal,
+      );
       expect(firstDetail.model_profile_revision).toBe(7);
       expect(secondDetail.model_profile_revision).toBe(8);
       expect(legacyDetail.model_profile_revision).toBeNull();
@@ -378,13 +391,24 @@ describe.skipIf(url === undefined)(
         };
       };
       expect(snapshotBody.modelProfileRevision).toBe(7);
-      expect(snapshotBody.executionSpec?.fallbackModels?.[0]?.modelProfileRevision).toBe(4);
-      expect(snapshotBody.executionSpec?.compactionModel?.modelProfileRevision).toBe(9);
-      const raw = await pool.query<{ execution_snapshot: unknown }>("SELECT execution_snapshot FROM runs WHERE id = $1", [first.id]);
+      expect(
+        snapshotBody.executionSpec?.fallbackModels?.[0]?.modelProfileRevision,
+      ).toBe(4);
+      expect(
+        snapshotBody.executionSpec?.compactionModel?.modelProfileRevision,
+      ).toBe(9);
+      const raw = await pool.query<{ execution_snapshot: unknown }>(
+        "SELECT execution_snapshot FROM runs WHERE id = $1",
+        [first.id],
+      );
       const persisted = parseStoredRunSnapshot(raw.rows[0]?.execution_snapshot);
       expect(persisted.modelProfileRevision).toBe(7);
-      expect(persisted.executionSpec.fallbackModels?.[0]?.modelProfileRevision).toBe(4);
-      expect(persisted.executionSpec.compactionModel?.modelProfileRevision).toBe(9);
+      expect(
+        persisted.executionSpec.fallbackModels?.[0]?.modelProfileRevision,
+      ).toBe(4);
+      expect(
+        persisted.executionSpec.compactionModel?.modelProfileRevision,
+      ).toBe(9);
       await expect(
         reopenedQueries.get(
           { ...admin, organizationId: "other-org" },
