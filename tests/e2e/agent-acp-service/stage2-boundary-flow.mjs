@@ -1,5 +1,7 @@
 import { durablePath, writeEvidenceFile } from "../../support/storage.mjs";
 import { inspect } from "node:util";
+import { createTraceDiagnostics } from "../../support/trace-diagnostics.mjs";
+import { assertStage2BusinessInventory } from "./stage2-business.mjs";
 import { stage2Step } from "./stage2-step.mjs";
 import { assertStage2TraceCredentials } from "./stage2-trace-credentials.mjs";
 import assert from "node:assert/strict";
@@ -54,6 +56,10 @@ assert(
 const traceDirectory = `artifacts/verification/stage2-boundary/${project}/traces`;
 durablePath(traceDirectory);
 await mkdir(traceDirectory, { recursive: true, mode: 0o700 });
+const traceDiagnostics = createTraceDiagnostics({
+  directory: traceDirectory,
+  budgetMs: 60_000,
+});
 const compose = (...args) =>
   execFileSync(
     "docker",
@@ -71,6 +77,27 @@ const compose = (...args) =>
   );
 const sdk = startClientTelemetry(env("ANTNEST_STAGE2_OTLP_URL"));
 let telemetryStopped = false;
+async function shutdownTelemetry() {
+  if (telemetryStopped) return;
+  try {
+    await sdk.shutdown();
+  } catch (error) {
+    try {
+      writeEvidenceFile(
+        traceDirectory,
+        "sdk-shutdown.private.txt",
+        inspect(error, { depth: 8 }),
+      );
+    } catch {
+      console.warn("Stage2 telemetry failure archive unavailable");
+    }
+    await traceDiagnostics.run("stage2-sdk-shutdown", () =>
+      Promise.reject(error),
+    );
+  } finally {
+    telemetryStopped = true;
+  }
+}
 let privateAccess;
 const secrets = [];
 const sessions = [];
@@ -902,6 +929,17 @@ try {
     authority: privateAccess.authoritySnapshots(),
   };
   evidence.model_calls = modelCalls;
+  evidence.business_inventory = assertStage2BusinessInventory({
+    agentId,
+    audits: evidence.retained_audits,
+    interrupted: evidence.interrupted,
+    modelCalls,
+    private: evidence.private,
+    scenarios: evidence.scenarios,
+    management: evidence.management,
+    workflows: evidence.workflows,
+    auditReads: evidence.audit.traces.length,
+  });
   const idleStart = new Date().toISOString();
   const idleSamples = [];
   for (let sample = 0; sample < 3; sample++) {
@@ -935,203 +973,223 @@ try {
   console.log(
     JSON.stringify({ diagnostic: "idle-services", ...evidence.idle }),
   );
-  await sdk.shutdown();
-  telemetryStopped = true;
-  await delay(6000);
-  const jaeger = `http://127.0.0.1:${env("ANTNEST_JAEGER_UI_HOST_PORT")}`;
-  const traceFailures = [];
-  evidence.trace_reviews = [];
-  let traceReadNumber = 0;
-  const readTrace = async (id) => {
-    assert(/^[a-f0-9]{32}$/u.test(id), "valid Trace ID required");
-    const data = await waitForTraceParents(async (signal) => {
-      const response = await fetch(`${jaeger}/api/traces/${id}`, { signal });
-      if (response.status === 404) return null;
-      assert.equal(response.status, 200, `Jaeger trace query failed: ${id}`);
-      const payload = await response.json();
-      if (payload.data?.length === 0) return null;
-      assert.equal(payload.data?.length, 1);
-      await writeFile(
-        `${traceDirectory}/${id}-${++traceReadNumber}.json`,
-        JSON.stringify(payload.data[0]),
-        {
-          mode: 0o600,
+  await shutdownTelemetry();
+  await traceDiagnostics.run("stage2-traces", async (traceSignal) => {
+    await delay(6000, undefined, { signal: traceSignal });
+    const jaeger = `http://127.0.0.1:${env("ANTNEST_JAEGER_UI_HOST_PORT")}`;
+    const traceFailures = [];
+    evidence.trace_reviews = [];
+    let traceReadNumber = 0;
+    const readTrace = async (id) => {
+      assert(/^[a-f0-9]{32}$/u.test(id), "valid Trace ID required");
+      const data = await waitForTraceParents(
+        async (signal) => {
+          const response = await fetch(`${jaeger}/api/traces/${id}`, {
+            signal,
+          });
+          if (response.status === 404) return null;
+          assert.equal(
+            response.status,
+            200,
+            `Jaeger trace query failed: ${id}`,
+          );
+          const payload = await response.json();
+          if (payload.data?.length === 0) return null;
+          assert.equal(payload.data?.length, 1);
+          await writeFile(
+            `${traceDirectory}/${id}-${++traceReadNumber}.json`,
+            JSON.stringify(payload.data[0]),
+            {
+              mode: 0o600,
+            },
+          );
+          assertStage2TraceCredentials(payload.data[0], { secrets, sessions });
+          return payload.data[0];
         },
+        { signal: traceSignal },
       );
-      assertStage2TraceCredentials(payload.data[0], { secrets, sessions });
-      return payload.data[0];
-    });
-    const diagnostics = data.spans
-      .filter((span) => span.warnings?.length)
-      .map((span) => ({
-        span_id: span.spanID,
-        name: span.operationName,
-        service: data.processes[span.processID]?.serviceName,
-        warnings: span.warnings,
-        references: span.references,
-        start: span.startTime,
-        duration: span.duration,
-        parent: data.spans
-          .filter((item) =>
-            span.references?.some(
-              (ref) => ref.refType === "CHILD_OF" && ref.spanID === item.spanID,
-            ),
-          )
-          .map((item) => ({
-            name: item.operationName,
-            start: item.startTime,
-            duration: item.duration,
-          })),
-      }));
-    if (diagnostics.length)
-      console.error(
-        JSON.stringify({
-          trace_id: id,
-          warning_spans: diagnostics.length,
-          warnings: [...new Set(diagnostics.flatMap((item) => item.warnings))],
-        }),
-      );
-    try {
-      evidence.trace_reviews.push(reviewStage2Trace(data));
-    } catch (error) {
-      traceFailures.push({ label: `strict:${id}`, message: error.message });
-    }
-    return data;
-  };
-  const auditTraces = evidence.audit.traces;
-  evidence.audit.traces = [];
-  const checkTrace = async (label, operation) => {
-    try {
-      await operation();
-    } catch (error) {
-      traceFailures.push({
-        label,
-        message: error instanceof Error ? error.message : String(error),
+      const diagnostics = data.spans
+        .filter((span) => span.warnings?.length)
+        .map((span) => ({
+          span_id: span.spanID,
+          name: span.operationName,
+          service: data.processes[span.processID]?.serviceName,
+          warnings: span.warnings,
+          references: span.references,
+          start: span.startTime,
+          duration: span.duration,
+          parent: data.spans
+            .filter((item) =>
+              span.references?.some(
+                (ref) =>
+                  ref.refType === "CHILD_OF" && ref.spanID === item.spanID,
+              ),
+            )
+            .map((item) => ({
+              name: item.operationName,
+              start: item.startTime,
+              duration: item.duration,
+            })),
+        }));
+      if (diagnostics.length)
+        console.error(
+          JSON.stringify({
+            trace_id: id,
+            warning_spans: diagnostics.length,
+            warnings: [
+              ...new Set(diagnostics.flatMap((item) => item.warnings)),
+            ],
+          }),
+        );
+      try {
+        evidence.trace_reviews.push(reviewStage2Trace(data));
+      } catch (error) {
+        traceFailures.push({ label: `strict:${id}`, message: error.message });
+      }
+      return data;
+    };
+    const auditTraces = evidence.audit.traces;
+    evidence.audit.traces = [];
+    const checkTrace = async (label, operation) => {
+      try {
+        await operation();
+      } catch (error) {
+        traceFailures.push({
+          label,
+          message: error instanceof Error ? error.message : String(error),
+        });
+      }
+    };
+    for (const id of new Set(auditTraces))
+      await checkTrace(`audit:${id}`, async () => {
+        evidence.audit.traces.push(inspectAuditBoundary(await readTrace(id)));
+      });
+    evidence.execution = [];
+    evidence.connections = [];
+    for (const id of stage2CompletedTraceIDs(
+      modelCalls,
+      evidence.interrupted,
+    )) {
+      await checkTrace(`run:${id}`, async () => {
+        const run = await readTrace(id);
+        const inspected = inspectExecutionBoundary({ source: run, run });
+        const prompt = run.spans.find(
+          (span) => span.spanID === inspected.prompt_span_id,
+        );
+        const candidates = [
+          ...evidence.private.connections.flatMap((connection) =>
+            connection.evidence.map((receipt) => ({ receipt })),
+          ),
+          ...evidence.private.http.flatMap((connection) =>
+            connection.evidence.map((receipt) => ({
+              receipt,
+              http: connection.http,
+            })),
+          ),
+        ].filter(
+          ({ receipt }) =>
+            receipt.method === "session/prompt" &&
+            receipt.outcome === "succeeded" &&
+            receipt.requestId === tag(prompt, "antnest.request.id") &&
+            receipt.inputSessionID === inspected.session_id &&
+            receipt.agentId === inspected.agent_id &&
+            `v${receipt.protocolVersion}` ===
+              tag(prompt, "antnest.protocol.version") &&
+            (receipt.transport === "http"
+              ? receipt.traceID === id
+              : prompt.references.some(
+                  (link) =>
+                    link.refType === "FOLLOWS_FROM" &&
+                    link.traceID === receipt.connectionTraceID,
+                )),
+        );
+        assert.equal(
+          candidates.length,
+          1,
+          "completed Run needs one original private Prompt receipt",
+        );
+        const { receipt, http } = candidates[0];
+        const connection =
+          receipt.transport === "websocket"
+            ? await readTrace(receipt.connectionTraceID)
+            : undefined;
+        const bound = inspectStage2PrivatePrompt(run, receipt, {
+          connection,
+          http,
+          secrets,
+        });
+        assert.equal(bound.prompt_span_id, inspected.prompt_span_id);
+        evidence.execution.push({ ...inspected, ...bound });
+        if (connection)
+          evidence.connections.push({
+            trace_id: connection.traceID,
+            request_id: receipt.requestId,
+          });
       });
     }
-  };
-  for (const id of new Set(auditTraces))
-    await checkTrace(`audit:${id}`, async () => {
-      evidence.audit.traces.push(inspectAuditBoundary(await readTrace(id)));
-    });
-  evidence.execution = [];
-  evidence.connections = [];
-  for (const id of stage2CompletedTraceIDs(modelCalls, evidence.interrupted)) {
-    await checkTrace(`run:${id}`, async () => {
-      const run = await readTrace(id);
-      const inspected = inspectExecutionBoundary({ source: run, run });
-      const prompt = run.spans.find(
-        (span) => span.spanID === inspected.prompt_span_id,
-      );
-      const candidates = [
-        ...evidence.private.connections.flatMap((connection) =>
-          connection.evidence.map((receipt) => ({ receipt })),
-        ),
-        ...evidence.private.http.flatMap((connection) =>
-          connection.evidence.map((receipt) => ({
-            receipt,
-            http: connection.http,
-          })),
-        ),
-      ].filter(
-        ({ receipt }) =>
-          receipt.method === "session/prompt" &&
-          receipt.outcome === "succeeded" &&
-          receipt.requestId === tag(prompt, "antnest.request.id") &&
-          receipt.inputSessionID === inspected.session_id &&
-          receipt.agentId === inspected.agent_id &&
-          `v${receipt.protocolVersion}` ===
-            tag(prompt, "antnest.protocol.version") &&
-          (receipt.transport === "http"
-            ? receipt.traceID === id
-            : prompt.references.some(
-                (link) =>
-                  link.refType === "FOLLOWS_FROM" &&
-                  link.traceID === receipt.connectionTraceID,
-              )),
+    evidence.lifecycle = [];
+    for (const source of evidence.management)
+      await checkTrace(`lifecycle:${source.kind}`, async () => {
+        evidence.lifecycle.push(
+          inspectLifecycleBoundary(
+            await readTrace(source.trace_id),
+            source.kind,
+          ),
+        );
+      });
+    await checkTrace("complete-stage2-inventory", () => {
+      evidence.inventory = assertStage2Inventory({
+        agentId,
+        audits: evidence.retained_audits,
+        execution: evidence.execution,
+        modelCalls,
+        interrupted: evidence.interrupted,
+        scenarios: evidence.scenarios,
+        management: evidence.lifecycle,
+        workflows: evidence.workflows,
+        auditTraceCount: evidence.audit.traces.length,
+      });
+      assert.equal(
+        evidence.execution.filter((row) => row.transport === "websocket")
+          .length,
+        5,
       );
       assert.equal(
-        candidates.length,
+        evidence.execution.filter((row) => row.transport === "http").length,
         1,
-        "completed Run needs one original private Prompt receipt",
-      );
-      const { receipt, http } = candidates[0];
-      const connection =
-        receipt.transport === "websocket"
-          ? await readTrace(receipt.connectionTraceID)
-          : undefined;
-      const bound = inspectStage2PrivatePrompt(run, receipt, {
-        connection,
-        http,
-        secrets,
-      });
-      assert.equal(bound.prompt_span_id, inspected.prompt_span_id);
-      evidence.execution.push({ ...inspected, ...bound });
-      if (connection)
-        evidence.connections.push({
-          trace_id: connection.traceID,
-          request_id: receipt.requestId,
-        });
-    });
-  }
-  evidence.lifecycle = [];
-  for (const source of evidence.management)
-    await checkTrace(`lifecycle:${source.kind}`, async () => {
-      evidence.lifecycle.push(
-        inspectLifecycleBoundary(await readTrace(source.trace_id), source.kind),
       );
     });
-  await checkTrace("complete-stage2-inventory", () => {
-    evidence.inventory = assertStage2Inventory({
-      agentId,
-      audits: evidence.retained_audits,
-      execution: evidence.execution,
-      modelCalls,
-      interrupted: evidence.interrupted,
-      scenarios: evidence.scenarios,
-      management: evidence.lifecycle,
-      workflows: evidence.workflows,
-      auditTraceCount: evidence.audit.traces.length,
-    });
-    assert.equal(
-      evidence.execution.filter((row) => row.transport === "websocket").length,
-      5,
+    console.log(
+      JSON.stringify({
+        diagnostic: "trace-summary",
+        audit_traces: evidence.audit.traces.length,
+        execution_traces: evidence.execution.length,
+        lifecycle_traces: evidence.lifecycle.length,
+        private_connections: evidence.connections.length,
+        strict_warning_failures: traceFailures.filter((item) =>
+          item.label.startsWith("strict:"),
+        ).length,
+        clock_warning_traces: evidence.trace_reviews.filter(
+          (item) => item.strict_trace === "failed",
+        ).length,
+        structural_failures: traceFailures.filter(
+          (item) => !item.label.startsWith("strict:"),
+        ),
+        secret_checks: evidence.secret_checks,
+      }),
     );
-    assert.equal(
-      evidence.execution.filter((row) => row.transport === "http").length,
-      1,
-    );
+    if (traceFailures.length) {
+      throw new Error(
+        `${traceFailures.length} auxiliary Stage2 Trace checks failed`,
+      );
+    }
   });
-  console.log(
-    JSON.stringify({
-      diagnostic: "trace-summary",
-      audit_traces: evidence.audit.traces.length,
-      execution_traces: evidence.execution.length,
-      lifecycle_traces: evidence.lifecycle.length,
-      private_connections: evidence.connections.length,
-      strict_warning_failures: traceFailures.filter((item) =>
-        item.label.startsWith("strict:"),
-      ).length,
-      clock_warning_traces: evidence.trace_reviews.filter(
-        (item) => item.strict_trace === "failed",
-      ).length,
-      structural_failures: traceFailures.filter(
-        (item) => !item.label.startsWith("strict:"),
-      ),
-      secret_checks: evidence.secret_checks,
-    }),
-  );
-  if (traceFailures.length) {
-    throw new Error(
-      `${traceFailures.length} trace checks failed; business scenarios are not full acceptance`,
-    );
-  }
 } catch (error) {
   failures.push(error);
 } finally {
   for (const close of [
     () => privateAccess?.closeAndWait(),
-    () => (telemetryStopped ? undefined : sdk.shutdown()),
+    () => shutdownTelemetry(),
   ]) {
     try {
       await close();
@@ -1146,6 +1204,7 @@ try {
       JSON.stringify({
         ...evidence,
         agent_id: agentId,
+        trace_diagnostics: traceDiagnostics.summary(),
         result: failures.length ? "failed" : "passed",
         failures: [...new Set(failures)].map((error) =>
           inspect(error, { depth: 12 }),
@@ -1175,7 +1234,9 @@ if (failures.length) {
 console.log(
   JSON.stringify({
     result: "passed",
+    status: "business_passed",
     agent_id: agentId,
-    inventory: evidence.inventory,
+    inventory: evidence.business_inventory,
+    trace_diagnostics: traceDiagnostics.summary(),
   }),
 );

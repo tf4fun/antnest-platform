@@ -349,8 +349,9 @@ to an unexpired predecessor lease can recover its abandoned Learning claim
 after expiry instead of remaining unavailable until a configuration mutation.
 
 System E2E recovery checks follow v2 digest/delta publication and cold credential
-reference resolution. Restore and shutdown Trace collection is auxiliary while
-original business and resource cleanup checks remain blocking. Skill install
+reference resolution. Stage2, restore and shutdown Trace collection is auxiliary
+while original SDK completions, durable audits, model/Tool inventory and resource
+cleanup checks remain blocking. Skill install
 failures retain sanitized phase and source-location evidence independently of
 private CI logs.
 

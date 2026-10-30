@@ -66,6 +66,12 @@ authentication, foreign-organization, cursor and outage rejection cases.
 PostgreSQL dump, raw service logs, decoded Temporal histories and three idle
 samples for both services remain part of the evidence.
 
+Final business admission uses the original v2 WebSocket and v1 HTTP completion
+receipts, successful Tool updates, terminal retained audits, model request and
+attempt inventory, management receipts and Temporal workflow inventory. It runs
+before any Jaeger queries and rejects missing or foreign completions, replay,
+failed requests and unfinished resource closure independently of Trace export.
+
 ## Trace and resource ownership
 
 Stage2 intentionally enables RPC content capture. Identity's existing enabled
@@ -85,6 +91,12 @@ body outcome. It must agree with the exported CLIENT, have zero body bytes,
 and accompany a successful original RPC response and joined connection.
 Raw data and known external SDK diagnostics are preserved;
 confirmed external SDK issues do not block internal-service acceptance.
+All Trace collection, credential inspection within exported Trace, topology and
+timing checks are auxiliary. Their original failures remain private evidence
+with a warning summary. Collection shares a 60 s budget; cancellation is passed
+to and joined by each trace reader. Missing collected Trace never counts as
+passed business work. Original request authorization and session isolation,
+Runtime behavior, persisted facts and actual cleanup remain blocking checks.
 
 Every connection, watch, exporter, request and child process is joined on both
 success and failure. Business, archive and cleanup failures retain their original
