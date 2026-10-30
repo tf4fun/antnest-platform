@@ -3,6 +3,59 @@ import test from "node:test";
 import { readFileSync } from "node:fs";
 import * as evidence from "./foundation-private-evidence.mjs";
 
+test("runner merge retains reliability and both Workspace scenario dispatches", () => {
+  const source = readFileSync(
+    new URL("./foundation-run.mjs", import.meta.url),
+    "utf8",
+  );
+  assert.match(
+    source,
+    /profile === "reliability"\s*\?\s*\(await import\("\.\/reliability-flow\.mjs"\)\)\.runReliability/u,
+  );
+  assert.match(
+    source,
+    /profile === "workspace"\s*\?\s*\(\s*await import\("\.\.\/workspace-closeout\/current-flow\.mjs"\)\s*\)\.workspaceProtocol\s*:\s*profile === "workspace-browser"\s*\?\s*\(\s*await import\("\.\.\/workspace-closeout\/browser-current-flow\.mjs"\)\s*\)\.runBrowserProfile/u,
+  );
+});
+
+test("runner merge retains main recovery profiles in auxiliary diagnostics", () => {
+  const source = readFileSync(
+    new URL("./foundation-run.mjs", import.meta.url),
+    "utf8",
+  );
+  const definition = source.match(
+    /const foundationDiagnostics = (\[[\s\S]*?\])\.includes\(profile\)/u,
+  );
+  assert(definition, "runner must explicitly select auxiliary diagnostic profiles");
+  assert.deepEqual(
+    [...definition[1].matchAll(/"([^"]+)"/gu)].map((match) => match[1]),
+    ["foundation", "loss", "restore", "skill-restore", "shutdown"],
+  );
+});
+
+test("runner merge retains both sides of the public business status profiles", () => {
+  const source = readFileSync(
+    new URL("./foundation-run.mjs", import.meta.url),
+    "utf8",
+  );
+  const definition = source.match(
+    /status:\s*(\[[\s\S]*?\])\.includes\(\s*profile,?\s*\)/u,
+  );
+  assert(definition, "runner must explicitly select public business profiles");
+  assert.deepEqual(
+    [...definition[1].matchAll(/"([^"]+)"/gu)].map((match) => match[1]),
+    [
+      "workspace",
+      "foundation",
+      "loss",
+      "restore",
+      "skill-restore",
+      "shutdown",
+      "reliability",
+    ],
+  );
+});
+
 test("Foundation public summary excludes original RPC and state bodies without changing private admission evidence", () => {
   assert.equal(typeof evidence.foundationPublicResult, "function");
   const original = {
