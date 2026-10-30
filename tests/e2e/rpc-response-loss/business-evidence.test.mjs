@@ -19,6 +19,44 @@ const tools = (e, index = 0, step = 0) =>
   );
 const clone = (value) => structuredClone(value);
 
+test("v2 response loss accepts an original delivered digest proof and rejects changed recovery scope or version", () => {
+  const evidence = fixture();
+  for (const selected of evidence.scenarios.filter((s) => s.kind === "apply")) {
+    const fault = selected.fault;
+    fault.held.method = "apply-execution-delta";
+    fault.held.base_revision = fault.held.revision - 1;
+    fault.records[0] = { ...fault.held, delivery: "dropped" };
+    fault.records[1] = {
+      receipt_id: fault.records[1].receipt_id,
+      method: "get-execution-digest",
+      organization_id: fault.held.organization_id,
+      schema_version: 2,
+      revision: fault.held.applied_revision,
+      applied_revision: fault.held.applied_revision,
+      digest: "a".repeat(64),
+      recovery_of: fault.held.receipt_id,
+      request_hash: "b".repeat(64),
+      response_hash: "c".repeat(64),
+      status: 200,
+      delivery: "delivered",
+    };
+  }
+  assert.deepEqual(inspect(evidence), summary);
+  for (const patch of [
+    { organization_id: "foreign" },
+    { revision: 1 },
+    { applied_revision: 1 },
+    { schema_version: 1 },
+    { digest: null },
+    { recovery_of: "other" },
+    { delivery: "expired" },
+  ]) {
+    const changed = clone(evidence);
+    Object.assign(changed.scenarios[0].fault.records[1], patch);
+    assert.throws(() => inspect(changed));
+  }
+});
+
 function executionCopies(evidence) {
   const seen = new WeakSet();
   const executions = [];

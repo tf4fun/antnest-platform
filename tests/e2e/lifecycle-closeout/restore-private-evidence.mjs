@@ -26,7 +26,7 @@ export function restorePublicResult(result) {
   return publicResult;
 }
 
-export function restorePrivateAdmission(result) {
+export function restorePrivateAdmission(result, { requireTrace = true } = {}) {
   assert.equal(result.profile, "offline-restore");
   for (const [field, count] of Object.entries({
     operations: 4,
@@ -57,7 +57,7 @@ export function restorePrivateAdmission(result) {
   assert.deepEqual(result.private_collection_errors, []);
   const work = result.private_restore,
     connections = result.private_connections,
-    requests = result.request_traces;
+    requests = result.request_traces ?? [];
   assert.equal(work.states.length, 2);
   const [initial, enabled] = work.states;
   assert.notEqual(initial.container.Id, enabled.container.Id);
@@ -69,16 +69,36 @@ export function restorePrivateAdmission(result) {
   assert.equal(work.logins.length, 2);
   assert.equal(work.delegations.length, 2);
   assert.equal(connections.length, 2);
-  assert.equal(requests.length, 8);
-  connections.forEach(checkPrivateACPConnection);
-  unique(connections.map((c) => c.connectionTraceID));
-  unique(connections.map((c) => c.clientSpanID));
-  unique(work.logins.map((login) => login.trace_id));
+  if (requireTrace) assert.equal(requests.length, 8);
+  connections.forEach((connection) =>
+    checkPrivateACPConnection(
+      requireTrace
+        ? connection
+        : {
+            ...connection,
+            connectionTraceID: undefined,
+            clientSpanID: undefined,
+            initialization: {
+              ...connection.initialization,
+              connectionTraceID: undefined,
+              clientSpanID: undefined,
+            },
+            evidence: connection.evidence.map((row) => ({
+              ...row,
+              connectionTraceID: undefined,
+              clientSpanID: undefined,
+            })),
+          },
+    ),
+  );
+  if (requireTrace) unique(connections.map((c) => c.connectionTraceID));
+  if (requireTrace) unique(connections.map((c) => c.clientSpanID));
+  if (requireTrace) unique(work.logins.map((login) => login.trace_id));
   unique(work.logins.map((login) => login.session_digest));
   assert.deepEqual(work.logins[0].principal, work.logins[1].principal);
   for (const [i, login] of work.logins.entries()) {
     assert.equal(login.status, 200);
-    assert.match(login.trace_id, /^[a-f0-9]{32}$/u);
+    if (requireTrace) assert.match(login.trace_id, /^[a-f0-9]{32}$/u);
     assert.match(login.session_digest, /^[a-f0-9]{64}$/u);
     assertRestoreOwner(
       login.principal,
@@ -135,22 +155,24 @@ export function restorePrivateAdmission(result) {
     ].entries()) {
       const trace = requests[index++],
         ordinary = row.method === "session/prompt";
-      assert.equal(trace.topology, "passed");
-      assert.deepEqual(
-        [
-          trace.method,
-          trace.request_id,
-          trace.connection_trace_id,
-          trace.session_id,
-        ],
-        [row.method, row.requestId, row.connectionTraceID, row.sessionId],
-      );
-      assert.equal(trace.runs, ordinary ? 1 : 0);
-      assert.equal(trace.runtime_tool_calls, ordinary ? 1 : 0);
+      if (requireTrace) {
+        assert.equal(trace.topology, "passed");
+        assert.deepEqual(
+          [
+            trace.method,
+            trace.request_id,
+            trace.connection_trace_id,
+            trace.session_id,
+          ],
+          [row.method, row.requestId, row.connectionTraceID, row.sessionId],
+        );
+        assert.equal(trace.runs, ordinary ? 1 : 0);
+        assert.equal(trace.runtime_tool_calls, ordinary ? 1 : 0);
+      }
       assert.equal(row.kind, ordinary ? "ordinary" : "request");
       assert.equal(row.rejection, undefined);
       assert.equal(row.rejectionReceipt, undefined);
-      assert.equal(trace.rejection, undefined);
+      if (requireTrace) assert.equal(trace.rejection, undefined);
       assert.equal(row.outcome, "succeeded");
       if (row.method === "initialize") continue;
       const session =
@@ -195,12 +217,12 @@ export function restorePrivateAdmission(result) {
         prompt: [{ type: "text", text: phase }],
       });
       assert.equal(row.requestResult.stopReason, "end_turn");
-      assert.equal(trace.run_id, work.runs[i].run_id);
+      if (requireTrace) assert.equal(trace.run_id, work.runs[i].run_id);
       providers.push(
         ...["tool", "reply"].map((stage) => ({
           phase,
           stage,
-          trace_id: trace.trace_id,
+          ...(requireTrace ? { trace_id: trace.trace_id } : {}),
         })),
       );
     }
@@ -216,13 +238,13 @@ export function restorePrivateAdmission(result) {
     work.provider_requests.map(({ phase, stage, trace_id }) => ({
       phase,
       stage,
-      trace_id,
+      ...(requireTrace ? { trace_id } : {}),
     })),
     providers,
   );
   const admissions = work.lifecycle_admissions;
   assert.equal(admissions.length, 4);
-  assert.equal(result.traces.length, 4);
+  if (requireTrace) assert.equal(result.traces.length, 4);
   assert.deepEqual(
     admissions.map((r) => [r.agentID, r.kind]),
     ["create", "disable", "enable", "delete"].map((kind) => [
@@ -231,14 +253,29 @@ export function restorePrivateAdmission(result) {
     ]),
   );
   unique(admissions.map((r) => r.requestID));
-  for (const [i, receipt] of admissions.entries()) {
-    const trace = result.traces[i];
-    assert.deepEqual(
-      [trace.trace_id, trace.agent_id, trace.request_id, trace.kind],
-      [receipt.traceID, receipt.agentID, receipt.requestID, receipt.kind],
-    );
-    assert.equal(trace.topology, "passed");
-  }
+  if (requireTrace)
+    for (const [i, receipt] of admissions.entries()) {
+      const trace = result.traces[i];
+      assert.deepEqual(
+        [trace.trace_id, trace.agent_id, trace.request_id, trace.kind],
+        [receipt.traceID, receipt.agentID, receipt.requestID, receipt.kind],
+      );
+      assert.equal(trace.topology, "passed");
+    }
+  const inventory = {
+    connections: 2,
+    initializations: 2,
+    business_requests: 6,
+    runs: 2,
+    provider_requests: 4,
+    runtime_tool_calls: 2,
+    lifecycle_admissions: 4,
+    login_sessions: 2,
+    databases: 7,
+    persistent_volumes: 2,
+    encryption_keys: 3,
+  };
+  if (!requireTrace) return { inventory };
   unique([...requests, ...result.traces].map((r) => r.trace_id));
   const diagnostics = restorePrivateOutcome(requests),
     strict = foundationTraceExitCode(result.traces);
@@ -261,18 +298,6 @@ export function restorePrivateAdmission(result) {
         : Math.max(strict, diagnostics.exit_code),
     accepted_exit: lifecycle && diagnostics.accepted ? 0 : 1,
     private_diagnostics: diagnostics,
-    inventory: {
-      connections: 2,
-      initializations: 2,
-      business_requests: 6,
-      runs: 2,
-      provider_requests: 4,
-      runtime_tool_calls: 2,
-      lifecycle_admissions: 4,
-      login_sessions: 2,
-      databases: 7,
-      persistent_volumes: 2,
-      encryption_keys: 3,
-    },
+    inventory,
   };
 }

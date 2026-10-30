@@ -1,3 +1,4 @@
+import { assertReceipts } from "./evidence.mjs";
 import { createHash } from "node:crypto";
 import assert from "node:assert/strict";
 import { isDeepStrictEqual } from "node:util";
@@ -694,8 +695,11 @@ function inspectFault(input, scenario) {
     "Foreign proxy receipt organization",
   );
   assert(
-    held.method ===
-      (scenario.kind === "apply" ? "apply-execution-snapshot" : "settle-agent"),
+    scenario.kind === "apply"
+      ? ["apply-execution-snapshot", "apply-execution-delta"].includes(
+          held.method,
+        )
+      : held.method === "settle-agent",
     "Proxy receipt belongs to another RPC method",
   );
   for (const key of ["request_hash", "response_hash"])
@@ -738,6 +742,10 @@ function inspectFault(input, scenario) {
     held.receipt_id,
     "Proxy lost a different held receipt",
   );
+  safeCheck(
+    () => assertReceipts(held, fault.records, { requireTrace: false }),
+    "Invalid original RPC loss recovery receipts",
+  );
   const ids = new Set();
   for (const [index, record] of fault.records.entries()) {
     nonempty(record.receipt_id, "Original proxy HTTP attempt ID required");
@@ -747,6 +755,7 @@ function inspectFault(input, scenario) {
       record.delivery === (index === 0 ? "dropped" : "delivered"),
       "Proxy loss or retry delivery was not observed",
     );
+    if (record.method === "get-execution-digest") continue;
     for (const key of [
       "method",
       "organization_id",

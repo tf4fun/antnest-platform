@@ -44,7 +44,7 @@ export function shutdownPublicResult(result) {
   } = result;
   return publicResult;
 }
-export function shutdownPrivateAdmission(result) {
+export function shutdownPrivateAdmission(result, { requireTrace = true } = {}) {
   assert.equal(result.profile, "shutdown");
   for (const [key, value] of Object.entries({
     operations: 2,
@@ -64,18 +64,18 @@ export function shutdownPrivateAdmission(result) {
   const work = result.private_shutdown,
     connections = result.private_connections,
     states = result.private_state_watches,
-    requests = result.request_traces,
-    watches = result.watch_traces;
+    requests = result.request_traces ?? [],
+    watches = result.watch_traces ?? [];
   assert.equal(work.states.length, 2);
   assert.equal(work.logins.length, 1);
   assert.equal(work.delegations.length, 4);
   assert.equal(connections.length, 2);
   assert.equal(states.length, 2);
-  assert.equal(requests.length, 4);
-  assert.equal(watches.length, 2);
+  if (requireTrace) assert.equal(requests.length, 4);
+  if (requireTrace) assert.equal(watches.length, 2);
   const login = work.logins[0];
   assert.equal(login.status, 200);
-  assert.match(login.trace_id, /^[a-f0-9]{32}$/u);
+  if (requireTrace) assert.match(login.trace_id, /^[a-f0-9]{32}$/u);
   assert.match(login.session_digest, /^[a-f0-9]{64}$/u);
   for (const state of work.states)
     assertRestoreOwner(
@@ -156,9 +156,31 @@ export function shutdownPrivateAdmission(result) {
   );
   const session = connections[0].evidence[0].sessionId;
   assert(typeof session === "string" && session.length > 0);
-  connections.forEach(checkPrivateACPConnection);
-  unique(connections.map((connection) => connection.connectionTraceID));
-  unique(connections.map((connection) => connection.clientSpanID));
+  connections.forEach((connection) =>
+    checkPrivateACPConnection(
+      requireTrace
+        ? connection
+        : {
+            ...connection,
+            connectionTraceID: undefined,
+            clientSpanID: undefined,
+            initialization: {
+              ...connection.initialization,
+              connectionTraceID: undefined,
+              clientSpanID: undefined,
+            },
+            evidence: connection.evidence.map((row) => ({
+              ...row,
+              connectionTraceID: undefined,
+              clientSpanID: undefined,
+            })),
+          },
+    ),
+  );
+  if (requireTrace)
+    unique(connections.map((connection) => connection.connectionTraceID));
+  if (requireTrace)
+    unique(connections.map((connection) => connection.clientSpanID));
   let requestIndex = 0;
   for (const [i, connection] of connections.entries()) {
     assert.equal(connection.version, 1);
@@ -181,19 +203,21 @@ export function shutdownPrivateAdmission(result) {
       assert.equal(row.rejection, undefined);
       assert.equal(row.rejectionReceipt, undefined);
       const trace = requests[requestIndex++];
-      assert.equal(trace.topology, "passed");
-      assert.deepEqual(
-        [
-          trace.method,
-          trace.request_id,
-          trace.connection_trace_id,
-          trace.session_id,
-        ],
-        [row.method, row.requestId, row.connectionTraceID, row.sessionId],
-      );
-      assert.equal(trace.runs, 0);
-      assert.equal(trace.runtime_tool_calls, 0);
-      assert.equal(trace.rejection, undefined);
+      if (requireTrace) {
+        assert.equal(trace.topology, "passed");
+        assert.deepEqual(
+          [
+            trace.method,
+            trace.request_id,
+            trace.connection_trace_id,
+            trace.session_id,
+          ],
+          [row.method, row.requestId, row.connectionTraceID, row.sessionId],
+        );
+        assert.equal(trace.runs, 0);
+        assert.equal(trace.runtime_tool_calls, 0);
+        assert.equal(trace.rejection, undefined);
+      }
       const raw = connection.raw_frames.filter(
         (frame) =>
           Object.hasOwn(frame, "id") &&
@@ -234,8 +258,8 @@ export function shutdownPrivateAdmission(result) {
     assert.deepEqual(row.principal, login.principal);
     assert.equal(row.session_digest, login.session_digest);
   }
-  unique(states.map((row) => row.traceID));
-  unique(states.map((row) => row.clientSpanID));
+  if (requireTrace) unique(states.map((row) => row.traceID));
+  if (requireTrace) unique(states.map((row) => row.clientSpanID));
   for (const [i, receipt] of states.entries())
     assertShutdownPrivateWatchReceipt(
       receipt,
@@ -276,10 +300,11 @@ export function shutdownPrivateAdmission(result) {
           diagnostic.observedAt >= work.stop.startedAt &&
           diagnostic.observedAt <= watch.closure.observedAt,
       );
-      assert(
-        watches[0].cancellation_error_spans > 0,
-        "remote socket termination requires the original cancellation Trace",
-      );
+      if (requireTrace)
+        assert(
+          watches[0].cancellation_error_spans > 0,
+          "remote socket termination requires the original cancellation Trace",
+        );
     }
   }
   assert.deepEqual(
@@ -290,52 +315,61 @@ export function shutdownPrivateAdmission(result) {
     work.public_watches[0].closure,
     states[0].closure,
   ]);
-  for (const [i, trace] of watches.entries()) {
-    assert.equal(trace.topology, "passed");
-    assert.equal(trace.remote_closure_verified, true);
-    assert.equal(trace.stop_window_verified, true);
-    assert.equal(
-      trace.trace_id,
-      i ? states[0].traceID : work.public_watches[0].traceID,
-    );
-    assert.deepEqual(trace.closure, result.watch_closures[i]);
+  for (const closure of result.watch_closures)
     assert(
-      trace.closure.observedAt >= work.stop.startedAt &&
-        trace.closure.observedAt <= work.stop_window.end,
+      Number.isSafeInteger(closure.observedAt) &&
+        closure.observedAt >= work.stop.startedAt &&
+        closure.observedAt <= work.stop_window.end,
+      "original stream closure must be inside the shutdown window",
+    );
+  const event = watches[0];
+  if (requireTrace) {
+    for (const [i, trace] of watches.entries()) {
+      assert.equal(trace.topology, "passed");
+      assert.equal(trace.remote_closure_verified, true);
+      assert.equal(trace.stop_window_verified, true);
+      assert.equal(
+        trace.trace_id,
+        i ? states[0].traceID : work.public_watches[0].traceID,
+      );
+      assert.deepEqual(trace.closure, result.watch_closures[i]);
+      assert(
+        trace.closure.observedAt >= work.stop.startedAt &&
+          trace.closure.observedAt <= work.stop_window.end,
+      );
+    }
+    assert.equal(watches[1].client_span_id, states[0].clientSpanID);
+    assert.equal(watches[1].agent_id, result.agent_id);
+    const stateWatch = watches[1];
+    assert.equal(stateWatch.kind, "private_state_watch");
+    assert.match(stateWatch.server_span_id, /^[a-f0-9]{16}$/u);
+    assert.equal(stateWatch.strict_trace, "failed");
+    assert.equal(stateWatch.error_spans, 1);
+    const originalError = {
+      trace_id: stateWatch.trace_id,
+      span_id: stateWatch.server_span_id,
+    };
+    assert.deepEqual(stateWatch.raw_error_inventory, [originalError]);
+    assert.deepEqual(stateWatch.owned_error_spans, [
+      { ...originalError, reason: "shutdown-private-state-process-shutdown" },
+    ]);
+    assert.equal(event.gateway_ancestry, true);
+    assert.equal(event.resolve_source_error_spans, 0);
+    assert(Number.isSafeInteger(event.error_spans) && event.error_spans >= 0);
+    assert.equal(event.error_spans, event.cancellation_error_spans);
+    assert(
+      Number.isSafeInteger(event.warning_count) &&
+        event.warning_count >= event.warnings.length,
+    );
+    assert.equal(event.warning_count === 0, event.warnings.length === 0);
+    assert.equal(
+      event.strict_trace,
+      event.error_spans || event.warning_count ? "failed" : "passed",
     );
   }
-  assert.equal(watches[1].client_span_id, states[0].clientSpanID);
-  assert.equal(watches[1].agent_id, result.agent_id);
-  const stateWatch = watches[1];
-  assert.equal(stateWatch.kind, "private_state_watch");
-  assert.match(stateWatch.server_span_id, /^[a-f0-9]{16}$/u);
-  assert.equal(stateWatch.strict_trace, "failed");
-  assert.equal(stateWatch.error_spans, 1);
-  const originalError = {
-    trace_id: stateWatch.trace_id,
-    span_id: stateWatch.server_span_id,
-  };
-  assert.deepEqual(stateWatch.raw_error_inventory, [originalError]);
-  assert.deepEqual(stateWatch.owned_error_spans, [
-    { ...originalError, reason: "shutdown-private-state-process-shutdown" },
-  ]);
-  const event = watches[0];
-  assert.equal(event.gateway_ancestry, true);
-  assert.equal(event.resolve_source_error_spans, 0);
-  assert(Number.isSafeInteger(event.error_spans) && event.error_spans >= 0);
-  assert.equal(event.error_spans, event.cancellation_error_spans);
-  assert(
-    Number.isSafeInteger(event.warning_count) &&
-      event.warning_count >= event.warnings.length,
-  );
-  assert.equal(event.warning_count === 0, event.warnings.length === 0);
-  assert.equal(
-    event.strict_trace,
-    event.error_spans || event.warning_count ? "failed" : "passed",
-  );
   const lifecycle = work.lifecycle_admissions;
   assert.equal(lifecycle.length, 2);
-  assert.equal(result.traces.length, 2);
+  if (requireTrace) assert.equal(result.traces.length, 2);
   assert.deepEqual(
     lifecycle.map((row) => [row.kind, row.agentID]),
     [
@@ -344,17 +378,31 @@ export function shutdownPrivateAdmission(result) {
     ],
   );
   unique(lifecycle.map((row) => row.requestID));
-  for (const [i, row] of lifecycle.entries()) {
-    const trace = result.traces[i];
-    assert.equal(trace.topology, "passed");
-    assert.deepEqual(
-      [trace.trace_id, trace.agent_id, trace.request_id, trace.kind],
-      [row.traceID, row.agentID, row.requestID, row.kind],
-    );
-    assert.equal(trace.rejection, undefined);
-    assert.equal(trace.restart_error_spans ?? 0, 0);
-    assert.equal(trace.expected_transport_faults ?? 0, 0);
-  }
+  if (requireTrace)
+    for (const [i, row] of lifecycle.entries()) {
+      const trace = result.traces[i];
+      assert.equal(trace.topology, "passed");
+      assert.deepEqual(
+        [trace.trace_id, trace.agent_id, trace.request_id, trace.kind],
+        [row.traceID, row.agentID, row.requestID, row.kind],
+      );
+      assert.equal(trace.rejection, undefined);
+      assert.equal(trace.restart_error_spans ?? 0, 0);
+      assert.equal(trace.expected_transport_faults ?? 0, 0);
+    }
+  const inventory = {
+    connections: 2,
+    initializations: 2,
+    business_requests: 2,
+    login_sessions: 1,
+    private_state_watches: 2,
+    maintenance_watch_closures: 2,
+    lifecycle_admissions: 2,
+    runs: 0,
+    provider_requests: 0,
+    runtime_tool_calls: 0,
+  };
+  if (!requireTrace) return { inventory };
   const all = [...requests, ...watches, ...result.traces];
   unique(all.map((trace) => trace.trace_id));
   const requestOutcome = restorePrivateOutcome(requests),
@@ -375,17 +423,6 @@ export function shutdownPrivateAdmission(result) {
       requests: requestOutcome,
       state_watch: watchOutcome,
     },
-    inventory: {
-      connections: 2,
-      initializations: 2,
-      business_requests: 2,
-      login_sessions: 1,
-      private_state_watches: 2,
-      maintenance_watch_closures: 2,
-      lifecycle_admissions: 2,
-      runs: 0,
-      provider_requests: 0,
-      runtime_tool_calls: 0,
-    },
+    inventory,
   };
 }

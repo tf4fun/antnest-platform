@@ -25,6 +25,133 @@ func settlementRequest() ports.LifecycleSettlementRequest {
 	return ports.LifecycleSettlementRequest{OrganizationID: "org-1", AgentID: "agent-1", OperationID: "operation-1", Mode: "wait", DeadlineAt: time.Now().Add(time.Minute)}
 }
 
+type settlementV2ClientStub struct {
+	*executionV2ClientStub
+	settle func(context.Context, ports.AgentSettlementRequest) (ports.AgentSettlementResult, error)
+}
+
+func (client settlementV2ClientStub) SettleAgent(ctx context.Context, request ports.AgentSettlementRequest) (ports.AgentSettlementResult, error) {
+	return client.settle(ctx, request)
+}
+
+func TestExecutionSettlementV2ClosesAdmissionWithoutOldOwnerDigestProof(t *testing.T) {
+	request := settlementRequest()
+	source := executionSource(t)
+	source.Agents[0].Agent.ActiveOperationRequestID = request.OperationID
+	var stages []string
+	store := &executionPublicationStoreStub{
+		read: func(context.Context, string) (ports.ExecutionSource, error) {
+			stages = append(stages, "read")
+			return source, nil
+		},
+		record: func(context.Context, ports.ExecutionAcknowledgement) error {
+			stages = append(stages, "record")
+			return nil
+		},
+	}
+	client := settlementV2ClientStub{
+		executionV2ClientStub: &executionV2ClientStub{
+			executionPublicationClientStub: executionPublicationClientStub{apply: func(_ context.Context, snapshot ports.ExecutionSnapshot) (ports.ExecutionAcknowledgement, error) {
+				stages = append(stages, "apply")
+				require.Equal(t, 2, snapshot.SchemaVersion)
+				require.False(t, snapshot.Agents[0].AcceptingRuns)
+				require.Equal(t, &request.OperationID, snapshot.Agents[0].OperationID)
+				return ports.ExecutionAcknowledgement{OrganizationID: source.OrganizationID, AppliedRevision: source.Revision}, nil
+			}},
+			digest: func(context.Context, string) (ports.ExecutionDigest, error) {
+				stages = append(stages, "digest")
+				return ports.ExecutionDigest{}, &ports.DependencyError{Service: "agent-acp-service", Code: "configuration_unavailable", Retryable: true}
+			},
+		},
+		settle: func(_ context.Context, input ports.AgentSettlementRequest) (ports.AgentSettlementResult, error) {
+			stages = append(stages, "settle")
+			require.Equal(t, source.Revision, input.MinimumRevision)
+			require.Equal(t, request.OperationID, input.OperationID)
+			return ports.AgentSettlementResult{AppliedRevision: source.Revision, Outcome: ports.ExecutionRuntimeBarrierRequired}, nil
+		},
+	}
+	publisher := NewExecutionPublisher(store, &executionCredentialOpener{}, client, WithExecutionWireVersion(2))
+	result, err := publisher.CloseAndSettle(t.Context(), request)
+	require.NoError(t, err)
+	require.Equal(t, ports.ExecutionRuntimeBarrierRequired, result.Outcome)
+	require.Equal(t, []string{"read", "digest", "apply", "record", "settle"}, stages)
+}
+
+func TestExecutionSettlementV2ReusesCurrentClosureAndRetainsDeltaPublication(t *testing.T) {
+	for _, alreadyApplied := range []bool{true, false} {
+		t.Run(map[bool]string{true: "already-applied", false: "older-publication"}[alreadyApplied], func(t *testing.T) {
+			request := settlementRequest()
+			source := executionSource(t)
+			source.Agents[0].Agent.ActiveOperationRequestID = request.OperationID
+			remote := currentV2Digest(t, source)
+			if !alreadyApplied {
+				remote.Revision--
+			}
+			var stages []string
+			store := &executionPublicationStoreStub{
+				read: func(context.Context, string) (ports.ExecutionSource, error) {
+					stages = append(stages, "read")
+					return source, nil
+				},
+				record: func(_ context.Context, ack ports.ExecutionAcknowledgement) error {
+					stages = append(stages, "record")
+					require.Equal(t, source.Revision, ack.AppliedRevision)
+					return nil
+				},
+			}
+			client := settlementV2ClientStub{
+				executionV2ClientStub: &executionV2ClientStub{
+					executionPublicationClientStub: executionPublicationClientStub{apply: func(context.Context, ports.ExecutionSnapshot) (ports.ExecutionAcknowledgement, error) {
+						return ports.ExecutionAcknowledgement{}, &ports.DependencyError{Service: "agent-acp-service", Code: "configuration_conflict", Retryable: true}
+					}},
+					digest: func(context.Context, string) (ports.ExecutionDigest, error) {
+						stages = append(stages, "digest")
+						return remote, nil
+					},
+					delta: func(_ context.Context, delta ports.ExecutionDelta) (ports.ExecutionAcknowledgement, error) {
+						stages = append(stages, "delta")
+						require.Equal(t, remote.Revision, delta.BaseRevision)
+						return ports.ExecutionAcknowledgement{OrganizationID: source.OrganizationID, AppliedRevision: source.Revision}, nil
+					},
+				},
+				settle: func(context.Context, ports.AgentSettlementRequest) (ports.AgentSettlementResult, error) {
+					stages = append(stages, "settle")
+					return ports.AgentSettlementResult{AppliedRevision: source.Revision, Outcome: ports.ExecutionRuntimeBarrierRequired}, nil
+				},
+			}
+			result, err := NewExecutionPublisher(store, &executionCredentialOpener{}, client, WithExecutionWireVersion(2)).CloseAndSettle(t.Context(), request)
+			require.NoError(t, err)
+			require.Equal(t, ports.ExecutionRuntimeBarrierRequired, result.Outcome)
+			want := []string{"read", "digest", "record", "settle"}
+			if !alreadyApplied {
+				want = []string{"read", "digest", "delta", "record", "settle"}
+			}
+			require.Equal(t, want, stages)
+		})
+	}
+}
+
+func TestExecutionSettlementV2DoesNotBypassInvalidOrUnauthorizedProof(t *testing.T) {
+	for _, code := range []string{"invalid_response", "service_unauthenticated", "caller_not_allowed", "configuration_conflict"} {
+		t.Run(code, func(t *testing.T) {
+			request := settlementRequest()
+			source := executionSource(t)
+			source.Agents[0].Agent.ActiveOperationRequestID = request.OperationID
+			failure := &ports.DependencyError{Service: "agent-acp-service", Code: code}
+			store := &executionPublicationStoreStub{read: func(context.Context, string) (ports.ExecutionSource, error) { return source, nil }}
+			client := settlementV2ClientStub{executionV2ClientStub: &executionV2ClientStub{
+				executionPublicationClientStub: executionPublicationClientStub{apply: func(context.Context, ports.ExecutionSnapshot) (ports.ExecutionAcknowledgement, error) {
+					t.Fatal("invalid or unauthorized proof must not trigger a full snapshot")
+					return ports.ExecutionAcknowledgement{}, nil
+				}},
+				digest: func(context.Context, string) (ports.ExecutionDigest, error) { return ports.ExecutionDigest{}, failure },
+			}}
+			_, err := NewExecutionPublisher(store, &executionCredentialOpener{}, client, WithExecutionWireVersion(2)).CloseAndSettle(t.Context(), request)
+			require.ErrorIs(t, err, failure)
+		})
+	}
+}
+
 func TestExecutionSettlementPublishesClosedCurrentOperationBeforeWaiting(t *testing.T) {
 	for _, outcome := range []string{ports.ExecutionSettled, ports.ExecutionNotSettled, ports.ExecutionRuntimeBarrierRequired} {
 		t.Run(outcome, func(t *testing.T) {
