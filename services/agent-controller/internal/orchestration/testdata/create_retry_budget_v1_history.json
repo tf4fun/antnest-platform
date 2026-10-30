@@ -77,11 +77,7 @@
           "buildId": "7e6324395bf070022d00cd4089f27ff9"
         },
         "sdkMetadata": {
-          "langUsedFlags": [
-            3,
-            1,
-            4
-          ],
+          "langUsedFlags": [3, 1, 4],
           "sdkName": "temporal-go",
           "sdkVersion": "1.49.0"
         },

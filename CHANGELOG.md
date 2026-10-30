@@ -339,6 +339,10 @@ native Runtime retains its separate per-instance token profile.
 
 ### Fixed
 
+Controller lifecycle termination releases its owned Skill preparation after
+committing the failure, including retries after a lost release confirmation.
+This frees the original preparation reservation before a failed-create Rebuild.
+
 Controller lifecycle phases terminate atomically when Temporal exhausts their
 retry budget while retaining the last retryable application error. Explicit
 retry timeout state is classified alongside timeout failures; older closed

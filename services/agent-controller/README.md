@@ -177,6 +177,11 @@ error. The Controller treats that outcome as a phase deadline and persists the
 same atomic termination as a timeout failure. A separate workflow version marker
 preserves the original failure path when replaying older closed histories.
 
+Terminating a create, rebuild or enable also releases its owned Skill preparation
+after the failure is committed. A lost RC release confirmation keeps the intent
+owned; retrying the already failed termination finishes that same idempotent
+release before a new preparation can occupy the Agent.
+
 `--healthcheck` probes the configured IPv4/IPv6 `/status` directly, bypassing
 environment proxies and refusing redirects while preserving TLS service identity.
 An empty TLS CA setting does not switch opted-in token/HTTP development probes
