@@ -1,3 +1,5 @@
+import { z } from "zod";
+
 import type {
   AuditDetail,
   AuditEvent,
@@ -17,6 +19,21 @@ import { decodeSessionEvent, type StoredSessionEvent } from "./session-event-cod
 const summaryColumns = `r.id AS run_id, r.session_id, s.agent_id, s.principal_id, r.state,
   to_char(r.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS created_at,
   to_char(r.updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS updated_at`;
+
+const admittedRevisionSchema = z.object({
+  modelProfileRevision: z
+    .number()
+    .int()
+    .positive()
+    .max(Number.MAX_SAFE_INTEGER)
+    .nullable()
+    .optional(),
+});
+
+function admittedModelProfileRevision(snapshot: unknown): number | null {
+  if (snapshot === null || snapshot === undefined) return null;
+  return admittedRevisionSchema.parse(snapshot).modelProfileRevision ?? null;
+}
 
 export class PostgresExecutionAudits implements ExecutionAuditRepository {
   public constructor(private readonly kernel: PostgresKernel) {}
@@ -68,13 +85,18 @@ export class PostgresExecutionAudits implements ExecutionAuditRepository {
     const row = result.rows[0];
     if (row === undefined) return null;
     const { budget_reason, ...detail } = row;
-    if (budget_reason === null) return detail;
+    const model_profile_revision = admittedModelProfileRevision(row.execution_snapshot);
+    if (budget_reason === null) return { ...detail, model_profile_revision };
     if (
       row.error_class !== "budget_exceeded" ||
       (row.state !== "failed" && row.state !== "unresolved")
     )
       throw new Error("Audit has inconsistent budget facts");
-    return { ...detail, budget_reason: budgetFactSchema.parse(budget_reason) };
+    return {
+      ...detail,
+      model_profile_revision,
+      budget_reason: budgetFactSchema.parse(budget_reason),
+    };
   }
 
   public async events(query: AuditEventQuery, signal: AbortSignal): Promise<AuditEvent[] | null> {

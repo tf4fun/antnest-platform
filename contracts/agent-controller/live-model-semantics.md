@@ -6,7 +6,10 @@ MCP and Skill inputs stay immutable. Controller control revision 48 activates
 the proposal: the usage and event routes, the `effective_models` reader
 projection, the model-scoped revision journal and the optional
 `model_profile_revision` on published models. ACP and Console consumer batches
-remain separate deliveries and deploy before any reliance on the new fields.
+are delivered consumers-first: the ACP reader, admission freeze and
+audit projection are implemented; the Console usage/confirmation surface is
+pending, and the Controller's new producer fields must deploy only after ACP.
+
 The model journal does not extend the Agent `event_type` enum, and the
 proposal introduces no optional model revision pinning. Issue #72 catalog and
 default ownership stays out of scope.

@@ -1,5 +1,6 @@
 import type { ResourceIdGenerator } from "../domain/resource-id.js";
 import { DomainError } from "../domain/errors.js";
+import { snapshotWithModelCandidate } from "../domain/run-snapshot.js";
 import { skillCommands, skillInvocation } from "../domain/skill-commands.js";
 import type { RuntimePath } from "../domain/runtime-information.js";
 import { withPlanTool } from "../domain/plan.js";
@@ -66,14 +67,7 @@ export class ContextBuilder {
     const calibrations = await withWorkerOwnership(ownershipSignal, async () => {
       const compaction = snapshot.executionSpec.compactionModel;
       const candidate =
-        compaction === undefined
-          ? undefined
-          : {
-              ...snapshot,
-              modelProfileId: compaction.modelProfileId,
-              providerConnectionId: compaction.providerConnectionId,
-              executionSpec: { ...snapshot.executionSpec, model: compaction.model },
-            };
+        compaction === undefined ? undefined : snapshotWithModelCandidate(snapshot, compaction);
       return {
         ratio: (await this.dependencies.repository.loadCalibration?.(snapshot)) ?? 1,
         candidateRatio:

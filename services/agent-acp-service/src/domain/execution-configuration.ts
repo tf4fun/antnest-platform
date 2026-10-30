@@ -68,6 +68,7 @@ const pricingSchema = z.strictObject({
 export const executionModelSchema = z.strictObject({
   provider_token_limits: providerTokenLimitsSchema.optional(),
   model_profile_id: identifier,
+  model_profile_revision: revision.optional(),
   connection_id: identifier,
   display_name: z.string().min(1).max(200),
   enabled: z.boolean(),
@@ -473,6 +474,9 @@ export function resolveExecutionConfiguration(
     compaction = {
       modelProfileId: candidate.model_profile_id,
       providerConnectionId: connection.connection_id,
+      ...(candidate.model_profile_revision === undefined
+        ? {}
+        : { modelProfileRevision: candidate.model_profile_revision }),
       model: modelSpec(candidate, connection.base_url),
     };
   }
@@ -519,6 +523,9 @@ export function resolveExecutionConfiguration(
       fallbackModels.push({
         modelProfileId: candidate.model_profile_id,
         providerConnectionId: connection.connection_id,
+        ...(candidate.model_profile_revision === undefined
+          ? {}
+          : { modelProfileRevision: candidate.model_profile_revision }),
         model: {
           ...modelSpec(candidate, connection.base_url),
           ...(candidateThinking === undefined ? {} : { thinking: candidateThinking }),
@@ -534,6 +541,9 @@ export function resolveExecutionConfiguration(
     executionRevision: agent.execution_revision,
     providerConnectionId: provider.connection_id,
     modelProfileId: model.model_profile_id,
+    ...(model.model_profile_revision === undefined
+      ? {}
+      : { modelProfileRevision: model.model_profile_revision }),
     model: {
       ...modelSpec(model, provider.base_url),
       ...(thinking === undefined ? {} : { thinking }),

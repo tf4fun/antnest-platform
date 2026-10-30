@@ -62,6 +62,7 @@ export type ModelSpec = {
 export type ModelCandidate = {
   modelProfileId: string;
   providerConnectionId: string;
+  modelProfileRevision?: number;
   model: ModelSpec;
 };
 
@@ -96,6 +97,7 @@ export type RunExecutionSnapshot = {
   organizationId: string;
   providerConnectionId: string;
   modelProfileId: string;
+  modelProfileRevision?: number;
   configurationRevision: number;
   accessRevision: string;
   deadlineAt: Date;
