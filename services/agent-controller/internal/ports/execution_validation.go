@@ -77,6 +77,7 @@ func (provider ExecutionProvider) valid(version int) bool {
 
 func (model ExecutionModel) valid(baseURL string) bool {
 	return executionIdentifier.MatchString(model.ModelProfileID) && executionText(model.DisplayName) && executionText(model.Model) &&
+		model.ModelProfileRevision >= 0 && model.ModelProfileRevision <= domain.MaximumSafeInteger &&
 		int64(model.ContextWindow) <= MaximumExecutionRevision && int64(model.MaxOutputTokens) <= MaximumExecutionRevision &&
 		domain.ValidateModelSpec(model.WithEndpoint(baseURL)) == nil
 }

@@ -62,6 +62,8 @@ type CatalogService interface {
 	GetTemplate(context.Context, string, string) (application.TemplateView, error)
 	GetTemplateRevision(context.Context, string, string, int64) (application.TemplateView, error)
 	ListTemplates(context.Context, application.ListCatalogInput) (application.TemplatePage, error)
+	GetModelProfileUsage(context.Context, string, string) (ports.ModelProfileUsage, error)
+	ListModelProfileEvents(context.Context, string, string, int64, int) (ports.ModelProfileEventPage, error)
 }
 
 type LifecycleService interface {
@@ -176,6 +178,8 @@ func (h *handler) routes() []routeDefinition {
 		{pattern: "POST /internal/model-profiles", handler: h.createModelProfile},
 		{pattern: "GET /internal/model-profiles", handler: h.listModelProfiles},
 		{pattern: "GET /internal/model-profiles/{model_profile_id}", handler: h.getModelProfile},
+		{pattern: "GET /internal/model-profiles/{model_profile_id}/usage", handler: h.getModelProfileUsage},
+		{pattern: "GET /internal/model-profiles/{model_profile_id}/events", handler: h.listModelProfileEvents},
 		{pattern: "POST /internal/model-profiles/{model_profile_id}/revisions", handler: h.reviseModelProfile},
 		{pattern: "POST /internal/agent-templates", handler: h.createTemplate, metadataOnly: true},
 		{pattern: "GET /internal/agent-templates", handler: h.listTemplates},
@@ -326,6 +330,11 @@ type modelProfileListResponse struct {
 	NextAfterID *string                `json:"next_after_id"`
 }
 
+type modelProfileEventListResponse struct {
+	Items             []ports.ModelProfileRevisedEvent `json:"items"`
+	NextAfterRevision *int64                           `json:"next_after_revision"`
+}
+
 type templateListResponse struct {
 	Items       []templateResponse `json:"items"`
 	NextAfterID *string            `json:"next_after_id"`
@@ -387,6 +396,7 @@ type agentResponse struct {
 	FailureStage                    string                                  `json:"failure_stage,omitempty"`
 	FailureCode                     string                                  `json:"failure_code,omitempty"`
 	Configuration                   *agentConfigurationResponse             `json:"configuration,omitempty"`
+	EffectiveModels                 []ports.EffectiveModel                  `json:"effective_models,omitempty"`
 	AggregateSequence               int64                                   `json:"aggregate_sequence"`
 	CreatedAt                       time.Time                               `json:"created_at"`
 	UpdatedAt                       time.Time                               `json:"updated_at"`
@@ -538,6 +548,72 @@ func (h *handler) getModelProfile(response http.ResponseWriter, request *http.Re
 		return
 	}
 	writeJSON(response, http.StatusOK, modelProfilePayload(view))
+}
+
+func (h *handler) getModelProfileUsage(response http.ResponseWriter, request *http.Request) {
+	response.Header().Set("Cache-Control", "no-store")
+	if request.ContentLength != 0 || len(request.TransferEncoding) != 0 {
+		writeError(response, http.StatusBadRequest, "invalid_request", "request is invalid", false)
+		return
+	}
+	organizationID, ok := requiredOrganizationQuery(response, request)
+	if !ok {
+		return
+	}
+	usage, err := h.catalog.GetModelProfileUsage(
+		request.Context(), organizationID, request.PathValue("model_profile_id"),
+	)
+	if err != nil {
+		writeServiceError(request.Context(), response, err)
+		return
+	}
+	writeJSON(response, http.StatusOK, usage)
+}
+
+func (h *handler) listModelProfileEvents(response http.ResponseWriter, request *http.Request) {
+	response.Header().Set("Cache-Control", "no-store")
+	if request.ContentLength != 0 || len(request.TransferEncoding) != 0 {
+		writeError(response, http.StatusBadRequest, "invalid_request", "request is invalid", false)
+		return
+	}
+	query, ok := strictQuery(response, request, map[string]struct{}{
+		"organization_id": {}, "after_revision": {}, "limit": {},
+	})
+	if !ok {
+		return
+	}
+	organizationID := strings.TrimSpace(query.Get("organization_id"))
+	if organizationID == "" {
+		writeError(response, http.StatusBadRequest, "invalid_request", "organization is required", false)
+		return
+	}
+	afterRevision, ok := nonnegativeInt64(response, query.Get("after_revision"))
+	if !ok {
+		return
+	}
+	limit := 0
+	if raw := query.Get("limit"); raw != "" {
+		parsed, err := strconv.Atoi(raw)
+		if err != nil || parsed < 1 || parsed > 100 {
+			writeError(response, http.StatusBadRequest, "invalid_request", "request is invalid", false)
+			return
+		}
+		limit = parsed
+	}
+	page, err := h.catalog.ListModelProfileEvents(
+		request.Context(), organizationID, request.PathValue("model_profile_id"), afterRevision, limit,
+	)
+	if err != nil {
+		writeServiceError(request.Context(), response, err)
+		return
+	}
+	items := page.Items
+	if items == nil {
+		items = []ports.ModelProfileRevisedEvent{}
+	}
+	writeJSON(response, http.StatusOK, modelProfileEventListResponse{
+		Items: items, NextAfterRevision: page.NextAfterRevision,
+	})
 }
 
 func (h *handler) listModelProfiles(response http.ResponseWriter, request *http.Request) {
@@ -1214,6 +1290,7 @@ func agentPayload(agent application.AgentView) agentResponse {
 		FailureStage:                    agent.FailureStage, FailureCode: agent.FailureCode,
 		AggregateSequence: agent.AggregateSequence,
 		CreatedAt:         agent.CreatedAt, UpdatedAt: agent.UpdatedAt,
+		EffectiveModels: agent.EffectiveModels,
 	}
 	if agent.RuntimeRecovery != nil {
 		projection := *agent.RuntimeRecovery

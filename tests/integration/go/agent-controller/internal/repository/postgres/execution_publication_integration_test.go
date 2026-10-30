@@ -94,7 +94,7 @@ func TestExecutionPublicationModelWriteAdvancesCurrentConfiguration(t *testing.T
 	require.Equal(t, current.Revision, state.Revision)
 }
 
-func TestExecutionPublicationIgnoresModelMetadataOnlyRevision(t *testing.T) {
+func TestExecutionPublicationAdvancesModelRevisionOnlyChanges(t *testing.T) {
 	repository := providerTestRepository(t)
 	model := integrationModelRecord(t)
 	seedProviderForModel(t, repository, model)
@@ -112,7 +112,7 @@ func TestExecutionPublicationIgnoresModelMetadataOnlyRevision(t *testing.T) {
 	require.NoError(t, err)
 	after, err := repository.GetExecutionSynchronization(t.Context(), model.OrganizationID)
 	require.NoError(t, err)
-	require.Equal(t, before, after)
+	require.Equal(t, before.Revision+1, after.Revision, "the published model revision is execution metadata")
 	current, err := repository.GetModelProfile(t.Context(), model.ModelProfileID)
 	require.NoError(t, err)
 	require.EqualValues(t, 2, current.Revision.Revision())

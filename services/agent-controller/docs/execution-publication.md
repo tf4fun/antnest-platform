@@ -888,3 +888,15 @@ PostgreSQL, real ACP owner barriers and authority restoration are excluded.
 The remote unit run repeats the test and records its own measurements;
 two-process PostgreSQL and system credential-rotation acceptance remain
 independent evidence.
+
+## Live model revisions
+
+Each published model entry carries the optional `model_profile_revision` field
+with the profile's current revision. Because that revision is visible
+publication metadata, every accepted profile revision — including identical,
+name-only or pricing-only edits — advances the organization execution
+revision; consumers learn the new snapshot and old persisted snapshots without
+the field remain valid. ACP consumers must deploy before relying on the field.
+Published snapshots freeze the value at emission; already-admitted Runs keep
+their candidate revisions and only the next published revision changes what
+new admissions see. There is no historical model-revision restore.

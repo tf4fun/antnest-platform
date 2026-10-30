@@ -6,7 +6,25 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+
+	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/domain"
 )
+
+func TestExecutionModelProfileRevisionValidation(t *testing.T) {
+	valid := ExecutionModel{
+		ModelParameters: domain.ModelParameters{Model: "model", ContextWindow: 8192, MaxOutputTokens: 1024},
+		ModelProfileID:  "model-1", ConnectionID: "provider-1", DisplayName: "Model", Enabled: true,
+	}
+	require.True(t, valid.valid("https://api.example.com"), "legacy snapshots without the field stay valid")
+	withRevision := valid
+	withRevision.ModelProfileRevision = 2
+	require.True(t, withRevision.valid("https://api.example.com"))
+	for _, revision := range []int64{-1, domain.MaximumSafeInteger + 1} {
+		rejected := valid
+		rejected.ModelProfileRevision = revision
+		require.False(t, rejected.valid("https://api.example.com"), "revision %d must be rejected", revision)
+	}
+}
 
 func TestExecutionTextUsesACPStringLength(t *testing.T) {
 	// Zod's string length is measured in UTF-16 code units, not UTF-8 bytes.

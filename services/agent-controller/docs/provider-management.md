@@ -235,6 +235,22 @@ Model edits and credential rotations are ordered under the command receipt lock,
 with version CAS in the transaction. An outer read is not a conflict authority:
 the same command may have committed between the first receipt check and that read.
 
+Live model revision tracking: a Model Profile edit commits a durable
+`model_profile_revised` journal row (organization, profile, sequential
+`revision` and `previous_revision`, `revision_id`, `request_id`, `occurred_at`)
+in the same transaction as the revision and its command receipt. Creation emits
+nothing, a rejected CAS emits nothing, and receipt replay cannot duplicate a
+row. The journal is model-scoped and separate from Agent events; it starts with
+migration 0036, so pre-migration revisions have no events and there is no
+historical revision restore. `GET /internal/model-profiles/{id}/usage` reports
+the complete, untruncated count of unique current Template heads (including
+disabled heads, primary or ordered fallback) and unique non-deleted Agents whose
+effective spec or running lifecycle target spec references the profile, so an
+operator sees the blast radius before saving an edit; the same scoped read
+returns 404 for unknown or cross-organization IDs.
+`GET /internal/model-profiles/{id}/events` pages the journal ascending by
+revision (`after_revision`, `limit` default 50, maximum 100).
+
 Deleting secret rows does not remove data that was already exported to
 telemetry. Provider creation, credential rotation and both discovery routes
 are metadata-only, so their credential DTOs are not captured even when

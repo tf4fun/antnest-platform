@@ -35,6 +35,14 @@ and requires a signed administrator CCT whose subject is that owner and whose
 request; concurrency uses `expected_authorization_revision`. A repeated stale
 write returns a conflict rather than allocating a second revision or event.
 
+Template prompt, runtime, MCP and Skill inputs remain immutable once an
+Agent spec is materialized, but the Model Profile and Provider connection the
+spec names are live: the detail response's `effective_models` projects the
+current revision of the primary and ordered fallback profiles without
+rewriting the frozen configuration. A spec without model references omits the
+field rather than fabricating an empty list. Stored Runs and immutable Agent
+spec/execution revisions never follow later model edits.
+
 See [execution publication](execution-publication.md) for how the default
 reaches ACP.
 

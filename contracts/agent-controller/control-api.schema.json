@@ -1023,6 +1023,100 @@
         }
       }
     },
+    "model_profile_usage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["templates", "agents"],
+      "properties": {
+        "templates": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "agents": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        }
+      }
+    },
+    "effective_model": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["model_profile_id", "revision"],
+      "properties": {
+        "model_profile_id": {
+          "$ref": "#/$defs/id"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        }
+      }
+    },
+    "model_profile_revised_event": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "event_type",
+        "request_id",
+        "organization_id",
+        "model_profile_id",
+        "revision_id",
+        "previous_revision",
+        "revision",
+        "occurred_at"
+      ],
+      "properties": {
+        "event_type": {
+          "const": "model_profile_revised"
+        },
+        "request_id": {
+          "$ref": "#/$defs/id"
+        },
+        "organization_id": {
+          "$ref": "#/$defs/id"
+        },
+        "model_profile_id": {
+          "$ref": "#/$defs/id"
+        },
+        "revision_id": {
+          "$ref": "#/$defs/id"
+        },
+        "previous_revision": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 2,
+          "maximum": 9007199254740991
+        },
+        "occurred_at": {
+          "$ref": "#/$defs/timestamp"
+        }
+      }
+    },
+    "model_profile_event_list": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["items", "next_after_revision"],
+      "properties": {
+        "items": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/model_profile_revised_event"
+          }
+        },
+        "next_after_revision": {
+          "type": ["integer", "null"],
+          "minimum": 1,
+          "maximum": 9007199254740991
+        }
+      }
+    },
     "create_template_request": {
       "type": "object",
       "additionalProperties": false,
@@ -1578,6 +1672,13 @@
         },
         "configuration": {
           "$ref": "#/$defs/agent_configuration"
+        },
+        "effective_models": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/effective_model"
+          }
         },
         "created_at": {
           "$ref": "#/$defs/timestamp"

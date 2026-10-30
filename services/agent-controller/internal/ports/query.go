@@ -49,6 +49,7 @@ type AgentConfigurationRecord struct {
 	ModelProfileID       string
 	ModelProfileName     string
 	ModelProfileRevision int64
+	EffectiveModels      []EffectiveModel
 	Snapshot             domain.AgentSpecSnapshot
 }
 

@@ -23,12 +23,20 @@ func (repository *Repository) GetAgentConfiguration(
 	ctx context.Context, agentID string, agentSpecRevisionID string,
 ) (ports.AgentConfigurationRecord, error) {
 	var record ports.AgentConfigurationRecord
-	var snapshotPayload []byte
+	var snapshotPayload, effectivePayload []byte
 	err := repository.pool.QueryRow(ctx, `
 SELECT spec.agent_id, spec.id, template.name,
        model_profile.id, model_profile.display_name,
-       spec.snapshot
+       spec.snapshot,
+       (SELECT COALESCE(jsonb_agg(jsonb_build_object('model_profile_id',resolved.id,'revision',resolved.version) ORDER BY resolved.position),'[]'::jsonb) FROM (
+        SELECT p.id,p.version,min(ref.position) AS position
+        FROM (SELECT spec.snapshot->>'model_profile_id' AS id,0::bigint AS position
+         UNION ALL SELECT value,ordinality FROM jsonb_array_elements_text(CASE WHEN jsonb_typeof(spec.snapshot->'fallback_model_profile_ids')='array' THEN spec.snapshot->'fallback_model_profile_ids' ELSE '[]'::jsonb END) WITH ORDINALITY) ref
+        JOIN agent_controller.model_profiles p ON p.id=ref.id AND p.organization_id=agent.organization_id
+        GROUP BY p.id,p.version) resolved)
 FROM agent_controller.agent_spec_revisions AS spec
+JOIN agent_controller.agents AS agent
+  ON agent.id = spec.agent_id
 JOIN agent_controller.agent_templates AS template
   ON template.id = spec.template_id
 JOIN agent_controller.model_profiles AS model_profile
@@ -36,7 +44,7 @@ JOIN agent_controller.model_profiles AS model_profile
 WHERE spec.agent_id = $1 AND spec.id = $2`, agentID, agentSpecRevisionID).Scan(
 		&record.AgentID, &record.AgentSpecRevisionID, &record.TemplateName,
 		&record.ModelProfileID, &record.ModelProfileName,
-		&snapshotPayload,
+		&snapshotPayload, &effectivePayload,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return ports.AgentConfigurationRecord{}, ports.ErrNotFound
@@ -50,6 +58,9 @@ WHERE spec.agent_id = $1 AND spec.id = $2`, agentID, agentSpecRevisionID).Scan(
 	}
 	record.Snapshot = snapshot
 	record.ModelProfileRevision = snapshot.ModelProfileVersion
+	if err := json.Unmarshal(effectivePayload, &record.EffectiveModels); err != nil {
+		return ports.AgentConfigurationRecord{}, fmt.Errorf("decode Agent effective model projection: %w", err)
+	}
 	return record, nil
 }
 

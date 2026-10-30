@@ -57,7 +57,7 @@ func buildExecutionSnapshot(ctx context.Context, source ports.ExecutionSource, v
 		if model.OrganizationID != source.OrganizationID || model.Revision.OrganizationID() != source.OrganizationID || model.Revision.Snapshot().ModelProfileID != model.ModelProfileID {
 			return ports.ExecutionSnapshot{}, ports.ErrInvalidExecutionConfiguration
 		}
-		result.Models = append(result.Models, ports.ExecutionModel{ModelParameters: model.Revision.Snapshot().Model.Parameters(), ModelProfileID: model.ModelProfileID, ConnectionID: model.ProviderConnectionID, DisplayName: model.DisplayName, Enabled: model.Enabled})
+		result.Models = append(result.Models, ports.ExecutionModel{ModelParameters: model.Revision.Snapshot().Model.Parameters(), ModelProfileID: model.ModelProfileID, ModelProfileRevision: model.Revision.Revision(), ConnectionID: model.ProviderConnectionID, DisplayName: model.DisplayName, Enabled: model.Enabled})
 	}
 	attachProviderObservations(result, source.ProviderObservations)
 	seenAgents := make(map[string]bool, len(source.Agents))

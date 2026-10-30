@@ -20,6 +20,19 @@ key and the OpenAI Chat Completions request protocol. Templates can list ordered
 fallback models; see [Provider failover](provider-failover.md). Console can
 discover remote models for a connection; see [Model discovery](model-discovery.md).
 
+Model Profiles stay live: Agents execute against the current head rather than a pinned
+revision, while Template prompt, runtime, MCP and Skill inputs remain immutable.
+Agent detail exposes `effective_models` — the current revision of the primary and
+ordered fallback profiles — as a live projection that never rewrites frozen
+configuration. `GET /internal/model-profiles/{id}/usage` reports complete,
+untruncated Template/Agent reference counts for operator confirmation, and every
+committed revision appends one `model_profile_revised` event to the model-scoped
+journal that starts with migration 0036; pre-migration revisions have no events
+and there is no model-history restore. Published execution snapshots now carry
+the profile's current `model_profile_revision`, so every accepted edit —
+including metadata-only changes — advances the execution publication revision
+and ACP consumers must deploy before relying on the field.
+
 Custom Providers, other builtin Providers and Codex subscription authentication
 are extensions. The contract defines how they fit and how unsupported
 capabilities are rejected. Console shows no Codex login button. No OAuth or

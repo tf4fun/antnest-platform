@@ -62,6 +62,13 @@ type machineControlContract struct {
 		FailedCreateTTLSeconds int      `json:"failed_create_ttl_seconds"`
 		CancelUpdate           string   `json:"cancel_update"`
 	} `json:"lifecycle_reliability"`
+	LiveModelSemantics struct {
+		EventType           string `json:"event_type"`
+		EventsDefaultLimit  int    `json:"events_default_limit"`
+		EventsMaxLimit      int    `json:"events_max_limit"`
+		UsageCountsComplete bool   `json:"usage_counts_complete"`
+		UsageTruncated      bool   `json:"usage_truncated"`
+	} `json:"live_model_semantics"`
 }
 
 type controlContractRoute struct {
@@ -93,7 +100,7 @@ func TestMachineControlContractMatchesRegisteredBoundary(t *testing.T) {
 	readStrictContractJSON(t, filepath.Join(root, "contracts/agent-controller/control-contract.json"), &contract)
 	var schema machineControlSchema
 	readContractJSON(t, filepath.Join(root, "contracts/agent-controller/control-api.schema.json"), &schema)
-	if contract.Revision != 47 || contract.Trust != "verified-workload-and-caller-context" || contract.Authentication != "service-authentication.md" {
+	if contract.Revision != 48 || contract.Trust != "verified-workload-and-caller-context" || contract.Authentication != "service-authentication.md" {
 		t.Fatalf("control contract revision = %d", contract.Revision)
 	}
 	if contract.MediaTypes.Request != "application/json" ||
