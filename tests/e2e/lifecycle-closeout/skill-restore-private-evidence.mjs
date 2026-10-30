@@ -34,7 +34,10 @@ export function skillRestorePublicResult(result) {
   return publicResult;
 }
 
-export function skillRestorePrivateAdmission(result) {
+export function skillRestorePrivateAdmission(
+  result,
+  { requireTrace = true } = {},
+) {
   assert.equal(result.profile, "offline-skill-restore");
   for (const [field, count] of Object.entries({
     operations: 9,
@@ -69,7 +72,7 @@ export function skillRestorePrivateAdmission(result) {
   assert.deepEqual(result.private_collection_errors, []);
   const work = result.private_skill_restore,
     connections = result.private_connections,
-    requests = result.request_traces;
+    requests = result.request_traces ?? [];
   assert.equal(work.states.length, 4);
   const [initial, peerInitial, enabled, peerEnabled] = work.states;
   assert.notEqual(result.agent_id, result.peer_agent_id);
@@ -104,16 +107,36 @@ export function skillRestorePrivateAdmission(result) {
   assert.equal(work.logins.length, 2);
   assert.equal(work.delegations.length, 4);
   assert.equal(connections.length, 4);
-  assert.equal(requests.length, 14);
-  connections.forEach(checkPrivateACPConnection);
-  unique(connections.map((c) => c.connectionTraceID));
-  unique(connections.map((c) => c.clientSpanID));
-  unique(work.logins.map((login) => login.trace_id));
+  if (requireTrace) assert.equal(requests.length, 14);
+  connections.forEach((connection) =>
+    checkPrivateACPConnection(
+      requireTrace
+        ? connection
+        : {
+            ...connection,
+            connectionTraceID: undefined,
+            clientSpanID: undefined,
+            initialization: {
+              ...connection.initialization,
+              connectionTraceID: undefined,
+              clientSpanID: undefined,
+            },
+            evidence: connection.evidence.map((row) => ({
+              ...row,
+              connectionTraceID: undefined,
+              clientSpanID: undefined,
+            })),
+          },
+    ),
+  );
+  if (requireTrace) unique(connections.map((c) => c.connectionTraceID));
+  if (requireTrace) unique(connections.map((c) => c.clientSpanID));
+  if (requireTrace) unique(work.logins.map((login) => login.trace_id));
   unique(work.logins.map((login) => login.session_digest));
   assert.deepEqual(work.logins[0].principal, work.logins[1].principal);
   for (const [i, login] of work.logins.entries()) {
     assert.equal(login.status, 200);
-    assert.match(login.trace_id, /^[a-f0-9]{32}$/u);
+    if (requireTrace) assert.match(login.trace_id, /^[a-f0-9]{32}$/u);
     assert.match(login.session_digest, /^[a-f0-9]{64}$/u);
     assertRestoreOwner(
       login.principal,
@@ -188,22 +211,24 @@ export function skillRestorePrivateAdmission(result) {
     ].entries()) {
       const trace = requests[index++],
         ordinary = row.method === "session/prompt";
-      assert.equal(trace.topology, "passed");
-      assert.deepEqual(
-        [
-          trace.method,
-          trace.request_id,
-          trace.connection_trace_id,
-          trace.session_id,
-        ],
-        [row.method, row.requestId, row.connectionTraceID, row.sessionId],
-      );
-      assert.equal(trace.runs, ordinary ? 1 : 0);
-      assert.equal(trace.runtime_tool_calls, ordinary ? 1 : 0);
+      if (requireTrace) {
+        assert.equal(trace.topology, "passed");
+        assert.deepEqual(
+          [
+            trace.method,
+            trace.request_id,
+            trace.connection_trace_id,
+            trace.session_id,
+          ],
+          [row.method, row.requestId, row.connectionTraceID, row.sessionId],
+        );
+        assert.equal(trace.runs, ordinary ? 1 : 0);
+        assert.equal(trace.runtime_tool_calls, ordinary ? 1 : 0);
+      }
       assert.equal(row.kind, ordinary ? "ordinary" : "request");
       assert.equal(row.rejection, undefined);
       assert.equal(row.rejectionReceipt, undefined);
-      assert.equal(trace.rejection, undefined);
+      if (requireTrace) assert.equal(trace.rejection, undefined);
       assert.equal(row.outcome, "succeeded");
       if (row.method === "initialize") continue;
       const session =
@@ -255,12 +280,12 @@ export function skillRestorePrivateAdmission(result) {
         prompt: [{ type: "text", text: phase }],
       });
       assert.equal(row.requestResult.stopReason, "end_turn");
-      assert.equal(trace.run_id, work.runs[i].run_id);
+      if (requireTrace) assert.equal(trace.run_id, work.runs[i].run_id);
       providers.push(
         ...["tool", "reply"].map((stage) => ({
           phase,
           stage,
-          trace_id: trace.trace_id,
+          ...(requireTrace ? { trace_id: trace.trace_id } : {}),
         })),
       );
     }
@@ -276,13 +301,13 @@ export function skillRestorePrivateAdmission(result) {
     work.provider_requests.map(({ phase, stage, trace_id }) => ({
       phase,
       stage,
-      trace_id,
+      ...(requireTrace ? { trace_id } : {}),
     })),
     providers,
   );
   const admissions = work.lifecycle_admissions;
   assert.equal(admissions.length, 9);
-  assert.equal(result.traces.length, 9);
+  if (requireTrace) assert.equal(result.traces.length, 9);
   assert.deepEqual(
     admissions.map((r) => [r.agentID, r.kind]),
     [
@@ -298,14 +323,15 @@ export function skillRestorePrivateAdmission(result) {
     ],
   );
   unique(admissions.map((r) => r.requestID));
-  for (const [i, receipt] of admissions.entries()) {
-    const trace = result.traces[i];
-    assert.deepEqual(
-      [trace.trace_id, trace.agent_id, trace.request_id, trace.kind],
-      [receipt.traceID, receipt.agentID, receipt.requestID, receipt.kind],
-    );
-    assert.equal(trace.topology, "passed");
-  }
+  if (requireTrace)
+    for (const [i, receipt] of admissions.entries()) {
+      const trace = result.traces[i];
+      assert.deepEqual(
+        [trace.trace_id, trace.agent_id, trace.request_id, trace.kind],
+        [receipt.traceID, receipt.agentID, receipt.requestID, receipt.kind],
+      );
+      assert.equal(trace.topology, "passed");
+    }
   assert.equal(work.frozen_skill.skill_id, result.restored_preset_skill);
   assert.equal(work.frozen_skill.version, 1);
   assert.equal(work.skill_files.length, 4);
@@ -343,6 +369,20 @@ export function skillRestorePrivateAdmission(result) {
       (r) => r.requestID === work.missing_volume.queries.at(-1).body.request_id,
     ),
   );
+  const inventory = {
+    connections: 4,
+    initializations: 4,
+    business_requests: 10,
+    runs: 4,
+    provider_requests: 8,
+    runtime_tool_calls: 4,
+    lifecycle_admissions: 9,
+    login_sessions: 2,
+    databases: 8,
+    persistent_volumes: volumes.length,
+    encryption_keys: 3,
+  };
+  if (!requireTrace) return { inventory };
   unique([...requests, ...result.traces].map((r) => r.trace_id));
   const diagnostics = restorePrivateOutcome(requests),
     strict = foundationTraceExitCode(result.traces);
@@ -365,18 +405,6 @@ export function skillRestorePrivateAdmission(result) {
         : Math.max(strict, diagnostics.exit_code),
     accepted_exit: lifecycle && diagnostics.accepted ? 0 : 1,
     private_diagnostics: diagnostics,
-    inventory: {
-      connections: 4,
-      initializations: 4,
-      business_requests: 10,
-      runs: 4,
-      provider_requests: 8,
-      runtime_tool_calls: 4,
-      lifecycle_admissions: 9,
-      login_sessions: 2,
-      databases: 8,
-      persistent_volumes: volumes.length,
-      encryption_keys: 3,
-    },
+    inventory,
   };
 }

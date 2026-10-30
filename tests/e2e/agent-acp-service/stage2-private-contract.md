@@ -51,6 +51,13 @@ post-recovery Prompt owns an independently observed Run trace and is included
 among all six completed Run traces; excluding the crash scenario trace must not
 silently exclude that recovery Run.
 
+With execution publication v2, the Controller-offline scenario uses a warm
+credential cache. SIGKILL recovery separately proves durable authority and the
+interrupted Run terminal state while Controller is stopped, with no model
+replay. Controller is then brought back before the explicit new Prompt: v2
+stores credential references and its process-local secret cache is empty after
+restart. The completed Run and model request inventory above remains required.
+
 Create and Rebuild retain their two original management traces. The five
 explicit Temporal histories are Create, Rebuild, Disable, Enable and Delete;
 automatic Disable is checked separately. The audit consumer retains all seven
@@ -58,6 +65,12 @@ Runs, its 48 successful HTTP reads (6 list, 14 detail, 28 events), and its exist
 authentication, foreign-organization, cursor and outage rejection cases.
 PostgreSQL dump, raw service logs, decoded Temporal histories and three idle
 samples for both services remain part of the evidence.
+
+Final business admission uses the original v2 WebSocket and v1 HTTP completion
+receipts, successful Tool updates, terminal retained audits, model request and
+attempt inventory, management receipts and Temporal workflow inventory. It runs
+before any Jaeger queries and rejects missing or foreign completions, replay,
+failed requests and unfinished resource closure independently of Trace export.
 
 ## Trace and resource ownership
 
@@ -78,6 +91,12 @@ body outcome. It must agree with the exported CLIENT, have zero body bytes,
 and accompany a successful original RPC response and joined connection.
 Raw data and known external SDK diagnostics are preserved;
 confirmed external SDK issues do not block internal-service acceptance.
+All Trace collection, credential inspection within exported Trace, topology and
+timing checks are auxiliary. Their original failures remain private evidence
+with a warning summary. Collection shares a 60 s budget; cancellation is passed
+to and joined by each trace reader. Missing collected Trace never counts as
+passed business work. Original request authorization and session isolation,
+Runtime behavior, persisted facts and actual cleanup remain blocking checks.
 
 Every connection, watch, exporter, request and child process is joined on both
 success and failure. Business, archive and cleanup failures retain their original

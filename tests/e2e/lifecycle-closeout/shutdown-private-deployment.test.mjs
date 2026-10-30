@@ -38,7 +38,10 @@ test("Shutdown keeps sixteen raw private services, nine application images and f
     source,
     /profile === "shutdown"\s*\? inspectFoundationPrivateDeployment\(rows, config\)/u,
   );
-  assert.match(source, /admission = shutdownPrivateAdmission\(result\)/u);
+  assert.match(
+    source,
+    /admission = await admitRecoveryBusiness\(profile, result, \{/u,
+  );
   const make = readFileSync(
     new URL("../../../Makefile", import.meta.url),
     "utf8",

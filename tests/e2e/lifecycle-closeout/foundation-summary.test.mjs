@@ -79,7 +79,10 @@ test("Foundation public summary excludes original RPC and state bodies without c
   assert(
     shutdownFailureIndex > archiveIndex &&
       shutdownFailureIndex <
-        source.indexOf("admission = shutdownPrivateAdmission(result)"),
+        source.indexOf(
+          "admission = await admitRecoveryBusiness(profile, result, {",
+          shutdownFailureIndex,
+        ),
     "Shutdown must preserve raw evidence before propagating original failures",
   );
   const lossFailureIndex = source.indexOf("lossFailures(result.lossErrors)");
@@ -89,7 +92,10 @@ test("Foundation public summary excludes original RPC and state bodies without c
   assert(
     restoreFailureIndex > archiveIndex &&
       restoreFailureIndex <
-        source.indexOf("admission = restorePrivateAdmission(result)"),
+        source.indexOf(
+          "admission = await admitRecoveryBusiness(profile, result, {",
+          restoreFailureIndex,
+        ),
     "Restore must preserve raw evidence before propagating original failures",
   );
   assert(

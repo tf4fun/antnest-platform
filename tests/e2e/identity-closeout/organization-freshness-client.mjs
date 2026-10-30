@@ -53,7 +53,7 @@ export { observeDisplayRejection };
 
 export async function searchOrganizationFeed(
   jaeger,
-  { directory, earliest, latest, fetchImpl },
+  { directory, earliest, latest, fetchImpl, signal },
 ) {
   assert(
     Number.isFinite(earliest) && Number.isFinite(latest) && earliest <= latest,
@@ -71,7 +71,7 @@ export async function searchOrganizationFeed(
       limit: "1000",
       lookback: `${lookback}ms`,
     }),
-    { fetchImpl, now },
+    { fetchImpl, now, signal },
   );
   writeEvidenceFile(
     directory,
@@ -251,6 +251,9 @@ export async function prepareOrganizationFreshness({
     );
   }
   return {
+    snapshot() {
+      return structuredClone(record);
+    },
     beginRename() {
       record.renameStartedMS = performance.now();
       save();
@@ -269,7 +272,7 @@ export async function prepareOrganizationFreshness({
       }
       for (const plan of plans) await read(plan, "expired", changed);
     },
-    async collect(jaeger) {
+    async collect(jaeger, signal) {
       const resolutions = await verifyIdentityEvidence(
         jaeger,
         record.reads.map((r) => ({
@@ -278,7 +281,7 @@ export async function prepareOrganizationFreshness({
           ttlMS: record.ttlMS,
         })),
         secrets,
-        { directory, inspect: inspectOrganizationRead },
+        { directory, inspect: inspectOrganizationRead, signal },
       );
       const timeline = assertOrganizationTimeline({ ...record, resolutions });
       const earliest =
@@ -298,6 +301,7 @@ export async function prepareOrganizationFreshness({
             limit: "1000",
             lookback: `${Math.ceil(Date.now() - record.startedEpochMS + 5000)}ms`,
           }),
+          { signal },
         );
         writeEvidenceFile(directory, name, JSON.stringify(result));
         assert(
@@ -310,6 +314,7 @@ export async function prepareOrganizationFreshness({
         directory,
         earliest,
         latest,
+        signal,
       });
       const feedExpected = selectSessionFeedRequests(
         feedTraces,
@@ -320,7 +325,7 @@ export async function prepareOrganizationFreshness({
         jaeger,
         feedExpected,
         secrets,
-        { directory, inspect: inspectEmptySessionFeed },
+        { directory, inspect: inspectEmptySessionFeed, signal },
       );
       const feedCoverage = assertDisplayFeedCoverage(
         resolutions,
@@ -367,7 +372,7 @@ export async function prepareOrganizationFreshness({
         jaeger,
         refreshExpected,
         secrets,
-        { directory, inspect: inspectOrganizationRefresh },
+        { directory, inspect: inspectOrganizationRefresh, signal },
       );
       const result = {
         timeline,

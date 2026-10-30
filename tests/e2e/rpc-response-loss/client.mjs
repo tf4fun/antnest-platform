@@ -420,7 +420,7 @@ async function exercise(version, kind, template, model) {
   if (kind === "apply") {
     const revision = (await sync()).revision + 1;
     await proxy("/__test/arm", {
-      method: "apply-execution-snapshot",
+      method: "apply-execution-delta",
       organization_id: organizationId,
       revision,
     });

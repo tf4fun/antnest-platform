@@ -39,7 +39,10 @@ test("Restore keeps sixteen raw private services, nine application images and it
     source,
     /profile === "restore"\s*\? inspectFoundationPrivateDeployment\(rows, config\)/u,
   );
-  assert.match(source, /admission = restorePrivateAdmission\(result\)/u);
+  assert.match(
+    source,
+    /admission = await admitRecoveryBusiness\(profile, result, \{/u,
+  );
   const makefile = readFileSync(
     new URL("../../../Makefile", import.meta.url),
     "utf8",
