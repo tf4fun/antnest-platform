@@ -351,8 +351,26 @@ func TestFailedCreateRebuildBlankStoredSpecFallback(t *testing.T) {
 		t.Fatal("blank-stored-spec base must satisfy the guard")
 	}
 	now := time.Now().UTC()
-	if _, _, err := repository.BeginAgentRebuild(ctx,
-		rebuildBeginForRetry(agent, loaded.ConfiguredSpec, create, now)); err != nil {
+	begin := rebuildBeginForRetry(agent, loaded.ConfiguredSpec, create, now)
+	state, replayed, err := repository.BeginAgentRebuild(ctx, begin)
+	if err != nil {
 		t.Fatal(err)
+	}
+	if replayed {
+		t.Fatal("first admission must not replay")
+	}
+	if state.SourceSpec.ID != create.TargetSpecRevisionID {
+		t.Fatalf("begin must rebuild the failed create target spec: %+v", state.SourceSpec)
+	}
+	if state.Operation.SourceFailedCreateRequestID != create.RequestID {
+		t.Fatalf("begin must carry the retry marker: %+v", state.Operation)
+	}
+	replayedState, replayed, err := repository.BeginAgentRebuild(ctx, begin)
+	if err != nil || !replayed {
+		t.Fatalf("exact begin replay must return stored state: %v replayed=%v", err, replayed)
+	}
+	if replayedState.Operation.RequestID != state.Operation.RequestID ||
+		replayedState.Operation.SourceFailedCreateRequestID != create.RequestID {
+		t.Fatalf("replay must preserve the operation and marker: %+v", replayedState.Operation)
 	}
 }

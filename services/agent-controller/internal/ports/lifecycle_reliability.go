@@ -52,15 +52,16 @@ func CanClearLifecycleQuarantine(base AgentLifecycleBase) bool {
 		agent.RuntimeRevision == "" {
 		return false
 	}
-	if agent.DesiredState == domain.DesiredEnabled {
+	switch agent.DesiredState {
+	case domain.DesiredEnabled:
 		if agent.ActivationState != domain.ActivationEnabled {
 			return false
 		}
-	} else if agent.DesiredState == domain.DesiredDisabled {
+	case domain.DesiredDisabled:
 		if agent.ActivationState != domain.ActivationDisabled {
 			return false
 		}
-	} else {
+	default:
 		return false
 	}
 	spec := base.ConfiguredSpec

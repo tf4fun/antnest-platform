@@ -40,14 +40,24 @@ func Open(ctx context.Context, address string, logger *slog.Logger) (client.Clie
 	}, nil
 }
 
-func NewWorker(temporalClient client.Client, service *application.LifecycleService, stopTimeout time.Duration, configurations ...WorkerConfiguration) worker.Worker {
-	configuration := normalizeWorkerConfiguration(configurations)
-	w := worker.New(temporalClient, TaskQueue, worker.Options{
+func lifecycleWorkerOptions(stopTimeout time.Duration, configuration WorkerConfiguration) worker.Options {
+	options := worker.Options{
 		WorkerStopTimeout:                      stopTimeout,
 		MaxConcurrentActivityExecutionSize:     4,
 		MaxConcurrentWorkflowTaskExecutionSize: 4,
-		BuildID:                                configuration.BuildID,
-	})
+	}
+	if configuration.BuildID != "" {
+		options.DeploymentOptions.Version = worker.WorkerDeploymentVersion{
+			DeploymentName: "agent-controller",
+			BuildID:        configuration.BuildID,
+		}
+	}
+	return options
+}
+
+func NewWorker(temporalClient client.Client, service *application.LifecycleService, stopTimeout time.Duration, configurations ...WorkerConfiguration) worker.Worker {
+	configuration := normalizeWorkerConfiguration(configurations)
+	w := worker.New(temporalClient, TaskQueue, lifecycleWorkerOptions(stopTimeout, configuration))
 	Register(w, service, configuration)
 	return w
 }
