@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 
 import { DomainError } from "../domain/errors.js";
+import { snapshotWithModelCandidate } from "../domain/run-snapshot.js";
 import { assertModelInputBudget, inputBudget } from "./context-budget.js";
 import { createTokenEstimator } from "./token-estimator.js";
 import { tokenCalibrationRatio } from "./token-calibration.js";
@@ -186,6 +187,9 @@ export async function compactModelContext(
   const selected = input.snapshot.executionSpec.compactionModel ?? {
     modelProfileId: input.snapshot.modelProfileId,
     providerConnectionId: input.snapshot.providerConnectionId,
+    ...(input.snapshot.modelProfileRevision === undefined
+      ? {}
+      : { modelProfileRevision: input.snapshot.modelProfileRevision }),
     model,
   };
   const compactorEstimator = createTokenEstimator(selected.model);
@@ -206,12 +210,10 @@ export async function compactModelContext(
       "Mandatory conversation context does not fit the selected model context window",
     );
 
-  const candidateSnapshot: RunExecutionSnapshot = {
-    ...input.snapshot,
-    modelProfileId: selected.modelProfileId,
-    providerConnectionId: selected.providerConnectionId,
-    executionSpec: { ...input.snapshot.executionSpec, model: selected.model },
-  };
+  const candidateSnapshot: RunExecutionSnapshot = snapshotWithModelCandidate(
+    input.snapshot,
+    selected,
+  );
   const promptCap = Math.floor(
     (selected.model.contextWindow - outputCap - INPUT_RESERVE_TOKENS) /
       (SAFETY_MARGIN * tokenCalibrationRatio(candidateSnapshot)),

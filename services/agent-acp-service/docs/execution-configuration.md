@@ -24,6 +24,14 @@ trying the next capable candidate, retaining one Run, input, request counter and
 deadline. `never` does not disable the existing selection-time fallback or
 organization-scoped manual override behavior.
 
+Model Profiles and Provider connections are live while Template prompts,
+runtime images, MCP and Skill inputs stay frozen in the admitted spec: a
+publication model may carry the optional `model_profile_revision` field (the
+Controller's current revision at publication), and each admitted Run freezes
+the selected primary revision plus every fallback and compaction candidate
+revision inside its immutable execution snapshot. Legacy publications without
+the field stay valid and produce no fabricated revision.
+
 Provider disable/revocation fails existing holders without graceful draining or
 Run replay. Re-enable creates new holders; credential rotation alone does not
 cancel execution. Platform publications refresh current ACP configuration options

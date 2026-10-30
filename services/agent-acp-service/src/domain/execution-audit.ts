@@ -54,6 +54,13 @@ export const auditDetailSchema = z.strictObject({
     .enum(["runtime_mcp", "client_mcp", "unclassified"])
     .nullable()
     .optional(),
+  model_profile_revision: z
+    .number()
+    .int()
+    .positive()
+    .max(Number.MAX_SAFE_INTEGER)
+    .nullable()
+    .optional(),
   usage_measurements: z.array(z.unknown()),
 });
 const eventSchema = z.strictObject({

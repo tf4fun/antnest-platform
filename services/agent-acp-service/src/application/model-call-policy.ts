@@ -3,6 +3,7 @@ import { isDeepStrictEqual } from "node:util";
 import { DomainError } from "../domain/errors.js";
 import { ModelBudgetExceededError, type ModelBudgetSettlement } from "../domain/model-budget.js";
 import { normalizeEmbeddedResource } from "../domain/embedded-resource.js";
+import { snapshotWithModelCandidate } from "../domain/run-snapshot.js";
 import type { ModelCandidate, RunExecutionSnapshot } from "../domain/types.js";
 import {
   ModelError,
@@ -377,17 +378,15 @@ function candidateSnapshots(
       model.maxOutputTokens = Math.min(256, model.maxOutputTokens);
       model.temperature = 0;
     }
-    return {
-      ...primary,
-      modelProfileId: candidate.modelProfileId,
-      providerConnectionId: candidate.providerConnectionId,
-      executionSpec: { ...primary.executionSpec, model },
-    };
+    return snapshotWithModelCandidate(primary, { ...candidate, model });
   };
   const snapshots = [
     select({
       modelProfileId: primary.modelProfileId,
       providerConnectionId: primary.providerConnectionId,
+      ...(primary.modelProfileRevision === undefined
+        ? {}
+        : { modelProfileRevision: primary.modelProfileRevision }),
       model: primary.executionSpec.model,
     }),
   ];

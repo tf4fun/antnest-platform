@@ -36,6 +36,7 @@ const schema = z
     organizationId: id,
     providerConnectionId: id,
     modelProfileId: id,
+    modelProfileRevision: positive.optional(),
     configurationRevision: positive,
     accessRevision: id,
     deadlineAt: z.iso.datetime({ offset: true }).transform((value) => new Date(value)),
@@ -66,6 +67,7 @@ const schema = z
           z.strictObject({
             modelProfileId: id,
             providerConnectionId: id,
+            modelProfileRevision: positive.optional(),
             model: modelSchema,
           }),
         )
@@ -75,6 +77,7 @@ const schema = z
         .strictObject({
           modelProfileId: id,
           providerConnectionId: id,
+          modelProfileRevision: positive.optional(),
           model: modelSchema,
         })
         .optional(),
@@ -121,8 +124,10 @@ export function parseStoredRunSnapshot(value: unknown): RunExecutionSnapshot {
     compactionModel,
     ...executionSpec
   } = parsed.executionSpec;
+  const { modelProfileRevision, ...rest } = parsed;
   return {
-    ...parsed,
+    ...rest,
+    ...(modelProfileRevision === undefined ? {} : { modelProfileRevision }),
     executionSpec: {
       ...executionSpec,
       model: normalizedModel(executionSpec.model),
@@ -136,6 +141,9 @@ export function parseStoredRunSnapshot(value: unknown): RunExecutionSnapshot {
             fallbackModels: fallbackModels.map((candidate) => ({
               modelProfileId: candidate.modelProfileId,
               providerConnectionId: candidate.providerConnectionId,
+              ...(candidate.modelProfileRevision === undefined
+                ? {}
+                : { modelProfileRevision: candidate.modelProfileRevision }),
               model: normalizedModel(candidate.model),
             })),
           }),
@@ -145,6 +153,9 @@ export function parseStoredRunSnapshot(value: unknown): RunExecutionSnapshot {
             compactionModel: {
               modelProfileId: compactionModel.modelProfileId,
               providerConnectionId: compactionModel.providerConnectionId,
+              ...(compactionModel.modelProfileRevision === undefined
+                ? {}
+                : { modelProfileRevision: compactionModel.modelProfileRevision }),
               model: normalizedModel(compactionModel.model),
             },
           }),

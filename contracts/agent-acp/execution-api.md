@@ -529,6 +529,12 @@ Runs sort descending by `(created_at, run_id)`. Event queries select either
 `stream: "permissions"` (creation/tool-call ID ascending). These are independent
 pagination streams, not a combined event journal. Cursors bind to organization,
 query filters, Run and stream as applicable; every page is separately authorized.
+Audit detail carries the optional `model_profile_revision` field: the primary
+Model Profile revision admitted in that Run's persisted execution snapshot.
+Historical snapshots recorded before the field existed surface `null`; ACP never
+reconstructs a revision from current Controller configuration. Fallback and
+compaction candidate revisions stay inside the immutable `execution_snapshot`
+payload and are not projected separately.
 
 Audit routes require verified Console workload and exactly one unchanged CCT
 with ACP audience and organization scope. Subject, membership and roles come

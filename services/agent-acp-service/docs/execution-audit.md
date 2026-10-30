@@ -62,7 +62,11 @@ remain bounded by the shared HTTP body limit.
 Service-level validation covers input retention, read-only authorization,
 deleted Session/Agent history, pagination, decoded tool details and permission
 outcomes. No fresh execution configuration is required for historical reads.
-Database failures are unavailable responses, not empty successful lists.
+Audit detail exposes `model_profile_revision`: the primary admitted
+revision read only from the Run's persisted execution snapshot, `null` for
+historical snapshots recorded before the field existed, and never
+reconstructed from current Controller configuration. Candidate revisions stay
+inside the immutable snapshot payload. Database failures are unavailable responses, not empty successful lists.
 HTTP/RPC/DB tracing uses the normal service boundaries; no per-business-step
 spans are added. Provider authentication is never joined into audit results.
 When RPC content capture is enabled, audit requests and responses are captured
