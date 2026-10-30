@@ -153,6 +153,31 @@ baseline; it is not permission to access deployment control networks.
 }
 ```
 
+or, from control contract revision 49, an inline policy document:
+
+```json
+{
+  "request_id": "request-network-2",
+  "organization_id": "org-1",
+  "actor_principal_id": "admin-1",
+  "spec": { "schema_version": 2, "default": "deny", "rules": [] },
+  "expected_resource_version": 3
+}
+```
+
+The request admits exactly one of the existing `(policy_id, revision)`
+reference tuple or a `spec` document; carrying both or neither is invalid, as
+is any additional field. `spec` is validated against `network_policy_spec`,
+which mirrors the Egress policy schema — the two schema_version 1 shapes plus
+the reserved schema_version 2 document — and stays self-contained with no
+external schema references. For a spec request, Controller derives a
+content-addressed policy identifier scoped by organization, Agent and
+canonical spec at fixed revision 1, and stores it through Egress's immutable
+policy-revision route before the assignment CAS. Egress remains the sole
+policy storage owner; Controller persists no policy copy, so an identical
+spec converges on the same immutable revision rather than accumulating
+duplicates.
+
 Returns the Egress-confirmed assignment with HTTP 200:
 
 ```json
@@ -167,8 +192,9 @@ Returns the Egress-confirmed assignment with HTTP 200:
 The caller supplies a positive observed assignment version. `request_id`
 correlates the request/log/trace; this operation does not introduce a Controller
 idempotency journal. Durable retry identity is Egress's unchanged
-`(agent_id, policy_id, revision, expected_resource_version)` tuple. No automatic
-retry or silent rebasing is performed. `resource_version_conflict` is 409;
+`(agent_id, policy_id, revision, expected_resource_version)` tuple; a spec
+request retries with its original `spec`, never a rewritten reference, and no
+automatic mutation or read repair is performed. `resource_version_conflict` is 409;
 unknown revisions and unallocated networks are 404. Cleanup failure returns
 `cleanup_failed` (503). Other unavailable/ambiguous dependency outcomes return
 503, malformed dependency responses return 502. A timeout is not proof that
@@ -182,6 +208,14 @@ are structured control logs/spans. A successful write returns immediately after
 Egress acknowledgement, without a subsequent read that could obscure success.
 Controller checks do not lock other services: concurrent lifecycle operations
 remain governed by Egress's independent attachment gate and per-Agent barrier.
+
+A policy `spec` read back through GET may be any document admitted by
+`network_policy_spec`, including a schema_version 2 ruleset once produced.
+Revision 49 publishes the schema_version 2 policy contract and the spec-only
+request variant ahead of implementation: the current Controller service still
+accepts only the v1 reference tuple, and the owning Egress, Controller and
+Console implementation batches plus the explicit integration batch remain
+pending.
 
 ## Model Configuration Authority
 
