@@ -21,9 +21,12 @@ export function reviewStage2Trace(trace) {
 
 export async function waitForTraceParents(
   read,
-  { timeout = 15000, interval = 200 } = {},
+  { timeout = 15000, interval = 200, signal: parentSignal } = {},
 ) {
-  const signal = AbortSignal.timeout(timeout);
+  const deadline = AbortSignal.timeout(timeout);
+  const signal = parentSignal
+    ? AbortSignal.any([parentSignal, deadline])
+    : deadline;
   let pending;
   try {
     while (true) {

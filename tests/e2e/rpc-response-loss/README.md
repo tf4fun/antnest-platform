@@ -2,7 +2,7 @@
 
 This scenario verifies that the platform recovers correctly when the Agent
 Controller loses a successful response from the ACP service. It covers the
-execution-snapshot publication and Agent settlement calls; the
+v2 execution publication and Agent settlement calls; the
 [contract](contract.md) lists the recovery obligations.
 
 ## Running
@@ -30,7 +30,8 @@ cancellation and actual cleanup remain blocking checks.
 
 ## Scenario
 
-The Controller's `apply-execution-snapshot` and `settle-agent` calls pass
+The Controller's `get-execution-digest`, `apply-execution-snapshot`,
+`apply-execution-delta` and `settle-agent` calls pass
 through a private fixture proxy to the real ACP service. The Gateway and Admin
 Console still address ACP directly. The protocol client uses the private ACP
 workspace listener with the original owner's delegated Identity; execution state
@@ -41,8 +42,10 @@ drops the held response when the scenario requests it. Retries come from the
 real publication worker or Temporal; the proxy never retries.
 
 - **Publication loss.** ACP already executes with edited Model parameters while
-  the Controller's persisted acknowledgement is behind. A delivered retry
-  catches up the acknowledgement without duplicating the completed Run.
+  the Controller's persisted acknowledgement is behind. A delivered retry or
+  an original v2 digest response proving the applied revision catches up the
+  acknowledgement without duplicating the completed Run. Digest reads pass
+  through unchanged and cannot consume the armed response-loss fault.
 - **Settlement loss.** A Rebuild stays in `drain` with its original Runtime
   while the successful settlement reply is held. Closed ACP admission rejects
   another prompt without creating a Run intent. The retry preserves the

@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import { resolve } from "node:path";
+import { createTraceDiagnostics } from "../../support/trace-diagnostics.mjs";
 const url = new URL("./restore-private-session.mjs", import.meta.url);
 const implementation = await import(url).catch((error) => {
   if (
@@ -8,6 +11,36 @@ const implementation = await import(url).catch((error) => {
   )
     throw error;
   return {};
+});
+test("Restore Trace failure and archive failure remain auxiliary and later collections are joined", async (t) => {
+  const directory = mkdtempSync(
+    resolve("artifacts/verification/restore-diagnostic-"),
+  );
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  const diagnostics = createTraceDiagnostics({ directory });
+  const original = new Error("business failure");
+  const errors = [original],
+    joined = [];
+  const rows = await implementation.collectRestoreTraces(
+    [{ traceID: "first" }, { traceID: "second" }],
+    async (row, signal) => {
+      assert(signal instanceof AbortSignal);
+      joined.push(row.traceID);
+      if (row.traceID === "first") throw new Error("Trace down");
+      return { trace_id: row.traceID };
+    },
+    async () => {
+      throw new Error("Trace archive down");
+    },
+    undefined,
+    errors,
+    diagnostics,
+  );
+  assert.deepEqual(joined, ["first", "second"]);
+  assert.deepEqual(errors, [original]);
+  assert.equal(rows[0].topology, "failed");
+  assert.equal(rows[1].topology, "passed");
+  assert.equal(diagnostics.summary().status, "warning");
 });
 test("Restore keeps original member and creation organization authority", () => {
   assert.equal(typeof implementation.assertRestoreOwner, "function");

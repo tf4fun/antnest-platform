@@ -2,7 +2,8 @@
 
 This document defines the recovery obligations that the
 [RPC response-loss scenario](README.md) verifies. The Agent Controller calls the
-ACP service's `apply-execution-snapshot` and `settle-agent` endpoints; ACP owns
+ACP service's snapshot/delta publication and `settle-agent` endpoints, with
+transparent v2 digest reads; ACP owns
 Run admission, durable completion and replay.
 
 ## Obligations
@@ -13,7 +14,8 @@ For each installed ACP SDK version:
    acknowledgement of a newly published Model configuration. ACP must already
    use the new parameters while the Controller's persisted acknowledgement
    remains behind. After the connection drops, the existing publication worker
-   must resend the current configuration and persist a real acknowledgement.
+   must confirm the current configuration through a delivered retry or the
+   real v2 digest response and persist its acknowledgement.
 2. **Settlement reply loss.** Hold a successful settlement reply for the exact
    Rebuild operation. The Controller must remain in `drain` with its old
    Runtime even though ACP has settled. After the reply drops, Temporal retries
@@ -34,7 +36,16 @@ the drop. It never retries an upstream request. Component tests cover negative
 selection, invalid and non-success acknowledgements, disconnects, timeouts and
 real socket behavior.
 
+A digest recovery receipt must follow the actual dropped delta receipt, bind
+the same organization and exact applied revision, and retain the original
+upstream digest and canonical request/response hashes. A digest read before the
+drop cannot consume the armed fault or count as recovery.
+
 ## Trace rules
+
+All collection, topology, SQL-span and timing findings in this section are
+auxiliary diagnostics. Their original strict failures are retained as warnings;
+business, authorization, persisted receipts and actual cleanup remain blocking.
 
 The protocol client uses the private workspace listener with the original
 owner's Identity delegation, and reads execution state through the authenticated

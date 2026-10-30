@@ -102,9 +102,37 @@ func (publisher *ExecutionPublisher) publishCurrent(ctx context.Context, organiz
 		return ports.ExecutionAcknowledgement{}, ports.ErrConcurrentChange
 	}
 	if publisher.wireVersion == ports.ExecutionSchemaVersion2 {
+		if settlement != nil {
+			remote, err := publisher.executionRemoteDigest(ctx, source.OrganizationID)
+			if err != nil {
+				var dependency *ports.DependencyError
+				if !errors.As(err, &dependency) || dependency.Service != "agent-acp-service" || dependency.Code != "configuration_unavailable" {
+					return ports.ExecutionAcknowledgement{}, err
+				}
+				// Only an unavailable old owner can require closure before proof.
+				// Healthy retries retain the already sealed v2 authority below.
+				return publisher.publishFullV2(ctx, source)
+			}
+			return publisher.publishCurrentV2(ctx, source, remote, true)
+		}
 		return publisher.publishCurrentV2(ctx, source, remote, remoteKnown)
 	}
 	snapshot, err := BuildExecutionSnapshot(ctx, source, publisher.opener)
+	if err != nil {
+		return ports.ExecutionAcknowledgement{}, err
+	}
+	if err := publisher.resolveRuntimeAuthority(ctx, &snapshot); err != nil {
+		return ports.ExecutionAcknowledgement{}, err
+	}
+	acknowledgement, err := publisher.client.ApplyExecutionSnapshot(ctx, snapshot)
+	if err != nil {
+		return ports.ExecutionAcknowledgement{}, err
+	}
+	return publisher.acknowledge(ctx, source, acknowledgement)
+}
+
+func (publisher *ExecutionPublisher) publishFullV2(ctx context.Context, source ports.ExecutionSource) (ports.ExecutionAcknowledgement, error) {
+	snapshot, err := BuildExecutionSnapshotV2(ctx, source)
 	if err != nil {
 		return ports.ExecutionAcknowledgement{}, err
 	}

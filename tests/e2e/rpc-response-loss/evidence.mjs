@@ -30,11 +30,25 @@ export function assertReceipts(held, records, { requireTrace = true } = {}) {
         "original HTTP attempt receipt ID required",
       );
   }
-  for (const record of records)
+  for (const [index, record] of records.entries()) {
+    if (record.method === "get-execution-digest") {
+      assert(index > 0);
+      assert.equal(held.method, "apply-execution-delta");
+      assert.equal(record.organization_id, held.organization_id);
+      assert.equal(record.schema_version, 2);
+      assert.equal(record.revision, held.applied_revision);
+      assert.equal(record.applied_revision, held.applied_revision);
+      assert.equal(record.recovery_of, held.receipt_id);
+      assert.equal(record.status, 200);
+      for (const field of ["digest", "request_hash", "response_hash"])
+        assert.match(record[field], /^[a-f0-9]{64}$/u);
+      continue;
+    }
     for (const key of [
       "method",
       "organization_id",
       "revision",
+      "base_revision",
       "minimum_revision",
       "applied_revision",
       "agent_id",
@@ -47,6 +61,7 @@ export function assertReceipts(held, records, { requireTrace = true } = {}) {
       "status",
     ])
       assert.equal(record[key], held[key], `changed receipt ${key}`);
+  }
   assert.match(held.request_hash, /^[a-f0-9]{64}$/);
   assert.match(held.response_hash, /^[a-f0-9]{64}$/);
   if (held.method === "settle-agent") assert.equal(held.outcome, "settled");

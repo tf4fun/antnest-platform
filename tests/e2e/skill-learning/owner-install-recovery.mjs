@@ -164,6 +164,7 @@ export async function verifyOwnerInstallRecovery({
   active,
   installedPackage,
   sourceSessionId,
+  checkpoint = () => {},
   signal,
 }) {
   const inspect = async (id) => JSON.parse(await docker(["inspect", id]))[0];
@@ -233,6 +234,7 @@ export async function verifyOwnerInstallRecovery({
       [`ANTNEST_E2E_OWNER_RECOVERY=${mode}`],
       ["console-controller"],
     );
+  checkpoint("owner-registration");
   const originalOwner = await readOwnerRegistration({ config, docker });
   const manual = await policy("manual");
   assert.equal(manual.policy.mode, "manual");
@@ -264,6 +266,7 @@ export async function verifyOwnerInstallRecovery({
   const taskColumns = `id,state,cancel_reason,claim_id,generation,
     claim_owner_registration_id,claim_owner_member_id,claim_owner_incarnation_id,
     claim_owner_epoch::text,model_calls,input_tokens,output_tokens,model_time_ms`;
+  checkpoint("original-learning-task");
   const tasks = await acp(
     `SELECT ${taskColumns} FROM learning_tasks WHERE agent_id=${agent}`,
   );
@@ -315,6 +318,7 @@ export async function verifyOwnerInstallRecovery({
   assert(BigInt(originalRuns[0].execution_owner_epoch) > 0n);
   const originalModel = await model();
 
+  checkpoint("owner-kill");
   await docker(["kill", "--signal", "KILL", acpContainer]);
   assert.equal((await docker(["wait", acpContainer])).trim(), "137");
   const killed = await inspect(acpContainer);
@@ -330,6 +334,7 @@ export async function verifyOwnerInstallRecovery({
     60000,
   );
   assertRestarted(ownerBefore, ownerAfter);
+  checkpoint("learning-claim-recovery");
   const audit = await until(
     async () => {
       const rows = await acp(
@@ -353,6 +358,7 @@ export async function verifyOwnerInstallRecovery({
     audit.recovering_incarnation_id,
     originalOwner.incarnation_id,
   );
+  checkpoint("owner-stop-proof");
   const registrations = await query(
     "antnest_runtime_controller",
     `SELECT registration_id,
@@ -389,6 +395,7 @@ export async function verifyOwnerInstallRecovery({
       observed_at: proof.inspection.stop_receipt.observed_at,
     },
   });
+  checkpoint("recovered-task");
   const [recoveredTask] = await acp(
     `SELECT ${taskColumns} FROM learning_tasks WHERE id=${task}`,
   );
@@ -405,6 +412,7 @@ export async function verifyOwnerInstallRecovery({
     acp(
       `SELECT * FROM learning_runtime_protections WHERE request_id=${request}`,
     );
+  checkpoint("runtime-protection");
   const [protectedRuntime] = await protections();
   assert(protectedRuntime);
   assert.equal(protectedRuntime.retired_at, null);
@@ -437,6 +445,7 @@ export async function verifyOwnerInstallRecovery({
     originalRuntime,
   );
   assert.deepEqual(await active(), installedPackage);
+  checkpoint("protected-prompt");
   const denied = await client("owner-protected", "owner-recovery-client.mjs", [
     "ANTNEST_E2E_OWNER_RECOVERY=denied",
     `ANTNEST_E2E_SOURCE_SESSION_ID=${sourceSessionId}`,
@@ -445,6 +454,7 @@ export async function verifyOwnerInstallRecovery({
   assert.deepEqual(await runs(), originalRuns);
   assert.deepEqual((await model()).requests, originalModel.requests);
 
+  checkpoint("runtime-operation-gate");
   const blocker = await holdRuntimeUpdate({
     config,
     docker,
@@ -453,8 +463,10 @@ export async function verifyOwnerInstallRecovery({
   });
   let receipt, fenced, checkpointFailure;
   try {
+    checkpoint("automatic-recovery-policy");
     const automatic = await policy("auto");
     assert.equal(automatic.policy.mode, "auto");
+    checkpoint("automatic-recovery-receipt");
     receipt = await until(
       async () => {
         const rows = await receipts();
@@ -465,6 +477,7 @@ export async function verifyOwnerInstallRecovery({
       signal,
       60000,
     );
+    checkpoint("runtime-fenced");
     const closed = await until(
       async () => {
         const [operation] =
@@ -501,6 +514,7 @@ export async function verifyOwnerInstallRecovery({
       attachment.network_rv,
     );
     assert.equal(closed.network_attachment.tunnel_ipv4, attachment.tunnel_ipv4);
+    checkpoint("runtime-insert-blocked");
     const waiters = await until(
       async () => {
         const waiting = await blocker.waiters();
@@ -542,7 +556,9 @@ export async function verifyOwnerInstallRecovery({
     Buffer.from(receipt.execution_hex, "hex").toString(),
     install.execution_id,
   );
+  checkpoint("replacement-operation");
   await fixture.operation(receipt.request_id);
+  checkpoint("replacement-ready");
   await fixture.ready();
   const completed = await receipts();
   assert.equal(completed.length, 1);
