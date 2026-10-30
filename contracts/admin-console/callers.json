@@ -335,6 +335,22 @@
       },
       "request_body": "json"
     },
+    "POST /api/admin/agents/{agent_id}/lifecycle-operation/cancel": {
+      "callers": ["edge-gateway"],
+      "authentication": "workload",
+      "caller_context": {
+        "edge-gateway": "required"
+      },
+      "request_body": "json"
+    },
+    "POST /api/admin/agents/{agent_id}/lifecycle-quarantine/clear": {
+      "callers": ["edge-gateway"],
+      "authentication": "workload",
+      "caller_context": {
+        "edge-gateway": "required"
+      },
+      "request_body": "json"
+    },
     "POST /api/admin/agents/{agent_id}/rebuild": {
       "callers": ["edge-gateway"],
       "authentication": "workload",
