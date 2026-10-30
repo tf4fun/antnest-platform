@@ -339,6 +339,11 @@ native Runtime retains its separate per-instance token profile.
 
 ### Fixed
 
+ACP v2 digest retries reconcile an unavailable owner against the unchanged
+sealed authority before acknowledging it. A cold restart that initially loses
+to an unexpired predecessor lease can recover its abandoned Learning claim
+after expiry instead of remaining unavailable until a configuration mutation.
+
 System E2E recovery checks follow v2 digest/delta publication and cold credential
 reference resolution. Restore and shutdown Trace collection is auxiliary while
 original business and resource cleanup checks remain blocking. Skill install
