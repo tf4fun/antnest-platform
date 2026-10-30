@@ -98,6 +98,19 @@ no view of internal service names, rather than cluster or service-discovery DNS.
 The upstream must accept DNS over TCP because Runtime executors use
 `options use-vc`, keeping DNS on the governed TCP-only packet path.
 
+`ANTNEST_EGRESS_PLATFORM_DENY_CIDRS` is required and fail-closed: a
+comma-separated list of canonical IPv4 CIDRs (no host bits, 1-256 entries, `0.0.0.0/0`
+permitted as an intentional deny-everything). The list must contain the entire
+Tunnel CIDR and every connected IPv4 subnet discovered at startup, or Egress
+refuses to boot. The same set feeds the nft forward drop, the userspace
+data-plane guard and resolver answer filtering; only the virtual resolver TCP:53
+exception bypasses it. Explicit v2 `allow` rules may open other RFC1918
+destinations, never this set and never other hard special-use ranges. Compose
+ships a default covering the tunnel, runtime-management, control,
+`ANTNEST_SERVICE_NETWORK_PREFIX` and the egress database/outbound subnets; a
+full override must cover the operator's other configured subnets too, and
+explicit private allows must be expressed as v2 rules.
+
 The virtual resolver removes protected A answers using the same IPv4 baseline,
 tunnel pool and connected-subnet snapshot as the nft backstop. It removes all
 AAAA answers because Runtime drops IPv6. CNAME chains with no retained terminal

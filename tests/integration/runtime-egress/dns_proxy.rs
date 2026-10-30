@@ -554,3 +554,140 @@ async fn per_source_connection_limit_still_rejects_excess_clients() {
     assert_eq!(proxy.metrics.snapshot().rejected_connections, 1);
     drop(first);
 }
+
+fn uplink_packet(source: Ipv4Addr, destination: Ipv4Addr, dport: u16) -> Vec<u8> {
+    let mut packet = vec![0x45, 0, 0, 40, 0, 0, 0x40, 0, 64, 6, 0, 0];
+    packet.extend_from_slice(&source.octets());
+    packet.extend_from_slice(&destination.octets());
+    packet.extend_from_slice(&40_000_u16.to_be_bytes());
+    packet.extend_from_slice(&dport.to_be_bytes());
+    packet.extend_from_slice(&[0; 8]);
+    packet.extend_from_slice(&[0x50, 0x02, 0, 0]);
+    packet.extend_from_slice(&[0; 4]);
+    packet
+}
+
+#[tokio::test]
+async fn engine_bound_query_authorizes_only_reachable_bound_addresses() {
+    use antnest_runtime_egress::{
+        dataplane::{AgentRoute, DataPlaneAction, DataPlaneEngine, NetworkSnapshot, RouteGate},
+        dns::run_dns_proxy_with_engine,
+        domain::AgentId,
+        policy::PolicySpec,
+    };
+    let loopback = Ipv4Addr::new(127, 0, 0, 1);
+    let spec: PolicySpec = serde_json::from_str(
+        r#"{"schema_version":2,"default":"deny","rules":[{"action":"allow","domains":["api.github.com"],"ports":[443]},{"action":"allow","cidrs":["10.30.0.0/16"],"ports":[443]}]}"#,
+    )
+    .unwrap();
+    let mut engine = DataPlaneEngine::new(
+        NetworkSnapshot::default(),
+        1400,
+        32,
+        16,
+        Duration::from_secs(60),
+    );
+    engine.upsert_route(AgentRoute {
+        agent_id: AgentId::parse("agent-dns").unwrap(),
+        tunnel_ipv4: loopback,
+        assignment_version: 1,
+        policy: spec.compile("100.64.0.1".parse().unwrap()),
+        gate: RouteGate::Open,
+        runtime_endpoint: Some("127.0.0.9".parse().unwrap()),
+    });
+    engine.set_platform_deny(vec!["172.30.255.0/24".parse().unwrap()]);
+    let engine = Arc::new(std::sync::Mutex::new(engine));
+
+    let response = answer(
+        &query(7, "api.github.com.", RecordType::A),
+        vec![
+            cname("api.github.com.", "edge.github.net."),
+            a("edge.github.net.", "140.82.112.6"),
+            a("edge.github.net.", "10.30.0.7"),
+            a("edge.github.net.", "172.30.255.5"),
+            a("example.com.", "93.184.216.34"),
+        ],
+    );
+    let upstream = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let upstream_address = upstream.local_addr().unwrap();
+    let reply = frame(&response.to_bytes().unwrap());
+    let upstream_task = tokio::spawn(async move {
+        let (mut stream, _) = upstream.accept().await.unwrap();
+        let _ = read_frame(&mut stream).await;
+        stream.write_all(&reply).await.unwrap();
+    });
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let cancellation = CancellationToken::new();
+    let proxy_engine = engine.clone();
+    let proxy_cancellation = cancellation.clone();
+    let proxy = tokio::spawn(async move {
+        run_dns_proxy_with_engine(
+            listener,
+            DnsProxyConfig {
+                upstream: upstream_address,
+                protected_networks: vec!["172.30.255.0/24".parse().unwrap()],
+                max_connections: 4,
+                max_connections_per_source: 4,
+                connection_timeout: DEADLINE,
+            },
+            Arc::new(DnsMetrics::default()),
+            proxy_engine,
+            proxy_cancellation,
+        )
+        .await
+        .unwrap();
+    });
+
+    let mut client = TcpStream::connect(address).await.unwrap();
+    let sent = query(7, "api.github.com.", RecordType::A);
+    client
+        .write_all(&frame(&sent.to_bytes().unwrap()))
+        .await
+        .unwrap();
+    let filtered = Message::from_bytes(&read_frame(&mut client).await).unwrap();
+    upstream_task.await.unwrap();
+    let addresses: Vec<Ipv4Addr> = filtered
+        .answers
+        .iter()
+        .filter_map(|record| match &record.data {
+            RData::A(address) => Some(address.0),
+            _ => None,
+        })
+        .collect();
+    assert!(addresses.contains(&"140.82.112.6".parse().unwrap()));
+    assert!(addresses.contains(&"10.30.0.7".parse().unwrap()));
+    assert!(!addresses.contains(&"172.30.255.5".parse().unwrap()));
+
+    let peer: std::net::SocketAddr = "127.0.0.9:41000".parse().unwrap();
+    let now = std::time::Instant::now();
+    {
+        let mut guard = engine.lock().unwrap();
+        for (destination, port, allowed) in [
+            ("140.82.112.6", 443_u16, true),
+            ("10.30.0.7", 443, true),
+            ("93.184.216.34", 443, false),
+            ("172.30.255.5", 443, false),
+            ("140.82.112.6", 25, false),
+        ] {
+            let action = guard.handle_uplink(
+                &uplink_packet(loopback, destination.parse().unwrap(), port),
+                peer,
+                now,
+            );
+            if allowed {
+                assert!(
+                    matches!(action, DataPlaneAction::WriteTun(_)),
+                    "{destination}:{port} {action:?}"
+                );
+            } else {
+                assert!(
+                    !matches!(action, DataPlaneAction::WriteTun(_)),
+                    "{destination}:{port} {action:?}"
+                );
+            }
+        }
+    }
+    cancellation.cancel();
+    let _ = proxy.await;
+}

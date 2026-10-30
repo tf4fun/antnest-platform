@@ -32,6 +32,7 @@ pub struct Config {
     pub dns_upstream: SocketAddr,
     pub tun_name: String,
     pub command_timeout: Duration,
+    pub platform_deny_cidrs: Vec<Ipv4Net>,
 }
 
 #[derive(Clone, Debug, Error, Eq, PartialEq)]
@@ -133,6 +134,13 @@ impl Config {
             return Err(ConfigError::InvalidTunName);
         }
         let command_timeout = parse_duration(&values, "ANTNEST_EGRESS_COMMAND_TIMEOUT", "5s")?;
+        let platform_deny_cidrs = parse_platform_deny_cidrs(&values)?;
+        let covered = platform_deny_cidrs.iter().any(|network| {
+            network.contains(&tunnel_cidr.network()) && network.contains(&tunnel_cidr.broadcast())
+        });
+        if !covered {
+            return Err(ConfigError::Invalid("ANTNEST_EGRESS_PLATFORM_DENY_CIDRS"));
+        }
         Ok(Self {
             tunnel_key_file: values
                 .get("ANTNEST_EGRESS_TUNNEL_KEY_FILE")
@@ -155,6 +163,7 @@ impl Config {
             dns_upstream,
             tun_name,
             command_timeout,
+            platform_deny_cidrs,
         })
     }
 }
@@ -199,6 +208,25 @@ fn check_development_secrets(
         ));
     }
     Ok(vec!["ANTNEST_EGRESS_DATABASE_URL"])
+}
+
+fn parse_platform_deny_cidrs(
+    values: &HashMap<String, String>,
+) -> Result<Vec<Ipv4Net>, ConfigError> {
+    let list = required(values, "ANTNEST_EGRESS_PLATFORM_DENY_CIDRS")?;
+    let mut networks: Vec<Ipv4Net> = Vec::new();
+    for entry in list.split(',') {
+        let entry = entry.trim();
+        let network = crate::policy::canonical_ipv4_net(entry)
+            .ok_or(ConfigError::Invalid("ANTNEST_EGRESS_PLATFORM_DENY_CIDRS"))?;
+        if !networks.contains(&network) {
+            networks.push(network);
+        }
+    }
+    if networks.is_empty() || networks.len() > 256 {
+        return Err(ConfigError::Invalid("ANTNEST_EGRESS_PLATFORM_DENY_CIDRS"));
+    }
+    Ok(networks)
 }
 
 pub fn health_listen_from_env() -> Result<SocketAddrV4, ConfigError> {

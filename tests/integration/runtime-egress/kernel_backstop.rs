@@ -1,7 +1,7 @@
 #![cfg(target_os = "linux")]
 
 use antnest_runtime_egress::{
-    kernel::{KernelPlan, LinuxKernel},
+    kernel::{KernelPlan, LinuxKernel, connected_ipv4_subnets},
     network::PacketDevice,
 };
 use serde_json::Value;
@@ -87,7 +87,10 @@ async fn kernel_rejects_database_destination_when_userspace_policy_is_bypassed()
         1400,
     )
     .unwrap();
-    let (_, mut tun) = LinuxKernel::bootstrap(&plan, Duration::from_secs(5))
+    let routes = std::fs::read_to_string("/proc/net/route").unwrap();
+    let mut platform_deny = connected_ipv4_subnets(&routes).unwrap();
+    platform_deny.push("100.64.0.0/29".parse().unwrap());
+    let (_, mut tun) = LinuxKernel::bootstrap(&plan, &platform_deny, Duration::from_secs(5))
         .await
         .unwrap();
     let before = drop_count().await;

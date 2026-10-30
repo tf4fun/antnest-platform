@@ -612,7 +612,7 @@ async fn seed_repository(
                     &revision.policy_id.as_str(),
                     &u64_to_i64(revision.revision)?,
                     &i64::from(revision.spec.schema_version()),
-                    &serde_json::to_value(revision.spec).map_err(unavailable)?,
+                    &serde_json::to_value(&revision.spec).map_err(unavailable)?,
                     &revision.digest,
                 ],
             )
@@ -818,7 +818,7 @@ impl Repository for PostgresRepository {
                         &candidate.policy_id.as_str(),
                         &u64_to_i64(candidate.revision)?,
                         &i64::from(candidate.spec.schema_version()),
-                        &serde_json::to_value(candidate.spec).map_err(operation_failed)?,
+                        &serde_json::to_value(&candidate.spec).map_err(operation_failed)?,
                         &candidate.digest,
                     ],
                 )
