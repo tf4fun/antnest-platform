@@ -20,6 +20,8 @@ Issue 状态最后核对于 2026-10-28：141 个 issue，87 个已关闭，54 �
 
 ## 当前批次
 
+- **#35 已收口（2026-10-31，最新）**：已核对受审 head `352cb413`／`36d356eb`／`261520cf`／`5b0ec642`／`5fa4e29b`／`821007fd` 的 Repository／Integration 必需门禁及选中服务／组件证据成功，按 #414 → #415 → #416 → #417 → #418 → #419 保留历史合入 main；对应 merge 为 `b6847632`／`f0f8e256`／`a9235174`／`8f5e553a`／`a70bd687`／`18cc6775`。最终 main 文件树与受审集成候选完全一致。#35 源码侧验收完成并以 completed 关闭；#82 的 #35 子项已勾选，Epic、其他子项与两项 Exit criteria 保持原状。完整 CI 链接、实现边界与原始验收见 #35 最新交付：默认 local workspace 持久但不强制硬配额（disk_quota_enforced=false），DAC_OVERRIDE／SETPCAP 因必要性测试保留，不虚称配额或降权效果。真实容器隔离及 Docker/system E2E 原条目保留未勾选，由独立工作流跟踪；未查询或等待合并后系统结果，不宣称其通过或版本集发布能力。下方待 CI／未合并／保持开放等条目仅为历史记录。
+
 - **#420 合并前同步（2026-10-31，新候选门禁待确认）**：用户明确要求将 #420 合入 main。旧精确候选 `b8dae365` 的 Repository [41106884837](https://github.com/tf4fun/antnest-platform/actions/runs/41106884837)、Integration [41106885012](https://github.com/tf4fun/antnest-platform/actions/runs/41106885012) 和完整 system [41106885765](https://github.com/tf4fun/antnest-platform/actions/runs/41106885765) 20/20 组及结果门通过；516 项 fixture 零跳过，真实 Managed v1/v2 与 RPC 回执已核对，辅助 Trace 告警保留，本批临时证据已按规范删除。main 随后合入 #35 到 `18cc6775`；本次普通 merge 仅解决 TODO 双方追加记录，保留全部历史，#420 的测试／文档交付字节不变，#35 实现从 main 原样继承。合并前 closingIssuesReferences 为空，#377 继续由 main system 结果自动管理，不因 PR 通过而关闭；#46 源码侧已完成，#82 其他退出条件不改变。将核对同步后精确候选的必需远程 CI，再按用户授权保留历史合并 #420；旧基线的 20/20 不替代新 main 系统验收，也不代表 release 能力。
 
 - **main E2E #46 字段兼容修复（2026-10-31，进行中）**：用户明确指派系统失败修复。main `f0c32753` 的 [41066898445](https://github.com/tf4fun/antnest-platform/actions/runs/41066898445) 18/20 组通过，Managed MCP v1/v2 在 `durable-run-business`、RPC response-loss 在 `business-admission` 失败；survivor／生命周期原修复通过。两处公开执行快照白名单遗漏 #46 新增的合法 `modelProfileRevision`；将 fixtures 对齐实际 Console 投影后先红，再补合法字段及正安全整数／审计 revision 一致性检查。220 项定向回归通过，零跳过，含旧快照和未知字段拒绝；业务／回放／Runtime／实际清理要求不放宽。真实精确 main 镜像定向复验及新候选远程门待核对；不宣称 main 已通过。当前临时证据在 `artifacts/verification/main-e2e-41066898445/`，远程验收确认后删除。
@@ -169,7 +171,7 @@ Issue 状态最后核对于 2026-10-28：141 个 issue，87 个已关闭，54 �
 - [ ] [#168](https://github.com/tf4fun/antnest-platform/issues/168) test(runtime): move packet-path egress and health probe checks out of the platform lifecycle suites
 - [x] [#33](https://github.com/tf4fun/antnest-platform/issues/33) Runtime observation journal can permanently skip facts: BIGSERIAL order is not commit order
 - [x] [#39](https://github.com/tf4fun/antnest-platform/issues/39) RC observation journal: prune runs inside every append transaction, retention docs disagree, and leader writes are not fenced
-- [ ] [#35](https://github.com/tf4fun/antnest-platform/issues/35) Harden Runtime containers: stop grace shorter than shutdown budget, no CPU or disk limits, exec /tmp, writable rootfs
+- [x] [#35](https://github.com/tf4fun/antnest-platform/issues/35) Harden Runtime containers: stop grace shorter than shutdown budget, no CPU or disk limits, exec /tmp, writable rootfs
 - [ ] [#15](https://github.com/tf4fun/antnest-platform/issues/15) runtime-egress: out-of-range revisions return retryable 503 and path rejections are inconsistent
 - [ ] [#6](https://github.com/tf4fun/antnest-platform/issues/6) Runtime internal Skill maintenance tool error codes are not filtered from MCP results, and mcp-contract.md overstates the closed tool_errors list
 - [ ] [#18](https://github.com/tf4fun/antnest-platform/issues/18) contracts: shared maintenance ticket schema omits the temporary_install and temporary_release actions
