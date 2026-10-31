@@ -25,7 +25,8 @@ use tokio::{
 };
 use tokio_util::sync::CancellationToken;
 
-use crate::policy::is_external_ipv4;
+use crate::{dataplane::DataPlaneEngine, policy::is_external_ipv4};
+use std::{net::Ipv4Addr, time::Instant};
 
 const MAX_MESSAGE_BYTES: usize = 16_384;
 
@@ -169,6 +170,26 @@ pub async fn run_dns_proxy(
     metrics: Arc<DnsMetrics>,
     cancellation: CancellationToken,
 ) -> Result<(), DnsError> {
+    run_dns_proxy_inner(listener, config, metrics, None, cancellation).await
+}
+
+pub async fn run_dns_proxy_with_engine(
+    listener: TcpListener,
+    config: DnsProxyConfig,
+    metrics: Arc<DnsMetrics>,
+    engine: Arc<Mutex<DataPlaneEngine>>,
+    cancellation: CancellationToken,
+) -> Result<(), DnsError> {
+    run_dns_proxy_inner(listener, config, metrics, Some(engine), cancellation).await
+}
+
+async fn run_dns_proxy_inner(
+    listener: TcpListener,
+    config: DnsProxyConfig,
+    metrics: Arc<DnsMetrics>,
+    engine: Option<Arc<Mutex<DataPlaneEngine>>>,
+    cancellation: CancellationToken,
+) -> Result<(), DnsError> {
     let DnsProxyConfig {
         upstream,
         protected_networks,
@@ -203,11 +224,12 @@ pub async fn run_dns_proxy(
                 };
                 let connection_metrics = metrics.clone();
                 let protected_networks = protected_networks.clone();
+                let engine = engine.clone();
                 connections.spawn(async move {
                     let _permit = permit;
                     let _source_permit = source_permit;
                     match proxy_connection(
-                        client, upstream, connection_timeout, &protected_networks, &connection_metrics,
+                        client, upstream, connection_timeout, &protected_networks, &connection_metrics, engine,
                     ).await {
                         Ok((client_to_upstream, upstream_to_client)) => {
                             connection_metrics.completed(client_to_upstream, upstream_to_client);
@@ -235,13 +257,15 @@ async fn proxy_connection(
     deadline: Duration,
     protected: &[Ipv4Net],
     metrics: &DnsMetrics,
+    engine: Option<Arc<Mutex<DataPlaneEngine>>>,
 ) -> Result<(u64, u64), io::Error> {
+    let peer = client.peer_addr();
     let mut server = timeout(deadline, TcpStream::connect(upstream))
         .await
         .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "DNS upstream connect timeout"))??;
     timeout(
         deadline,
-        forward_queries(&mut client, &mut server, protected, metrics),
+        forward_queries(&mut client, &mut server, protected, metrics, peer, engine),
     )
     .await
     .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "DNS proxy connection timeout"))?
@@ -252,7 +276,13 @@ async fn forward_queries(
     server: &mut TcpStream,
     protected: &[Ipv4Net],
     metrics: &DnsMetrics,
+    peer: io::Result<SocketAddr>,
+    engine: Option<Arc<Mutex<DataPlaneEngine>>>,
 ) -> io::Result<(u64, u64)> {
+    let source = peer.ok().and_then(|peer| match peer.ip() {
+        IpAddr::V4(address) => Some(address),
+        IpAddr::V6(_) => None,
+    });
     let mut client_bytes = 0;
     let mut upstream_bytes = 0;
     while let Some(bytes) = read_frame(client).await? {
@@ -274,6 +304,18 @@ async fn forward_queries(
             write_frame(client, &bytes).await?;
             continue;
         }
+        let context = if query.queries[0].query_type == RecordType::A {
+            engine.as_ref().and_then(|engine| {
+                source.and_then(|source| {
+                    engine
+                        .lock()
+                        .unwrap_or_else(|error| error.into_inner())
+                        .dns_context(source)
+                })
+            })
+        } else {
+            None
+        };
         write_frame(server, &bytes).await?;
         client_bytes += (bytes.len() + 2) as u64;
         let bytes = read_frame(server).await?.ok_or_else(invalid_message)?;
@@ -287,8 +329,56 @@ async fn forward_queries(
         {
             return Err(invalid_message());
         }
-        let (response, removed) = filter_response(&query, response, protected);
-        let bytes = response.to_bytes().map_err(|_| invalid_message())?;
+        let name = query.queries[0]
+            .name
+            .to_ascii()
+            .to_lowercase()
+            .trim_end_matches('.')
+            .to_owned();
+        let reachable: HashMap<Ipv4Addr, u32> =
+            if context.is_some() && response.metadata.response_code == ResponseCode::NoError {
+                bound_answers(&query.queries[0].name, &response)
+                    .into_iter()
+                    .collect()
+            } else {
+                HashMap::new()
+            };
+        let domain_mask = context
+            .as_ref()
+            .map_or(0, |context| context.policy.domain_rule_mask(&name));
+        let grant = |address: Ipv4Addr| {
+            reachable.contains_key(&address)
+                && context.as_ref().is_some_and(|context| {
+                    context.policy.explicit_any_port_allow(address, domain_mask)
+                })
+        };
+        let (response, removed) = filter_response_with(&query, response, protected, &grant);
+        let bytes = {
+            if let (Some(engine), Some(context)) = (&engine, &context) {
+                let retained: Vec<(Ipv4Addr, u32)> = response
+                    .answers
+                    .iter()
+                    .filter_map(|record| match &record.data {
+                        RData::A(address) => reachable.get(&address.0).map(|ttl| (address.0, *ttl)),
+                        _ => None,
+                    })
+                    .collect();
+                if !retained.is_empty() {
+                    let mut engine = engine.lock().unwrap_or_else(|error| error.into_inner());
+                    let now = Instant::now();
+                    for (address, ttl) in retained {
+                        engine.bind_dns_answers(
+                            context,
+                            &name,
+                            &[address],
+                            Duration::from_secs(u64::from(ttl.min(300))),
+                            now,
+                        );
+                    }
+                }
+            }
+            response.to_bytes().map_err(|_| invalid_message())?
+        };
         metrics.filtered(removed);
         write_frame(client, &bytes).await?;
         upstream_bytes += (bytes.len() + 2) as u64;
@@ -379,10 +469,65 @@ fn invalid_message() -> io::Error {
     io::Error::new(io::ErrorKind::InvalidData, "invalid DNS message")
 }
 
-fn filter_response(
+fn bound_answers(query_name: &Name, response: &Message) -> Vec<(Ipv4Addr, u32)> {
+    let mut cnames: HashMap<Name, Vec<(Name, u32)>> = HashMap::new();
+    let mut answers: HashMap<Name, Vec<(Ipv4Addr, u32)>> = HashMap::new();
+    for record in &response.answers {
+        match &record.data {
+            RData::A(address) if record.dns_class == DNSClass::IN => answers
+                .entry(record.name.clone())
+                .or_default()
+                .push((address.0, record.ttl)),
+            RData::CNAME(target) if record.dns_class == DNSClass::IN => cnames
+                .entry(record.name.clone())
+                .or_default()
+                .push((target.0.clone(), record.ttl)),
+            _ => {}
+        }
+    }
+    let mut visited = HashSet::new();
+    let mut current = query_name.clone();
+    let mut chain_ttl = u32::MAX;
+    let terminal = loop {
+        if !visited.insert(current.clone()) || visited.len() > 16 {
+            return Vec::new();
+        }
+        let cname = cnames.get(&current);
+        if cname.is_some() && answers.contains_key(&current) {
+            return Vec::new();
+        }
+        match cname {
+            Some(targets) if targets.len() == 1 => {
+                chain_ttl = chain_ttl.min(targets[0].1);
+                current = targets[0].0.clone();
+            }
+            Some(_) => return Vec::new(),
+            None => break current,
+        }
+    };
+    let Some(list) = answers.get(&terminal) else {
+        return Vec::new();
+    };
+    let mut dedup: HashMap<Ipv4Addr, u32> = HashMap::new();
+    for (address, record_ttl) in list {
+        dedup
+            .entry(*address)
+            .and_modify(|ttl| *ttl = (*ttl).min(*record_ttl))
+            .or_insert(chain_ttl.min(*record_ttl));
+    }
+    dedup.into_iter().collect()
+}
+
+#[cfg(test)]
+fn filter_response(query: &Message, response: Message, protected: &[Ipv4Net]) -> (Message, usize) {
+    filter_response_with(query, response, protected, &|_| false)
+}
+
+fn filter_response_with(
     query: &Message,
     mut response: Message,
     protected: &[Ipv4Net],
+    allow_private: &dyn Fn(Ipv4Addr) -> bool,
 ) -> (Message, usize) {
     let original_answers = response.answers.len();
     let mut blocked_names: HashSet<_> = response
@@ -393,7 +538,7 @@ fn filter_response(
         .collect();
     response.answers.retain(|record| match &record.data {
         RData::A(address) => {
-            is_external_ipv4(address.0)
+            (is_external_ipv4(address.0) || allow_private(address.0))
                 && !protected.iter().any(|network| network.contains(&address.0))
         }
         RData::AAAA(_) => false,
@@ -455,7 +600,7 @@ fn filter_response(
 mod tests {
     use std::net::{IpAddr, Ipv4Addr};
 
-    use super::{SourceLimits, filter_response};
+    use super::{SourceLimits, bound_answers, filter_response};
     use hickory_proto::{
         op::{Message, MessageType, OpCode, Query},
         rr::{
@@ -519,6 +664,78 @@ mod tests {
         let (filtered, removed) = filter_response(&query, response, &[]);
         assert_eq!(filtered.answers, [alias, public]);
         assert_eq!(removed, 4);
+    }
+
+    #[test]
+    fn bound_answers_follows_only_a_single_valid_chain() {
+        let name = |value: &str| Name::from_ascii(value).unwrap();
+        let qname = name("api.github.com.");
+        let mut query = Message::new(9, MessageType::Query, OpCode::Query);
+        query.add_query(Query::query(qname.clone(), RecordType::A));
+        let a = |owner: &str, ip: &str, ttl: u32| {
+            Record::from_rdata(
+                name(owner),
+                ttl,
+                RData::A(A(ip.parse::<Ipv4Addr>().unwrap())),
+            )
+        };
+        let cn = |owner: &str, target: &str, ttl: u32| {
+            Record::from_rdata(name(owner), ttl, RData::CNAME(CNAME(name(target))))
+        };
+        let direct = query.clone().into_response();
+        let mut direct = direct;
+        direct.add_answers([
+            a("api.github.com.", "140.82.112.6", 60),
+            a("example.com.", "93.184.216.34", 90),
+        ]);
+        let bound = bound_answers(&qname, &direct);
+        assert_eq!(bound, vec![("140.82.112.6".parse().unwrap(), 60)]);
+
+        let mut chained = query.clone().into_response();
+        chained.add_answers([
+            cn("api.github.com.", "edge.github.net.", 120),
+            cn("edge.github.net.", "cdn.github.net.", 45),
+            a("cdn.github.net.", "140.82.112.6", 300),
+            a("cdn.github.net.", "140.82.112.6", 30),
+        ]);
+        let bound = bound_answers(&qname, &chained);
+        assert_eq!(bound, vec![("140.82.112.6".parse().unwrap(), 30)]);
+
+        let mut cycled = query.clone().into_response();
+        cycled.add_answers([
+            cn("api.github.com.", "loop.example.", 60),
+            cn("loop.example.", "api.github.com.", 60),
+            a("api.github.com.", "140.82.112.6", 60),
+        ]);
+        assert!(bound_answers(&qname, &cycled).is_empty());
+
+        let mut ambiguous = query.clone().into_response();
+        ambiguous.add_answers([
+            cn("api.github.com.", "a.example.", 60),
+            cn("api.github.com.", "b.example.", 60),
+            a("a.example.", "140.82.112.6", 60),
+        ]);
+        assert!(bound_answers(&qname, &ambiguous).is_empty());
+
+        let mut mixed = query.clone().into_response();
+        mixed.add_answers([
+            cn("api.github.com.", "edge.example.", 60),
+            a("api.github.com.", "140.82.112.6", 60),
+            a("edge.example.", "140.82.112.7", 60),
+        ]);
+        assert!(bound_answers(&qname, &mixed).is_empty());
+
+        let mut deep = query.clone().into_response();
+        for index in 0..17 {
+            deep.add_answers([cn(
+                &format!("h{index}.example."),
+                &format!("h{}.example.", index + 1),
+                60,
+            )]);
+        }
+        deep.add_answers([cn("api.github.com.", "h0.example.", 60)]);
+        deep.add_answers([a("h17.example.", "140.82.112.6", 60)]);
+        assert!(bound_answers(&qname, &deep).is_empty());
     }
 
     #[test]

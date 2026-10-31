@@ -20,6 +20,10 @@ fn rejects_published_development_database_passwords() {
                 "ANTNEST_EGRESS_DNS_UPSTREAM".to_owned(),
                 "10.20.0.53:53".to_owned(),
             ),
+            (
+                "ANTNEST_EGRESS_PLATFORM_DENY_CIDRS".to_owned(),
+                "100.64.0.0/10".to_owned(),
+            ),
         ]);
         assert!(
             Config::from_values(values).is_err(),
@@ -46,6 +50,10 @@ fn public_development_opt_in_uses_shared_vectors_and_names_warnings() {
         (
             "ANTNEST_EGRESS_DNS_UPSTREAM".to_owned(),
             "10.20.0.53:53".to_owned(),
+        ),
+        (
+            "ANTNEST_EGRESS_PLATFORM_DENY_CIDRS".to_owned(),
+            "100.64.0.0/10".to_owned(),
         ),
     ]);
     assert!(
@@ -105,6 +113,10 @@ fn config_has_bounded_operational_defaults() {
             "ANTNEST_EGRESS_DNS_UPSTREAM".to_owned(),
             "10.20.0.53:53".to_owned(),
         ),
+        (
+            "ANTNEST_EGRESS_PLATFORM_DENY_CIDRS".to_owned(),
+            "100.64.0.0/10".to_owned(),
+        ),
     ]))
     .unwrap();
 
@@ -144,6 +156,10 @@ fn control_listener_accepts_only_an_explicit_ipv4_address() {
                 "ANTNEST_EGRESS_DNS_UPSTREAM".to_owned(),
                 "10.20.0.53:53".to_owned(),
             ),
+            (
+                "ANTNEST_EGRESS_PLATFORM_DENY_CIDRS".to_owned(),
+                "100.64.0.0/10".to_owned(),
+            ),
         ]);
 
         assert_eq!(
@@ -168,6 +184,10 @@ fn database_tls_must_be_explicitly_disabled_for_local_development() {
         (
             "ANTNEST_EGRESS_DNS_UPSTREAM".to_owned(),
             "10.20.0.53:53".to_owned(),
+        ),
+        (
+            "ANTNEST_EGRESS_PLATFORM_DENY_CIDRS".to_owned(),
+            "100.64.0.0/10".to_owned(),
         ),
     ];
     let mut disabled = HashMap::from(base.clone());
@@ -206,6 +226,10 @@ fn advertised_endpoint_is_literal_ipv4() {
             "ANTNEST_EGRESS_DNS_UPSTREAM".to_owned(),
             "10.20.0.53:53".to_owned(),
         ),
+        (
+            "ANTNEST_EGRESS_PLATFORM_DENY_CIDRS".to_owned(),
+            "100.64.0.0/10".to_owned(),
+        ),
     ]);
 
     assert_eq!(
@@ -229,6 +253,10 @@ fn advertised_endpoint_must_be_usable_unicast_with_a_port() {
             (
                 "ANTNEST_EGRESS_DNS_UPSTREAM".to_owned(),
                 "10.20.0.53:53".to_owned(),
+            ),
+            (
+                "ANTNEST_EGRESS_PLATFORM_DENY_CIDRS".to_owned(),
+                "100.64.0.0/10".to_owned(),
             ),
         ]);
 
@@ -312,6 +340,10 @@ fn health_is_loopback_only_and_control_never_uses_the_packet_address() {
             "ANTNEST_EGRESS_DNS_UPSTREAM".to_owned(),
             "10.20.0.53:53".to_owned(),
         ),
+        (
+            "ANTNEST_EGRESS_PLATFORM_DENY_CIDRS".to_owned(),
+            "100.64.0.0/10".to_owned(),
+        ),
     ]);
     for endpoint in ["10.20.0.8:8081", "10.20.0.8:8092"] {
         let mut values = base.clone();
@@ -335,4 +367,73 @@ fn health_is_loopback_only_and_control_never_uses_the_packet_address() {
             Err(ConfigError::Invalid("ANTNEST_EGRESS_HEALTH_LISTEN"))
         );
     }
+}
+
+#[test]
+fn platform_deny_list_is_required_canonical_and_covers_the_tunnel() {
+    let base = || {
+        HashMap::from([
+            (
+                "ANTNEST_EGRESS_DATABASE_URL".to_owned(),
+                "postgres://u:p@localhost/db".to_owned(),
+            ),
+            (
+                "ANTNEST_EGRESS_UDP_ADVERTISE".to_owned(),
+                "10.20.0.5:8092".to_owned(),
+            ),
+            (
+                "ANTNEST_EGRESS_DNS_UPSTREAM".to_owned(),
+                "10.20.0.53:53".to_owned(),
+            ),
+            (
+                "ANTNEST_EGRESS_PLATFORM_DENY_CIDRS".to_owned(),
+                "100.64.0.0/10,172.30.255.0/24".to_owned(),
+            ),
+        ])
+    };
+    let config = Config::from_values(base()).unwrap();
+    assert_eq!(
+        config.platform_deny_cidrs,
+        vec![
+            "100.64.0.0/10".parse().unwrap(),
+            "172.30.255.0/24".parse().unwrap()
+        ]
+    );
+    let mut missing = base();
+    missing.remove("ANTNEST_EGRESS_PLATFORM_DENY_CIDRS");
+    assert_eq!(
+        Config::from_values(missing),
+        Err(ConfigError::Missing("ANTNEST_EGRESS_PLATFORM_DENY_CIDRS"))
+    );
+    for (name, value) in [
+        ("empty", ""),
+        ("malformed", "100.64.0.0/10,not-a-cidr"),
+        ("host-bits", "100.64.0.0/10,172.30.255.5/24"),
+        ("noncanonical", "100.64.0.0/10,172.030.255.0/24"),
+        ("tunnel-not-covered", "10.241.0.0/24,172.30.255.0/24"),
+    ] {
+        let mut values = base();
+        values.insert(
+            "ANTNEST_EGRESS_PLATFORM_DENY_CIDRS".to_owned(),
+            value.to_owned(),
+        );
+        assert!(
+            Config::from_values(values).is_err(),
+            "{name} must be rejected"
+        );
+    }
+    let oversized = (0..257)
+        .map(|index| format!("10.240.{}.{}", index / 256, index % 256))
+        .map(|address| format!("{address}/32"))
+        .collect::<Vec<_>>()
+        .join(",");
+    let mut values = base();
+    values.insert(
+        "ANTNEST_EGRESS_PLATFORM_DENY_CIDRS".to_owned(),
+        format!("{oversized},100.64.0.0/10"),
+    );
+    assert_eq!(
+        Config::from_values(values),
+        Err(ConfigError::Invalid("ANTNEST_EGRESS_PLATFORM_DENY_CIDRS"))
+    );
 }
