@@ -273,11 +273,55 @@ DNS to the configured virtual resolver; it never permits loopback, link-local,
 private, shared Tunnel, multicast, documentation, benchmarking, or reserved
 destinations. This invariant prevents an Agent from routing through Egress back
 into Docker/Kubernetes control networks or another Runtime's unauthenticated
-MCP listener.
+MCP listener. Schema version 1 can never reach any private range.
 
-Later schemas may add protocol, destination CIDR, port, and domain-derived
-rules, including explicit enterprise-internal destinations. Runtime and the UDP
-packet format do not change when policy grows.
+Control contract revision 9 publishes schema version 2 ahead of
+implementation; the current service still loads only version 1 and the owning
+Egress batch is pending, so this subsection is the reserved design, not
+current behavior. A version 2 document is a `default` of `allow` or `deny`
+plus an ordered `rules` array of at most 128 entries evaluated first-match:
+the first rule whose selectors match the destination decides, and there is no
+longest-prefix or priority precedence. `protocol` is implicitly TCP only. A
+rule selects `cidrs` (canonical IPv4 CIDRs) or `domains` (lowercase DNS
+names), never both, may restrict `ports` to integers or `{from, to}` ranges,
+and matches any destination when it carries no selector. A `default` of
+`allow` keeps the v1 external-only universe. An explicit `allow` rule may
+additionally cover RFC1918 destinations only — it can never open the
+configured platform deny set or the remaining special-use ranges, which are
+evaluated before any rule.
+
+The platform deny set comes from the required
+`ANTNEST_EGRESS_PLATFORM_DENY_CIDRS` comma-separated list; there is no
+implicit service-derived fallback. Compose defaults enumerate the actual
+control, management, tunnel and all service subnets. Startup rejects a list
+that omits the selected tunnel range or any connected subnet discovered at
+kernel bootstrap, and the DNS answer protection filters against the same set.
+The kernel backstop changes with version 2: it must allow RFC1918 transit so
+explicit allow rules can reach internal destinations, while still denying the
+configured platform set and the hard special-use ranges regardless of the
+userspace decision.
+
+Under version 2, TCP DNS to the virtual resolver is permitted even when
+`default` is `deny` so domain rules can resolve; that is the single resolver
+exception and grants no general resolver access. Version 1 `deny_all` still
+denies DNS except the local readiness probe. Domain rules bind dynamically
+and only to validated A answers returned to that Agent's own queries plus the
+bounded connected CNAME chain. A binding's TTL is the minimum TTL along the
+chain capped at 300 seconds; a zero TTL grants no binding. Bindings are keyed
+by Agent, assignment version, rule index and resolved IPv4 — not a blanket
+Agent/address grant — so port, action and rule ordering stay respected. An
+Agent holds at most 4096 bindings; overflow fails closed without an entry and
+bindings are never shared across Agents. Expiry is rechecked for every packet,
+including replies and established flows. An assignment change or release
+resets all bindings, and unknown, rebound or private answers can never grant
+platform addresses.
+
+The canonical v1 migration maps `allow_all` to
+`{"schema_version": 2, "default": "allow", "rules": []}` and `deny_all` to
+`{"schema_version": 2, "default": "deny", "rules": []}`, preserving each v1
+external decision except for the documented resolver access; callers needing
+total DNS denial keep `deny_all`. Runtime and the UDP packet format do not
+change when policy grows.
 
 Assignment uses compare-and-swap on `resource_version`. One ephemeral Agent
 operation lock serializes policy assignment, flow reset, fence, release, and
