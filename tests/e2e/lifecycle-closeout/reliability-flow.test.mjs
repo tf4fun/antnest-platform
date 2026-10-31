@@ -349,7 +349,7 @@ async function scenario(mutate) {
     if (state.mutateControl && agentID === "agent-3" && state.controlSeen) {
       return {
         containers: [{ Id: "container-replaced", Mounts: [] }],
-        volumes: ["v1", "v2", "v3"],
+        volumes: ["v1", "v2", "v3", "v4"],
       };
     }
     if (agentID === "agent-3") state.controlSeen = true;
@@ -358,6 +358,7 @@ async function scenario(mutate) {
         workspace: `antnest-workspace-${agentID}`,
         skills: `antnest-skills-${agentID}`,
         receiver: `antnest-receiver-${agentID}`,
+        resolver: "antnest-runtime-resolver-1234567890abcdef1234567890abcdef",
       };
       return {
         containers: [
@@ -380,6 +381,12 @@ async function scenario(mutate) {
                 Type: "volume",
                 Name: volumes.receiver,
                 Destination: "/run/antnest-auth",
+                RW: false,
+              },
+              {
+                Type: "volume",
+                Name: volumes.resolver,
+                Destination: "/etc/resolv.conf",
                 RW: false,
               },
             ],

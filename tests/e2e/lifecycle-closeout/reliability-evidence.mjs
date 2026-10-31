@@ -290,8 +290,8 @@ export function assertGCProtectedAgent(before, after) {
       "Docker inspect Id is required",
     );
     assert(
-      Array.isArray(physical.volumes) && physical.volumes.length === 3,
-      "all three named Runtime storage identities are required",
+      Array.isArray(physical.volumes) && physical.volumes.length === 4,
+      "all four named Runtime storage identities are required",
     );
     assert(
       physical.volumes.every((name) => typeof name === "string" && name),
@@ -299,7 +299,7 @@ export function assertGCProtectedAgent(before, after) {
     );
     assert.equal(
       new Set(physical.volumes).size,
-      3,
+      4,
       "storage identities must be distinct",
     );
     requireEventPage(snapshot.events, agent.agent_id);
