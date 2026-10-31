@@ -28,6 +28,7 @@ const summaryFields = [
 const publicSnapshotFields = new Set([
   "providerConnectionId",
   "modelProfileId",
+  "modelProfileRevision",
   "configurationRevision",
   "agentSpecRevision",
   "executionRevision",
@@ -584,6 +585,17 @@ function inspectAudits(input, scenario, calls, state) {
       Object.keys(snapshot).every((field) => publicSnapshotFields.has(field)),
       "Unexpected public RPC execution snapshot field",
     );
+    assert(
+      !Object.hasOwn(snapshot, "modelProfileRevision") ||
+        positive(snapshot.modelProfileRevision),
+      "Invalid original RPC model profile revision",
+    );
+    if (Object.hasOwn(run, "model_profile_revision"))
+      same(
+        run.model_profile_revision,
+        snapshot.modelProfileRevision ?? null,
+        "RPC audit model profile revision differs from the captured snapshot",
+      );
     for (const field of [
       "providerConnectionId",
       "modelProfileId",

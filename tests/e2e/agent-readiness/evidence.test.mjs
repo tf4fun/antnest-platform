@@ -312,10 +312,21 @@ function roundFixture(index = 1, overrides = {}) {
                 Destination: "/run/antnest-auth",
                 RW: false,
               },
+              {
+                Type: "volume",
+                Name: "antnest-runtime-resolver-1234567890abcdef1234567890abcdef",
+                Destination: "/etc/resolv.conf",
+                RW: false,
+              },
             ],
           },
         ],
-        volumes: [workspace, skills, auth],
+        volumes: [
+          workspace,
+          skills,
+          auth,
+          "antnest-runtime-resolver-1234567890abcdef1234567890abcdef",
+        ],
       },
       after: { containers: [], volumes: [] },
       runtimeStatus: {

@@ -109,6 +109,12 @@ function fixture() {
               Name: "antnest-runtime-auth-fixture",
               RW: false,
             },
+            {
+              Destination: "/etc/resolv.conf",
+              Type: "volume",
+              Name: "antnest-runtime-resolver-1234567890abcdef1234567890abcdef",
+              RW: false,
+            },
           ],
         },
       ],
@@ -116,6 +122,7 @@ function fixture() {
         "antnest-workspace-a",
         "antnest-skill-set-fixture",
         "antnest-runtime-auth-fixture",
+        "antnest-runtime-resolver-1234567890abcdef1234567890abcdef",
       ],
     },
   };

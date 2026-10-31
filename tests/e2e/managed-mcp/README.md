@@ -107,6 +107,13 @@ shared collection budget; collectors receive cancellation and are actually joine
 No Trace result changes business admission. Raw evidence stays in the private
 `artifacts/verification/managed-mcp-secrets/v<version>-<tag>/traces/` directory.
 
+Public execution snapshots may include `modelProfileRevision` (#46). The business
+checker requires a positive safe integer and, when the audit supplies
+`model_profile_revision`, equality with that captured snapshot. Legacy snapshots
+may omit the revision (with a null audit revision); unknown public snapshot fields
+remain rejected. Replay compares the complete original Run, so a later live
+Model edit cannot rewrite an admitted revision.
+
 The business gate reads the complete administrative Run list and each Run's
 detail and execution-event page before deleting the Agent. It binds six original
 prompt receipts to six completed, quiescent Runs and their captured execution

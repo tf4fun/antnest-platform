@@ -92,7 +92,20 @@ func TestDockerDeletedPreparedVolumeCannotStartRuntimeCandidate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	driver, err := NewDriver(engine, Config{ControllerScope: scope, ManagementNetwork: "bridge", SystemSkillsVolume: "unused", SkillMountGate: gate})
+	resolver, err := NewResolverVolumeWriter(client, imageID, scope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resolverKey := deployment.Key{AgentID: agentID, Generation: 7}
+	t.Cleanup(func() {
+		cleanup, done := context.WithTimeout(context.Background(), 15*time.Second)
+		defer done()
+		_ = client.RemoveContainer(cleanup, containerName(agentID))
+		if err := resolver.Remove(cleanup, resolverKey); err != nil {
+			t.Errorf("remove resolver volume: %v", err)
+		}
+	})
+	driver, err := NewDriver(engine, Config{ControllerScope: scope, ManagementNetwork: "bridge", SystemSkillsVolume: "unused", SkillMountGate: gate, ResolverMountGate: resolver})
 	if err != nil {
 		t.Fatal(err)
 	}

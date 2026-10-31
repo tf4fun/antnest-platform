@@ -39,6 +39,7 @@ function assertMonitorStatus(body, ready) {
     platform_ready: true,
     observation_ready: true,
     monitor_ready: ready,
+    disk_quota_enforced: false,
   });
 }
 
