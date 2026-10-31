@@ -71,6 +71,7 @@ function storedSnapshot(captured) {
   return {
     providerConnectionId: "provider-managed",
     modelProfileId: "model-managed",
+    modelProfileRevision: 1,
     configurationRevision: captured.template_revision,
     deadlineAt: time(120000),
     agentSpecRevision: `agent-spec-${captured.template_revision}`,
@@ -195,6 +196,7 @@ function fixture(version = 1) {
       updated_at: time(index * 1000 + 500),
       input: [{ type: "text", text: phase }],
       execution_snapshot: storedSnapshot(snapshot),
+      model_profile_revision: 1,
       terminal_class: "completed",
       executor_state: "quiescent",
       tool_effect_state: "settled",
@@ -486,6 +488,45 @@ async function withCleanup(body, cleanup) {
 }
 
 for (const version of [1, 2]) {
+  test(`v${version}: legacy Managed audits remain valid without model revision evidence`, () => {
+    const evidence = fixture(version);
+    for (const { run } of evidence.runs) {
+      delete run.execution_snapshot.modelProfileRevision;
+      run.model_profile_revision = null;
+    }
+    assert.deepEqual(inspector()(evidence), expectedSummary);
+  });
+  test(`v${version}: Managed model revisions must be positive safe integers and agree with the audit`, () => {
+    for (const revision of [
+      null,
+      0,
+      -1,
+      1.5,
+      "1",
+      true,
+      Number.MAX_SAFE_INTEGER + 1,
+    ]) {
+      const evidence = fixture(version);
+      evidence.runs[0].run.execution_snapshot.modelProfileRevision = revision;
+      evidence.runs[0].run.model_profile_revision = revision;
+      assert.throws(() => inspector()(evidence), /model.*revision/iu);
+    }
+    const boundary = fixture(version);
+    for (const { run } of boundary.runs) {
+      run.execution_snapshot.modelProfileRevision = Number.MAX_SAFE_INTEGER;
+      run.model_profile_revision = Number.MAX_SAFE_INTEGER;
+    }
+    assert.deepEqual(inspector()(boundary), expectedSummary);
+    const changed = fixture(version);
+    changed.runs[0].run.model_profile_revision = 2;
+    assert.throws(() => inspector()(changed), /model.*revision/iu);
+    const unknown = fixture(version);
+    unknown.runs[0].run.execution_snapshot.runtimeToken = "private";
+    assert.throws(
+      () => inspector()(unknown),
+      /unexpected public execution snapshot field/u,
+    );
+  });
   test(`v${version}: actual public Admin DTOs bind to the original captured execution revision`, () => {
     const inspect = inspector();
     const evidence = fixture(version);
@@ -498,6 +539,7 @@ for (const version of [1, 2]) {
         [
           "providerConnectionId",
           "modelProfileId",
+          "modelProfileRevision",
           "configurationRevision",
           "agentSpecRevision",
           "executionRevision",

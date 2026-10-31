@@ -339,6 +339,10 @@ native Runtime retains its separate per-instance token profile.
 
 ### Fixed
 
+Managed MCP and RPC response-loss E2E admit the public Model Profile revision
+introduced by #46, validate positive safe-integer revisions against the audit,
+and retain legacy snapshot compatibility and unknown-field rejection.
+
 Lifecycle reliability E2E correlates public event metadata with persisted audit
 payloads and reads Egress cleanup through its actual owning database role.
 Safe failure summaries survive CI filtering while raw diagnostics stay private.
