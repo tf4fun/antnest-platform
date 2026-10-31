@@ -41,6 +41,7 @@ export function assertRuntimeStorage(physical, agentID) {
       ["workspace", "/workspace", true],
       ["skills", "/skills", false],
       ["receiver", "/run/antnest-auth", false],
+      ["resolver", "/etc/resolv.conf", false],
     ].map(([kind, path, writable]) => {
       const matching = mounts.filter((mount) => mount.Destination === path);
       assert.equal(matching.length, 1, `${kind} mount missing or ambiguous`);
@@ -52,7 +53,8 @@ export function assertRuntimeStorage(physical, agentID) {
     }),
   );
   assert.equal(storage.workspace, `antnest-workspace-${agentID}`);
-  assert.equal(new Set(Object.values(storage)).size, 3);
+  assert.match(storage.resolver, /^antnest-runtime-resolver-[0-9a-f]{32}$/);
+  assert.equal(new Set(Object.values(storage)).size, 4);
   assert.deepEqual(
     [...physical.volumes].sort(),
     Object.values(storage).sort(),

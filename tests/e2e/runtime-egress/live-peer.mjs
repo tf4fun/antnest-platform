@@ -224,10 +224,10 @@ async function proveOldAddressCannotImpersonate(agentID, runtime, before) {
   mkdirSync(directory, { recursive: true, mode: 0o700 });
   const frame = resolve(directory, "captured.bin");
   const attacker = project + "-old-address-holder";
-  // Docker archive copies can address the underlying rootfs instead of a live
-  // tmpfs. Keep this test-only executable and encrypted capture off /tmp.
-  const runtimeBinary = "/var/tmp/antnest-wire-proof";
-  const runtimeCapture = "/var/tmp/antnest-wire-captured.bin";
+  // The Runtime rootfs is read-only and /tmp is noexec. The mounted workspace
+  // supports Docker archive copies and execution; remove both files afterwards.
+  const runtimeBinary = "/workspace/.antnest-wire-proof";
+  const runtimeCapture = "/workspace/.antnest-wire-captured.bin";
   let paused = false,
     detached = false;
   try {

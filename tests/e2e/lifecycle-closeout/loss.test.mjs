@@ -9,7 +9,37 @@ import {
   assertLossDenial,
   assertLossProducer,
   assertLossBinding,
+  assertLostRuntimeResources,
 } from "./loss-evidence.mjs";
+
+test("lost Runtime retains exactly its four original storage volumes", () => {
+  const original = {
+    volume: "workspace",
+    skillVolume: "skills",
+    receiverVolume: "receiver",
+    resolverVolume: "resolver",
+  };
+  const resources = {
+    containers: [],
+    volumes: ["resolver", "workspace", "receiver", "skills"],
+  };
+  assert.doesNotThrow(() => assertLostRuntimeResources(resources, original));
+  assert.throws(() =>
+    assertLostRuntimeResources(
+      { ...resources, volumes: ["workspace", "receiver", "skills"] },
+      original,
+    ),
+  );
+  assert.throws(() =>
+    assertLostRuntimeResources(
+      { ...resources, volumes: [...resources.volumes, "foreign"] },
+      original,
+    ),
+  );
+  assert.throws(() =>
+    assertLostRuntimeResources({ ...resources, containers: [{}] }, original),
+  );
+});
 
 function payload(phase) {
   return {
