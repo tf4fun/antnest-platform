@@ -123,7 +123,7 @@ func TestNetworkPolicyReadsExactSpecAndSeparateAttachment(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if view.AgentID != "agent-1" || view.Policy.NetworkPolicyRevision != client.revision || view.Policy.ResourceVersion != 3 ||
+	if view.AgentID != "agent-1" || !reflect.DeepEqual(view.Policy.NetworkPolicyRevision, client.revision) || view.Policy.ResourceVersion != 3 ||
 		view.Attachment.State != "closed" || view.Attachment.ResourceVersion != 4 {
 		t.Fatalf("view=%+v", view)
 	}

@@ -44,7 +44,7 @@ func TestPolicyRevisionReadsOpaqueIDExactlyOnce(t *testing.T) {
 				}
 			})
 			result, err := client.GetPolicyRevision(context.Background(), ref)
-			if err != nil || result != expected {
+			if err != nil || !reflect.DeepEqual(result, expected) {
 				t.Fatalf("result=%+v error=%v", result, err)
 			}
 		})

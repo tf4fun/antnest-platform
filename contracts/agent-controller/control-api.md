@@ -169,10 +169,10 @@ The request admits exactly one of the existing `(policy_id, revision)`
 reference tuple or a `spec` document; carrying both or neither is invalid, as
 is any additional field. `spec` is validated against `network_policy_spec`,
 which mirrors the Egress policy schema — the two schema_version 1 shapes plus
-the reserved schema_version 2 document — and stays self-contained with no
-external schema references. For a spec request, Controller derives a
-content-addressed policy identifier scoped by organization, Agent and
-canonical spec at fixed revision 1, and stores it through Egress's immutable
+the schema_version 2 document — and stays self-contained with no
+external schema references. For a spec request, Controller derives `custom/<sha256-hex>` from the
+canonical JSON bytes `["<organization_id>","<agent_id>",<spec>]` at fixed
+revision 1, and stores it through Egress's immutable
 policy-revision route before the assignment CAS. Egress remains the sole
 policy storage owner; Controller persists no policy copy, so an identical
 spec converges on the same immutable revision rather than accumulating
