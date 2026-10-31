@@ -3,6 +3,19 @@ import { scopeLabel } from "./docker.mjs";
 import { assertAgentReady } from "../../support/verification/agent-state.mjs";
 import { assertAdmissionError } from "../../support/acp-errors.mjs";
 
+export function assertLostRuntimeResources(resources, initial) {
+  const expected = [
+    initial.volume,
+    initial.skillVolume,
+    initial.receiverVolume,
+    initial.resolverVolume,
+  ];
+  assert(expected.every((name) => typeof name === "string" && name));
+  assert.equal(new Set(expected).size, 4);
+  assert.deepEqual(resources.containers, []);
+  assert.deepEqual([...resources.volumes].sort(), expected.sort());
+}
+
 export function assertOwnedRuntime(container, initial, project) {
   assert.match(project, /^antnest-lifecycle-[a-f0-9]{8}$/);
   assert.equal(container.Id, initial.container.Id);

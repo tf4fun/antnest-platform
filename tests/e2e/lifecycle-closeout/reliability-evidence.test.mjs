@@ -289,7 +289,7 @@ function controlSnapshot(overrides = {}) {
     }),
     physical: {
       containers: [{ Id: "container-control-1" }],
-      volumes: ["volume-ws", "volume-skills", "volume-recv"],
+      volumes: ["volume-ws", "volume-skills", "volume-recv", "volume-resolver"],
     },
     events,
     ...overrides,
@@ -313,7 +313,7 @@ test("assertGCProtectedAgent preserves the ready control identities", () => {
       ...after,
       physical: {
         containers: after.physical.containers,
-        volumes: ["v1", "v1", "v1"],
+        volumes: ["v1", "v1", "v1", "v1"],
       },
     },
     {

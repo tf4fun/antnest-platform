@@ -16,6 +16,7 @@ const config = {
 };
 const storage = [
   "antnest-runtime-auth-receiver",
+  "antnest-runtime-resolver-1234567890abcdef1234567890abcdef",
   "antnest-skills-set-m1",
   "antnest-workspace-agent",
 ].join("\n");
@@ -47,6 +48,12 @@ function runtime() {
         Destination: "/run/antnest-auth",
         Type: "volume",
         Name: "antnest-runtime-auth-receiver",
+        RW: false,
+      },
+      {
+        Destination: "/etc/resolv.conf",
+        Type: "volume",
+        Name: "antnest-runtime-resolver-1234567890abcdef1234567890abcdef",
         RW: false,
       },
     ],
@@ -131,6 +138,12 @@ for (const [name, change] of [
     "writable receiver",
     (c) => {
       c.Mounts[2].RW = true;
+    },
+  ],
+  [
+    "writable resolver",
+    (c) => {
+      c.Mounts[3].RW = true;
     },
   ],
   [

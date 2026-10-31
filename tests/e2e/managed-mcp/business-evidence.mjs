@@ -24,6 +24,7 @@ const summaryFields = [
 const publicSnapshotFields = new Set([
   "providerConnectionId",
   "modelProfileId",
+  "modelProfileRevision",
   "configurationRevision",
   "agentSpecRevision",
   "executionRevision",
@@ -134,6 +135,18 @@ function inspectSnapshot(run, captured) {
     "agentExecutionSpecDigest",
   ])
     nonempty(snapshot[field], "captured public execution field required");
+  assert(
+    !Object.hasOwn(snapshot, "modelProfileRevision") ||
+      (Number.isSafeInteger(snapshot.modelProfileRevision) &&
+        snapshot.modelProfileRevision > 0),
+    "invalid captured model profile revision",
+  );
+  if (Object.hasOwn(run, "model_profile_revision"))
+    assert.equal(
+      run.model_profile_revision,
+      snapshot.modelProfileRevision ?? null,
+      "audit model profile revision differs from the captured snapshot",
+    );
   assert.equal(snapshot.executionRevision, captured.execution_revision);
   assert(
     Number.isSafeInteger(snapshot.configurationRevision) &&

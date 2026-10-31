@@ -25,6 +25,11 @@ async function fixture({ readerOrganization = "org-1" } = {}) {
     ["/workspace", "antnest-workspace-agent-1", true],
     ["/skills", "skills-volume", false],
     ["/run/antnest-auth", "receiver-volume", false],
+    [
+      "/etc/resolv.conf",
+      "antnest-runtime-resolver-1234567890abcdef1234567890abcdef",
+      false,
+    ],
   ].map(([Destination, Name, RW]) => ({
     Type: "volume",
     Destination,

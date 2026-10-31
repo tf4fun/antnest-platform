@@ -74,6 +74,7 @@ function execution(version, label, step, sessionId, runtime) {
     execution_snapshot: {
       providerConnectionId: "rpc-provider",
       modelProfileId: "rpc-model-profile",
+      modelProfileRevision: version + 1,
       configurationRevision: version + 10,
       deadlineAt: timestamp(120000),
       agentSpecRevision: "rpc-agent-spec",
@@ -96,6 +97,7 @@ function execution(version, label, step, sessionId, runtime) {
         },
       },
     },
+    model_profile_revision: version + 1,
     terminal_class: "completed",
     executor_state: "quiescent",
     tool_effect_state: "settled",
