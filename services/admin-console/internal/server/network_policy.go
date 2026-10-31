@@ -1,11 +1,14 @@
 package server
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/url"
 	"regexp"
+
+	"github.com/tf4fun/antnest-platform/modules/service-authentication/serviceauth"
 
 	"github.com/tf4fun/antnest-platform/services/admin-console/internal/principal"
 	"github.com/tf4fun/antnest-platform/services/admin-console/internal/upstream"
@@ -17,8 +20,54 @@ var networkPolicyKey = regexp.MustCompile(`^[!-~]{1,255}$`)
 var networkPolicyDigest = regexp.MustCompile(`^sha256:[a-f0-9]{64}$`)
 
 type networkPolicyInput struct {
-	Action                  string `json:"action"`
-	ExpectedResourceVersion uint64 `json:"expected_resource_version"`
+	Action                  string
+	Spec                    *networkPolicySpec
+	ExpectedResourceVersion uint64
+}
+
+func decodeNetworkPolicyInput(raw []byte) (networkPolicyInput, error) {
+	var fields struct {
+		Action          json.RawMessage `json:"action"`
+		Spec            json.RawMessage `json:"spec"`
+		ExpectedVersion json.RawMessage `json:"expected_resource_version"`
+	}
+	var input networkPolicyInput
+	if err := serviceauth.DecodeObject(raw, &fields); err != nil {
+		return input, err
+	}
+	null := func(value json.RawMessage) bool {
+		return bytes.Equal(bytes.TrimSpace(value), []byte("null"))
+	}
+	for name, value := range map[string]json.RawMessage{
+		"action": fields.Action, "spec": fields.Spec,
+		"expected_resource_version": fields.ExpectedVersion,
+	} {
+		if value != nil && null(value) {
+			return input, fmt.Errorf("%s must not be null", name)
+		}
+	}
+	if (fields.Action != nil) == (fields.Spec != nil) {
+		return input, fmt.Errorf("exactly one of action or spec is required")
+	}
+	if fields.Action != nil {
+		if err := json.Unmarshal(fields.Action, &input.Action); err != nil {
+			return input, err
+		}
+	}
+	if fields.Spec != nil {
+		var spec networkPolicySpec
+		if err := json.Unmarshal(fields.Spec, &spec); err != nil {
+			return input, err
+		}
+		input.Spec = &spec
+	}
+	if fields.ExpectedVersion == nil {
+		return input, fmt.Errorf("expected_resource_version is required")
+	}
+	if err := json.Unmarshal(fields.ExpectedVersion, &input.ExpectedResourceVersion); err != nil {
+		return input, err
+	}
+	return input, nil
 }
 
 type networkPolicyAssignmentSource struct {
@@ -69,11 +118,14 @@ func (h *handler) setNetworkPolicy(w http.ResponseWriter, r *http.Request, actor
 	if _, ok := parseListQuery(w, r); !ok {
 		return
 	}
-	var input networkPolicyInput
-	if !decodeJSON(w, r, &input) {
+	var raw json.RawMessage
+	if !decodeJSON(w, r, &raw) {
 		return
 	}
-	if !networkActionValid(input.Action) || !browserVersionValid(input.ExpectedResourceVersion) {
+	input, err := decodeNetworkPolicyInput(raw)
+	if err != nil ||
+		(input.Spec == nil && !networkActionValid(input.Action)) ||
+		!browserVersionValid(input.ExpectedResourceVersion) {
 		writeError(w, http.StatusBadRequest, "invalid_request", "Network policy selection is invalid")
 		return
 	}
@@ -82,12 +134,25 @@ func (h *handler) setNetworkPolicy(w http.ResponseWriter, r *http.Request, actor
 		return
 	}
 	agentID := r.PathValue("agent_id")
-	policyID := "builtin/deny-all"
-	if input.Action == "allow_all" {
-		policyID = "builtin/allow-all"
-	}
 	payload := map[string]any{"request_id": requestID, "organization_id": actor.OrganizationID, "actor_principal_id": actor.UserID,
-		"policy_id": policyID, "revision": 1, "expected_resource_version": input.ExpectedResourceVersion}
+		"expected_resource_version": input.ExpectedResourceVersion}
+	var policyID string
+	if input.Spec != nil {
+		payload["spec"] = *input.Spec
+		derived, err := deriveNetworkPolicyID(actor.OrganizationID, agentID, *input.Spec)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid_request", "Network policy selection is invalid")
+			return
+		}
+		policyID = derived
+	} else {
+		policyID = "builtin/deny-all"
+		if input.Action == "allow_all" {
+			policyID = "builtin/allow-all"
+		}
+		payload["policy_id"] = policyID
+		payload["revision"] = 1
+	}
 	body, err := json.Marshal(payload)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "encoding_failed", "Request could not be encoded")
@@ -102,6 +167,16 @@ func (h *handler) setNetworkPolicy(w http.ResponseWriter, r *http.Request, actor
 		if json.Unmarshal(body, &assigned) != nil || assigned.AgentID != agentID || assigned.PolicyID != policyID || assigned.Revision != 1 || !browserVersionValid(assigned.ResourceVersion) ||
 			(assigned.ResourceVersion != input.ExpectedResourceVersion && assigned.ResourceVersion != input.ExpectedResourceVersion+1) {
 			return nil, fmt.Errorf("invalid policy acknowledgement")
+		}
+		if input.Spec != nil {
+			if input.Spec.SchemaVersion == 1 {
+				return json.Marshal(networkPolicyAssignmentView{AgentID: agentID, Action: input.Spec.Action, ResourceVersion: assigned.ResourceVersion})
+			}
+			return json.Marshal(struct {
+				AgentID         string            `json:"agent_id"`
+				Spec            networkPolicySpec `json:"spec"`
+				ResourceVersion uint64            `json:"resource_version"`
+			}{AgentID: agentID, Spec: *input.Spec, ResourceVersion: assigned.ResourceVersion})
 		}
 		return json.Marshal(networkPolicyAssignmentView{AgentID: agentID, Action: input.Action, ResourceVersion: assigned.ResourceVersion})
 	})
@@ -119,20 +194,41 @@ func projectNetworkPolicy(body []byte, agentID string) ([]byte, error) {
 		AgentID string `json:"agent_id"`
 		Policy  struct {
 			networkPolicyAssignmentSource
-			Spec struct {
-				SchemaVersion int    `json:"schema_version"`
-				Action        string `json:"action"`
-			} `json:"spec"`
-			Digest string `json:"digest"`
+			Spec   json.RawMessage `json:"spec"`
+			Digest string          `json:"digest"`
 		} `json:"policy"`
 		Attachment networkAttachmentView `json:"attachment"`
 	}
 	if json.Unmarshal(body, &source) != nil || source.AgentID != agentID || !networkPolicyKey.MatchString(source.Policy.PolicyID) || source.Policy.Revision == 0 ||
-		!browserVersionValid(source.Policy.ResourceVersion) || source.Policy.Spec.SchemaVersion != 1 || !networkActionValid(source.Policy.Spec.Action) || !networkPolicyDigest.MatchString(source.Policy.Digest) ||
+		!browserVersionValid(source.Policy.ResourceVersion) || !networkPolicyDigest.MatchString(source.Policy.Digest) ||
 		!browserVersionValid(source.Attachment.ResourceVersion) || (source.Attachment.State != "open" && source.Attachment.State != "closed" && source.Attachment.State != "pending") {
 		return nil, fmt.Errorf("invalid policy read projection")
 	}
-	return json.Marshal(networkPolicyView{networkPolicyAssignmentView: networkPolicyAssignmentView{AgentID: agentID, Action: source.Policy.Spec.Action, ResourceVersion: source.Policy.ResourceVersion}, Attachment: source.Attachment})
+	var wire struct {
+		SchemaVersion int             `json:"schema_version"`
+		Action        string          `json:"action"`
+		Default       json.RawMessage `json:"default"`
+		Rules         json.RawMessage `json:"rules"`
+	}
+	if json.Unmarshal(source.Policy.Spec, &wire) != nil {
+		return nil, fmt.Errorf("invalid policy read projection")
+	}
+	if wire.SchemaVersion == 1 {
+		if wire.Default != nil || wire.Rules != nil || !networkActionValid(wire.Action) {
+			return nil, fmt.Errorf("invalid policy read projection")
+		}
+		return json.Marshal(networkPolicyView{networkPolicyAssignmentView: networkPolicyAssignmentView{AgentID: agentID, Action: wire.Action, ResourceVersion: source.Policy.ResourceVersion}, Attachment: source.Attachment})
+	}
+	var spec networkPolicySpec
+	if err := json.Unmarshal(source.Policy.Spec, &spec); err != nil {
+		return nil, fmt.Errorf("invalid policy read projection")
+	}
+	return json.Marshal(struct {
+		AgentID         string                `json:"agent_id"`
+		Spec            networkPolicySpec     `json:"spec"`
+		ResourceVersion uint64                `json:"resource_version"`
+		Attachment      networkAttachmentView `json:"attachment"`
+	}{AgentID: agentID, Spec: spec, ResourceVersion: source.Policy.ResourceVersion, Attachment: source.Attachment})
 }
 
 func (h *handler) writeNetworkPolicy(w http.ResponseWriter, r *http.Request, result bufferedResponse, project payloadProjector) {
@@ -167,6 +263,8 @@ func networkPolicyError(code string) (int, string) {
 		return 404, "Network policy is unavailable"
 	case "resource_version_conflict":
 		return 409, "Network policy changed. Refresh before making a new selection."
+	case "policy_revision_conflict":
+		return 409, "Network policy revision already exists with different content"
 	case "agent_network_unavailable":
 		return 409, "Agent network is unavailable"
 	case "cleanup_failed":

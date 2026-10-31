@@ -353,7 +353,7 @@ URI-encoded JSON pair `[organization_id,user_id]`, checked against the trusted
 principal before dispatch (`409 principal_changed` on mismatch); it cannot
 select an identity. Organization and actor are derived from the trusted
 principal. `spec` is validated against Controller's `network_policy_spec`
-(v1 shapes and the reserved schema_version 2 rules document). Console maps
+(v1 shapes and the schema_version 2 rules document). Console maps
 `action` to Egress's immutable built-in revision 1 reference tuple through
 Controller and forwards `spec` unchanged to Controller's spec-only request
 variant; it never calls Egress directly and never mixes the two tuples. GET
@@ -365,9 +365,7 @@ same `action`-or-`spec` projection. Policy IDs, revisions, digest, Tunnel
 addresses, organization, actor and Runtime metadata do not enter the browser
 projection. Malformed or mismatched success responses fail closed; errors use
 a bounded status/code/message allowlist. Neither path adds retries, read
-repair or a lifecycle operation. The spec channel is contract-reserved: the
-current BFF remains action-only until the owning Console implementation
-batch. See
+repair or a lifecycle operation. The spec channel is implemented by this Console batch. See
 [network policy UX and recovery](../../services/admin-console/docs/network-policy.md).
 
 ## Execution audit

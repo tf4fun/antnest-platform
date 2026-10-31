@@ -1,6 +1,6 @@
 import { csrfFromCookie } from "./forms";
 import type { AvailabilityChange, AvailabilityReceipt, CatalogKind, ExecutionSynchronization } from "./catalog-availability";
-import { decodeNetworkAssignment, decodeNetworkPolicy, type PendingNetwork } from "./network-policy";
+import { canonicalNetworkSpec, decodeNetworkAssignment, decodeNetworkPolicy, type PendingNetwork } from "./network-policy";
 import { decodeModelCallPolicy, sameModelCallPolicyIntent, type ModelCallPolicy, type ModelCallPolicyUpdate, type TemplateModelPolicy } from "./model-call-policy";
 import { invalidatesBrowserSession } from "./session-errors";
 import type { SkillPage, SkillReference, SkillVersion, SkillVersionPage, SkillSourcePage, SkillSourcePreview, SkillSourceSelection, SkillSourcePromotion } from "./skills";
@@ -404,7 +404,7 @@ export const api = {
   networkPolicy: async (agentID: string, signal?: AbortSignal) => decodeNetworkPolicy(await request<unknown>(`/api/admin/agents/${encodeURIComponent(agentID)}/network-policy`, { signal }), agentID),
   setNetworkPolicy: async (agentID: string, intent: PendingNetwork, scope: string) => decodeNetworkAssignment(await request<unknown>(`/api/admin/agents/${encodeURIComponent(agentID)}/network-policy`, {
     method: "PUT", headers: { "Idempotency-Key": intent.idempotency_key, "X-Antnest-Expected-Principal": encodeURIComponent(scope) },
-    body: json({ action: intent.action, expected_resource_version: intent.expected_resource_version }),
+    body: json("spec" in intent ? { spec: JSON.parse(canonicalNetworkSpec(intent.spec)), expected_resource_version: intent.expected_resource_version } : { action: intent.action, expected_resource_version: intent.expected_resource_version }),
   }), agentID, intent),
   modelCallPolicy: async (signal?: AbortSignal) => {
     try {
