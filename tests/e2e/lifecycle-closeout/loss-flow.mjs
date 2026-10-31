@@ -26,6 +26,7 @@ import {
   assertOwnedRuntime,
   assertLossProducer,
   assertLossBinding,
+  assertLostRuntimeResources,
 } from "./loss-evidence.mjs";
 import { journalReader, serviceContainer, until } from "./recovery-support.mjs";
 
@@ -485,14 +486,10 @@ async function lossCase(
         signal,
       );
     await docker(["rm", target.Id]);
-    // Skills and the generation's receiver stay until Rebuild replaces them;
+    // Skills, receiver and resolver volumes stay until Rebuild replaces them;
     // ready() then proves no stale volume survives.
     const lostResources = await resources(agentID);
-    assert.deepEqual(lostResources.containers, []);
-    assert.deepEqual(
-      lostResources.volumes.sort(),
-      [initial.volume, initial.skillVolume, initial.receiverVolume].sort(),
-    );
+    assertLostRuntimeResources(lostResources, initial);
     if (stopped) await startController(config, docker, stopped);
     const eventsPath = `/api/admin/agents/${agentID}/events?limit=100`;
     let lost;
