@@ -1,0 +1,48 @@
+{
+  "fixture_version": 1,
+  "organization_id": "org-1",
+  "agent_id": "agent-1",
+  "actor_principal_id": "user-admin",
+  "expected_resource_version": 1,
+  "spec": {
+    "schema_version": 2,
+    "default": "deny",
+    "rules": [
+      {
+        "action": "deny",
+        "cidrs": ["10.20.0.15/32"],
+        "ports": [25]
+      },
+      {
+        "action": "allow",
+        "cidrs": ["10.20.0.15/32"],
+        "ports": [443]
+      },
+      {
+        "action": "allow",
+        "domains": ["api.github.com"],
+        "ports": [{ "from": 443, "to": 443 }],
+        "protocol": "tcp"
+      },
+      {
+        "action": "allow",
+        "cidrs": ["192.168.10.0/24"],
+        "ports": [{ "from": 8000, "to": 9000 }]
+      }
+    ]
+  },
+  "policy_id": "custom/ab8782a9da793f27ef1b19115bcfc0fde2f59507e4e4ddc724a82fd2077864d5",
+  "revision": 1,
+  "egress_put_ack": {
+    "policy_id": "custom/ab8782a9da793f27ef1b19115bcfc0fde2f59507e4e4ddc724a82fd2077864d5",
+    "revision": 1,
+    "schema_version": 2,
+    "digest": "sha256:c83442aa935438559adc993c96964468f0ae1d061af6993fb46bbd223dff1760"
+  },
+  "assignment": {
+    "agent_id": "agent-1",
+    "policy_id": "custom/ab8782a9da793f27ef1b19115bcfc0fde2f59507e4e4ddc724a82fd2077864d5",
+    "revision": 1,
+    "resource_version": 2
+  }
+}

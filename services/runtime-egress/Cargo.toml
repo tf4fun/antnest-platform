@@ -60,6 +60,10 @@ path = "../../tests/integration/runtime-egress/control_auth.rs"
 name = "kernel_backstop"
 path = "../../tests/integration/runtime-egress/kernel_backstop.rs"
 
+[[test]]
+name = "policy_v2_handoff"
+path = "../../tests/integration/runtime-egress/policy_v2_handoff.rs"
+
 [dev-dependencies]
 opentelemetry_sdk = { version = "0.33.0", features = ["metrics", "testing", "trace"] }
 rcgen = { version = "0.14.10", default-features = false, features = ["crypto", "pem", "ring"] }
