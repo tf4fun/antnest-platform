@@ -20,6 +20,8 @@ Issue 状态最后核对于 2026-10-28：141 个 issue，87 个已关闭，54 �
 
 ## 当前批次
 
+- [ ] [#40](https://github.com/tf4fun/antnest-platform/issues/40) 集成批次 PR426 CI 修复（失败 head 28ff0af1）：实际 CI run 41136034564 / job 124338706952 go-lint 报 `jsonNumber` 与 tests/integration/go overlay skill_sources_http_test.go 冲突，组件 overlay RED 复现；仅重命名 helper→`networkPolicyHandoffJSONNumber`，相同组件 overlay 下 handoff＋Skill Source HTTP 3/3（含 race）GREEN，Console lint（本机 v2.15.0）exit 0、gofmt/diff 干净；新 head 完整远程 CI 尚未确认，不改业务/既有组件测试/CI 配置。证据见 artifacts/verification/issue-40-pr426-{red,green}-overlay.log、issue-40-pr426-console-artifact/go-lint/ 与 go-lint/go-lint-1793418713896-94383.result.json；#40 保持 open，push 后停止、不轮询，无 Docker E2E
+
 - **#40 显式契约／组件集成交付**：独立分支 `fix/issue-40-integration`，依赖契约 #422 → Egress #423 → Controller #424 → Console #425。共享冻结 `policy-v2-handoff.json` 将真实 Egress 鉴权路由 PUT 元数据 ack／不可变重试／冲突／GET／原版本 CAS，与 Controller HTTP 发布→CAS、Console BFF 白名单及浏览器 codec／pending 串联验证；根契约先因 fixture 缺失 RED，落地后根契约 6/6、两个 Go 消费包的 SharedHandoff 用例、真实 Rust 路由 1/1 GREEN。组件接线同时发现 Controller 误用 GET 解码器读取 PUT ack，已归 #424 `58b00e02` 修复（真实形状 RED 3/3 → GREEN，sha256 精确校验，错误摘要无 CAS），经普通合并传至 #425 `2eb8c817`。此前三处远程 CI 失败已归 #422 `464fdfad` 修复并逐级合入（版本钉与格式，不改 CI 策略）。所有批次保持独立 PR；完整远程门禁与 PostgreSQL 组件结果待精确候选 CI，不宣称合并／release-capable，#40 保持开放。本批 PR 推送后停止查询和轮询，由用户通知后续 CI；不承担 Docker E2E。
 
 - [ ] [#40](https://github.com/tf4fun/antnest-platform/issues/40) Admin Console v2 批次：分支 fix/issue-40-admin-console，依赖 #424/#423/#422；BFF 严格 action XOR spec（原始字节解码避开 serviceauth 反射）、spec-only 转发+内容寻址 ack 校验、v2 投影白名单、409 映射；Web 端 decodeNetworkSpec/canonical/pending 联合类型、自定义规则编辑器与陈旧草稿阻断；RED 4/4 → Go NetworkPolicy 聚焦测试、TS typecheck、lib 10/10 与组件 24/24 GREEN；完整门禁留给远程 CI；集成批次待做，无 Docker E2E，#40 保持 open

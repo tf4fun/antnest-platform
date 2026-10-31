@@ -80,7 +80,7 @@ func TestNetworkPolicyReadProjectsTheSharedHandoffSpec(t *testing.T) {
 	spec, _ := json.Marshal(fixture["spec"])
 	view := `{"agent_id":"` + fixture["agent_id"].(string) + `","policy":{"policy_id":"` +
 		fixture["policy_id"].(string) + `","revision":1,"resource_version":` +
-		jsonNumber(t, fixture["assignment"].(map[string]any)["resource_version"]) +
+		networkPolicyHandoffJSONNumber(t, fixture["assignment"].(map[string]any)["resource_version"]) +
 		`,"spec":` + string(spec) + `,"digest":"` + fixture["egress_put_ack"].(map[string]any)["digest"].(string) +
 		`"},"attachment":{"state":"closed","resource_version":1},"organization_id":"private"}`
 	backend := newBackendStub()
@@ -101,7 +101,7 @@ func TestNetworkPolicyReadProjectsTheSharedHandoffSpec(t *testing.T) {
 	}
 }
 
-func jsonNumber(t *testing.T, value any) string {
+func networkPolicyHandoffJSONNumber(t *testing.T, value any) string {
 	t.Helper()
 	encoded, err := json.Marshal(value)
 	if err != nil {
