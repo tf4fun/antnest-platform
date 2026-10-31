@@ -313,6 +313,7 @@ export async function runFoundationFlow(
       volume: storage.workspace,
       skillVolume: storage.skills,
       receiverVolume: storage.receiver,
+      resolverVolume: storage.resolver,
     };
   }
   async function physicalIdentity(agentID) {
