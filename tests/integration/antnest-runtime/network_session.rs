@@ -469,3 +469,315 @@ async fn packet_path_probe_keeps_connection_refused_fail_closed() {
     assert_eq!(error.code().as_str(), "network_transport_failed");
     assert!(error.to_string().contains("Connection refused"));
 }
+
+#[tokio::test]
+async fn restart_pause_helper_holds_first_grace_only() {
+    let now = tokio::time::Instant::now();
+    let mut pause = RestartPause::default();
+    assert_eq!(pause.observe(now, 60), Some(Duration::from_millis(60)));
+    assert!(pause.is_paused(now));
+    assert_eq!(pause.observe(now, 120_000), None);
+    assert!(pause.is_paused(now + Duration::from_millis(59)));
+    assert!(pause.take_resume_due(now + Duration::from_millis(60)));
+    assert!(!pause.is_paused(now + Duration::from_millis(60)));
+    assert!(!pause.take_resume_due(now + Duration::from_secs(1)));
+    assert_eq!(pause.observe(now + Duration::from_secs(1), 50), None);
+
+    let mut bounded = RestartPause::default();
+    assert_eq!(
+        bounded.observe(now, 120_000),
+        Some(Duration::from_millis(120_000))
+    );
+    assert!(bounded.is_paused(now + Duration::from_secs(119)));
+    assert_eq!(RestartPause::default().observe(now, 0), None);
+    assert_eq!(RestartPause::default().observe(now, 120_001), None);
+}
+
+async fn restart_fake_egress(
+    socket: tokio::net::UdpSocket,
+    mut crypto: antnest_runtime_tunnel::Peer,
+    notice_millis: u32,
+    early_rst: bool,
+) {
+    let mut packet = [0; antnest_runtime_tunnel::MAX_DATAGRAM + 1];
+    let mut probes = 0_usize;
+    loop {
+        let (size, address) = socket.recv_from(&mut packet).await.unwrap();
+        for event in crypto.receive(&packet[..size], address.ip()).unwrap() {
+            match event {
+                antnest_runtime_tunnel::Event::Network(frame) => {
+                    socket.send_to(&frame, address).await.unwrap();
+                }
+                antnest_runtime_tunnel::Event::Ipv4(inner) => {
+                    probes += 1;
+                    let mut replies = Vec::new();
+                    if probes == 1 {
+                        replies.push(
+                            antnest_runtime_tunnel::egress_restart_packet(
+                                Ipv4Addr::new(100, 64, 0, 2),
+                                notice_millis,
+                            )
+                            .unwrap(),
+                        );
+                        if early_rst {
+                            replies.push(unsupported_ipv4_rejection(&inner).unwrap());
+                        }
+                    } else {
+                        replies.push(unsupported_ipv4_rejection(&inner).unwrap());
+                    }
+                    for reply in replies {
+                        for event in crypto.send(&reply).unwrap() {
+                            if let antnest_runtime_tunnel::Event::Network(frame) = event {
+                                socket.send_to(&frame, address).await.unwrap();
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[tokio::test]
+async fn restart_notice_extends_first_attempt_once_then_fresh_probe_ready() {
+    let egress = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
+    let endpoint = egress.local_addr().unwrap();
+    egress.set_nonblocking(true).unwrap();
+    let egress = tokio::net::UdpSocket::from_std(egress).unwrap();
+    let socket = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
+    socket.connect(endpoint).unwrap();
+    socket.set_nonblocking(true).unwrap();
+    let socket = tokio::net::UdpSocket::from_std(socket).unwrap();
+    let crypto = loopback_egress_peer();
+    let mut runtime = antnest_runtime_tunnel::Peer::new(
+        antnest_runtime_tunnel::KeyId::parse("rtk_0102030405060708090a0b0c0d0e0f10").unwrap(),
+        [11; 32],
+        antnest_runtime_tunnel::Peer::public_key([29; 32]),
+        [53; 32],
+    );
+    let started = tokio::time::Instant::now();
+    let fake = tokio::spawn(restart_fake_egress(egress, crypto, 60, true));
+    let result = verify_egress_path(
+        &socket,
+        &mut runtime,
+        Ipv4Addr::new(100, 64, 0, 2),
+        7,
+        3,
+        Duration::from_millis(20),
+    )
+    .await;
+    let elapsed = started.elapsed();
+    fake.abort();
+    let _ = fake.await;
+    result.expect("fresh matching probe reply after the notice pause must succeed");
+    assert!(elapsed >= Duration::from_millis(60), "ready before pause: {elapsed:?}");
+    assert!(elapsed < Duration::from_secs(2), "unbounded wait: {elapsed:?}");
+}
+
+#[tokio::test]
+async fn restart_notice_only_never_readies_and_stays_bounded() {
+    let egress = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
+    let endpoint = egress.local_addr().unwrap();
+    egress.set_nonblocking(true).unwrap();
+    let egress = tokio::net::UdpSocket::from_std(egress).unwrap();
+    let socket = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
+    socket.connect(endpoint).unwrap();
+    socket.set_nonblocking(true).unwrap();
+    let socket = tokio::net::UdpSocket::from_std(socket).unwrap();
+    let mut crypto = loopback_egress_peer();
+    let mut runtime = antnest_runtime_tunnel::Peer::new(
+        antnest_runtime_tunnel::KeyId::parse("rtk_0102030405060708090a0b0c0d0e0f10").unwrap(),
+        [11; 32],
+        antnest_runtime_tunnel::Peer::public_key([29; 32]),
+        [53; 32],
+    );
+    let fake = tokio::spawn(async move {
+        let mut packet = [0; antnest_runtime_tunnel::MAX_DATAGRAM + 1];
+        loop {
+            let (size, address) = egress.recv_from(&mut packet).await.unwrap();
+            for event in crypto.receive(&packet[..size], address.ip()).unwrap() {
+                match event {
+                    antnest_runtime_tunnel::Event::Network(frame) => {
+                        egress.send_to(&frame, address).await.unwrap();
+                    }
+                    antnest_runtime_tunnel::Event::Ipv4(_) => {
+                        let notice = antnest_runtime_tunnel::egress_restart_packet(
+                            Ipv4Addr::new(100, 64, 0, 2),
+                            30,
+                        )
+                        .unwrap();
+                        for event in crypto.send(&notice).unwrap() {
+                            if let antnest_runtime_tunnel::Event::Network(frame) = event {
+                                egress.send_to(&frame, address).await.unwrap();
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    });
+    let result = tokio::time::timeout(
+        Duration::from_millis(250),
+        verify_egress_path(
+            &socket,
+            &mut runtime,
+            Ipv4Addr::new(100, 64, 0, 2),
+            7,
+            1,
+            Duration::from_millis(20),
+        ),
+    )
+    .await;
+    fake.abort();
+    let _ = fake.await;
+    assert!(matches!(result, Ok(Err(_))), "expected bounded timeout: {result:?}");
+}
+
+#[tokio::test]
+async fn restart_notice_grace_covers_whole_verification_once() {
+    let egress = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
+    let endpoint = egress.local_addr().unwrap();
+    egress.set_nonblocking(true).unwrap();
+    let egress = tokio::net::UdpSocket::from_std(egress).unwrap();
+    let socket = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
+    socket.connect(endpoint).unwrap();
+    socket.set_nonblocking(true).unwrap();
+    let socket = tokio::net::UdpSocket::from_std(socket).unwrap();
+    let mut crypto = loopback_egress_peer();
+    let mut runtime = antnest_runtime_tunnel::Peer::new(
+        antnest_runtime_tunnel::KeyId::parse("rtk_0102030405060708090a0b0c0d0e0f10").unwrap(),
+        [11; 32],
+        antnest_runtime_tunnel::Peer::public_key([29; 32]),
+        [53; 32],
+    );
+    let fake = tokio::spawn(async move {
+        let mut packet = [0; antnest_runtime_tunnel::MAX_DATAGRAM + 1];
+        let mut probes = 0_usize;
+        loop {
+            let (size, address) = egress.recv_from(&mut packet).await.unwrap();
+            for event in crypto.receive(&packet[..size], address.ip()).unwrap() {
+                match event {
+                    antnest_runtime_tunnel::Event::Network(frame) => {
+                        egress.send_to(&frame, address).await.unwrap();
+                    }
+                    antnest_runtime_tunnel::Event::Ipv4(_) => {
+                        probes += 1;
+                        let millis = if probes == 1 { 30 } else { 120_000 };
+                        let notice = antnest_runtime_tunnel::egress_restart_packet(
+                            Ipv4Addr::new(100, 64, 0, 2),
+                            millis,
+                        )
+                        .unwrap();
+                        for event in crypto.send(&notice).unwrap() {
+                            if let antnest_runtime_tunnel::Event::Network(frame) = event {
+                                egress.send_to(&frame, address).await.unwrap();
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    });
+    let started = tokio::time::Instant::now();
+    let result = tokio::time::timeout(
+        Duration::from_millis(250),
+        verify_egress_path(
+            &socket,
+            &mut runtime,
+            Ipv4Addr::new(100, 64, 0, 2),
+            7,
+            3,
+            Duration::from_millis(20),
+        ),
+    )
+    .await;
+    let elapsed = started.elapsed();
+    fake.abort();
+    let _ = fake.await;
+    assert!(matches!(result, Ok(Err(_))), "expected bounded error: {result:?}");
+    assert!(
+        elapsed < Duration::from_millis(240),
+        "grace must cover the whole verification once: {elapsed:?}"
+    );
+}
+
+#[test]
+fn restart_refusal_tolerance_only_applies_during_grace() {
+    let refused = io::Error::from(io::ErrorKind::ConnectionRefused);
+    let broken = io::Error::from(io::ErrorKind::BrokenPipe);
+    assert!(crate::network_session::refused_during_grace(&refused, true));
+    assert!(!crate::network_session::refused_during_grace(&refused, false));
+    assert!(!crate::network_session::refused_during_grace(&broken, true));
+    assert!(!crate::network_session::refused_during_grace(&broken, false));
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn restart_live_notice_is_consumed_without_tun_or_session_failure() {
+    let egress = tokio::net::UdpSocket::bind((Ipv4Addr::LOCALHOST, 0))
+        .await
+        .unwrap();
+    let endpoint = egress.local_addr().unwrap();
+    let (mut network, tun) = loopback_network(endpoint);
+    let mut crypto = loopback_egress_peer();
+    warm_loopback_network(&mut network, &egress, &mut crypto).await;
+    let runtime_address = std::net::SocketAddr::new(
+        Ipv4Addr::LOCALHOST.into(),
+        network.socket.local_addr().unwrap().port(),
+    );
+    let shutdown = CancellationToken::new();
+    let session = network.run(shutdown.clone(), RuntimeMetrics::default());
+    tokio::pin!(session);
+    let exercise = async {
+        let notice =
+            antnest_runtime_tunnel::egress_restart_packet(Ipv4Addr::new(100, 64, 0, 2), 30)
+                .unwrap();
+        let mut frame = Vec::new();
+        for event in crypto.send(&notice).unwrap() {
+            if let antnest_runtime_tunnel::Event::Network(datagram) = event {
+                frame = datagram;
+            }
+        }
+        egress.send_to(&frame, runtime_address).await.unwrap();
+        assert!(
+            tokio::time::timeout(Duration::from_millis(50), async {
+                let mut reply = [0; 1400];
+                tun.recv(&mut reply).await.unwrap()
+            })
+            .await
+            .is_err(),
+            "restart notice must never reach the TUN"
+        );
+        egress.send_to(&frame, runtime_address).await.unwrap();
+        assert!(
+            tokio::time::timeout(Duration::from_millis(20), async {
+                let mut reply = [0; 1400];
+                tun.recv(&mut reply).await.unwrap()
+            })
+            .await
+            .is_err(),
+            "replayed notice must not reach the TUN"
+        );
+        let probe = crate::packet::egress_readiness_probe(Ipv4Addr::new(100, 64, 0, 2), 23456, 9);
+        tun.send(&probe).await.unwrap();
+        assert_eq!(
+            tokio::time::timeout(
+                Duration::from_secs(1),
+                reply_to_loopback_probe(&egress, &mut crypto),
+            )
+            .await
+            .expect("live probe after notice must reach egress"),
+            probe
+        );
+        let mut reply = [0; 1400];
+        let size = tun.recv(&mut reply).await.unwrap();
+        assert_eq!(&reply[..size], unsupported_ipv4_rejection(&probe).unwrap());
+    };
+    tokio::select! {
+        result = &mut session => panic!("live session ended on restart notice: {result:?}"),
+        result = tokio::time::timeout(Duration::from_secs(4), exercise) => {
+            result.expect("live restart notice exercise completes");
+        }
+    }
+    shutdown.cancel();
+    session.await.expect("session stops cleanly after notice");
+}
