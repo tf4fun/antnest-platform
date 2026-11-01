@@ -534,7 +534,7 @@
       "mutation": "single_cas_no_redirect_retry_or_post_write_read",
       "browser_recovery": "local_storage_per_account_agent_request_explicit_original_tuple_retry",
       "side_effects": "no_agent_revision_runtime_rebuild_or_attachment_open",
-      "spec_only_v2_status": "contract_reserved_owning_batches_pending"
+      "spec_only_v2_status": "implemented"
     },
     "model_pricing": {
       "owner": "agent_controller_current_model",

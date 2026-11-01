@@ -206,7 +206,7 @@ Model Profiles and Provider connections are live configuration: Agent builds, Te
 - [Managed MCP](docs/managed-mcp.md) - Template-managed stdio MCP servers.
 - [Skills](docs/skills.md) - Skill Registry inventory, publication, discovery and promotion.
 - [Agent state](docs/agent-state.md) - lifecycle, activation and Runtime condition presentation.
-- [Network policy](docs/network-policy.md) - Agent public-network policy and recovery.
+- [Network policy](docs/network-policy.md) - Agent public-network policy, custom v2 rules and recovery.
 - [Model budgets and Template model policy](docs/model-call-policy.md) - Organization budget CAS, exact USD caps and Template retry/failover/run budget.
 - [Execution audit](docs/execution-audit.md) - ACP audit reads and synchronization status.
 - [Agent workspace navigation](docs/agent-workspace-navigation.md) - links into Agent UI.
