@@ -170,7 +170,7 @@ function roundFixture(index = 1, overrides = {}) {
     created_at: iso(3100),
     updated_at: iso(3200),
   };
-  const workspace = `antnest-workspace-${agentId}`;
+  const workspace = `antnest-antnest-stage3-e2e-12345-workspace-${agentId}`;
   const skills = `antnest-skills-${agentId}`;
   const auth = `antnest-auth-${agentId}`;
   return {

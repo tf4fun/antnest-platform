@@ -1,3 +1,4 @@
+import { runtimeResourceName } from "../../support/runtime-resource-name.mjs";
 import assert from "node:assert/strict";
 import { createServer, request } from "node:http";
 import { once } from "node:events";
@@ -103,7 +104,7 @@ export async function startCrashProxy({
         selection &&
         create &&
         url.searchParams.get("name") ===
-          `antnest-runtime-${selection.agent_id}` &&
+          runtimeResourceName(selection.scope, "runtime", selection.agent_id) &&
         spec.Labels?.["io.antnest.agent-id"] === selection.agent_id &&
         spec.Labels?.["io.antnest.runtime-controller-scope"] ===
           selection.scope;

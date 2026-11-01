@@ -8,6 +8,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { pathToFileURL } from "node:url";
+import { runtimeResourceName } from "../../support/runtime-resource-name.mjs";
 
 const socketPath = "/proxy/docker.sock";
 const upstreamSocket = "/var/run/docker.sock";
@@ -17,12 +18,16 @@ let armed, hit;
 export function creationTarget(path, body, expected) {
   const url = new URL(path, "http://docker");
   const match = /^\/(v[0-9.]+)\/containers\/create$/.exec(url.pathname);
+  const spec = JSON.parse(body);
   if (
     !match ||
-    url.searchParams.get("name") !== `antnest-runtime-${expected.agent_id}`
+    spec.Labels?.["io.antnest.agent-id"] !== expected.agent_id ||
+    spec.Labels?.["io.antnest.runtime-controller-scope"] !== expected.scope ||
+    !expected.scope ||
+    url.searchParams.get("name") !==
+      runtimeResourceName(expected.scope, "runtime", expected.agent_id)
   )
     return null;
-  const spec = JSON.parse(body);
   const mounts = spec.HostConfig?.Mounts ?? [];
   const skill = mounts.find((mount) => mount.Target === "/skills");
   if (
@@ -36,12 +41,17 @@ export function creationTarget(path, body, expected) {
   return { version: match[1], volume: skill.Source };
 }
 
-export function initializationTarget(path, body) {
-  const name = new URL(path, "http://docker").searchParams.get("name") ?? "";
-  const match = /^antnest-runtime-(agent_[0-9a-f]{32})$/.exec(name);
-  if (!match) return null;
-  const target = creationTarget(path, body, { agent_id: match[1] });
-  return target ? { ...target, agent_id: match[1] } : null;
+export function initializationTarget(path, body, expectedScope) {
+  const labels = JSON.parse(body).Labels;
+  const agent = labels?.["io.antnest.agent-id"];
+  const controllerScope =
+    expectedScope ?? labels?.["io.antnest.runtime-controller-scope"];
+  if (!/^agent_[0-9a-f]{32}$/.test(agent ?? "")) return null;
+  const target = creationTarget(path, body, {
+    agent_id: agent,
+    scope: controllerScope,
+  });
+  return target ? { ...target, agent_id: agent } : null;
 }
 
 export function startTarget(path, inspected, expected) {
@@ -193,7 +203,7 @@ async function intercept(incoming, outgoing) {
     (hit?.create_response_dropped || hit?.start_response_dropped) &&
     incoming.method === "GET" &&
     new URL(incoming.url, "http://docker").pathname.endsWith(
-      `/containers/antnest-runtime-${hit.agent_id}/json`,
+      `/containers/${runtimeResourceName(hit.scope, "runtime", hit.agent_id)}/json`,
     )
   ) {
     hit.recovery_inspect_seen = true;
@@ -264,7 +274,7 @@ async function intercept(incoming, outgoing) {
   const body = await readBody(incoming);
   const target =
     armed.mode === "initialize_race"
-      ? initializationTarget(incoming.url, body)
+      ? initializationTarget(incoming.url, body, scope)
       : creationTarget(incoming.url, body, armed);
   if (!target) {
     forward(incoming, outgoing, body);

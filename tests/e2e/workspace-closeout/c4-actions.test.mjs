@@ -15,7 +15,8 @@ function fixture(overrides = {}) {
   assert.equal(typeof implementation.createC4Actions, "function");
   const abort = new AbortController(),
     report = { checks: [], traces: [] },
-    events = [];
+    events = [],
+    budgets = [];
   const config = {
     project: "antnest-lifecycle-12345678",
     env: {},
@@ -33,11 +34,14 @@ function fixture(overrides = {}) {
     State: { Running: false, ExitCode: 0, OOMKilled: false },
   };
   const dependencies = {
-    createDocker: (_env, signal) => async (args) => {
-      events.push({ args, signal });
-      if (args[0] === "inspect") return JSON.stringify([container]);
-      if (args.includes("ps")) return "ui";
-      return "";
+    createDocker: (_env, signal, budget) => {
+      budgets.push(budget);
+      return async (args) => {
+        events.push({ args, signal });
+        if (args[0] === "inspect") return JSON.stringify([container]);
+        if (args.includes("ps")) return "ui";
+        return "";
+      };
     },
     flushShared: async () => {
       events.push({ shared: true });
@@ -51,6 +55,7 @@ function fixture(overrides = {}) {
     report,
     config,
     events,
+    budgets,
     container,
     actions: implementation.createC4Actions(
       {
@@ -120,6 +125,10 @@ test("C4 action captures its owned project before configuration can fail", async
 test("C4 flush joins Agent UI before all seven shared producers", async () => {
   const f = fixture();
   await f.actions.flush(f.config, f.report);
+  assert(
+    f.budgets[0] >= 180000,
+    "flush must cover UI stop plus Egress drain and cleanup",
+  );
   assert(f.events[0].args.includes("stop"));
   assert(f.events[0].args.includes("agent-ui"));
   assert.equal(f.events.at(-1).shared, true);

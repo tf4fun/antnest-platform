@@ -1,3 +1,4 @@
+import { runtimeResourceName } from "../../support/runtime-resource-name.mjs";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { mkdirSync } from "node:fs";
@@ -23,7 +24,7 @@ mkdirSync(directory, { recursive: true, mode: 0o700 });
 const run = randomUUID(),
   project = `antnest-stage3-e2e-${process.pid}`;
 const agent = `agent_${run.replaceAll("-", "")}`;
-const container = `antnest-runtime-${agent}`;
+const container = runtimeResourceName(project, "runtime", agent);
 const image = `antnest/antnest-runtime:progress-${run}`;
 const owner = "io.antnest.progress-gate-probe";
 const env = {
@@ -256,6 +257,7 @@ try {
     await attempt(() =>
       cleanupProgressProbe({
         run,
+        project,
         containerID,
         docker: cleanup,
         save: (file, raw) => writeEvidenceFile(directory, file, raw),

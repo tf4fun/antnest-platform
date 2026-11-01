@@ -47,6 +47,13 @@ impl NetworkSessionError {
 pub(crate) struct NetworkSession(UdpNetwork);
 
 impl NetworkSession {
+    pub(crate) fn management_ipv4(&self) -> Result<Ipv4Addr, NetworkSessionError> {
+        match self.0.socket.local_addr().map_err(local_error)? {
+            SocketAddr::V4(address) if !address.ip().is_unspecified() => Ok(*address.ip()),
+            _ => Err(local_error("verified Egress socket has no management IPv4")),
+        }
+    }
+
     #[cfg(target_os = "linux")]
     pub(crate) async fn prepare(
         network: RuntimeNetwork,
