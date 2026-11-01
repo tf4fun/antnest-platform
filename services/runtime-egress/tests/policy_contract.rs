@@ -8,7 +8,11 @@ fn machine_schema_defines_exactly_the_rust_policy_documents() {
     )))
     .expect("policy schema");
     let variants = schema["oneOf"].as_array().expect("policy variants");
-    let actions = variants
+    assert_eq!(variants.len(), 3);
+    let v2 = &variants[2];
+    assert_eq!(v2["additionalProperties"], false);
+    assert_eq!(v2["properties"]["schema_version"]["const"], 2);
+    let actions = variants[..2]
         .iter()
         .map(|variant| {
             assert_eq!(variant["additionalProperties"], false);

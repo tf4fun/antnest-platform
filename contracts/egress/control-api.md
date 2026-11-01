@@ -26,7 +26,7 @@ Control callers propagate W3C `traceparent` and optional `tracestate` headers.
 Invalid trace context is ignored without rejecting the business request.
 Runtime Egress does not accept `baggage` as part of its control contract.
 
-This document describes control contract revision 8.
+This document describes control contract revision 9.
 
 ## Status
 
@@ -220,6 +220,52 @@ different content returns `policy_revision_conflict`.
 
 The initial implementation accepts only the policy documents described by
 [`policy.schema.json`](policy.schema.json).
+
+Control contract revision 9 publishes the schema_version 2 policy document:
+
+```json
+{
+  "schema_version": 2,
+  "default": "deny",
+  "rules": [
+    { "action": "allow", "domains": ["api.github.com"], "ports": [443], "protocol": "tcp" },
+    { "action": "allow", "cidrs": ["10.20.0.15/32"], "ports": [443] },
+    { "action": "deny", "ports": [25] }
+  ]
+}
+```
+
+`default` is `allow` or `deny` and applies when no rule matches. `rules` is an
+ordered array of at most 128 entries evaluated first-match — the first rule
+whose selectors match the destination decides; there is no longest-prefix or
+priority ordering. Each rule carries a required `action` (`allow` or `deny`),
+optional `ports` (integers or `{from, to}` ranges, 1-65535, up to 64 entries;
+`from` greater than `to` is a semantic runtime rejection), an optional
+`protocol` that is `tcp` only, and at most one destination selector: `cidrs`
+(canonical IPv4 CIDRs, no leading zeros, prefix 0-32; host-bit enforcement is
+semantic runtime) or `domains` (lowercase ASCII hostnames of two or more
+labels, each 1-63 characters without edge hyphens, no trailing dot, no
+wildcards, at most 253 characters total). A rule with no selector matches any
+destination. Unknown fields, both selectors together, empty selector lists and
+IPv6/wildcard forms are invalid.
+
+A `default` of `allow` keeps the v1 external-only universe: it never opens
+loopback, link-local, private, multicast, documentation, benchmarking,
+reserved or deployment addresses. An explicit v2 `allow` rule may additionally
+cover RFC1918 destinations only; it can never permit the configured platform
+deny set or other special-use ranges, which are evaluated before any rule.
+Under schema_version 2, TCP DNS to the virtual resolver is permitted even when
+`default` is `deny` so domain rules can resolve; that is the single documented
+resolver exception and does not grant general resolver access. The canonical
+v1 migration is `allow_all` to `{"default": "allow", "rules": []}` and
+`deny_all` to `{"default": "deny", "rules": []}`, which preserves each v1
+external decision except for this resolver access; callers needing total DNS
+denial keep `deny_all`. Domain rules bind only validated answers from the
+Agent's own resolver queries; they can never grant platform addresses.
+
+Revision 9 reserves the document ahead of implementation: the current Egress
+service still accepts only schema_version 1 at this route, and the owning
+Egress, Controller and Console batches remain pending.
 
 `GET /internal/policies/{policy_id}/revisions/{revision}` reads the exact
 immutable revision, including its policy document:
