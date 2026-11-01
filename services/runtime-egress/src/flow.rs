@@ -12,6 +12,7 @@ pub enum ClaimResult {
     Existing,
     Collision,
     CapacityExceeded,
+    AdmissionDenied,
 }
 
 #[derive(Clone, Debug)]
@@ -83,6 +84,29 @@ impl FlowTable {
         );
         self.agent_counts.insert(agent_id, agent_count + 1);
         ClaimResult::Created
+    }
+
+    pub fn claim_existing(
+        &mut self,
+        agent_id: AgentId,
+        key: FlowKey,
+        peer: SocketAddr,
+        assignment_version: u64,
+        now: Instant,
+    ) -> ClaimResult {
+        self.expire(now);
+        match self.flows.get_mut(&key) {
+            Some(entry)
+                if entry.agent_id == agent_id
+                    && entry.peer == peer
+                    && entry.assignment_version == assignment_version =>
+            {
+                entry.last_seen = now;
+                ClaimResult::Existing
+            }
+            Some(_) => ClaimResult::Collision,
+            None => ClaimResult::AdmissionDenied,
+        }
     }
 
     pub fn peer_for_reply(

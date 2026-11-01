@@ -20,6 +20,8 @@ Issue 状态最后核对于 2026-10-28：141 个 issue，87 个已关闭，54 �
 
 ## 当前批次
 
+- **#41 Egress 批次（RC PR #436 之后）**：`ANTNEST_EGRESS_DRAIN_TIMEOUT` 默认 30s、最大 120s；干净终止信号在同一个绝对预算内保持 UDP／TUN／DNS／crypto 工作，旧 flow 继续且受原 policy／fence／version／idle 约束，新 tuple 拒绝，截止后取消并执行 5s 清理；后台任务失败在等待 barrier 时仍立即报告。对所有已认证合法 peer 每秒至多一批加密重启通知，ProbeOnly 探测不被误报 ready，健康降级不可恢复为 ready。15 项聚焦 drain 单元测试与 1 项真实 UDP＋模拟 TUN 组件测试通过；新增 lib Clippy 通过。单实例 flow／NAT 不持久化、重启非无损，Runtime 消费与部署 stop grace 仍待后续批次。共享 PR #435 在 `082fdedc` 的 Repository checks 通过、Integration checks 因 checksum Clippy 失败；已用 `as_chunks` 与测试类型别名修复，worktree Clippy all-targets＋8 项 codec 测试通过，待同步候选后重跑远程 CI，不等待。
+
 - **#41 RC 批次（共享 PR #435 之后）**：scope 进入容器／workspace 命名，超过 128 字节或歧义标识使用 128-bit 哈希；monitor 首轮 List 与恢复重试执行同 scope 旧容器重命名，一版本旧 workspace 回退保留现有内容，三个私有挂载 writer 兼容旧运行容器且禁止 live rewrite。真实 Docker IPAM 快照覆盖 `/24`／`/20`、IPRange、静态保留／跨 scope 占用，缓存投影至 `/status` 与容量指标；未知快照明确标记，Docker 为最终容量仲裁；创建与 Start 串行准入，实际 IPAM 错误映射 `503 runtime_capacity_exhausted`，新候选清理不确定时保留 unknown。新增反例先红后绿；最终 41 项聚焦 Docker 包测试通过，control／rpc／telemetry 聚焦测试通过。双 scope 同 Agent 的真实 Docker component 源已编译，本地因未配置 Docker opt-in 明确跳过，不能计为执行通过；远程接线由显式集成批次完成。Egress／Runtime 消费仍待后续 PR，不关闭 #41、不等待 CI。
 
 - **#41 运行时平面交付启动（2026-11-01）**：基于 main `03df6538`，按共享契约 → Runtime Controller → Runtime Egress → Runtime → 契约／组件集成拆分独立堆叠 PR；多节点实现仍由 #74 跟踪。共享批次定义 scope 命名／一版本旧资源迁移、真实 IPv4 IPAM 容量语义及 `503 runtime_capacity_exhausted`，并提供现有 revision-2 加密隧道内的有界重启通知 codec；新增测试先红（缺少新 API）后绿，8/8 聚焦 Rust 测试通过，fmt 通过。RC／Egress／Runtime 消费与组件集成尚未交付，不将 codec 视为完整业务工作流。完整门禁使用各候选远程 CI，CI 运行期间继续下一服务；所有 PR 创建后停止，不轮询最终结果、不合并、不关闭 #41。Docker E2E 由独立流程负责，本批次不维护或执行。

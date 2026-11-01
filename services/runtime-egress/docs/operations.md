@@ -487,3 +487,22 @@ Revision 1 and 2 are incompatible on the wire. Stop the previous deployment,
 upgrade RC/Runtime/Egress/Controller and bootstrap together, then re-enable or
 rebuild Agents to issue generation keys. No rolling raw-packet fallback exists.
 The Controller and deployment acceptance is the final #111 integration batch.
+
+## Scheduled-restart drain
+
+`ANTNEST_EGRESS_DRAIN_TIMEOUT` (default `30s`, `1ms`–`120s`) bounds the SIGTERM/SIGINT
+drain. On a clean signal, Egress begins draining while networking, DNS and crypto
+tasks stay alive until the absolute deadline: established flows keep forwarding,
+new flow tuples are refused (TCP reset when possible), and readiness probes
+receive the bounded authenticated restart notice (shared codec, at most one per
+second per peer). When the deadline expires all tasks are cancelled and the
+existing 5s join/abort cleanup runs; component failure or signal registration
+error skips the drain entirely. `/status` reports `degraded` from the moment
+drain begins and cannot return to `ready`.
+
+Draining only mitigates scheduled restarts. Flows and NAT state are not
+persisted: in-flight connections may drop at the deadline, abrupt failure sends
+no notice, and after restart the Runtime re-handshakes the authenticated tunnel
+and application retries recover without controller intervention — there is no
+Runtime compute rebuild guarantee and no multi-instance/HA claim. Set the
+container stop grace to the configured drain timeout plus at least 5 seconds.

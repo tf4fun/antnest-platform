@@ -12,6 +12,7 @@ pub mod control;
 pub mod dataplane;
 pub mod dns;
 pub mod domain;
+pub mod drain;
 pub mod flow;
 pub mod kernel;
 pub mod network;

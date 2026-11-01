@@ -1,5 +1,14 @@
 use super::*;
 use crate::tunnel::PreparedKey;
+
+#[cfg(test)]
+impl DataPlaneEngine {
+    pub(crate) fn test_bind_remote(&mut self, id: KeyId, remote: SocketAddr) {
+        if let Some(context) = self.tunnels.get_mut(&id) {
+            context.remote = Some(remote);
+        }
+    }
+}
 use antnest_runtime_tunnel::{Error as TunnelError, Event, datagram_key_id};
 use std::collections::HashSet;
 
@@ -131,7 +140,14 @@ impl DataPlaneEngine {
         }
     }
     pub fn tunnel_tick(&mut self) -> Vec<DataPlaneAction> {
+        self.tunnel_tick_at(Instant::now())
+    }
+
+    pub(crate) fn tunnel_tick_at(&mut self, now: Instant) -> Vec<DataPlaneAction> {
         let mut output = Vec::new();
+        let remaining = self.drain_remaining(now);
+        let notice_due = self.drain_notice_next.is_none_or(|next| next <= now);
+        let mut notice_sent = false;
         for (id, context) in &mut self.tunnels {
             let Some(remote) = context.remote else {
                 continue;
@@ -146,6 +162,26 @@ impl DataPlaneEngine {
             {
                 continue;
             }
+            if notice_due && let Some(remaining) = remaining.filter(|value| !value.is_zero()) {
+                let millis = u32::try_from(remaining.as_millis())
+                    .unwrap_or(u32::MAX)
+                    .max(1);
+                if let Ok(notice) =
+                    antnest_runtime_tunnel::egress_restart_packet(context.tunnel_ipv4, millis)
+                    && let Ok(events) = context.peer.send(&notice)
+                {
+                    for event in events {
+                        if let Event::Network(frame) = event {
+                            output.push(DataPlaneAction::SendUdp {
+                                agent_id: context.agent_id.clone(),
+                                peer: remote,
+                                packet: frame,
+                            });
+                        }
+                    }
+                    notice_sent = true;
+                }
+            }
             if let Ok(events) = context.peer.tick() {
                 for event in events {
                     if let Event::Network(packet) = event {
@@ -156,6 +192,9 @@ impl DataPlaneEngine {
                     }
                 }
             }
+        }
+        if notice_sent {
+            self.drain_notice_next = Some(now + Duration::from_secs(1));
         }
         output
     }

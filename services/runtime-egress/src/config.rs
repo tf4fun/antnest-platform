@@ -29,6 +29,7 @@ pub struct Config {
     pub max_flows: usize,
     pub max_agent_flows: usize,
     pub flow_idle: Duration,
+    pub drain_timeout: Duration,
     pub dns_upstream: SocketAddr,
     pub tun_name: String,
     pub command_timeout: Duration,
@@ -118,6 +119,12 @@ impl Config {
             return Err(ConfigError::InvalidFlowLimits);
         }
         let flow_idle = parse_duration(&values, "ANTNEST_EGRESS_FLOW_IDLE", "5m")?;
+        let drain_timeout = parse_duration(&values, "ANTNEST_EGRESS_DRAIN_TIMEOUT", "30s")?;
+        if drain_timeout
+            > Duration::from_millis(u64::from(antnest_runtime_tunnel::EGRESS_DRAIN_MAX_MILLIS))
+        {
+            return Err(ConfigError::Invalid("ANTNEST_EGRESS_DRAIN_TIMEOUT"));
+        }
         let dns_upstream = required(&values, "ANTNEST_EGRESS_DNS_UPSTREAM")?
             .parse()
             .map_err(|_| ConfigError::Invalid("ANTNEST_EGRESS_DNS_UPSTREAM"))?;
@@ -160,6 +167,7 @@ impl Config {
             max_flows,
             max_agent_flows,
             flow_idle,
+            drain_timeout,
             dns_upstream,
             tun_name,
             command_timeout,

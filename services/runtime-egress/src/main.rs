@@ -220,10 +220,14 @@ async fn run(
         )
     });
 
-    let failure = tokio::select! {
+    let mut failure = tokio::select! {
         signal = shutdown_signal() => signal.err().map(|error| error.to_string()),
         result = tasks.join_next() => Some(join_failure(result)),
     };
+    if failure.is_none() {
+        failure =
+            antnest_runtime_egress::drain::run(&service, &mut tasks, config.drain_timeout).await;
+    }
     cancellation.cancel();
     if timeout(Duration::from_secs(5), async {
         while tasks.join_next().await.is_some() {}
