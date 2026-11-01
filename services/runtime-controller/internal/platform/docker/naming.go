@@ -3,10 +3,12 @@ package docker
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
 	"strings"
 )
 
 const resourceNameMaxBytes = 128
+const scopedResourceNameFormat = "antnest-%s-%s-%s"
 
 func runtimeContainerName(scope, agentID string) string {
 	return scopedResourceName(scope, "runtime", agentID)
@@ -25,13 +27,13 @@ func scopedResourceName(scope, kind, agentID string) string {
 	if !plainNameSegment(agentID) {
 		agentPart = hashedNameSegment(agentID)
 	}
-	name := "antnest-" + scopePart + "-" + kind + "-" + agentPart
+	name := fmt.Sprintf(scopedResourceNameFormat, scopePart, kind, agentPart)
 	if len(name) > resourceNameMaxBytes {
 		scopePart = hashedNameSegment(scope)
-		name = "antnest-" + scopePart + "-" + kind + "-" + agentPart
+		name = fmt.Sprintf(scopedResourceNameFormat, scopePart, kind, agentPart)
 		if len(name) > resourceNameMaxBytes {
 			agentPart = hashedNameSegment(agentID)
-			name = "antnest-" + scopePart + "-" + kind + "-" + agentPart
+			name = fmt.Sprintf(scopedResourceNameFormat, scopePart, kind, agentPart)
 		}
 	}
 	return name

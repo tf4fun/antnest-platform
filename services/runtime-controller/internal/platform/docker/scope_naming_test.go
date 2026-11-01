@@ -23,7 +23,8 @@ func TestScopedNamesUseExactScopeAgentLayout(t *testing.T) {
 			t.Fatalf("scoped name exceeds the limit: %q", name)
 		}
 	}
-	if runtimeContainerName("rc", "agent-1") != runtimeContainerName("rc", "agent-1") {
+	firstRuntime := runtimeContainerName("rc", "agent-1")
+	if runtimeContainerName("rc", "agent-1") != firstRuntime {
 		t.Fatal("scoped naming is not stable")
 	}
 	if runtimeContainerName("scope-a", "agent-1") == runtimeContainerName("scope-b", "agent-1") {
@@ -96,7 +97,8 @@ func TestHashedSegmentsAreDeterministicAndCollisionResistant(t *testing.T) {
 	if first == second {
 		t.Fatalf("near-identical long Agents collide: %q", first)
 	}
-	if hashedNameSegment("scope") != hashedNameSegment("scope") {
+	firstSegment := hashedNameSegment("scope")
+	if hashedNameSegment("scope") != firstSegment {
 		t.Fatal("segment hashing is not deterministic")
 	}
 	if !hashedSegmentPattern.MatchString(hashedNameSegment("scope")) {
