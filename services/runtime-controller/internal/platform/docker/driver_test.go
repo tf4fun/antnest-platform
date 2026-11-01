@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -560,6 +561,7 @@ func testDriverConfig() Config {
 }
 
 type fakeResolverGate struct {
+	mu           sync.Mutex
 	prepareCalls int
 	verifyCalls  int
 	removeCalls  int
@@ -569,16 +571,22 @@ type fakeResolverGate struct {
 }
 
 func (g *fakeResolverGate) Prepare(context.Context, deployment.Key, string) error {
+	g.mu.Lock()
+	defer g.mu.Unlock()
 	g.prepareCalls++
 	return g.prepareErr
 }
 
 func (g *fakeResolverGate) VerifyRuntimeMount(context.Context, deployment.Key, string, string) error {
+	g.mu.Lock()
+	defer g.mu.Unlock()
 	g.verifyCalls++
 	return g.verifyErr
 }
 
 func (g *fakeResolverGate) Remove(context.Context, deployment.Key) error {
+	g.mu.Lock()
+	defer g.mu.Unlock()
 	g.removeCalls++
 	return g.removeErr
 }
