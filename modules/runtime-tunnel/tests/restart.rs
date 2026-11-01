@@ -72,11 +72,11 @@ fn establish(a: &mut Peer, b: &mut Peer) {
 fn sum16(parts: &[&[u8]]) -> u16 {
     let mut sum = 0u32;
     for part in parts {
-        let mut words = part.chunks_exact(2);
-        for w in &mut words {
+        let (words, remainder) = part.as_chunks::<2>();
+        for w in words {
             sum += u16::from_be_bytes([w[0], w[1]]) as u32;
         }
-        for &b in words.remainder() {
+        for &b in remainder {
             sum += (b as u32) << 8;
         }
     }
@@ -205,7 +205,8 @@ fn parser_rejects_truncated_extended_and_garbage_frames() {
 #[test]
 fn parser_rejects_mutated_header_transport_and_payload_fields() {
     let base = egress_restart_packet(TUNNEL, 60_000).unwrap();
-    let mutations: Vec<Box<dyn Fn(&mut Vec<u8>)>> = vec![
+    type PacketMutation = Box<dyn Fn(&mut Vec<u8>)>;
+    let mutations: Vec<PacketMutation> = vec![
         Box::new(|p| p[0] = 0x46),
         Box::new(|p| p[0] = 0x55),
         Box::new(|p| p[1] = 1),

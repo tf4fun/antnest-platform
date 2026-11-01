@@ -93,11 +93,11 @@ fn pseudo_header(source: &Ipv4Addr, destination: &Ipv4Addr) -> [u8; 12] {
 fn checksum(parts: &[&[u8]]) -> u16 {
     let mut sum = 0u32;
     for part in parts {
-        let mut words = part.chunks_exact(2);
-        for w in &mut words {
+        let (words, remainder) = part.as_chunks::<2>();
+        for w in words {
             sum += u16::from_be_bytes([w[0], w[1]]) as u32;
         }
-        for &b in words.remainder() {
+        for &b in remainder {
             sum += (b as u32) << 8;
         }
     }
