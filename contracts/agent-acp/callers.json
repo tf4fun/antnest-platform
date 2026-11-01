@@ -333,7 +333,7 @@
       ]
     },
     "services/agent-acp-service/src/transport/http-server.ts": {
-      "sha256": "cbcdd1b9a83b1e96f57e08aef7b1e7267dcde333e4e9c3a2910863fafb0b7d69",
+      "sha256": "80a3e5e84d0223c8ad2cffa48a858251bc1b68ad1210381fa5b77e26766903b9",
       "routes": ["GET /status", "UPGRADE /v1/acp", "UPGRADE /v2/acp"]
     },
     "services/agent-acp-service/src/transport/learning-changes.ts": {
@@ -406,7 +406,7 @@
       ]
     },
     "services/agent-acp-service/src/transport/peer-server.ts": {
-      "sha256": "c71ff0735ee13e3226a4bdf4db177fd6a195d236d57b3b4bb986b83ba48452c6",
+      "sha256": "c1d46a640d6b5477ec6ea5168cca54c8eb6ff2efffb4670c845d08b4a21f7dfd",
       "routes": [
         "POST /internal/acp-peer/identity",
         "POST /internal/acp-peer/publications/apply",

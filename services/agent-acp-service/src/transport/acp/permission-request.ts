@@ -1,5 +1,5 @@
 import { permissionChoices } from "../../domain/tool-permissions.js";
-import type { PermissionRequest } from "../../ports/tool-permissions.js";
+import type { PermissionRequest, PermissionResolution } from "../../ports/tool-permissions.js";
 import { untilAborted } from "../../application/permission-connections.js";
 import type { ConnectionTaskOwner } from "../../ports/connection-tasks.js";
 
@@ -13,6 +13,32 @@ export function v1Permission(request: PermissionRequest) {
       name: request.call.name,
       status: "pending" as const,
       rawInput: request.call.arguments,
+    },
+    _meta: {
+      "antnest.dev/permission-request": {
+        version: 1,
+        runId: request.runId,
+        toolCallId: request.call.id,
+      },
+    },
+  };
+}
+
+export function permissionResolution(request: PermissionRequest, reason: PermissionResolution) {
+  return {
+    sessionId: request.sessionId,
+    update: {
+      sessionUpdate: "notice" as const,
+      severity: "info" as const,
+      title: "Permission request resolved",
+      _meta: {
+        "antnest.dev/permission-resolution": {
+          version: 1,
+          runId: request.runId,
+          toolCallId: request.call.id,
+          reason,
+        },
+      },
     },
   };
 }

@@ -4,8 +4,12 @@ import { targetCancelRunId } from "./target-cancel.js";
 import { configurationCondition } from "./configuration-condition.js";
 import { promptBridgeIntent } from "./prompt-intent.js";
 import { v1Configuration } from "../configuration.js";
-import { permissionRequest, v1Permission } from "../permission-request.js";
-import type { PermissionConnectionsPort } from "../../../ports/tool-permissions.js";
+import { permissionRequest, permissionResolution, v1Permission } from "../permission-request.js";
+import type {
+  PermissionConnectionsPort,
+  PermissionRequest,
+  PermissionResolution,
+} from "../../../ports/tool-permissions.js";
 import { createAcpDispatcher } from "../../../telemetry/acp-dispatch.js";
 
 import { errorCapability } from "../../../domain/error-catalog.js";
@@ -57,6 +61,7 @@ export function createAcpV1Agent({
   let initialized = false;
   let bridgeDelivery = false;
   let bridgeLearningNotices = false;
+  let clientNotices = false;
   let noticeSubscription: ReturnType<LearningNoticePublisher["subscribe"]> | undefined;
   let connection: acp.AgentConnection;
   let client: acp.AgentContext;
@@ -151,6 +156,15 @@ export function createAcpV1Agent({
           (error) => closeFailed(error, "permission"),
           tasks,
         ),
+      ...(clientNotices
+        ? {
+            resolved: (request: PermissionRequest, reason: PermissionResolution) =>
+              client.notify(
+                acp.methods.client.session.update,
+                permissionResolution(request, reason),
+              ),
+          }
+        : {}),
     });
   };
   const sessionSetup = async (sessionId: string) => {
@@ -209,6 +223,7 @@ export function createAcpV1Agent({
           );
         }
         initialized = true;
+        clientNotices = params.clientCapabilities?.session?.notices != null;
         bridgeDelivery = bridgeRequested(params._meta);
         bridgeLearningNotices =
           bridgeDelivery &&

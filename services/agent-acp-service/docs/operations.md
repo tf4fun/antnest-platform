@@ -591,6 +591,13 @@ The endpoint fixes the protocol version for the complete connection. Stable v1
 and draft v2 are separate adapters over the same application core. The
 unversioned `/acp` has no caller grant and never negotiates a default version.
 
+Public and private owner-peer WebSockets send a protocol ping every
+`ANTNEST_ACP_WS_PING_INTERVAL` (`20s` default, 1–300000ms) and terminate when no
+matching pong arrives inside two intervals; application frames never count as
+activity. A permission wait ends durably at `ANTNEST_ACP_PERMISSION_TIMEOUT`
+(default `min(10m, runTimeout/2)`, strictly below the Run timeout), never by
+restarting on reconnect and never granting a default rule.
+
 `ANTNEST_ACP_CONTROL_LISTEN` serves only Controller publication/settlement and
 minimal health. Bind it to the control network; workspace returns 404 for those
 operations. Both listeners must open before readiness and close on startup

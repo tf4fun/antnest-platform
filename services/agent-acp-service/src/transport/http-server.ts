@@ -38,6 +38,7 @@ import {
 } from "../application/owner-incarnation.js";
 import { promptCapabilities } from "./acp/capabilities.js";
 import { NOOP_TELEMETRY, type TelemetryPort } from "../ports/telemetry.js";
+import { startWebSocketLiveness } from "./acp/websocket-liveness.js";
 import {
   createAcpV1WebSocketStream,
   createAcpV2WebSocketWireStream,
@@ -122,6 +123,7 @@ export type AgentAcpHttpServerOptions = {
   ready: () => Promise<boolean>;
   id?: () => string;
   maxWebSocketPayloadBytes: number;
+  wsPingIntervalMs?: number;
   connectionLimits?: ConnectionCapacityLimits;
   telemetry?: TelemetryPort;
   reportError?: (error: unknown, operation: string) => void;
@@ -785,6 +787,7 @@ export class AgentAcpHttpServer {
         span?.addEvent("antnest.http.upgrade.connection.setup.started");
         this.telemetry.count("antnest.acp.connections", { result: "accepted", protocol });
         this.connections.add(webSocket);
+        startWebSocketLiveness(webSocket, this.options.wsPingIntervalMs);
         webSocket.once("close", () => {
           this.connections.delete(webSocket);
           this.telemetry.count("antnest.acp.connections", { result: "closed" });
@@ -1052,6 +1055,7 @@ export class AgentAcpHttpServer {
       await new Promise<void>((resolve, reject) => {
         wire.once("open", () => {
           state.opened = true;
+          startWebSocketLiveness(wire, this.options.wsPingIntervalMs);
           wire.pause();
           resolve();
         });
@@ -1087,6 +1091,7 @@ export class AgentAcpHttpServer {
           channel.close(1001, "Forwarded connection closing");
         };
         this.connections.add(client);
+        startWebSocketLiveness(client, this.options.wsPingIntervalMs);
         this.forwardedClosers.add(close);
         client.on("message", (data, binary) => {
           client.pause();

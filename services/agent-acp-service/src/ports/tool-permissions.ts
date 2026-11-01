@@ -18,6 +18,7 @@ export type PermissionOwner = Pick<
   accessRevision: string;
 };
 export type PermissionResult = { decision: PermissionDecision; reason: string };
+export type PermissionResolution = "permission_resolved" | "permission_timeout";
 
 export interface ToolPermissionPort {
   request(
@@ -41,6 +42,7 @@ export type PermissionConnection = {
   signal: AbortSignal;
   tasks?: ConnectionTaskOwner;
   request(request: PermissionRequest, signal: AbortSignal): Promise<unknown>;
+  resolved?(request: PermissionRequest, reason: PermissionResolution): Promise<void>;
 };
 export interface PermissionConnectionsPort {
   attach(connection: PermissionConnection): void;

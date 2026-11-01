@@ -22,8 +22,8 @@ const request: PermissionRequest = {
     description: "write",
   },
 };
-function setup() {
-  const connections = new PermissionConnections();
+function setup(permissionTimeoutMs = 600_000) {
+  const connections = new PermissionConnections(permissionTimeoutMs);
   const identity = binding();
   const repository = {
     open: vi
@@ -146,6 +146,124 @@ describe("Durable Tool permissions", () => {
     h.connections.detach(request.sessionId);
     expect(getEventListeners(lifetime.signal, "abort")).toHaveLength(0);
   });
+  it("publishes the resolution notice only after the durable decision commits", async () => {
+    const h = setup();
+    const resolved = vi.fn().mockResolvedValue(undefined);
+    const lifetime = new AbortController();
+    const commit = Promise.withResolvers<boolean>();
+    h.repository.decide.mockReturnValue(commit.promise);
+    h.connections.attach({
+      binding: binding(),
+      sessionId: request.sessionId,
+      signal: lifetime.signal,
+      request: vi.fn(() => Promise.resolve(selected("allow_once"))),
+      resolved,
+    });
+    const pending = h.service.request(h.input);
+    await vi.waitFor(() => expect(h.repository.decide).toHaveBeenCalledOnce());
+    expect(resolved).not.toHaveBeenCalled();
+    commit.resolve(true);
+    expect(await pending).toMatchObject({ decision: "allow_once" });
+    expect(resolved).toHaveBeenCalledWith(request, "permission_resolved");
+    expect(h.repository.decide.mock.invocationCallOrder[0]!).toBeLessThan(
+      resolved.mock.invocationCallOrder[0]!,
+    );
+  });
+
+  it("does not publish a notice when persistence throws", async () => {
+    const h = setup();
+    h.repository.decide.mockRejectedValue(new Error("database gone"));
+    const resolved = vi.fn().mockResolvedValue(undefined);
+    const lifetime = new AbortController();
+    h.connections.attach({
+      binding: binding(),
+      sessionId: request.sessionId,
+      signal: lifetime.signal,
+      request: vi.fn(() => Promise.resolve(selected("allow_once"))),
+      resolved,
+    });
+    await expect(h.service.request(h.input)).rejects.toThrow("database gone");
+    expect(resolved).not.toHaveBeenCalled();
+  });
+
+  it("does not publish a notice when persistence does not commit", async () => {
+    const h = setup();
+    h.repository.decide.mockResolvedValue(false);
+    const resolved = vi.fn().mockResolvedValue(undefined);
+    const lifetime = new AbortController();
+    h.connections.attach({
+      binding: binding(),
+      sessionId: request.sessionId,
+      signal: lifetime.signal,
+      request: vi.fn(() => Promise.resolve(selected("allow_once"))),
+      resolved,
+    });
+    expect(await h.service.request(h.input)).toMatchObject({
+      decision: "cancelled",
+      reason: "permission_stale",
+    });
+    expect(resolved).not.toHaveBeenCalled();
+  });
+
+  it("times out durably as permission_timeout, withdraws the wait and grants no rule", async () => {
+    const h = setup(10);
+    const resolved = vi.fn().mockResolvedValue(undefined);
+    const asked = Promise.withResolvers<AbortSignal>();
+    const lifetime = new AbortController();
+    h.connections.attach({
+      binding: binding(),
+      sessionId: request.sessionId,
+      signal: lifetime.signal,
+      request: vi.fn((_value, signal: AbortSignal) => {
+        asked.resolve(signal);
+        return new Promise(() => undefined);
+      }),
+      resolved,
+    });
+    expect(await h.service.request(h.input)).toEqual({
+      decision: "cancelled",
+      reason: "permission_timeout",
+    });
+    expect(h.repository.decide).toHaveBeenCalledWith(
+      expect.objectContaining({
+        result: { decision: "cancelled", reason: "permission_timeout" },
+      }),
+    );
+    expect(h.repository.decide.mock.calls[0]?.[0].rule).toBeUndefined();
+    expect(resolved).toHaveBeenCalledWith(request, "permission_timeout");
+    expect((await asked.promise).aborted).toBe(true);
+  });
+
+  it("keeps the committed outcome when the resolution notice fails", async () => {
+    const h = setup();
+    const resolved = vi.fn().mockRejectedValue(new Error("notice failed"));
+    const lifetime = new AbortController();
+    h.connections.attach({
+      binding: binding(),
+      sessionId: request.sessionId,
+      signal: lifetime.signal,
+      request: vi.fn(() => Promise.resolve(selected("allow_once"))),
+      resolved,
+    });
+    expect(await h.service.request(h.input)).toMatchObject({ decision: "allow_once" });
+  });
+
+  it("keeps the committed outcome when the resolution notice throws synchronously", async () => {
+    const h = setup();
+    const resolved = vi.fn<(_request: unknown, _reason: unknown) => Promise<void>>(() => {
+      throw new Error("notice failed");
+    });
+    const lifetime = new AbortController();
+    h.connections.attach({
+      binding: binding(),
+      sessionId: request.sessionId,
+      signal: lifetime.signal,
+      request: vi.fn(() => Promise.resolve(selected("allow_once"))),
+      resolved,
+    });
+    expect(await h.service.request(h.input)).toMatchObject({ decision: "allow_once" });
+  });
+
   it("persists before asking and commits before returning approval", async () => {
     const h = setup();
     const response = Promise.withResolvers<unknown>();

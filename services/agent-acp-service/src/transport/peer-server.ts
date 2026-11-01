@@ -21,6 +21,7 @@ import { OWNER_HTTP_PATH } from "./owner-http.js";
 import { OWNER_CONTROL_PATHS } from "./owner-control.js";
 import { strictObject } from "../adapters/strict-json.js";
 import { WebSocketServer, type WebSocket } from "ws";
+import { startWebSocketLiveness } from "./acp/websocket-liveness.js";
 import type { Duplex } from "node:stream";
 import {
   OWNER_FORWARD_HEADER,
@@ -65,6 +66,7 @@ export type PeerServerOptions = {
   apply: (request: PeerPublicationRequest, signal: AbortSignal) => Promise<unknown>;
   timeoutMs?: number;
   maxWebSocketPayloadBytes?: number;
+  wsPingIntervalMs?: number;
   forwardHttp?: (
     request: IncomingMessage,
     response: ServerResponse,
@@ -114,6 +116,7 @@ export class PeerServer {
   private readonly forward: PeerServerOptions["forward"];
   private readonly forwardHttp: PeerServerOptions["forwardHttp"];
   private readonly forwardControl: PeerServerOptions["forwardControl"];
+  private readonly wsPingIntervalMs: number | undefined;
 
   public constructor(options: PeerServerOptions) {
     const timeoutMs = options.timeoutMs === undefined ? defaultTimeoutMs : options.timeoutMs;
@@ -132,6 +135,7 @@ export class PeerServer {
     this.forward = options.forward;
     this.forwardHttp = options.forwardHttp;
     this.forwardControl = options.forwardControl;
+    this.wsPingIntervalMs = options.wsPingIntervalMs;
     this.webSockets = new WebSocketServer({
       noServer: true,
       clientTracking: false,
@@ -344,6 +348,7 @@ export class PeerServer {
       const accepted = Promise.withResolvers<void>();
       this.webSockets.handleUpgrade(request, socket, head, (wire) => {
         state.upgraded = true;
+        startWebSocketLiveness(wire, this.wsPingIntervalMs);
         void prepared!.accept(wire).then(accepted.resolve, accepted.reject);
       });
       if (!state.upgraded) throw new PeerFailure("invalid_request");

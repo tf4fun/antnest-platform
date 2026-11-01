@@ -191,6 +191,7 @@ cancellation is carried by `session/cancel` and is mandatory for this service.
 | WIRE-08 | JSON-RPC IDs are preserved and unknown methods return `-32601`.                                                     | both version raw-wire tests                       | Covered         |
 | WIRE-09 | v2 initialize is the only item in its batch.                                                                        | raw-wire batch rejection test                     | Covered         |
 | WIRE-10 | ACP `_meta` trace context reaches application/model/MCP spans.                                                      | telemetry unit tests                              | Layer-covered   |
+| WIRE-11 | Public and peer WebSockets ping on the configured interval and terminate without a matching pong in two intervals.  | `websocket-liveness.test.ts`                      | Layer-covered   |
 
 ## Unadvertised Surfaces
 
