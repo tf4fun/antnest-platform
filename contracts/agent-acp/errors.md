@@ -86,6 +86,13 @@ replaying an accepted Prompt, model request or Tool effect. ACP enforces shared
 HTTP/WebSocket quotas before connection admission. Immutable admission indexing,
 performance and multi-replica ownership remain separate delivery work in #49.
 
+`permission_timeout` is the `availability` admission/HTTP mapping `-32039`
+with HTTP 408 for a permission request that reached its approval deadline
+under the [connection liveness contract](connection-liveness.md). Its
+`refresh_permission` recovery carries no `retry_after_ms`: retry means
+requesting permission again or submitting new eligible work, never replaying
+an accepted Prompt, model request or Tool effect.
+
 `retryable: true` is not permission to immediately replay every operation.
 `wait_binding` waits for an available binding, `wait_rebuild` requires the
 Runtime rebuild barrier, and `reconnect` requires a new usable connection.

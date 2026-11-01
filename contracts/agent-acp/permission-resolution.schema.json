@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://antnest.dev/contracts/agent-acp/permission-resolution.schema.json",
+  "title": "ACP permission resolution notice payload",
+  "description": "Versioned correlation payload published in a live permission resolution notice; it identifies the resolved request and is neither an approval nor a tool completion.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "runId", "toolCallId", "reason"],
+  "properties": {
+    "version": {
+      "type": "integer",
+      "const": 1
+    },
+    "runId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200
+    },
+    "toolCallId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200
+    },
+    "reason": {
+      "type": "string",
+      "enum": ["permission_resolved", "permission_timeout"]
+    }
+  }
+}
