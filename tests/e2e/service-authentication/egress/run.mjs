@@ -749,7 +749,9 @@ try {
   );
   for (const signal of ["SIGTERM", "SIGINT"]) {
     await invoke(["kill", "--signal", signal, id]);
-    assert.equal(await invoke(["wait", id]), "0");
+    // #41 permits 120s drain plus 5s cleanup; wait for the documented
+    // graceful lifecycle rather than the ordinary 30s Docker command bound.
+    assert.equal(await invoke(["wait", id], true, { timeoutMS: 130000 }), "0");
     const [stopped] = JSON.parse(await invoke(["inspect", id]));
     assert.equal(stopped.State.ExitCode, 0);
     await invoke(["start", id]);

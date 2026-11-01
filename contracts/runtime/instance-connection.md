@@ -197,6 +197,11 @@ prove identity. No caller trusts the public liveness result as a binding.
 Remove the SDK's `disable_allowed_hosts()`. Admit only the Runtime's own
 server-owned management alias/address and loopback hosts with the configured
 port, never a wildcard Host or a host named by a request. If RC publishes the
+current IP, Runtime obtains its own management IPv4 from the local socket of the
+verified Egress session (or a concrete HTTP listener in an isolated test), and
+adds only that canonical IPv4 and configured HTTP port to both Host guards.
+No address is learned from request headers or caller-controlled host lists.
+If RC publishes the
 management alias rather than the current IP, it must be the exact owned
 container alias and remain bound to the same connection. Runtime private
 clients pin that origin, strip unrelated service/user/CCT authority, disable

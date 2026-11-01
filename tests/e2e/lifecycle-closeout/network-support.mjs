@@ -125,7 +125,8 @@ export async function flushTraceProducers(config, docker, signal) {
     "identity-service",
   ];
   await docker(
-    composeArgs(config.project, ["stop", "-t", "30", ...services]),
+    // Egress permits a 120s drain plus 5s cleanup; all exits are checked below.
+    composeArgs(config.project, ["stop", "-t", "130", ...services]),
     true,
     { signal },
   );

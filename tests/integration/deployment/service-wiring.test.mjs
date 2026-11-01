@@ -105,6 +105,7 @@ test("Egress authentication fixture denies the tunnel and every connected subnet
     },
   );
   const egress = config.services["runtime-egress"];
+  assert.equal(egress.stop_grace_period, "2m10s");
   assert.deepEqual(
     egress.environment.ANTNEST_EGRESS_PLATFORM_DENY_CIDRS?.split(",").sort(),
     [

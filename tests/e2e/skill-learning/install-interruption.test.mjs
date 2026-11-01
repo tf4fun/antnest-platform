@@ -1,3 +1,4 @@
+import { runtimeResourceName } from "../../support/runtime-resource-name.mjs";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { generateKeyPairSync, randomUUID } from "node:crypto";
@@ -257,8 +258,16 @@ test(titles[name], { timeout: 720_000 }, async (t) => {
     );
     diagnostics.advance("agent-setup");
     const fixture = await setup(config, abort.signal);
-    const runtimeName = `antnest-runtime-${fixture.agentID}`;
-    const workspaceVolume = `antnest-workspace-${fixture.agentID}`;
+    const runtimeName = runtimeResourceName(
+      config.project,
+      "runtime",
+      fixture.agentID,
+    );
+    const workspaceVolume = runtimeResourceName(
+      config.project,
+      "workspace",
+      fixture.agentID,
+    );
     const service = async (serviceName) =>
       docker(
         composeArgs(config.project, [...overlay, "ps", "-q", serviceName]),

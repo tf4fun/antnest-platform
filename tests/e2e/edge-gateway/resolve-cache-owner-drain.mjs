@@ -1,3 +1,4 @@
+import { runtimeResourceName } from "../../support/runtime-resource-name.mjs";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
@@ -392,7 +393,7 @@ async function createOwnerLifecycleCore({
     assert(!signal?.aborted, "load owner setup cancelled");
     const id =
       service === "runtime"
-        ? `antnest-runtime-${agentID}`
+        ? runtimeResourceName(project, "runtime", agentID)
         : await docker(compose(["ps", "-q", service]));
     const row = await read(service, id);
     normal(row, true);

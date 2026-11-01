@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"net/netip"
 	"strconv"
 	"strings"
@@ -801,13 +802,19 @@ func (d *Driver) inspectContainer(container Container) (deployment.Inspection, e
 	} else {
 		peer = ""
 	}
-	base := "http://" + container.Name + ":" + strconv.FormatUint(port, 10)
+	// Docker resource names can exceed a DNS label after scope isolation.
+	// Route HTTP only to the current, validated management-network peer.
+	var statusEndpoint, mcpEndpoint string
+	if peer != "" {
+		base := "http://" + net.JoinHostPort(peer, strconv.FormatUint(port, 10))
+		statusEndpoint, mcpEndpoint = base+"/status", base+"/mcp"
+	}
 	return deployment.Inspection{
 		AgentID: key.AgentID, Generation: key.Generation,
 		SpecDigest: digest, PlatformResourceID: container.ID,
 		PlatformPhase: condition.phase, Health: condition.health, Reason: condition.reason,
-		DiagnosticSummary: condition.detail, StatusEndpoint: base + "/status",
-		MCPEndpoint: base + "/mcp", RestartCount: container.RestartCount,
+		DiagnosticSummary: condition.detail, StatusEndpoint: statusEndpoint,
+		MCPEndpoint: mcpEndpoint, RestartCount: container.RestartCount,
 		RuntimeEndpoint: peer,
 		ObservedAt:      time.Now().UTC(),
 	}, nil

@@ -1,3 +1,4 @@
+import { runtimeResourceName } from "../../support/runtime-resource-name.mjs";
 import assert from "node:assert/strict";
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
@@ -111,7 +112,10 @@ async function container(config, service) {
 async function runtime(config, agentId) {
   assert.match(agentId, /^agent_[a-f0-9]+$/u);
   const rows = JSON.parse(
-    await docker(["inspect", "antnest-runtime-" + agentId]),
+    await docker([
+      "inspect",
+      runtimeResourceName(config.project, "runtime", agentId),
+    ]),
   );
   assert.equal(rows.length, 1);
   const value = rows[0];
@@ -238,7 +242,10 @@ async function recoverySource(config) {
   assert.equal(mounts.length, 1);
   assert.equal(mounts[0].Type, "volume");
   return {
-    runtimeContainerPrefix: "antnest-runtime-",
+    runtimeContainerPrefix: original.Name.replace(/^\//u, "").slice(
+      0,
+      -agentId.length,
+    ),
     runtimeControllerScope: config.project,
     workspaceVolume: mounts[0].Name,
     workspaceManifest: manifest,

@@ -1,3 +1,4 @@
+import { runtimeResourceName } from "../../support/runtime-resource-name.mjs";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import test from "node:test";
@@ -421,7 +422,7 @@ function fixture() {
     if (args[0] === "compose") return states.get(args.at(-1)).Id;
     if (args[0] === "inspect") {
       const state =
-        args[1] === "antnest-runtime-agent"
+        args[1] === runtimeResourceName(project, "runtime", "agent")
           ? states.get("runtime")
           : [...states.values()].find((row) => row.Id === args[1]);
       assert(state, "unexpected container");

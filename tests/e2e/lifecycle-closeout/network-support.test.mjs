@@ -7,7 +7,40 @@ import {
   physicalIdentity,
   assertProducerStopped,
   assertRuntimeExited,
+  flushTraceProducers,
 } from "./network-support.mjs";
+
+test("producer shutdown lets Egress finish its maximum drain and still rejects forced exit", async () => {
+  const project = "antnest-lifecycle-deadbeef";
+  for (const forced of [false, true]) {
+    let containers;
+    const docker = async (args, long) => {
+      if (args.includes("stop")) {
+        assert.equal(long, true);
+        const seconds = Number(args[args.indexOf("-t") + 1]);
+        containers = args.slice(args.indexOf("-t") + 2).map((service) => ({
+          Id: service,
+          Config: { Labels: { "com.docker.compose.project": project } },
+          State: {
+            Running: false,
+            OOMKilled: false,
+            ExitCode:
+              service === "runtime-egress" && (forced || seconds < 125)
+                ? 137
+                : 0,
+          },
+        }));
+        return "";
+      }
+      if (args.includes("ps")) return containers.map((c) => c.Id).join("\n");
+      assert.equal(args[0], "inspect");
+      return JSON.stringify(containers);
+    };
+    const shutdown = flushTraceProducers({ project }, docker);
+    if (forced) await assert.rejects(shutdown, /graceful shutdown/u);
+    else assert.equal(await shutdown, 7);
+  }
+});
 
 test("Runtime deletion must preserve a single clean exit before physical removal", () => {
   const events = ["kill", "die", "stop", "destroy"].map((Action) => ({

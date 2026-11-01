@@ -1,3 +1,5 @@
+import { runtimeResourceName } from "../../support/runtime-resource-name.mjs";
+import { assertMonitorStatus } from "./observation-readiness.mjs";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
@@ -29,19 +31,6 @@ const api = JSON.parse(
 const validateStatus = new Ajv2020({ strict: true }).compile(
   api.$defs.readiness,
 );
-
-function assertMonitorStatus(body, ready) {
-  assert.deepEqual(body, {
-    status: ready ? "ready" : "not_ready",
-    live: true,
-    ready,
-    database_ready: true,
-    platform_ready: true,
-    observation_ready: true,
-    monitor_ready: ready,
-    disk_quota_enforced: false,
-  });
-}
 
 const { values } = parseArgs({
   options: {
@@ -417,7 +406,10 @@ fetch(process.argv[1], { method: "PUT", headers: { "Antnest-Service-Authorizatio
   assert.equal(created.state, "completed");
   assert.equal(created.inspection.lifecycle_state, "provisioned");
   const runtime = JSON.parse(
-    await docker(["inspect", `antnest-runtime-${agent}`]),
+    await docker([
+      "inspect",
+      runtimeResourceName(config.project, "runtime", agent),
+    ]),
   )[0];
   assert.equal(runtime.State.Running, true);
   const observations = await request(

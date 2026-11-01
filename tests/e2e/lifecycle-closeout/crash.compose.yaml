@@ -8,6 +8,7 @@ services:
       ANTNEST_DOCKER_SOCKET_GID: ${ANTNEST_DOCKER_SOCKET_GID:?ANTNEST_DOCKER_SOCKET_GID is required}
     volumes:
       - ./tests/e2e/lifecycle-closeout:/fixtures:ro
+      - ./tests/support:/support:ro
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - crash-socket:/fault
     healthcheck:
