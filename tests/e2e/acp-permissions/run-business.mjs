@@ -679,7 +679,8 @@ function checkWire(connections, infos) {
               ),
           });
     }
-    const states = [];
+    const states = [],
+      resolutions = new Set();
     for (const frame of connection.raw_frames.filter(
       (row) => row.method === "session/update",
     )) {
@@ -695,6 +696,46 @@ function checkWire(connections, infos) {
             ["running", "idle"].includes(update.state),
         );
         states.push(params);
+        continue;
+      }
+      if (update.sessionUpdate === "notice") {
+        const resolution = update._meta?.["antnest.dev/permission-resolution"];
+        require(object(resolution));
+        const info = one(
+          allowed.filter(
+            (info) =>
+              info.run.run_id === resolution.runId &&
+              info.run.session_id === params.sessionId &&
+              info.toolId === resolution.toolCallId &&
+              !(connection.role === "owner" && info.entry === "reconnect"),
+          ),
+        );
+        const permission = one(info.record.permissions.items);
+        require(
+          connection.permissions.some(
+            (row) =>
+              row.params.sessionId === params.sessionId &&
+              (row.params.toolCall ?? row.params.subject?.toolCall)
+                ?.toolCallId === info.toolId,
+          ) && !resolutions.has(info.run.run_id),
+        );
+        same(update, {
+          sessionUpdate: "notice",
+          severity: "info",
+          title: "Permission request resolved",
+          _meta: {
+            "antnest.dev/permission-resolution": {
+              version: 1,
+              runId: info.run.run_id,
+              toolCallId: info.toolId,
+              reason:
+                permission.reason === "permission_timeout"
+                  ? "permission_timeout"
+                  : "permission_resolved",
+            },
+          },
+        });
+        resolutions.add(info.run.run_id);
         continue;
       }
       if (

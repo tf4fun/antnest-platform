@@ -29,6 +29,10 @@ const connection = (e, version = 1, role = "owner") =>
   e.connections.find((row) => row.version === version && row.role === role);
 const permission = (e, phase = "v1-once") =>
   saved(e, phase).permissions.items[0];
+const resolution = (e, version = 1, role = "owner") =>
+  connection(e, version, role).raw_frames.find(
+    (frame) => frame.params?.update?.sessionUpdate === "notice",
+  );
 const toolEvents = (e, phase = "v1-once") =>
   saved(e, phase).events.items.filter((event) => event.kind === "tool_call");
 const toolUpdate = (e, phase = "v1-once", status = "completed") => {
@@ -129,6 +133,102 @@ test("Permissions distinguishes failed undispatched Tool events and replay deliv
   }
   assert.deepEqual(inspect(e), expected);
 });
+
+test("Permissions validates live resolution notices without treating them as durable Tool results", () => {
+  api();
+  const e = fixture();
+  for (const version of [1, 2]) {
+    assert(resolution(e, version));
+    assert(resolution(e, version, "replay"));
+    const owner = connection(e, version);
+    assert.equal(
+      owner.raw_frames.filter(
+        (frame) => frame.params?.update?.sessionUpdate === "notice",
+      ).length,
+      7,
+    );
+  }
+  const before = structuredClone(e);
+  assert.deepEqual(inspect(e), expected);
+  assert.deepEqual(e, before);
+  // Resolution notices are live only; durable execution evidence is still
+  // required when a notice was missed during a disconnect.
+  for (const c of e.connections)
+    c.raw_frames = c.raw_frames.filter(
+      (frame) => frame.params?.update?.sessionUpdate !== "notice",
+    );
+  assert.deepEqual(inspect(e), expected);
+});
+
+for (const version of [1, 2])
+  test(`Permissions v${version} rejects uncorrelated, malformed or duplicate resolution notices`, () => {
+    api();
+    const mutations = [
+      (frame) => {
+        delete frame.params.update._meta;
+      },
+      (frame) => {
+        frame.params.update._meta["antnest.dev/permission-resolution"].version =
+          2;
+      },
+      (frame) => {
+        frame.params.update._meta["antnest.dev/permission-resolution"].runId =
+          "foreign-run";
+      },
+      (frame) => {
+        frame.params.update._meta[
+          "antnest.dev/permission-resolution"
+        ].toolCallId = "foreign-tool";
+      },
+      (frame) => {
+        frame.params.update._meta["antnest.dev/permission-resolution"].reason =
+          "permission_timeout";
+      },
+      (frame) => {
+        frame.params.update._meta["antnest.dev/permission-resolution"].extra =
+          true;
+      },
+      (frame) => {
+        frame.params.update.title = "Tool completed";
+      },
+      (frame) => {
+        frame.params.update.severity = "warning";
+      },
+      (frame, e) => {
+        frame.params.sessionId = original(e, `v${version}-chat`).sessionId;
+      },
+      (frame, e) => {
+        const run = saved(e, `v${version}-follow`).run;
+        frame.params.update._meta["antnest.dev/permission-resolution"] = {
+          version: 1,
+          runId: run.run_id,
+          toolCallId: toolEvents(e, `v${version}-follow`)[0].payload.toolCallId,
+          reason: "permission_resolved",
+        };
+      },
+      (frame, e) => {
+        connection(e, version).raw_frames.push(structuredClone(frame));
+      },
+      (frame, e) => {
+        connection(e, version, "foreign").raw_frames.push(
+          structuredClone(frame),
+        );
+      },
+      (frame, e) => {
+        connection(e, version, "replay").raw_frames.push(
+          structuredClone(frame),
+        );
+      },
+    ];
+    for (const mutate of mutations) {
+      const e = fixture();
+      mutate(resolution(e, version), e);
+      assert.throws(
+        () => inspect(e),
+        /Permissions business evidence is invalid/u,
+      );
+    }
+  });
 
 test("Permissions admits the real v1 owner stream without a live accepted user-message echo", () => {
   api();
