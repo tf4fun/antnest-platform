@@ -20,6 +20,8 @@ Issue 状态最后核对于 2026-10-28：141 个 issue，87 个已关闭，54 �
 
 ## 当前批次
 
+- [ ] [#40](https://github.com/tf4fun/antnest-platform/issues/40) PR424 取消测试竞态修复（失败 head 933337e2）：CI run 41230602155 / job 124623898813 的 `TestCreateWorkflowCancelDuringActivityRequestsTermination` 首事件误为 terminate_lifecycle；本地原用例 -race -count20 通过，未虚称本地 RED。启动监听器先于 mock body 执行，改为 mock 内记录 network_ensure 后通过 0 延迟回调提交取消，无新 goroutine／sleep／重试／超时放宽；断言取消成功、精确活动顺序、一次对应 phase/code 的终止及一个子流程。修改后目标用例 race 20/20、关联取消用例 4/4、Controller lint（本机 v2.15.0）GREEN，gofmt/diff 干净；仅改测试及本记录，不改业务／SDK／CI 配置。证据为根工作区 artifacts/verification/issue-40-pr424-{controller-ci,original-cancel,green-cancel,green-related}.log，lint go-lint-1793498546845-9987 exit 0；按计划普通合并 #425/#426，新 head 完整远程门禁未确认，不合并 PR、不关 #40、不处理 Docker E2E，推送后停止、不轮询。
+
 - [ ] [#40](https://github.com/tf4fun/antnest-platform/issues/40) Controller 元数据 ack 接线修正：Egress PUT 修订响应为 `{policy_id,revision,schema_version,digest}`（无 spec）；PutPolicyRevision 改用严格元数据解码+sha256 摘要精确校验，不再误用 GET 完整解码；RED 3/3 → egressclient/server 聚焦 NetworkPolicy/PolicyRevision 测试 GREEN，完整门禁留给远程 CI；#424 依赖真实合约形状未变，#40 保持 open
 
 - [ ] [#40](https://github.com/tf4fun/antnest-platform/issues/40) Controller v2 批次：分支 fix/issue-40-agent-controller，依赖 #423/#422；spec-only PUT→内容寻址 custom/sha256 修订发布+原版本 CAS（ports/application/egressclient/server 严格 v1/v2 解码、Range 形状保持、409 映射）；RED 2/2 → ports/application/egressclient/server 聚焦 NetworkPolicy/PolicyRevision/PolicyAssignment/PutPolicyRevision 测试全部 GREEN，完整门禁留给远程 CI；Console/集成批次待做，无 Docker E2E，#40 保持 open
