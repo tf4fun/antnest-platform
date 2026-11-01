@@ -570,8 +570,14 @@ async fn restart_notice_extends_first_attempt_once_then_fresh_probe_ready() {
     fake.abort();
     let _ = fake.await;
     result.expect("fresh matching probe reply after the notice pause must succeed");
-    assert!(elapsed >= Duration::from_millis(60), "ready before pause: {elapsed:?}");
-    assert!(elapsed < Duration::from_secs(2), "unbounded wait: {elapsed:?}");
+    assert!(
+        elapsed >= Duration::from_millis(60),
+        "ready before pause: {elapsed:?}"
+    );
+    assert!(
+        elapsed < Duration::from_secs(2),
+        "unbounded wait: {elapsed:?}"
+    );
 }
 
 #[tokio::test]
@@ -630,7 +636,10 @@ async fn restart_notice_only_never_readies_and_stays_bounded() {
     .await;
     fake.abort();
     let _ = fake.await;
-    assert!(matches!(result, Ok(Err(_))), "expected bounded timeout: {result:?}");
+    assert!(
+        matches!(result, Ok(Err(_))),
+        "expected bounded timeout: {result:?}"
+    );
 }
 
 #[tokio::test]
@@ -694,7 +703,10 @@ async fn restart_notice_grace_covers_whole_verification_once() {
     let elapsed = started.elapsed();
     fake.abort();
     let _ = fake.await;
-    assert!(matches!(result, Ok(Err(_))), "expected bounded error: {result:?}");
+    assert!(
+        matches!(result, Ok(Err(_))),
+        "expected bounded error: {result:?}"
+    );
     assert!(
         elapsed < Duration::from_millis(240),
         "grace must cover the whole verification once: {elapsed:?}"
@@ -706,9 +718,13 @@ fn restart_refusal_tolerance_only_applies_during_grace() {
     let refused = io::Error::from(io::ErrorKind::ConnectionRefused);
     let broken = io::Error::from(io::ErrorKind::BrokenPipe);
     assert!(crate::network_session::refused_during_grace(&refused, true));
-    assert!(!crate::network_session::refused_during_grace(&refused, false));
+    assert!(!crate::network_session::refused_during_grace(
+        &refused, false
+    ));
     assert!(!crate::network_session::refused_during_grace(&broken, true));
-    assert!(!crate::network_session::refused_during_grace(&broken, false));
+    assert!(!crate::network_session::refused_during_grace(
+        &broken, false
+    ));
 }
 
 #[tokio::test(flavor = "current_thread")]
