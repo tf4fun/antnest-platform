@@ -49,8 +49,8 @@ function expectedDefinition(code: string, entry: CatalogEntry) {
 }
 
 describe("the canonical ACP error catalog", () => {
-  it("covers all 74 registered codes and exports the canonical capability version", () => {
-    expect(definitions).toHaveLength(74);
+  it("covers all 75 registered codes and exports the canonical capability version", () => {
+    expect(definitions).toHaveLength(75);
     expect(catalog.capability.name).toBe("antnest.dev/errors");
     expect(errorCapability).toStrictEqual({ version: catalog.capability.version });
     expect(errorCapability).toStrictEqual({ version: 1 });
@@ -98,6 +98,20 @@ describe("the canonical ACP error catalog", () => {
       recovery: "backoff",
       message: "Agent already has an active Run",
     });
+  });
+
+  it("freezes permission_timeout at -32039 and HTTP 408 without a retry delay", () => {
+    const definition = resolveErrorDefinition("permission_timeout", "admission");
+    expect(definition).toStrictEqual({
+      code: "permission_timeout",
+      errorClass: "availability",
+      jsonRpcCode: -32039,
+      httpStatus: 408,
+      retryable: true,
+      recovery: "refresh_permission",
+      message: "Permission request timed out",
+    });
+    expect(Object.hasOwn(definition, "retryAfterMs")).toBe(false);
   });
 
   it("keeps runtime_barrier_required at -32036 and HTTP 409 without a retry delay", () => {
