@@ -1,4 +1,5 @@
 use std::borrow::Cow;
+use std::net::{Ipv4Addr, SocketAddr};
 use std::pin::Pin;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -131,6 +132,7 @@ pub(crate) struct RuntimeHttp {
     managed: Catalog,
     maintenance_verifiers: Vec<SkillMaintenanceVerifier>,
     receiver: crate::service_auth::Receiver,
+    management_ipv4: Option<Ipv4Addr>,
 }
 
 impl RuntimeHttp {
@@ -149,6 +151,7 @@ impl RuntimeHttp {
             managed,
             maintenance_verifiers,
             receiver,
+            management_ipv4: None,
         }
     }
 
@@ -161,12 +164,18 @@ impl RuntimeHttp {
             managed: Catalog::default(),
             maintenance_verifiers: Vec::new(),
             receiver: crate::service_auth::test_receiver(),
+            management_ipv4: None,
         }
     }
 
     #[cfg(all(test, target_os = "linux"))]
     pub(crate) fn with_managed(mut self, catalog: Catalog) -> Self {
         self.managed = catalog;
+        self
+    }
+
+    pub(crate) fn with_management_ipv4(mut self, address: Ipv4Addr) -> Self {
+        self.management_ipv4 = Some(address);
         self
     }
 
@@ -180,11 +189,19 @@ impl RuntimeHttp {
         listener: tokio::net::TcpListener,
         shutdown: CancellationToken,
     ) -> Result<(), std::io::Error> {
-        let admission = crate::service_auth::AdmissionState::new(
+        let local = listener.local_addr()?;
+        let mut admission = crate::service_auth::AdmissionState::new(
             self.receiver,
             format!("antnest-runtime-{}", self.status.agent_id),
-            listener.local_addr()?.port(),
+            local.port(),
         );
+        let management_ipv4 = self.management_ipv4.or(match local {
+            SocketAddr::V4(address) if !address.ip().is_unspecified() => Some(*address.ip()),
+            _ => None,
+        });
+        if let Some(address) = management_ipv4 {
+            admission = admission.with_management_ipv4(address, local.port());
+        }
         let maintenance_actor = match &self.tools {
             ToolBackend::Process(actor) => Some(actor.clone()),
             #[cfg(test)]

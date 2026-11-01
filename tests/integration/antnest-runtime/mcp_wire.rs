@@ -1,5 +1,118 @@
 #[cfg(target_os = "linux")]
 #[tokio::test]
+async fn management_ipv4_host_admission_preserves_authority_and_mcp() {
+    for wildcard in [false, true] {
+        use rmcp::{
+            ClientLifecycleMode, ClientServiceExt,
+            model::{ClientCapabilities, ClientConfig, Implementation, ProtocolVersion},
+            transport::StreamableHttpClientTransport,
+        };
+        use std::sync::Arc;
+        use tokio_util::sync::CancellationToken;
+
+        let workspace = tempfile::tempdir().unwrap();
+        let skills = tempfile::tempdir().unwrap();
+        let roots =
+            Arc::new(crate::roots::NamedRoots::open(workspace.path(), skills.path()).unwrap());
+        let listener =
+            tokio::net::TcpListener::bind(if wildcard { "0.0.0.0:0" } else { "127.0.0.2:0" })
+                .await
+                .unwrap();
+        let address = std::net::SocketAddr::new(
+            "127.0.0.2".parse().unwrap(),
+            listener.local_addr().unwrap().port(),
+        );
+        let shutdown = CancellationToken::new();
+        let server = RuntimeHttp::new_in_process(
+            RuntimeStatus::with_execution_id(
+                RuntimeIdentity::new("agent-1", 2).unwrap(),
+                "execution-1",
+            ),
+            roots,
+        );
+        let server = if wildcard {
+            server.with_management_ipv4("127.0.0.2".parse().unwrap())
+        } else {
+            server
+        };
+        let running = tokio::spawn(server.serve(listener, shutdown.clone()));
+        let http = reqwest::Client::builder().no_proxy().build().unwrap();
+        let status_url = format!("http://{address}{STATUS_PATH}");
+        let token = crate::service_auth::test_header();
+        let valid = http
+            .get(&status_url)
+            .header(crate::service_auth::SERVICE_HEADER, &token)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(valid.status(), reqwest::StatusCode::OK);
+        assert_eq!(
+            http.get(&status_url).send().await.unwrap().status(),
+            reqwest::StatusCode::UNAUTHORIZED
+        );
+        for host in [
+            format!("127.0.0.3:{}", address.port()),
+            format!("127.0.0.2:{}", address.port().wrapping_add(1)),
+            format!("foreign.invalid:{}", address.port()),
+        ] {
+            let rejected = http
+                .get(&status_url)
+                .header(crate::service_auth::SERVICE_HEADER, &token)
+                .header("host", host)
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(rejected.status(), reqwest::StatusCode::FORBIDDEN);
+            assert_eq!(
+                rejected.json::<serde_json::Value>().await.unwrap()["code"],
+                "host_not_allowed"
+            );
+        }
+        let mut headers = std::collections::HashMap::new();
+        headers.insert(
+            axum::http::HeaderName::from_static(crate::service_auth::SERVICE_HEADER),
+            token.parse().unwrap(),
+        );
+        headers.insert(
+            axum::http::HeaderName::from_static("x-antnest-expected-execution-id"),
+            "execution-1".parse().unwrap(),
+        );
+        let transport = StreamableHttpClientTransport::with_client(
+            http,
+            rmcp::transport::streamable_http_client::StreamableHttpClientTransportConfig::with_uri(
+                format!("http://{address}{MCP_PATH}"),
+            )
+            .custom_headers(headers),
+        );
+        let client = ClientConfig::new(
+            ClientCapabilities::default(),
+            Implementation::new("management-host-test", "1"),
+        )
+        .with_protocol_version(ProtocolVersion::V_2026_07_28)
+        .serve_with_lifecycle(
+            transport,
+            ClientLifecycleMode::Discover {
+                preferred_versions: vec![ProtocolVersion::V_2026_07_28],
+            },
+        )
+        .await
+        .expect("MCP must admit its own management IPv4 with workload authority");
+        assert!(
+            !client
+                .list_tools(Default::default())
+                .await
+                .unwrap()
+                .tools
+                .is_empty()
+        );
+        client.cancel().await.unwrap();
+        shutdown.cancel();
+        running.await.unwrap().unwrap();
+    }
+}
+
+#[cfg(target_os = "linux")]
+#[tokio::test]
 async fn official_mcp_client_observes_status_and_calls_all_runtime_tools() {
     use std::sync::Arc;
 
