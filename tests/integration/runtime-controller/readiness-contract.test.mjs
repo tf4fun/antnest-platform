@@ -33,6 +33,9 @@ const ready = {
   observation_ready: true,
   monitor_ready: true,
   disk_quota_enforced: false,
+  runtime_capacity: 0,
+  runtime_count: 0,
+  runtime_capacity_known: false,
 };
 
 test("the current RC contract retains revision 14's required monitor boolean", () => {
@@ -79,4 +82,120 @@ test("disk_quota_enforced is a required capability boolean, never a readiness bl
     }
   }
   assert(validate(ready), "an unbounded local backend must not fail readiness");
+});
+
+test("capacity snapshot fields are required nonnegative integers and a boolean", () => {
+  const unavailable = {
+    ...ready,
+    status: "not_ready",
+    ready: false,
+    monitor_ready: false,
+  };
+  for (const snapshot of [
+    { runtime_capacity: 0, runtime_count: 0, runtime_capacity_known: false },
+    { runtime_capacity: 251, runtime_count: 2, runtime_capacity_known: true },
+    { runtime_capacity: 0, runtime_count: 0, runtime_capacity_known: true },
+  ]) {
+    for (const response of [ready, unavailable]) {
+      assert(
+        validate({ ...response, ...snapshot }),
+        `capacity snapshot must validate: ${JSON.stringify(validate.errors)}`,
+      );
+    }
+  }
+  const required = api.$defs.readiness.required;
+  for (const field of [
+    "runtime_capacity",
+    "runtime_count",
+    "runtime_capacity_known",
+  ]) {
+    assert(required.includes(field), `${field} must be required`);
+  }
+  for (const field of ["runtime_capacity", "runtime_count"]) {
+    assert.equal(api.$defs.readiness.properties[field].type, "integer");
+    assert.equal(api.$defs.readiness.properties[field].minimum, 0);
+  }
+  assert.equal(
+    api.$defs.readiness.properties.runtime_capacity_known.type,
+    "boolean",
+  );
+  for (const field of ["runtime_capacity", "runtime_count"]) {
+    for (const response of [ready, unavailable]) {
+      const without = {
+        ...response,
+        runtime_capacity: 5,
+        runtime_count: 1,
+        runtime_capacity_known: true,
+      };
+      delete without[field];
+      assert.equal(validate(without), false);
+      assert(
+        validate.errors.some(
+          (error) =>
+            error.keyword === "required" &&
+            error.params.missingProperty === field,
+        ),
+        `deleting ${field} must surface its required error`,
+      );
+      for (const value of [undefined, null, "0", true, -1, 0.5]) {
+        assert.equal(
+          validate({
+            ...response,
+            runtime_capacity: 5,
+            runtime_count: 1,
+            runtime_capacity_known: true,
+            [field]: value,
+          }),
+          false,
+          `${field}=${JSON.stringify(value)} must be invalid`,
+        );
+      }
+      for (const value of [0, 251]) {
+        assert(
+          validate({
+            ...response,
+            runtime_count: 1,
+            runtime_capacity_known: true,
+            [field]: value,
+          }),
+          `${field}=${value} must validate`,
+        );
+      }
+    }
+  }
+  for (const response of [ready, unavailable]) {
+    for (const value of [true, false]) {
+      assert(
+        validate({
+          ...response,
+          runtime_capacity: 5,
+          runtime_count: 1,
+          runtime_capacity_known: value,
+        }),
+        `runtime_capacity_known=${value} must validate`,
+      );
+    }
+    const without = { ...response, runtime_capacity: 5, runtime_count: 1 };
+    delete without.runtime_capacity_known;
+    assert.equal(validate(without), false);
+    assert(
+      validate.errors.some(
+        (error) =>
+          error.keyword === "required" &&
+          error.params.missingProperty === "runtime_capacity_known",
+      ),
+    );
+    for (const value of [null, "false", 0, 1]) {
+      assert.equal(
+        validate({
+          ...response,
+          runtime_capacity: 5,
+          runtime_count: 1,
+          runtime_capacity_known: value,
+        }),
+        false,
+        `runtime_capacity_known=${JSON.stringify(value)} must be invalid`,
+      );
+    }
+  }
 });
