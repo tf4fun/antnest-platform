@@ -1,11 +1,22 @@
+import { runtimeResourceName } from "../../support/runtime-resource-name.mjs";
 import assert from "node:assert/strict";
 
 // Keep the immutable ID returned by this run's successful create. If creation
 // was interrupted, recover only the container carrying this run's unique label.
-export async function cleanupProgressProbe({ run, containerID, docker, save }) {
+export async function cleanupProgressProbe({
+  run,
+  project,
+  containerID,
+  docker,
+  save,
+}) {
   assert.match(run, /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/u);
   const owner = "io.antnest.progress-gate-probe";
-  const name = `antnest-runtime-agent_${run.replaceAll("-", "")}`;
+  const name = runtimeResourceName(
+    project,
+    "runtime",
+    `agent_${run.replaceAll("-", "")}`,
+  );
   let ids;
   if (containerID !== undefined) {
     assert.match(containerID, /^[a-f0-9]{64}$/u);

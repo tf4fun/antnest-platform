@@ -307,7 +307,8 @@ async function restoreScenario(
     config.compose([
       "stop",
       "-t",
-      "25",
+      // Include Egress's maximum 120s drain and 5s cleanup.
+      "130",
       ...recoveryWriters.filter((s) => s !== "temporal"),
     ]),
     true,

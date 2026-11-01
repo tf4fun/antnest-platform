@@ -1,3 +1,4 @@
+import { runtimeResourceName } from "../../support/runtime-resource-name.mjs";
 import assert from "node:assert/strict";
 import { mkdir, writeFile } from "node:fs/promises";
 import { composeArgs } from "../lifecycle-closeout/docker.mjs";
@@ -87,7 +88,7 @@ export async function temporaryAcpFlow({
       );
       const files = await docker([
         "exec",
-        `antnest-runtime-${targetId}`,
+        runtimeResourceName(config.project, "runtime", targetId),
         "sh",
         "-ec",
         "if test -d /workspace/.antnest/skill-temporary/v1; then find /workspace/.antnest/skill-temporary/v1 -mindepth 1 -maxdepth 1 -print; fi; test ! -e /workspace/.antnest/skills/temporary-procedure; test ! -e /skills/temporary-procedure",
@@ -124,7 +125,7 @@ export async function temporaryAcpFlow({
   }
   await docker([
     "exec",
-    `antnest-runtime-${sourceId}`,
+    runtimeResourceName(config.project, "runtime", sourceId),
     "test",
     "-f",
     "/workspace/.antnest/skills/fixture-procedure/SKILL.md",

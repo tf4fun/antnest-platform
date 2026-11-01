@@ -1,3 +1,4 @@
+import { runtimeResourceName } from "../runtime-resource-name.mjs";
 import {
   mkdirSync,
   mkdtempSync,
@@ -20,10 +21,15 @@ export async function lifecycleCliFixture(t) {
   f.root = root;
   f.scope = "fixture-lifecycle";
   f.inspection = recoveryInspection();
-  f.inspection.Name = "/antnest-runtime-" + f.temporaryId;
+  f.inspection.Name =
+    "/" + runtimeResourceName(f.scope, "runtime", f.temporaryId);
   f.inspection.Config.Labels["io.antnest.agent-id"] = f.temporaryId;
   f.inspection.Config.Labels["io.antnest.runtime-controller-scope"] = f.scope;
-  f.inspection.Mounts[0].Name = "antnest-workspace-" + f.temporaryId;
+  f.inspection.Mounts[0].Name = runtimeResourceName(
+    f.scope,
+    "workspace",
+    f.temporaryId,
+  );
   f.marker = "lifecycle fixture marker";
   const state = join(root, "docker.json"),
     calls = join(root, "calls.jsonl"),

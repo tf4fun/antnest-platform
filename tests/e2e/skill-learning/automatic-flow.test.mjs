@@ -1,3 +1,4 @@
+import { runtimeResourceName } from "../../support/runtime-resource-name.mjs";
 import { isolateCompromisedRuntime } from "./key-compromise-recovery.mjs";
 import { runKeyRemovalProbe } from "./key-removal-probe.mjs";
 import assert from "node:assert/strict";
@@ -767,7 +768,13 @@ test(
                     "-Atc",
                     "SELECT task_id,request_id,action,state,receipt FROM learning_maintenance_intents WHERE state <> 'settled' ORDER BY created_at",
                   ]).catch(() => "unresolved query unavailable"),
-                  runtimeLog: logs(`antnest-runtime-${fixture.agentID}`),
+                  runtimeLog: logs(
+                    runtimeResourceName(
+                      config.project,
+                      "runtime",
+                      fixture.agentID,
+                    ),
+                  ),
                 }
               : {}),
             acpLog: acpContainer
@@ -942,7 +949,11 @@ test(
       }
       let runtimeContainerBeforeRotation;
       if (keyRotation) {
-        const runtimeName = `antnest-runtime-${fixture.agentID}`;
+        const runtimeName = runtimeResourceName(
+          config.project,
+          "runtime",
+          fixture.agentID,
+        );
         runtimeContainerBeforeRotation = await docker([
           "inspect",
           "--format",
@@ -1137,7 +1148,7 @@ test(
             "inspect",
             "--format",
             "{{.Id}}",
-            `antnest-runtime-${fixture.agentID}`,
+            runtimeResourceName(config.project, "runtime", fixture.agentID),
           ]),
           runtimeContainerBeforeRotation,
         );
@@ -1346,7 +1357,7 @@ test(
             "exec",
             "--user",
             "1000",
-            `antnest-runtime-${fixture.agentID}`,
+            runtimeResourceName(config.project, "runtime", fixture.agentID),
             "sh",
             "-c",
             "printf changed > /workspace/.antnest/skills/fixture-procedure/extra.txt",
@@ -1406,7 +1417,7 @@ test(
             "exec",
             "--user",
             "1000:1000",
-            `antnest-runtime-${fixture.agentID}`,
+            runtimeResourceName(config.project, "runtime", fixture.agentID),
             "node",
             "-e",
             "const fs=require('node:fs');const count=p=>fs.existsSync(p)?fs.readdirSync(p).length:0;console.log(JSON.stringify({staging:count('/workspace/.antnest/skill-learning/staging'),candidates:count('/workspace/.antnest/skill-learning/candidates'),detached:count('/workspace/.antnest/skill-learning/release-stage'),active:fs.existsSync('/workspace/.antnest/skills/fixture-procedure/SKILL.md')}))",
@@ -1667,7 +1678,11 @@ test(
             ]);
           }
         }
-        const runtimeName = `antnest-runtime-${fixture.agentID}`;
+        const runtimeName = runtimeResourceName(
+          config.project,
+          "runtime",
+          fixture.agentID,
+        );
         const runtimeInspect = JSON.parse(
           await docker(["inspect", runtimeName]),
         )[0];

@@ -1,3 +1,4 @@
+import { runtimeResourceName } from "../../support/runtime-resource-name.mjs";
 import assert from "node:assert/strict";
 import test from "node:test";
 const url = new URL("./gate-cleanup.mjs", import.meta.url);
@@ -12,7 +13,12 @@ const implementation = await import(url).catch((error) => {
 const run = "2485d43c-9cb0-42a0-9c9f-186a2dc3e855",
   id = "a".repeat(64);
 const owner = "io.antnest.progress-gate-probe";
-const container = `antnest-runtime-agent_${run.replaceAll("-", "")}`;
+const project = "antnest-stage3-e2e-1234";
+const container = runtimeResourceName(
+  project,
+  "runtime",
+  `agent_${run.replaceAll("-", "")}`,
+);
 function entry() {
   assert.equal(typeof implementation.cleanupProgressProbe, "function");
   return implementation.cleanupProgressProbe;
@@ -25,6 +31,7 @@ function fixture(failures = {}) {
     saved,
     options: {
       run,
+      project,
       containerID: id,
       docker: async (args) => {
         calls.push(args);

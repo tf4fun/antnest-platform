@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { runtimeResourceName } from "../../support/runtime-resource-name.mjs";
 import {
   creationTarget,
   initializationTarget,
@@ -7,10 +8,21 @@ import {
 } from "./docker-socket-fault-proxy.mjs";
 
 const agent_id = `agent_${"a".repeat(32)}`;
-const expected = { agent_id, skill_set_digest: `sha256:${"b".repeat(64)}` };
+const expected = {
+  agent_id,
+  scope: "test-controller",
+  skill_set_digest: `sha256:${"b".repeat(64)}`,
+};
 const volume = `antnest-skills-${"c".repeat(32)}-m1`;
-const path = `/v1.47/containers/create?name=antnest-runtime-${agent_id}`;
-const body = (mounts) => JSON.stringify({ HostConfig: { Mounts: mounts } });
+const path = `/v1.47/containers/create?name=${runtimeResourceName(expected.scope, "runtime", agent_id)}`;
+const body = (mounts) =>
+  JSON.stringify({
+    Labels: {
+      "io.antnest.agent-id": agent_id,
+      "io.antnest.runtime-controller-scope": expected.scope,
+    },
+    HostConfig: { Mounts: mounts },
+  });
 const skill = {
   Type: "volume",
   Source: volume,
@@ -20,6 +32,10 @@ const skill = {
 };
 
 test("Docker race proxy selects only the expected read-only Skill target", () => {
+  assert.equal(
+    creationTarget(path, body([skill]), { ...expected, scope: "foreign" }),
+    null,
+  );
   assert.deepEqual(creationTarget(path, body([skill]), expected), {
     version: "v1.47",
     volume,

@@ -24,8 +24,9 @@ export ANTNEST_EGRESS_CONTROL_IPV4="${ANTNEST_EGRESS_CONTROL_IPV4:-10.252.${netw
 export ANTNEST_RUNTIME_CONTROLLER_CONTROL_IPV4="${ANTNEST_RUNTIME_CONTROLLER_CONTROL_IPV4:-10.252.${network_octet}.5}"
 
 agent_id="agent-runtime-controller-e2e-$$"
-runtime_name="antnest-runtime-${agent_id}"
-workspace_volume="antnest-workspace-${agent_id}"
+export ANTNEST_RUNTIME_CONTROLLER_SCOPE="${ANTNEST_RUNTIME_CONTROLLER_SCOPE:-$COMPOSE_PROJECT_NAME}"
+runtime_name=$(node tests/support/runtime-resource-name.mjs "$ANTNEST_RUNTIME_CONTROLLER_SCOPE" runtime "$agent_id")
+workspace_volume=$(node tests/support/runtime-resource-name.mjs "$ANTNEST_RUNTIME_CONTROLLER_SCOPE" workspace "$agent_id")
 controller_url="http://127.0.0.1:${ANTNEST_RUNTIME_CONTROLLER_HOST_PORT}"
 egress_url="http://${ANTNEST_EGRESS_CONTROL_IPV4}:8081"
 

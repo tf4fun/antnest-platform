@@ -6,6 +6,7 @@ import { mkdtemp, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { startCrashProxy } from "./crash-proxy.mjs";
+import { runtimeResourceName } from "../../support/runtime-resource-name.mjs";
 
 for (const phase of ["before-create", "after-start"])
   for (const ending of ["disconnect", "expiry"])
@@ -86,7 +87,7 @@ for (const phase of ["before-create", "after-start"])
         },
         Env: ["SECRET=never-record-this"],
       };
-      const create = "/v1.47/containers/create?name=antnest-runtime-agent";
+      const create = `/v1.47/containers/create?name=${runtimeResourceName(selection.scope, "runtime", "agent")}`;
       await post(create, {
         ...body,
         Labels: {

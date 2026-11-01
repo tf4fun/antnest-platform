@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { setTimeout as delay } from "node:timers/promises";
 import { assertEventPage } from "./evidence.mjs";
+import { runtimeResourceName } from "../../support/runtime-resource-name.mjs";
 
 export async function waitForDeletedRuntimeResources(
   read,
@@ -52,7 +53,16 @@ export function assertRuntimeStorage(physical, agentID) {
       return [kind, mount.Name];
     }),
   );
-  assert.equal(storage.workspace, `antnest-workspace-${agentID}`);
+  const scope =
+    physical.containers[0].Config?.Labels?.[
+      "io.antnest.runtime-controller-scope"
+    ];
+  assert.equal(
+    storage.workspace,
+    scope
+      ? runtimeResourceName(scope, "workspace", agentID)
+      : `antnest-workspace-${agentID}`,
+  );
   assert.match(storage.resolver, /^antnest-runtime-resolver-[0-9a-f]{32}$/);
   assert.equal(new Set(Object.values(storage)).size, 4);
   assert.deepEqual(
