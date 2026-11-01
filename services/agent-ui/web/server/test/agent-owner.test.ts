@@ -2347,3 +2347,72 @@ test("owner retirement joins the actual held retry query before completing", { t
     }
   });
 });
+
+test("permission resolution notices release inbox work without a cached Session", async () => {
+  const f = fixture();
+  const owner = await AgentBridgeOwner.open({
+    scope,
+    retainWork: f.retainWork,
+    connect: f.connect,
+  });
+  try {
+    const controller = new AbortController();
+    const pending = f.callback().requestPermission(
+      {
+        ...permission,
+        _meta: {
+          "antnest.dev/permission-request": {
+            version: 1,
+            runId: "run-1",
+            toolCallId: "tool-1",
+          },
+        },
+      } as RequestPermissionRequest,
+      controller.signal,
+    ) as Promise<unknown>;
+    assert.equal(f.work(), 1);
+    assert.equal(owner.cachedSessionCount, 0);
+    await f.callback().update({
+      sessionId: "session-1",
+      update: {
+        sessionUpdate: "notice",
+        severity: "info",
+        title: "Permission request resolved",
+        _meta: {
+          "antnest.dev/permission-resolution": {
+            version: 1,
+            runId: "other-run",
+            toolCallId: "tool-1",
+            reason: "permission_resolved",
+          },
+        },
+      },
+    });
+    assert.equal(f.work(), 1);
+    await f.callback().update({
+      sessionId: "session-1",
+      update: {
+        sessionUpdate: "notice",
+        severity: "info",
+        title: "Permission request resolved",
+        _meta: {
+          "antnest.dev/permission-resolution": {
+            version: 1,
+            runId: "run-1",
+            toolCallId: "tool-1",
+            reason: "permission_resolved",
+          },
+        },
+      },
+    });
+    assert.equal(f.work(), 0);
+    assert.equal(owner.cachedSessionCount, 0);
+    assert.deepEqual(await outcome(pending), {
+      status: "fulfilled",
+      value: { outcome: { outcome: "cancelled" } },
+    });
+    assert.deepEqual(f.calls, []);
+  } finally {
+    owner.close();
+  }
+});

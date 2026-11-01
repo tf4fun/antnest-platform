@@ -268,7 +268,7 @@
       ]
     },
     "services/agent-ui/web/server/src/http/permission-routes.ts": {
-      "sha256": "ac92ed87c4d8ccf0b62e357acc8627b4b7637b8f32e8efeb06c21c6ca348fe90",
+      "sha256": "7482cca8981283fba9f28a265a32606b1e50fd5e41578a4719b427ad88eb406a",
       "routes": [
         "POST /api/app/workspace/v1/agents/{agentId}/permissions/{permissionId}/decision"
       ]

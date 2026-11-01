@@ -1322,6 +1322,14 @@ export class AgentBridgeOwner {
 
   private onUpdate(params: SessionNotification): void {
     if (this.retired) return;
+    if (params.update.sessionUpdate === "notice") {
+      const resolution =
+        params.update._meta?.["antnest.dev/permission-resolution"];
+      if (resolution !== undefined) {
+        this.inbox.resolve(params.sessionId, resolution);
+        return;
+      }
+    }
     if (params.update.sessionUpdate === "available_commands_update") {
       const skills = projectSkillCommands(params.update.availableCommands);
       if (JSON.stringify(skills) !== JSON.stringify(this.currentSkillCommands)) {

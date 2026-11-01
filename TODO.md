@@ -20,6 +20,8 @@ Issue 状态最后核对于 2026-10-28：141 个 issue，87 个已关闭，54 �
 
 ## 当前批次
 
+- **#54 Agent UI 消费批次（ACP PR [#441](https://github.com/tf4fun/antnest-platform/pull/441) 后继）**：严格验证 resolution metadata，以 Session／Run／Tool call 三元组撤回匹配 inbox；取消结果只释放本地工作、不替代审批。过期 ID／generation 返回 `409 permission_stale`，非法选项仍为 `permission_conflict`；浏览器仅移除同 generation 的失效条目，不删除更新请求、不自动重发。新增单实例部署／重启说明，明确 owner-sticky 未实现、UI ACP 为 HTTP/SSE。聚焦测试先 RED 后 GREEN 16/16＋owner 1/1，UI typecheck 通过；现有多个 UI 文件本来不满足 ACP Prettier 默认风格，格式检查 exit 1 如实保留、未全文件重排，非报告为通过。仅按已审查路由更新 caller 指纹，不改注册／鉴权策略。日志在 `artifacts/verification/issue-54-agent-ui/`。已单次读取 #440 CI：ACP unit 因 catalog 旧断言 74 而新契约为 75 失败，修复将在原契约批次提交并普通合并向下传播；未等待／轮询。
+
 - **#54 ACP 服务批次（契约 PR [#440](https://github.com/tf4fun/antnest-platform/pull/440) 后继）**：完成公开／owner-peer 双向 WebSocket 心跳、同 Session owner 多连接审批扇出、首个有效且复验授权的回复胜出、晚到回复撤回、跨重连不重置的独立审批超时，以及持久化成功后才发送的可选 resolution notice。保持原权限／worker fencing、Run 拒绝工具后继续策略及 SDK 原始任务所有权；不实现 #76。TDD 初始 RED 后聚焦 81/81；审查追加延迟 pong、同步 ping 失败、同步 notice 异常隔离、持久化屏障和撤权反例，追加 RED 3 项、GREEN 51/51（格式后 fanout 18/18），ACP typecheck／定向 lint／format 通过。日志临时保留 `artifacts/verification/issue-54-acp/`；完整远程单元／契约／组件门禁待候选 CI，不重复本地全套，不等待并直接推进 Agent UI。
 
 - **#54 共享契约批次（2026-11-01）**：按用户要求按服务独立 PR、TDD、远程 CI 异步推进。现状已确认：#64 已退役 Gateway ACP WebSocket relay；Agent UI 使用 ACP Streamable HTTP/SSE，不重建旧入口。本批冻结 WebSocket 20s ping／两间隔无匹配 pong 终止、同 owner 多连接审批扇出／首个有效回复胜出、取消撤回与可选 resolved notice、独立审批超时及 `permission_timeout` 错误契约。先补测试，定向 RED exit 1（3 项新契约缺失），GREEN 70/70，受影响文件格式检查通过；原始日志临时保留 `artifacts/verification/issue-54-contract/`。生产方 ACP、消费者 Agent UI 与独立集成批次随后交付；本批不宣称完整业务闭环，不运行／维护 Docker E2E，不等待完整远程 CI，不合并或关闭 #54。工作区原有 #41 合并交接记录完整保留。

@@ -93,7 +93,7 @@ export function createPermissionHandler(dependencies: {
       if (cause instanceof PermissionDecisionError)
         return error(
           409,
-          "permission_conflict",
+          cause.code,
           "Permission request is no longer current",
           "refresh",
         );

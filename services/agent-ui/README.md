@@ -424,6 +424,7 @@ specific activity request proven to precede the held response is excluded.
 ## Documentation
 
 - [Architecture](docs/architecture.md) - Bridge ownership, request flow, recovery, history, capacity and testing.
+- [Operations](docs/operations.md) - single-replica deployment, load balancing and restart recovery.
 - [UI design rules](docs/ui-design.md) - visual, interaction, navigation and accessibility rules.
 - [Workspace state](docs/workspace-state.md) - management and execution state observation and recovery.
 - [Multimodal input](docs/multimodal-input.md) - attachment formats, limits and preview lifecycle.

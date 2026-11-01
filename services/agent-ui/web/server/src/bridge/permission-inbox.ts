@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { z } from "zod";
 import type {
   RequestPermissionRequest,
   RequestPermissionResponse,
@@ -6,6 +7,18 @@ import type {
 
 const maxPending = 64;
 const maxVisibleInputBytes = 256 * 1024;
+const correlationId = z.string().min(1).max(200);
+const requestCorrelation = z.strictObject({
+  version: z.literal(1),
+  runId: correlationId,
+  toolCallId: correlationId,
+});
+const resolutionNotice = z.strictObject({
+  version: z.literal(1),
+  runId: correlationId,
+  toolCallId: correlationId,
+  reason: z.enum(["permission_resolved", "permission_timeout"]),
+});
 
 export type PendingPermission = {
   permissionId: string;
@@ -23,12 +36,18 @@ export type PendingPermission = {
 type Entry = {
   view: PendingPermission;
   finish: (optionId?: string) => void;
+  correlation?: { runId: string; toolCallId: string };
 };
 
 export class PermissionDecisionError extends Error {
-  public constructor(message: string) {
+  public readonly code: "permission_stale" | "permission_conflict";
+  public constructor(
+    message: string,
+    code: "permission_stale" | "permission_conflict" = "permission_conflict",
+  ) {
     super(message);
     this.name = "PermissionDecisionError";
+    this.code = code;
   }
 }
 
@@ -78,7 +97,11 @@ export class PermissionInbox {
               : { outcome: "selected", optionId },
         });
       };
-      this.entries.set(permissionId, { view, finish });
+      this.entries.set(permissionId, {
+        view,
+        finish,
+        correlation: correlate(request),
+      });
       signal.addEventListener("abort", abort, { once: true });
       if (signal.aborted) finish();
       else this.publish();
@@ -94,10 +117,24 @@ export class PermissionInbox {
     if (entry === undefined || entry.view.generation !== generation)
       throw new PermissionDecisionError(
         "Permission request is no longer current",
+        "permission_stale",
       );
     if (!entry.view.options.some((option) => option.optionId === optionId))
       throw new PermissionDecisionError("Permission option was not advertised");
     entry.finish(optionId);
+  }
+
+  public resolve(sessionId: string, payload: unknown): void {
+    const parsed = resolutionNotice.safeParse(payload);
+    if (!parsed.success) return;
+    const { runId, toolCallId } = parsed.data;
+    for (const entry of [...this.entries.values()])
+      if (
+        entry.view.sessionId === sessionId &&
+        entry.correlation?.runId === runId &&
+        entry.correlation.toolCallId === toolCallId
+      )
+        entry.finish();
   }
 
   public clear(): void {
@@ -111,6 +148,18 @@ export class PermissionInbox {
       // A failed observer cannot choose a permission outcome for the user.
     }
   }
+}
+
+function correlate(
+  request: RequestPermissionRequest,
+): { runId: string; toolCallId: string } | undefined {
+  const meta = (request as { _meta?: Record<string, unknown> })._meta?.[
+    "antnest.dev/permission-request"
+  ];
+  const parsed = requestCorrelation.safeParse(meta);
+  if (!parsed.success || parsed.data.toolCallId !== request.toolCall.toolCallId)
+    return undefined;
+  return { runId: parsed.data.runId, toolCallId: parsed.data.toolCallId };
 }
 
 function project(

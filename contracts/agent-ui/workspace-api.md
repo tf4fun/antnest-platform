@@ -300,8 +300,13 @@ Configuration applies only a server-advertised select string or boolean value
 with the opaque
 `configurationToken` from the current view; response loss is reconciled by reading the current
 configuration, not replaying an old selection. Permission decisions carry
-the exact currently advertised `permissionId`, option and generation; stale
-generations fail without choosing a default answer. The browser may retain
+the exact currently advertised `permissionId`, option and generation; a
+stale `permissionId` or generation fails HTTP 409 as `permission_stale`
+without choosing a default answer, while an unadvertised option stays
+`permission_conflict`. The Agent may also publish an auxiliary
+`session/update` `notice` carrying `antnest.dev/permission-resolution`
+correlation; the Bridge withdraws the matching pending request as cancelled
+and never substitutes a decision. The browser may retain
 drafts and attachments while mounted but does not persist unsent work.
 
 The error envelope has stable `code`, non-secret `message`, `requestId`,
