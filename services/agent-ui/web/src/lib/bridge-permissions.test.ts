@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { BridgePermissionStore } from "./bridge-permissions.ts";
+import { WorkspaceApiError } from "./workspace-api-client.ts";
 
 const permission = (generation: number) => ({
   permissionId: "permission-1", sessionId: "session-1", generation,
@@ -52,4 +53,43 @@ test("one permission generation sends one decision despite repeated clicks", asy
   assert.equal(calls, 2);
   release();
   await third;
+});
+
+test("a stale decision removes only the same observed generation and reports the failure", async () => {
+  const store = new BridgePermissionStore("agent-1", {
+    decidePermission: async () => {
+      throw new WorkspaceApiError("Permission request is no longer current", 409, "permission_stale", "refresh");
+    },
+  });
+  store.observe([permission(3)]);
+  await assert.rejects(store.decide("permission-1", "allow"), /no longer current/u);
+  assert.equal(store.pending.length, 0);
+});
+
+test("a stale decision in flight cannot remove a newer observed generation", async () => {
+  let release!: (error: unknown) => void;
+  const store = new BridgePermissionStore("agent-1", {
+    decidePermission: async () =>
+      new Promise((_resolve, reject) => {
+        release = reject;
+      }),
+  });
+  store.observe([permission(3)]);
+  const stale = store.decide("permission-1", "allow");
+  store.observe([permission(4)]);
+  release(new WorkspaceApiError("Permission request is no longer current", 409, "permission_stale", "refresh"));
+  await assert.rejects(stale, /no longer current/u);
+  assert.equal(store.pending.length, 1);
+  assert.equal(store.pending[0]?.request.options[0]?.optionId, "allow");
+});
+
+test("an unrelated decision failure keeps the pending request observed", async () => {
+  const store = new BridgePermissionStore("agent-1", {
+    decidePermission: async () => {
+      throw new WorkspaceApiError("Workspace is unavailable", 503, "upstream_unavailable", "retry_read");
+    },
+  });
+  store.observe([permission(3)]);
+  await assert.rejects(store.decide("permission-1", "allow"));
+  assert.equal(store.pending.length, 1);
 });

@@ -4,7 +4,8 @@ Agent UI is one TypeScript/Node service. Its Node process owns the ACP Bridge,
 HTTP API, SSE streams, static assets and React SSR. The browser uses same-origin
 HTTP commands and SSE observation; it does not connect to ACP. The Edge Gateway
 authenticates requests and proxies them to the Node service through one
-`ANTNEST_AGENT_UI_URL` target. The browser contract is the
+`ANTNEST_AGENT_UI_URL` target. Deployment and restart rules live in
+[operations](operations.md). The browser contract is the
 [Workspace API](../../../contracts/agent-ui/workspace-api.md).
 
 ## Ownership

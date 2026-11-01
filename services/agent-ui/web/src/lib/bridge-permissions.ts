@@ -1,6 +1,6 @@
 import type { RequestPermissionRequest } from "@agentclientprotocol/sdk";
 import type { PendingPermission } from "./permissions.ts";
-import type { BridgeHttpClient } from "./workspace-api-client.ts";
+import { WorkspaceApiError, type BridgeHttpClient } from "./workspace-api-client.ts";
 
 type PermissionApi = Pick<BridgeHttpClient, "decidePermission">;
 type Permission = { generation: number; request: RequestPermissionRequest };
@@ -48,7 +48,15 @@ export class BridgePermissionStore {
       return existing.task;
     }
     const task = (async () => {
-      await this.api.decidePermission(this.agentId, id, current.generation, optionId, signal);
+      try {
+        await this.api.decidePermission(this.agentId, id, current.generation, optionId, signal);
+      } catch (cause) {
+        if (cause instanceof WorkspaceApiError && cause.status === 409 && cause.code === "permission_stale") {
+          if (this.entries.get(id)?.generation === current.generation) this.entries.delete(id);
+          if (this.decided.get(id) === current.generation) this.decided.delete(id);
+        }
+        throw cause;
+      }
       if (this.entries.get(id)?.generation !== current.generation)
         throw new Error("Permission request is no longer current");
       this.decided.set(id, current.generation);
