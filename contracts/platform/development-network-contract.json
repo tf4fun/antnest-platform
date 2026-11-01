@@ -419,9 +419,9 @@
   },
   "runtime_management": {
     "subnet_environment": "ANTNEST_RUNTIME_MANAGEMENT_SUBNET",
-    "default_subnet": "172.30.255.0/24",
+    "default_subnet": "172.30.240.0/20",
     "dynamic_ip_range_environment": "ANTNEST_RUNTIME_MANAGEMENT_IP_RANGE",
-    "default_dynamic_ip_range": "172.30.255.128/25",
+    "default_dynamic_ip_range": "172.30.240.0/21",
     "static_members": [
       "runtime-controller",
       "agent-acp-service",

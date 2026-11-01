@@ -598,6 +598,21 @@ Kubernetes adapter is planned and not implemented. These interfaces prevent
 Stage 1 components from absorbing Agent management or execution
 responsibilities.
 
+## Runtime Plane topology
+
+The Runtime Plane stays single-host on one Docker daemon: one management bridge
+(default parent subnet `172.30.240.0/20`, dynamic IPAM pool `172.30.240.0/21`,
+fixed platform endpoints `172.30.255.3`-`.6` retained outside the pool), one
+Egress owning non-persisted TUN/flows/NAT, and controller-scope-prefixed Runtime
+containers and workspaces (`antnest-<scope>-runtime|workspace-<agent>`) that keep
+independent controller instances isolated on the same daemon. Legacy unscoped
+resources migrate on first reconcile with a one-release fallback; IPAM capacity
+is reported through `/status` and exhaustion returns `runtime_capacity_exhausted`.
+A scheduled Egress restart emits a bounded authenticated drain notice (max 120s)
+before shutdown; abrupt failure sends none and recovery is authenticated
+re-handshake plus application retries, not controller rebuild. Multi-node
+behavior is out of scope (#74).
+
 ## 17. Verification Requirements
 
 ### 17.1 Runtime and Egress

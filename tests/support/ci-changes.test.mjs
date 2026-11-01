@@ -134,6 +134,8 @@ const ids = (selected) => selected.map((suite) => suite.id);
 const enabled = suites.filter((suite) => !suite.disabled);
 const runtimeControllerAnonymousVolumeCommand =
   "ANTNEST_RUNTIME_CONTROLLER_TEST_DOCKER_SOCKET=/var/run/docker.sock ANTNEST_RUNTIME_CONTROLLER_TEST_ANONYMOUS_VOLUME_IMAGE=postgres:17.11-bookworm node tests/integration/go/run.mjs runtime-controller --profile integration --package internal/platform/docker -- -race -timeout=3m -run ^TestRemoveContainerDeletesAnonymousVolumesAndPreservesNamedResources$";
+const runtimeControllerScopeCommand =
+  "ANTNEST_RUNTIME_CONTROLLER_TEST_DOCKER_SOCKET=/var/run/docker.sock ANTNEST_RUNTIME_CONTROLLER_TEST_IMAGE_TAG=postgres:17.11-bookworm node tests/integration/go/run.mjs runtime-controller --profile integration --package internal/platform/docker -- -race -timeout=3m -run ^TestScopedRuntimeResourcesStayIsolatedOnOneDaemon$";
 
 test("Controller recovery changes require both real automatic and original manual ACP restart admission", () => {
   for (const path of [
@@ -191,6 +193,7 @@ test("observation ordering always admits the real Controller consumer", () => {
     assert.deepEqual(suite.run, [
       "make test-runtime-controller-postgres",
       runtimeControllerAnonymousVolumeCommand,
+      runtimeControllerScopeCommand,
     ]);
   }
   const recipe = readFileSync(resolve(root, "Makefile"), "utf8").match(
@@ -215,6 +218,7 @@ test("Runtime Controller container cleanup selects PostgreSQL admission with its
     assert.deepEqual(suite.run, [
       "make test-runtime-controller-postgres",
       runtimeControllerAnonymousVolumeCommand,
+      runtimeControllerScopeCommand,
     ]);
     assert.deepEqual(suite.pull, [
       "postgres:17.11-bookworm",
@@ -1954,4 +1958,27 @@ test("the CLI build inventory includes every resolved build", (t) => {
     suiteImages([], { allImages: true }),
     "a main version set covers every image",
   );
+});
+
+test("Runtime Plane scope isolation changes select the controller component suite", () => {
+  for (const path of [
+    "services/runtime-controller/internal/platform/docker/naming.go",
+    "services/runtime-controller/internal/platform/docker/capacity.go",
+    "tests/integration/go/runtime-controller/internal/platform/docker/scope_capacity_integration_test.go",
+    "contracts/runtime/runtime-plane-limits.json",
+  ]) {
+    const suite = selectSuites([path]).find(
+      ({ id }) => id === "runtime-controller-postgres",
+    );
+    assert(suite, `${path} must select runtime-controller-postgres`);
+    assert.equal(suite.kind, "component");
+    assert(
+      suite.run.includes(runtimeControllerScopeCommand),
+      `${path} must run the scoped isolation command`,
+    );
+    assert(
+      suite.pull.includes("postgres:17.11-bookworm"),
+      "existing postgres image retained",
+    );
+  }
 });

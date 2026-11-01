@@ -124,7 +124,7 @@ test("deployment example uses generated authentication and separated purpose add
   assert.equal(env.ANTNEST_RUNTIME_OTLP_INGRESS_IPV4, "172.30.255.4");
   assert.equal(env.ANTNEST_RUNTIME_CONTROLLER_MANAGEMENT_IPV4, "172.30.255.5");
   assert.equal(env.ANTNEST_ACP_MANAGEMENT_IPV4, "172.30.255.6");
-  assert.equal(env.ANTNEST_RUNTIME_MANAGEMENT_IP_RANGE, "172.30.255.128/25");
+  assert.equal(env.ANTNEST_RUNTIME_MANAGEMENT_IP_RANGE, "172.30.240.0/21");
   assert.equal(env.ANTNEST_AGENT_CONTROLLER_CONTROL_IPV4, "172.31.255.4");
   assert.equal(env.ANTNEST_RUNTIME_CONTROLLER_CONTROL_IPV4, "172.31.255.5");
   assert.equal(env.ANTNEST_PROVIDER_ALLOW_PRIVATE_ENDPOINTS, "false");

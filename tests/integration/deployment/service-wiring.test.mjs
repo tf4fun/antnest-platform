@@ -451,7 +451,7 @@ test("management, owner databases, Provider and gateway ingress have exact membe
   );
   assert.equal(
     base.networks["runtime-management"].ipam.config[0].ip_range,
-    "172.30.255.128/25",
+    topology.runtime_management.default_dynamic_ip_range,
   );
   for (const [name, network] of Object.entries(topology.database_networks)) {
     assert.equal(base.networks[name].internal, true, name);
