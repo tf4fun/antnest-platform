@@ -166,6 +166,12 @@ Rejection, cancellation, replay and reconnect must retain their original outcome
 and must not introduce model calls or execution. Real Runtime acknowledgement,
 Agent deletion and final operation completion remain hard gates.
 
+Live permission-resolution notices are checked against the original connection's
+approval delivery and the persisted Session, Run, Tool and resolution reason.
+Unknown, malformed, duplicate or foreign notices fail inspection. A notice does
+not replace durable approval or Tool execution evidence, and a missed live notice
+does not invalidate otherwise complete evidence after a disconnect.
+
 Trace collection, topology, timing and exporter failures are auxiliary under one
 shared 60-second budget. Missing or malformed diagnostic identities do not waive
 business checks or fabricate evidence. Raw diagnostic failures and unexecuted
