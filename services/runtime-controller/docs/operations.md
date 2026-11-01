@@ -411,6 +411,33 @@ Workspace volumes carry Antnest managed, Controller-scope, and Agent ownership l
 volume without exact labels is never adopted, mounted, or deleted. System Skill
 storage is deployment-owned and only checked for existence.
 
+All Runtime containers and workspaces are named `antnest-<scope>-runtime-<agent>`
+and `antnest-<scope>-workspace-<agent>` (bounded to 128 bytes; long or ambiguous
+segments use a deterministic `h-<128-bit>` form). Resource names alone isolate
+concurrent Controller scopes on this single Docker host; this is not a
+multi-node or HA claim. Deployment `antnest-runtime-<agent>` and
+`antnest-workspace-<agent>` legacy resources with matching managed, scope, and
+identity labels are adopted once: containers are renamed during monitor
+reconciliation (and explicit adapter Ready), and owned
+legacy workspaces remain a one-release fallback (no copy, no shadow volume).
+Foreign legacy resources are never renamed, started, or deleted. The Egress
+failure domain remains a single instance.
+
+The management IPv4 pool is capacity-accounted. The selected pool (IPAM
+`IPRange` when configured, otherwise the `Subnet`) excludes network/broadcast,
+gateway, auxiliary, and other occupied endpoints; `runtime_count` counts all
+attached managed Runtime endpoints across scopes and `runtime_capacity` is the
+total Runtime slot count. The legacy `172.30.255.0/24` subnet offers about 250
+Runtime slots before static platform endpoints; `172.30.240.0/20` is the
+upcoming default. `/status` reports the cached `runtime_capacity`,
+`runtime_count` and `runtime_capacity_known` snapshot without probing Docker.
+When the pool is known to be full, admission refuses new compute with
+HTTP 503 `runtime_capacity_exhausted` (`retryable: true`);
+existing Runtimes are never evicted and exact-idempotent replays still succeed.
+When capacity is unknown the snapshot reports `runtime_capacity_known: false`
+and creation still proceeds — Docker remains the final arbiter of address
+availability.
+
 Runtime containers are handled by the same rule: normal Inspect/List/Delete
 requires exact managed, Agent, generation, and persisted-digest identity. A
 managed container with malformed labels blocks reconciliation until an operator

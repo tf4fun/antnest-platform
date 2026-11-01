@@ -100,14 +100,17 @@ type revisionConfigurationRequest struct {
 }
 
 type readinessResponse struct {
-	Status            string `json:"status"`
-	Live              bool   `json:"live"`
-	Ready             bool   `json:"ready"`
-	DatabaseReady     bool   `json:"database_ready"`
-	PlatformReady     bool   `json:"platform_ready"`
-	ObservationReady  bool   `json:"observation_ready"`
-	MonitorReady      bool   `json:"monitor_ready"`
-	DiskQuotaEnforced bool   `json:"disk_quota_enforced"`
+	Status               string `json:"status"`
+	Live                 bool   `json:"live"`
+	Ready                bool   `json:"ready"`
+	DatabaseReady        bool   `json:"database_ready"`
+	PlatformReady        bool   `json:"platform_ready"`
+	ObservationReady     bool   `json:"observation_ready"`
+	MonitorReady         bool   `json:"monitor_ready"`
+	DiskQuotaEnforced    bool   `json:"disk_quota_enforced"`
+	RuntimeCapacity      uint64 `json:"runtime_capacity"`
+	RuntimeCount         uint64 `json:"runtime_count"`
+	RuntimeCapacityKnown bool   `json:"runtime_capacity_known"`
 }
 
 func readinessFromDomain(status string, value control.Readiness) readinessResponse {
@@ -116,6 +119,8 @@ func readinessFromDomain(status string, value control.Readiness) readinessRespon
 		DatabaseReady: value.DatabaseReady, PlatformReady: value.PlatformReady,
 		ObservationReady: value.ObservationReady, MonitorReady: value.MonitorReady,
 		DiskQuotaEnforced: value.DiskQuotaEnforced,
+		RuntimeCapacity:   value.RuntimeCapacity, RuntimeCount: value.RuntimeCount,
+		RuntimeCapacityKnown: value.RuntimeCapacityKnown,
 	}
 }
 

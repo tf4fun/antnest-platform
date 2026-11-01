@@ -468,9 +468,20 @@ boolean on both HTTP 200 and HTTP 503 responses:
   "platform_ready": true,
   "observation_ready": true,
   "monitor_ready": true,
-  "disk_quota_enforced": false
+  "disk_quota_enforced": false,
+  "runtime_capacity": 251,
+  "runtime_count": 2,
+  "runtime_capacity_known": true
 }
 ```
+
+Revision 22 adds `runtime_capacity` (total Runtime IPv4 slots including occupied
+ones), `runtime_count` (attached managed Runtime endpoints across scopes), and
+`runtime_capacity_known` to `/status`. Both values come from the snapshot cached
+by Ready and monitor reconciliation; `runtime_capacity_known: false` means the
+pool could not be measured and never implies zero or available capacity. New
+compute creation over a known-full pool is rejected before compute creation
+with 503 `runtime_capacity_exhausted` (`retryable: true`).
 
 `disk_quota_enforced` reports whether the configured workspace volume backend
 applies an operator-attested hard byte quota; `false` means the default local

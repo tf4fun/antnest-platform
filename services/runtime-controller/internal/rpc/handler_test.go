@@ -377,6 +377,7 @@ func newTestHandler(t *testing.T, service Service) http.Handler {
 
 type fakeService struct {
 	operation              deployment.Operation
+	readiness              control.Readiness
 	inspection             deployment.Environment
 	observations           []deployment.Observation
 	readyErr               error
@@ -399,6 +400,9 @@ func (*fakeService) ResolveImage(context.Context, string) (platform.ImageResolut
 func (s *fakeService) Status(context.Context) (control.Readiness, error) {
 	if s.readyErr != nil {
 		return control.Readiness{}, s.readyErr
+	}
+	if s.readiness != (control.Readiness{}) {
+		return s.readiness, nil
 	}
 	return control.Readiness{DatabaseReady: true, PlatformReady: true, ObservationReady: true, MonitorReady: true}, nil
 }

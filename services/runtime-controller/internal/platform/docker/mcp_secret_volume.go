@@ -72,7 +72,7 @@ func (writer *MCPVolumeWriter) Prepare(ctx context.Context, key deployment.Key, 
 	if key.Validate() != nil || source.Validate() != nil || !deployment.HasMCPSecrets(servers) {
 		return errors.New("managed MCP bootstrap identity invalid")
 	}
-	runtime, err := writer.engine.InspectContainer(telemetry.WithExpectedDockerAbsence(ctx), containerName(key.AgentID))
+	runtime, err := ownedRuntimeContainer(ctx, writer.engine, writer.scope, key.AgentID)
 	if err == nil && runtime.Running {
 		return writer.VerifyRuntimeMount(ctx, key, source, servers, runtime.ID)
 	}
@@ -206,7 +206,7 @@ func (writer *MCPVolumeWriter) VerifyRuntimeMount(ctx context.Context, key deplo
 	}
 	name := mcpVolumeName(writer.scope, key)
 	container, err := writer.engine.InspectContainer(ctx, id)
-	if err != nil || container.ID != id || container.Name != containerName(key.AgentID) || container.Labels[labelManaged] != "runtime" || container.Labels[labelScope] != writer.scope || container.Labels[labelAgentID] != key.AgentID || container.Labels[labelGeneration] != strconv.FormatUint(key.Generation, 10) || !hasMCPMount(container, name, true) {
+	if err != nil || container.ID != id || !managedRuntimeName(writer.scope, container.Name, key.AgentID) || container.Labels[labelManaged] != "runtime" || container.Labels[labelScope] != writer.scope || container.Labels[labelAgentID] != key.AgentID || container.Labels[labelGeneration] != strconv.FormatUint(key.Generation, 10) || !hasMCPMount(container, name, true) {
 		return errors.New("actual managed MCP bootstrap mount differs")
 	}
 	volume, err := writer.engine.InspectVolume(ctx, name)

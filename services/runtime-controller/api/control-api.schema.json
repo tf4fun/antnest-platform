@@ -149,7 +149,10 @@
         "platform_ready",
         "observation_ready",
         "monitor_ready",
-        "disk_quota_enforced"
+        "disk_quota_enforced",
+        "runtime_capacity",
+        "runtime_count",
+        "runtime_capacity_known"
       ],
       "properties": {
         "status": {
@@ -178,6 +181,20 @@
         "disk_quota_enforced": {
           "type": "boolean",
           "description": "Whether the configured workspace volume backend applies an operator-attested hard byte quota. False means the default local driver is unbounded; it is not a readiness failure and does not claim a measured disk-fill proof."
+        },
+        "runtime_capacity": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Cached total Runtime IPv4 slots on the management pool, including occupied runtimes; meaningful only when runtime_capacity_known is true."
+        },
+        "runtime_count": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Cached count of attached managed Runtime IPv4 endpoints across all Controller scopes on the management network."
+        },
+        "runtime_capacity_known": {
+          "type": "boolean",
+          "description": "Whether the management capacity snapshot is known; false never implies zero or available capacity."
         }
       }
     },

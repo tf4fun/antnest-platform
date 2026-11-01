@@ -250,6 +250,42 @@ func (c *Client) InspectNetwork(ctx context.Context, name string) error {
 	return c.do(ctx, http.MethodGet, "/networks/"+url.PathEscape(name), nil, nil)
 }
 
+func (c *Client) InspectNetworkDetails(ctx context.Context, name string) (Network, error) {
+	var response struct {
+		Name string `json:"Name"`
+		IPAM struct {
+			Config []struct {
+				Subnet             string            `json:"Subnet"`
+				IPRange            string            `json:"IPRange"`
+				Gateway            string            `json:"Gateway"`
+				AuxiliaryAddresses map[string]string `json:"AuxiliaryAddresses"`
+			} `json:"Config"`
+		} `json:"IPAM"`
+		Containers map[string]struct {
+			IPv4Address string `json:"IPv4Address"`
+		} `json:"Containers"`
+	}
+	if err := c.do(ctx, http.MethodGet, "/networks/"+url.PathEscape(name), nil, &response); err != nil {
+		return Network{}, err
+	}
+	network := Network{Name: response.Name, Containers: make(map[string]string, len(response.Containers))}
+	for id, endpoint := range response.Containers {
+		network.Containers[id] = endpoint.IPv4Address
+	}
+	for _, config := range response.IPAM.Config {
+		network.IPAM = append(network.IPAM, NetworkIPAM{
+			Subnet: config.Subnet, IPRange: config.IPRange,
+			Gateway: config.Gateway, AuxiliaryAddresses: config.AuxiliaryAddresses,
+		})
+	}
+	return network, nil
+}
+
+func (c *Client) RenameContainer(ctx context.Context, identifier, name string) error {
+	return c.do(ctx, http.MethodPost,
+		"/containers/"+url.PathEscape(identifier)+"/rename?name="+url.QueryEscape(name), nil, nil)
+}
+
 func (c *Client) RemoveVolume(ctx context.Context, name string) error {
 	return c.do(ctx, http.MethodDelete, "/volumes/"+url.PathEscape(name), nil, nil)
 }
@@ -438,6 +474,18 @@ func (c *Client) GetArchive(ctx context.Context, identifier, source string) (io.
 	return response.Body, nil
 }
 
+type APIError struct {
+	Method  string
+	Path    string
+	Status  int
+	Message string
+}
+
+func (e *APIError) Error() string {
+	return fmt.Sprintf("docker %s %s returned %d %s: %s",
+		e.Method, e.Path, e.Status, http.StatusText(e.Status), e.Message)
+}
+
 func (c *Client) do(ctx context.Context, method, requestPath string, input, output any) (resultErr error) {
 	var body io.Reader
 	if input != nil {
@@ -467,8 +515,10 @@ func (c *Client) do(ctx context.Context, method, requestPath string, input, outp
 	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		detail, _ := io.ReadAll(io.LimitReader(response.Body, 4096))
-		err := fmt.Errorf("docker %s %s returned %s: %s",
-			method, requestPath, response.Status, strings.TrimSpace(string(detail)))
+		err := &APIError{
+			Method: method, Path: requestPath, Status: response.StatusCode,
+			Message: strings.TrimSpace(string(detail)),
+		}
 		if response.StatusCode == http.StatusConflict {
 			return errors.Join(ErrConflict, err)
 		}

@@ -119,6 +119,13 @@ func (p *ObservedPlatform) VerifyStorage(
 	})
 }
 
+func (p *ObservedPlatform) Capacity() platform.Capacity {
+	if reporter, ok := p.next.(interface{ Capacity() platform.Capacity }); ok {
+		return reporter.Capacity()
+	}
+	return platform.Capacity{}
+}
+
 func (p *ObservedPlatform) DiskQuotaEnforced() bool {
 	if prober, ok := p.next.(interface{ DiskQuotaEnforced() bool }); ok {
 		return prober.DiskQuotaEnforced()

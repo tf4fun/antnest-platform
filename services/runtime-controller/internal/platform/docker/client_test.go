@@ -129,7 +129,7 @@ func TestHTTPClientMapsDockerResourcesAndHardening(t *testing.T) {
 		t.Fatal(err)
 	}
 	driver := newTestDriver(t, newFakeEngine())
-	spec, err := driver.containerSpec(testDeployment(), testDigest)
+	spec, err := driver.containerSpec(testDeployment(), testDigest, driver.scopedNames("agent-1"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -349,7 +349,7 @@ func TestUnixTransportCoversTheMaximumStopGrace(t *testing.T) {
 
 func TestCreateRequestPlacesStopTimeoutAtTopLevel(t *testing.T) {
 	driver := newTestDriver(t, newFakeEngine())
-	spec, err := driver.containerSpec(testDeployment(), testDigest)
+	spec, err := driver.containerSpec(testDeployment(), testDigest, driver.scopedNames("agent-1"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -376,7 +376,7 @@ func TestCreateRequestAlwaysAppliesNoNewPrivileges(t *testing.T) {
 	if len(helper.HostConfig.SecurityOpt) != 1 || helper.HostConfig.SecurityOpt[0] != "no-new-privileges=true" {
 		t.Fatalf("bare helper spec lost no-new-privileges: %+v", helper.HostConfig.SecurityOpt)
 	}
-	runtimeSpec, err := newTestDriver(t, newFakeEngine()).containerSpec(testDeployment(), testDigest)
+	runtimeSpec, err := newTestDriver(t, newFakeEngine()).containerSpec(testDeployment(), testDigest, resourceNames{container: containerName("agent-1"), workspace: workspaceVolume("agent-1")})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -448,7 +448,7 @@ func TestHTTPClientMapsQuotaVolumeAndMountSubpath(t *testing.T) {
 	if options["size"] != "10737418240" {
 		t.Fatalf("DriverOpts missing from volume create: %v", createBody)
 	}
-	spec, err := newTestDriver(t, newFakeEngine()).containerSpec(testDeployment(), testDigest)
+	spec, err := newTestDriver(t, newFakeEngine()).containerSpec(testDeployment(), testDigest, resourceNames{container: containerName("agent-1"), workspace: workspaceVolume("agent-1")})
 	if err != nil {
 		t.Fatal(err)
 	}

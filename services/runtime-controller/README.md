@@ -67,6 +67,18 @@ Startup rejects published PostgreSQL passwords under the [development secret pol
   one platform-Watch consumer.
 - Emit structured logs, traces, and low-cardinality metrics.
 
+Runtime containers and workspace volumes are named `antnest-<scope>-runtime-<agent>`
+and `antnest-<scope>-workspace-<agent>` on its single Docker host; legacy unscoped
+resources with matching ownership labels are adopted once (containers renamed,
+workspaces kept as a one-release fallback). Management IPv4 pool capacity is
+cached by Ready and monitor reconciliation, reported on `/status`, and new
+compute creation over a known-full pool is refused with
+`runtime_capacity_exhausted`. Concurrent Controller scopes share one daemon
+safely through resource names — this is not a multi-node or HA claim, and the
+Egress failure domain remains one instance. See
+[operations](docs/operations.md#coordinated-resources) for limits and migration
+details.
+
 ## Non-responsibilities
 
 - It does not decide when an Agent is initialized, updated, disabled, enabled,

@@ -69,7 +69,7 @@ func (w *ResolverVolumeWriter) Prepare(ctx context.Context, key deployment.Key, 
 	if err != nil {
 		return err
 	}
-	runtime, err := w.engine.InspectContainer(telemetry.WithExpectedDockerAbsence(ctx), containerName(key.AgentID))
+	runtime, err := ownedRuntimeContainer(ctx, w.engine, w.scope, key.AgentID)
 	if err == nil && runtime.Running {
 		return w.VerifyRuntimeMount(ctx, key, resolverIPv4, runtime.ID)
 	}
@@ -235,7 +235,7 @@ func (w *ResolverVolumeWriter) VerifyRuntimeMount(ctx context.Context, key deplo
 	if err != nil {
 		return err
 	}
-	if container.ID != containerID || container.Name != containerName(key.AgentID) ||
+	if container.ID != containerID || !managedRuntimeName(w.scope, container.Name, key.AgentID) ||
 		container.Labels[labelManaged] != "runtime" || container.Labels[labelScope] != w.scope ||
 		container.Labels[labelAgentID] != key.AgentID ||
 		container.Labels[labelGeneration] != strconv.FormatUint(key.Generation, 10) ||
@@ -279,7 +279,7 @@ func (w *ResolverVolumeWriter) Remove(ctx context.Context, key deployment.Key) e
 	if key.Validate() != nil {
 		return fmt.Errorf("%w: resolver identity is invalid", ErrConflict)
 	}
-	_, err := w.engine.InspectContainer(telemetry.WithExpectedDockerAbsence(ctx), containerName(key.AgentID))
+	_, err := ownedRuntimeContainer(ctx, w.engine, w.scope, key.AgentID)
 	if err == nil {
 		return fmt.Errorf("%w: resolver volume is still mounted by compute", ErrConflict)
 	}

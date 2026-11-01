@@ -5,6 +5,11 @@
     "source": "services/agent-acp-service/src/adapters/model/provider-transport.ts"
   },
   {
+    "value": "antnest-%s-%s-%s",
+    "purpose": "Controller-scope Docker resource name format, not an HTTP header",
+    "source": "services/runtime-controller/internal/platform/docker/naming.go"
+  },
+  {
     "value": "antnest-acp-runtime-",
     "purpose": "Private Runtime sender directory prefix",
     "source": "services/agent-acp-service/src/adapters/runtime-connections.ts"

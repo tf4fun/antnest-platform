@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -43,7 +44,7 @@ func TestCreateExistingTargetStillRequiresOwnedWorkspace(t *testing.T) {
 		t.Run(map[bool]string{false: "missing", true: "foreign"}[foreign], func(t *testing.T) {
 			engine := newFakeEngine()
 			engine.container = exactContainer()
-			name := "antnest-workspace-agent-1"
+			name := "antnest-test-controller-workspace-agent-1"
 			want := "storage_not_found"
 			if foreign {
 				engine.volumes[name].Labels[labelScope] = "other-scope"
@@ -67,7 +68,7 @@ func TestCreateDistinguishesMissingStorageFromDockerFailure(t *testing.T) {
 		name   string
 		volume string
 	}{
-		{name: "workspace", volume: "antnest-workspace-agent-1"},
+		{name: "workspace", volume: "antnest-test-controller-workspace-agent-1"},
 		{name: "system Skills", volume: "antnest-system-skills"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -94,13 +95,13 @@ func TestCreateMapsImmutableRuntimeSpecToHardenedContainer(t *testing.T) {
 		t.Fatalf("unexpected create: outcome=%+v engine=%+v", outcome, engine)
 	}
 	spec := engine.created
-	if spec.Name != "antnest-runtime-agent-1" || spec.Image != testDeployment().ImageRef {
+	if spec.Name != "antnest-test-controller-runtime-agent-1" || spec.Image != testDeployment().ImageRef {
 		t.Fatalf("wrong Docker identity: %+v", spec)
 	}
 	if !spec.ReadOnlyRootFS || spec.Environment["ANTNEST_RUNTIME_SPEC"] == "" || spec.User != "0:0" {
 		t.Fatalf("Runtime bootstrap was not hardened: %+v", spec)
 	}
-	if spec.Mounts["/workspace"].Source != "antnest-workspace-agent-1" ||
+	if spec.Mounts["/workspace"].Source != "antnest-test-controller-workspace-agent-1" ||
 		!spec.Mounts["/skills"].ReadOnly {
 		t.Fatalf("unexpected mounts: %+v", spec.Mounts)
 	}
@@ -228,7 +229,7 @@ func TestCreatePreservesConflictWhenConcurrentResourceCannotBeInspected(t *testi
 
 func TestEnsureStorageConvergesAfterConcurrentCreate(t *testing.T) {
 	engine := newFakeEngine()
-	delete(engine.volumes, "antnest-workspace-agent-1")
+	delete(engine.volumes, "antnest-test-controller-workspace-agent-1")
 	engine.createVolumeErr = ErrConflict
 	engine.createVolumeMaterializes = true
 	driver := newTestDriver(t, engine)
@@ -242,7 +243,7 @@ func TestEnsureStorageConvergesAfterConcurrentCreate(t *testing.T) {
 
 func TestEnsureStoragePreservesConflictWhenVolumeCannotBeInspected(t *testing.T) {
 	engine := newFakeEngine()
-	delete(engine.volumes, "antnest-workspace-agent-1")
+	delete(engine.volumes, "antnest-test-controller-workspace-agent-1")
 	engine.createVolumeErr = ErrConflict
 	driver := newTestDriver(t, engine)
 
@@ -255,10 +256,10 @@ func TestEnsureStoragePreservesConflictWhenVolumeCannotBeInspected(t *testing.T)
 
 func TestVerifyStorageRejectsMissingOrForeignWorkspace(t *testing.T) {
 	for _, prepare := range []func(*fakeEngine){
-		func(engine *fakeEngine) { delete(engine.volumes, "antnest-workspace-agent-1") },
+		func(engine *fakeEngine) { delete(engine.volumes, "antnest-test-controller-workspace-agent-1") },
 		func(engine *fakeEngine) {
-			engine.volumes["antnest-workspace-agent-1"] = Volume{
-				Name: "antnest-workspace-agent-1", Labels: map[string]string{"owner": "foreign"},
+			engine.volumes["antnest-test-controller-workspace-agent-1"] = Volume{
+				Name: "antnest-test-controller-workspace-agent-1", Labels: map[string]string{"owner": "foreign"},
 			}
 		},
 	} {
@@ -352,8 +353,8 @@ func TestDeleteStorageRefusesWhileManagedRuntimeExists(t *testing.T) {
 
 func TestDeleteStorageRejectsSameNameForeignVolume(t *testing.T) {
 	engine := newFakeEngine()
-	engine.volumes["antnest-workspace-agent-1"] = Volume{
-		Name: "antnest-workspace-agent-1", Labels: map[string]string{"owner": "another-system"},
+	engine.volumes["antnest-test-controller-workspace-agent-1"] = Volume{
+		Name: "antnest-test-controller-workspace-agent-1", Labels: map[string]string{"owner": "another-system"},
 	}
 	driver := newTestDriver(t, engine)
 
@@ -367,8 +368,8 @@ func TestDeleteStorageRejectsSameNameForeignVolume(t *testing.T) {
 
 func TestCreateRejectsSameNameForeignWorkspaceVolume(t *testing.T) {
 	engine := newFakeEngine()
-	engine.volumes["antnest-workspace-agent-1"] = Volume{
-		Name: "antnest-workspace-agent-1", Labels: map[string]string{"owner": "another-system"},
+	engine.volumes["antnest-test-controller-workspace-agent-1"] = Volume{
+		Name: "antnest-test-controller-workspace-agent-1", Labels: map[string]string{"owner": "another-system"},
 	}
 	driver := newTestDriver(t, engine)
 
@@ -402,7 +403,7 @@ func TestReadyUsesLightweightInventoryProbe(t *testing.T) {
 	if err := driver.Ready(context.Background()); err != nil {
 		t.Fatalf("readiness inspected fleet contents: %v", err)
 	}
-	if engine.probeCalls != 1 || engine.listCalls != 0 {
+	if engine.probeCalls != 0 || engine.listCalls != 1 {
 		t.Fatalf("readiness calls: probe=%d full-list=%d", engine.probeCalls, engine.listCalls)
 	}
 }
@@ -532,7 +533,7 @@ func testDeployment() deployment.Deployment {
 
 func exactContainer() *Container {
 	return &Container{
-		ID: "container-1", Name: "antnest-runtime-agent-1", Running: true, Status: "running", Health: "healthy",
+		ID: "container-1", Name: "antnest-test-controller-runtime-agent-1", Running: true, Status: "running", Health: "healthy",
 		NetworkIPv4: map[string]string{"antnest-runtime-management": "10.243.1.20"},
 		Labels: map[string]string{
 			labelManaged: "runtime", labelScope: "test-controller",
@@ -560,6 +561,7 @@ func testDriverConfig() Config {
 }
 
 type fakeResolverGate struct {
+	mu           sync.Mutex
 	prepareCalls int
 	verifyCalls  int
 	removeCalls  int
@@ -569,16 +571,22 @@ type fakeResolverGate struct {
 }
 
 func (g *fakeResolverGate) Prepare(context.Context, deployment.Key, string) error {
+	g.mu.Lock()
+	defer g.mu.Unlock()
 	g.prepareCalls++
 	return g.prepareErr
 }
 
 func (g *fakeResolverGate) VerifyRuntimeMount(context.Context, deployment.Key, string, string) error {
+	g.mu.Lock()
+	defer g.mu.Unlock()
 	g.verifyCalls++
 	return g.verifyErr
 }
 
 func (g *fakeResolverGate) Remove(context.Context, deployment.Key) error {
+	g.mu.Lock()
+	defer g.mu.Unlock()
 	g.removeCalls++
 	return g.removeErr
 }
@@ -610,8 +618,8 @@ type fakeEngine struct {
 func newFakeEngine() *fakeEngine {
 	return &fakeEngine{
 		volumes: map[string]Volume{
-			"antnest-workspace-agent-1": {
-				Name: "antnest-workspace-agent-1", Labels: map[string]string{
+			"antnest-test-controller-workspace-agent-1": {
+				Name: "antnest-test-controller-workspace-agent-1", Labels: map[string]string{
 					labelManaged: "workspace", labelScope: "test-controller", labelAgentID: "agent-1",
 				},
 			},
