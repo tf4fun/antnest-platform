@@ -5,7 +5,7 @@ use std::{
         Arc, Mutex, Weak,
         atomic::{AtomicBool, AtomicU64, Ordering},
     },
-    time::{Duration, SystemTime},
+    time::{Duration, Instant, SystemTime},
 };
 
 use crate::tunnel::{KeyBox, Registration};
@@ -76,6 +76,7 @@ pub struct SweepReport {
 struct ServiceHealth {
     data_plane_ready: AtomicBool,
     repository_ready: AtomicBool,
+    draining: AtomicBool,
     snapshot_revision: AtomicU64,
     transitions: AtomicU64,
 }
@@ -85,7 +86,10 @@ impl ServiceHealth {
         let data_plane_ready = self.data_plane_ready.load(Ordering::Acquire);
         let control_plane_ready = self.repository_ready.load(Ordering::Acquire);
         ServiceStatus {
-            status: if data_plane_ready && control_plane_ready {
+            status: if data_plane_ready
+                && control_plane_ready
+                && !self.draining.load(Ordering::Acquire)
+            {
                 "ready"
             } else {
                 "degraded"
@@ -94,6 +98,11 @@ impl ServiceHealth {
             control_plane_ready,
             snapshot_revision: self.snapshot_revision.load(Ordering::Acquire),
         }
+    }
+
+    fn mark_draining(&self) {
+        self.draining.store(true, Ordering::Release);
+        self.snapshot_published();
     }
 
     fn recovered(&self) {
@@ -460,6 +469,17 @@ where
 
     pub fn output_barrier(&self) -> Arc<AsyncMutex<()>> {
         self.output_barrier.clone()
+    }
+
+    pub async fn begin_drain(&self, timeout: Duration) {
+        let deadline = Instant::now() + timeout;
+        self.health.mark_draining();
+        let _output = self.output_barrier.lock().await;
+        let now = Instant::now();
+        self.dataplane
+            .lock()
+            .expect("data-plane mutex poisoned")
+            .begin_drain(now, deadline.saturating_duration_since(now));
     }
 
     pub async fn ensure_agent_network(
@@ -1139,5 +1159,25 @@ mod tests {
         let locks = operations.locks.lock().await;
         assert_eq!(locks.len(), 1);
         assert!(locks.contains_key(&second));
+    }
+}
+
+#[cfg(test)]
+mod drain_tests {
+    use super::ServiceHealth;
+
+    #[test]
+    fn drain_marks_health_degraded_permanently() {
+        let health = ServiceHealth::default();
+        health.repository_available(true);
+        health.transition("data_plane", &health.data_plane_ready, true, "test");
+        assert_eq!(health.snapshot().status, "ready");
+        health.mark_draining();
+        assert_eq!(health.snapshot().status, "degraded");
+        assert!(!health.metrics(0).service_ready);
+        health.repository_available(true);
+        health.recovered();
+        assert_eq!(health.snapshot().status, "degraded");
+        assert!(!health.metrics(0).service_ready);
     }
 }

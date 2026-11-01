@@ -108,6 +108,7 @@ or `h` suffix; a bare number means seconds.
 | `ANTNEST_EGRESS_QUARANTINE`                     | no            | `5m`                               | Released-address quarantine duration                                                                              |
 | `ANTNEST_EGRESS_MAX_FLOWS`                      | no            | `65536`                            | Global flow bound; must be non-zero                                                                               |
 | `ANTNEST_EGRESS_MAX_AGENT_FLOWS`                | no            | `1024`                             | Per-Agent flow bound; must be non-zero and not exceed the global bound                                            |
+| `ANTNEST_EGRESS_DRAIN_TIMEOUT`                | no            | `30s`                              | SIGTERM/SIGINT drain bound (`1ms`–`120s`)                                                                          |
 | `ANTNEST_EGRESS_FLOW_IDLE`                      | no            | `5m`                               | Inactive flow expiry                                                                                              |
 | `ANTNEST_EGRESS_DNS_UPSTREAM`                   | yes           | none                               | DNS-over-TCP recursive upstream; production should use one with no view of internal names. Compose retains `127.0.0.11:53`; protected answers are filtered. |
 | `ANTNEST_EGRESS_PLATFORM_DENY_CIDRS`            | yes           | none                               | Required comma-separated canonical IPv4 CIDRs (1-256, deduplicated) forming the non-bypassable platform deny set; must cover the whole Tunnel CIDR and every connected subnet or startup refuses to boot. Leave the example environment value empty to let Compose derive tunnel, management, control, service, database and outbound egress subnets from the selected topology; an explicit override must cover the same configured subnets. |
@@ -116,6 +117,14 @@ or `h` suffix; a bare number means seconds.
 | `RUST_LOG`                                      | no            | `info,hyper=warn,reqwest=warn`     | Log filter; only `antnest_runtime_egress` targets reach stderr                                                    |
 | `OTEL_SDK_DISABLED`                             | no            | `true`                             | `true` or `1` disables OTLP export while keeping local trace correlation                                          |
 | `ANTNEST_TELEMETRY_CAPTURE_RPC_CONTENT`         | no            | `false`                            | `true` records complete control RPC JSON, which can include secrets                                               |
+
+During a scheduled restart the single Egress instance drains for up to
+`ANTNEST_EGRESS_DRAIN_TIMEOUT`: established flows keep forwarding, new flow
+tuples are refused, and readiness probes receive the bounded authenticated
+restart notice. Configure the stop grace above the drain timeout plus 5s.
+Egress remains one non-HA instance with non-persisted flows and NAT; Runtime
+reconnects and application retries recover without controller intervention.
+
 | `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`            | no            | `http://127.0.0.1:4318/v1/traces`  | OTLP HTTP traces endpoint                                                                                         |
 | `OTEL_EXPORTER_OTLP_METRICS_ENDPOINT`           | no            | `http://127.0.0.1:4318/v1/metrics` | OTLP HTTP metrics endpoint                                                                                        |
 | `OTEL_EXPORTER_OTLP_ENDPOINT`                   | no            | `http://127.0.0.1:4318`            | Fallback OTLP HTTP base URL; `/v1/traces` and `/v1/metrics` are appended                                          |

@@ -1,6 +1,6 @@
 #[path = "../../support/egress-auth.rs"]
 mod auth;
-use antnest_runtime_tunnel::{Event, MAX_DATAGRAM, Peer};
+use antnest_runtime_tunnel::{Event, MAX_DATAGRAM, Peer, parse_egress_restart};
 
 use std::{
     io,
@@ -290,4 +290,91 @@ async fn receive_inner(socket: &UdpSocket, peer: &mut Peer) -> Vec<u8> {
             }
         }
     }
+}
+
+const DRAIN_SYN: &str =
+    "4500002800004000400600006460000a5db8d8229c4001bb00000029000000005002000000000000";
+const DRAIN_PROBE: &str =
+    "4500002800004000400600006460000ac0000201c001000900000000000000005002000000000000";
+
+#[tokio::test]
+async fn drain_serves_existing_flow_and_sends_restart_notice_to_probe() {
+    let egress = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+    let egress_address = egress.local_addr().unwrap();
+    let runtime = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+    runtime.connect(egress_address).await.unwrap();
+    let (service_tun, mut kernel_tun) = tokio::io::duplex(4096);
+    let route = AgentRoute {
+        agent_id: AgentId::parse("agent-1").unwrap(),
+        tunnel_ipv4: "100.96.0.10".parse().unwrap(),
+        assignment_version: 1,
+        policy: PolicySpec::allow_all().compile(RESOLVER),
+        gate: RouteGate::Open,
+        runtime_endpoint: Some(Ipv4Addr::LOCALHOST),
+    };
+    let engine = Arc::new(Mutex::new(DataPlaneEngine::new(
+        NetworkSnapshot::from_routes([route]),
+        1400,
+        32,
+        16,
+        Duration::from_secs(60),
+    )));
+    let mut crypto = install_tunnel(&engine);
+    let cancellation = CancellationToken::new();
+    let task = tokio::spawn(run_packet_loop(
+        egress,
+        TestTun(service_tun),
+        engine.clone(),
+        Arc::new(tokio::sync::Mutex::new(())),
+        1400,
+        Duration::from_secs(1),
+        cancellation.clone(),
+    ));
+    let packet = decode_hex(DRAIN_SYN);
+    send_encrypted(&runtime, &mut crypto, &packet).await;
+    let mut uplink = vec![0_u8; 1400];
+    let read = tokio::time::timeout(Duration::from_secs(2), kernel_tun.read(&mut uplink))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(&uplink[..read], packet.as_slice());
+
+    engine
+        .lock()
+        .unwrap()
+        .begin_drain(std::time::Instant::now(), Duration::from_secs(30));
+
+    send_encrypted(&runtime, &mut crypto, &packet).await;
+    let read = tokio::time::timeout(Duration::from_secs(2), kernel_tun.read(&mut uplink))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(&uplink[..read], packet.as_slice());
+
+    let mut fresh = packet.clone();
+    fresh[21] = 0x7f;
+    send_encrypted(&runtime, &mut crypto, &fresh).await;
+    assert!(
+        tokio::time::timeout(Duration::from_millis(300), kernel_tun.read(&mut uplink))
+            .await
+            .is_err(),
+        "new tuple reached the TUN during drain"
+    );
+
+    send_encrypted(&runtime, &mut crypto, &decode_hex(DRAIN_PROBE)).await;
+    let mut millis = 0;
+    for _ in 0..8 {
+        let inner =
+            tokio::time::timeout(Duration::from_secs(1), receive_inner(&runtime, &mut crypto))
+                .await
+                .expect("encrypted drain response");
+        if let Ok(value) = parse_egress_restart(&inner, "100.96.0.10".parse().unwrap()) {
+            millis = value;
+            break;
+        }
+    }
+    assert!(millis > 0 && millis <= 30_000, "notice millis {millis}");
+
+    cancellation.cancel();
+    task.await.unwrap().unwrap();
 }

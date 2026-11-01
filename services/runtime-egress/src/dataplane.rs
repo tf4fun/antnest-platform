@@ -125,6 +125,7 @@ pub enum DropReason {
     FlowCollision,
     FlowCapacity,
     ReverseFlowMissing,
+    Draining,
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -165,6 +166,8 @@ pub struct DataPlaneEngine {
     bindings: HashMap<AgentId, AgentBindings>,
     dns_generations: HashMap<AgentId, u64>,
     dns_generation_counter: u64,
+    drain_deadline: Option<Instant>,
+    drain_notice_next: Option<Instant>,
 }
 
 impl DataPlaneEngine {
@@ -187,7 +190,26 @@ impl DataPlaneEngine {
             bindings: HashMap::new(),
             dns_generations: HashMap::new(),
             dns_generation_counter: 0,
+            drain_deadline: None,
+            drain_notice_next: None,
         }
+    }
+
+    pub fn begin_drain(&mut self, now: Instant, timeout: Duration) {
+        let deadline = now + timeout;
+        self.drain_deadline = Some(
+            self.drain_deadline
+                .map_or(deadline, |current| current.min(deadline)),
+        );
+    }
+
+    pub fn is_draining(&self) -> bool {
+        self.drain_deadline.is_some()
+    }
+
+    pub fn drain_remaining(&self, now: Instant) -> Option<Duration> {
+        self.drain_deadline
+            .map(|deadline| deadline.saturating_duration_since(now))
     }
 
     pub fn set_platform_deny(&mut self, networks: Vec<Ipv4Net>) {
@@ -354,11 +376,19 @@ impl DataPlaneEngine {
         {
             return self.drop(DropReason::PeerMismatch);
         }
+        let draining = self.is_draining();
+        let drained = matches!(self.drain_remaining(now), Some(remaining) if remaining.is_zero());
         match route.gate {
             RouteGate::HardFenced => return self.drop(DropReason::AgentFenced),
             RouteGate::ProbeOnly => {
                 if !is_readiness_probe(&packet, bytes.len()) {
                     return self.drop(DropReason::AgentFenced);
+                }
+                if drained {
+                    return self.drop(DropReason::Draining);
+                }
+                if draining {
+                    return self.restart_notice(packet.source, route.agent_id.clone(), peer, now);
                 }
                 let Some(packet) = tcp_reset(&packet) else {
                     return self.drop(DropReason::AgentFenced);
@@ -370,6 +400,12 @@ impl DataPlaneEngine {
                 };
             }
             RouteGate::Open => {}
+        }
+        if draining && drained {
+            return self.drop(DropReason::Draining);
+        }
+        if draining && is_readiness_probe(&packet, bytes.len()) {
+            return self.restart_notice(packet.source, route.agent_id.clone(), peer, now);
         }
         let resolver_hit =
             packet.destination == route.policy.resolver_ipv4() && packet.destination_port == 53;
@@ -398,18 +434,60 @@ impl DataPlaneEngine {
         }
         increment(&mut self.metrics.policy_allows, 1);
 
-        match self.flows.claim(
-            route.agent_id.clone(),
-            packet.flow_key(),
-            peer,
-            route.assignment_version,
-            now,
-        ) {
+        let claim = if draining {
+            self.flows.claim_existing(
+                route.agent_id.clone(),
+                packet.flow_key(),
+                peer,
+                route.assignment_version,
+                now,
+            )
+        } else {
+            self.flows.claim(
+                route.agent_id.clone(),
+                packet.flow_key(),
+                peer,
+                route.assignment_version,
+                now,
+            )
+        };
+        match claim {
             ClaimResult::Created | ClaimResult::Existing => {
                 DataPlaneAction::WriteTun(bytes.to_vec())
             }
+            ClaimResult::AdmissionDenied => match tcp_reset(&packet) {
+                Some(packet) => DataPlaneAction::SendUdp {
+                    agent_id: route.agent_id.clone(),
+                    peer,
+                    packet,
+                },
+                None => self.drop(DropReason::Draining),
+            },
             ClaimResult::Collision => self.drop(DropReason::FlowCollision),
             ClaimResult::CapacityExceeded => self.drop(DropReason::FlowCapacity),
+        }
+    }
+
+    fn restart_notice(
+        &mut self,
+        tunnel_ipv4: Ipv4Addr,
+        agent_id: AgentId,
+        peer: SocketAddr,
+        now: Instant,
+    ) -> DataPlaneAction {
+        let Some(remaining) = self.drain_remaining(now) else {
+            return self.drop(DropReason::Draining);
+        };
+        let millis = u32::try_from(remaining.as_millis())
+            .unwrap_or(u32::MAX)
+            .max(1);
+        match antnest_runtime_tunnel::egress_restart_packet(tunnel_ipv4, millis) {
+            Ok(packet) => DataPlaneAction::SendUdp {
+                agent_id,
+                peer,
+                packet,
+            },
+            Err(_) => self.drop(DropReason::Draining),
         }
     }
 
@@ -432,6 +510,9 @@ impl DataPlaneEngine {
         };
         if route.gate != RouteGate::Open {
             return self.drop(DropReason::AgentFenced);
+        }
+        if matches!(self.drain_remaining(now), Some(remaining) if remaining.is_zero()) {
+            return self.drop(DropReason::Draining);
         }
         let agent_id = route.agent_id.clone();
         let assignment_version = route.assignment_version;
@@ -619,6 +700,7 @@ impl DataPlaneEngine {
             DropReason::FlowCapacity => {
                 increment(&mut self.metrics.flow_capacity_rejections, 1);
             }
+            DropReason::Draining => {}
             DropReason::ReverseFlowMissing => {
                 increment(&mut self.metrics.reverse_flow_misses, 1);
             }
