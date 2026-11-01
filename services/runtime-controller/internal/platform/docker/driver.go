@@ -8,6 +8,8 @@ import (
 	"net/netip"
 	"strconv"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/tf4fun/antnest-platform/services/runtime-controller/internal/deployment"
@@ -158,9 +160,11 @@ type ContainerSpec struct {
 }
 
 type Driver struct {
-	engine Engine
-	config Config
-	images *ImagePolicy
+	engine   Engine
+	config   Config
+	images   *ImagePolicy
+	createMu sync.Mutex
+	capacity atomic.Value
 }
 
 func NewDriver(engine Engine, config Config) (*Driver, error) {
@@ -183,14 +187,20 @@ func NewDriver(engine Engine, config Config) (*Driver, error) {
 	if config.StopGraceSeconds < 20 || config.StopGraceSeconds > 120 {
 		return nil, fmt.Errorf("runtime stop grace %d must be a whole second value within [20, 120]", config.StopGraceSeconds)
 	}
-	return &Driver{engine: engine, config: config, images: images}, nil
+	driver := &Driver{engine: engine, config: config, images: images}
+	driver.capacity.Store(platform.Capacity{})
+	return driver, nil
 }
 
 func (d *Driver) Ready(ctx context.Context) error {
 	if err := d.engine.Ping(ctx); err != nil {
 		return err
 	}
-	if _, err := d.engine.ListManagedContainerIDs(ctx); err != nil {
+	managed, err := d.engine.ListManagedContainers(ctx)
+	if err != nil {
+		return err
+	}
+	if _, err := d.migrateLegacyRuntimes(ctx, managed); err != nil {
 		return err
 	}
 	if err := d.engine.InspectNetwork(ctx, d.config.ManagementNetwork); err != nil {
@@ -199,7 +209,70 @@ func (d *Driver) Ready(ctx context.Context) error {
 	if _, err := d.engine.InspectVolume(ctx, d.config.SystemSkillsVolume); err != nil {
 		return fmt.Errorf("inspect system Skills volume: %w", err)
 	}
+	d.refreshCapacityWithInventory(ctx, managed)
 	return nil
+}
+
+func (d *Driver) migrateLegacyRuntimes(ctx context.Context, managed []Container) (int, error) {
+	renamer, ok := d.engine.(interface {
+		RenameContainer(context.Context, string, string) error
+	})
+	migrated := 0
+	for _, container := range managed {
+		if !d.owns(container.Labels) {
+			continue
+		}
+		agentLabel := strings.TrimSpace(container.Labels[labelAgentID])
+		scoped := runtimeContainerName(d.config.ControllerScope, agentLabel)
+		if container.Name == scoped {
+			continue
+		}
+		if !managedRuntimeName(d.config.ControllerScope, container.Name, agentLabel) {
+			return migrated, fmt.Errorf("managed Runtime container %q does not match its scope identity", container.Name)
+		}
+		if _, _, err := managedIdentity(container.Labels); err != nil {
+			return migrated, fmt.Errorf("normalize managed Runtime container for migration: %w", err)
+		}
+		if !ok {
+			continue
+		}
+		existing, err := d.engine.InspectContainer(telemetry.WithExpectedDockerAbsence(ctx), scoped)
+		if err == nil {
+			return migrated, fmt.Errorf("legacy Runtime container %q conflicts with existing %q", container.Name, existing.Name)
+		}
+		if !errors.Is(err, ErrNotFound) {
+			return migrated, fmt.Errorf("inspect scoped Runtime name %q: %w", scoped, err)
+		}
+		if err := renamer.RenameContainer(ctx, container.ID, scoped); err != nil {
+			return migrated, fmt.Errorf("rename legacy Runtime container %q: %w", container.Name, err)
+		}
+		migrated++
+	}
+	return migrated, nil
+}
+
+func ownedRuntimeContainer(ctx context.Context, engine interface {
+	InspectContainer(context.Context, string) (Container, error)
+}, scope, agentID string) (Container, error) {
+	scoped, err := engine.InspectContainer(telemetry.WithExpectedDockerAbsence(ctx), runtimeContainerName(scope, agentID))
+	if err == nil {
+		return scoped, nil
+	}
+	if !errors.Is(err, ErrNotFound) {
+		return Container{}, err
+	}
+	legacy, err := engine.InspectContainer(telemetry.WithExpectedDockerAbsence(ctx), containerName(agentID))
+	if err != nil {
+		return Container{}, err
+	}
+	if legacy.Labels[labelManaged] != "runtime" || legacy.Labels[labelScope] != scope {
+		return Container{}, ErrNotFound
+	}
+	return legacy, nil
+}
+
+func (d *Driver) inspectRuntimeContainer(ctx context.Context, agentID string) (Container, error) {
+	return ownedRuntimeContainer(ctx, d.engine, d.config.ControllerScope, agentID)
 }
 
 func (d *Driver) DeploymentDigest(value deployment.Deployment) (string, error) {
@@ -209,9 +282,19 @@ func (d *Driver) DeploymentDigest(value deployment.Deployment) (string, error) {
 	if err := value.ValidateFor(key); err != nil {
 		return "", err
 	}
+	return d.digestForNames(value, d.scopedNames(value.RuntimeSpec.AgentID))
+}
+
+func (d *Driver) digestForNames(value deployment.Deployment, names resourceNames) (string, error) {
+	key := deployment.Key{
+		AgentID: value.RuntimeSpec.AgentID, Generation: value.RuntimeSpec.Generation,
+	}
+	if err := value.ValidateFor(key); err != nil {
+		return "", err
+	}
 	logical := value
 	logical.PreparedMaterialization = nil
-	spec, err := d.containerSpec(logical, "")
+	spec, err := d.containerSpec(logical, "", names)
 	if err != nil {
 		return "", err
 	}
@@ -224,6 +307,20 @@ func (d *Driver) DeploymentDigest(value deployment.Deployment) (string, error) {
 		PreparedSkills     *skillset.PreparedReference   `json:"prepared_skills,omitempty"`
 		ManagedMCPTemplate *deployment.MCPTemplateSource `json:"managed_mcp_template,omitempty"`
 	}{Revision: 1, Platform: "docker", Name: spec.Name, Request: dockerCreateRequest(spec), PreparedSkills: value.PreparedSkills, ManagedMCPTemplate: value.ManagedMCPTemplate})
+}
+
+func (d *Driver) scopedNames(agentID string) resourceNames {
+	return resourceNames{
+		container: runtimeContainerName(d.config.ControllerScope, agentID),
+		workspace: workspaceVolumeName(d.config.ControllerScope, agentID),
+	}
+}
+
+func (d *Driver) legacyDeploymentDigest(value deployment.Deployment) (string, error) {
+	return d.digestForNames(value, resourceNames{
+		container: containerName(value.RuntimeSpec.AgentID),
+		workspace: workspaceVolume(value.RuntimeSpec.AgentID),
+	})
 }
 
 func (d *Driver) Create(
@@ -244,10 +341,16 @@ func (d *Driver) Create(
 		}
 	}
 	computed, err := d.DeploymentDigest(value)
+	if err == nil && computed != digest {
+		if legacy, legacyErr := d.legacyDeploymentDigest(value); legacyErr == nil && legacy == digest {
+			computed = digest
+		}
+	}
 	if err != nil || computed != digest {
 		return failed(deployment.EffectNotStarted, "invalid_request", errors.New("deployment digest mismatch"))
 	}
-	if err := d.requireCreateStorage(ctx, key.AgentID, value.PreparedMaterialization, value.Resources); err != nil {
+	workspace, err := d.requireCreateStorage(ctx, key.AgentID, value.PreparedMaterialization, value.Resources)
+	if err != nil {
 		switch {
 		case errors.Is(err, deployment.ErrIdentityConflict):
 			return failed(deployment.EffectNotStarted, "storage_ownership_conflict", err)
@@ -281,8 +384,8 @@ func (d *Driver) Create(
 		return dockerFailure("platform_unavailable", err, true)
 	}
 
-	name := containerName(key.AgentID)
-	existing, err := d.engine.InspectContainer(telemetry.WithExpectedDockerAbsence(ctx), name)
+	name := runtimeContainerName(d.config.ControllerScope, key.AgentID)
+	existing, err := d.inspectRuntimeContainer(ctx, key.AgentID)
 	if err != nil && !errors.Is(err, ErrNotFound) {
 		return dockerFailure("platform_unavailable", err, false)
 	}
@@ -290,20 +393,30 @@ func (d *Driver) Create(
 		return d.convergeContainer(ctx, existing, key, digest, value.PreparedMaterialization, value.RuntimeSpec.Authentication, value.ManagedMCPTemplate, value.RuntimeSpec.MCPServers, value.RuntimeSpec.Network.ResolverIPv4)
 	}
 
-	spec, err := d.containerSpec(value, digest)
+	spec, err := d.containerSpec(value, digest, resourceNames{container: name, workspace: workspace.Name})
 	if err != nil {
 		return failed(deployment.EffectNotStarted, "invalid_request", err)
 	}
+	d.createMu.Lock()
+	if capacityErr := d.admitRuntimeCapacity(ctx); capacityErr != nil {
+		d.createMu.Unlock()
+		return failed(deployment.EffectNotStarted, "runtime_capacity_exhausted", capacityErr)
+	}
 	containerID, err := d.engine.CreateContainer(ctx, spec)
 	if err != nil {
+		d.createMu.Unlock()
 		existing, inspectErr := d.engine.InspectContainer(ctx, name)
 		if inspectErr == nil {
 			return d.convergeContainer(ctx, existing, key, digest, value.PreparedMaterialization, value.RuntimeSpec.Authentication, value.ManagedMCPTemplate, value.RuntimeSpec.MCPServers, value.RuntimeSpec.Network.ResolverIPv4)
+		}
+		if isIPAMExhaustion(err) {
+			return failed(deployment.EffectNotStarted, "runtime_capacity_exhausted", errors.Join(err, inspectErr))
 		}
 		return dockerFailure(
 			"platform_unavailable", errors.Join(err, inspectErr), errors.Is(err, ErrConflict),
 		)
 	}
+	defer d.createMu.Unlock()
 	if prepared := value.PreparedMaterialization; prepared != nil {
 		if err := d.config.SkillMountGate.VerifyRuntimeMount(ctx, prepared.Key, containerID, prepared.ManifestDigest); err != nil {
 			return failed(deployment.EffectUnknown, "skill_mount_verification_failed",
@@ -328,8 +441,15 @@ func (d *Driver) Create(
 		if inspectErr == nil && d.matches(existing, key, digest) && existing.Running {
 			return d.convergeContainer(ctx, existing, key, digest, value.PreparedMaterialization, value.RuntimeSpec.Authentication, value.ManagedMCPTemplate, value.RuntimeSpec.MCPServers, value.RuntimeSpec.Network.ResolverIPv4)
 		}
+		if isIPAMExhaustion(err) {
+			if cleanupErr := d.removeRejectedSkillCandidate(containerID, key, digest); cleanupErr != nil {
+				return failed(deployment.EffectUnknown, "runtime_capacity_exhausted", errors.Join(err, inspectErr, cleanupErr))
+			}
+			return failed(deployment.EffectNotStarted, "runtime_capacity_exhausted", err)
+		}
 		return dockerFailure("platform_unavailable", errors.Join(err, inspectErr), true)
 	}
+	d.refreshCapacity(ctx)
 	return completed()
 }
 
@@ -343,7 +463,7 @@ func (d *Driver) removeRejectedSkillCandidate(containerID string, key deployment
 	if err != nil {
 		return fmt.Errorf("inspect rejected Runtime candidate: %w", err)
 	}
-	if candidate.ID != containerID || candidate.Name != containerName(key.AgentID) ||
+	if candidate.ID != containerID || candidate.Name != runtimeContainerName(d.config.ControllerScope, key.AgentID) ||
 		!d.matches(candidate, key, digest) || candidate.Status != "created" || candidate.Running {
 		return errors.New("rejected Runtime candidate changed before cleanup")
 	}
@@ -387,12 +507,34 @@ func (d *Driver) convergeContainer(
 	if existing.Running {
 		return completed()
 	}
-	if err := d.engine.StartContainer(ctx, existing.ID); err != nil {
+	needsAddress := existing.NetworkIPv4[d.config.ManagementNetwork] == ""
+	if needsAddress {
+		d.createMu.Lock()
+		if err := d.admitRuntimeCapacity(ctx); err != nil {
+			d.createMu.Unlock()
+			return failed(deployment.EffectNotStarted, "runtime_capacity_exhausted", err)
+		}
+	}
+	err := d.engine.StartContainer(ctx, existing.ID)
+	if err != nil {
+		if needsAddress {
+			d.createMu.Unlock()
+		}
 		current, inspectErr := d.engine.InspectContainer(ctx, existing.Name)
 		if inspectErr == nil && d.matches(current, key, digest) && current.Running {
 			return completed()
 		}
+		if isIPAMExhaustion(err) {
+			if inspectErr == nil && d.matches(current, key, digest) && !current.Running {
+				return failed(deployment.EffectNotStarted, "runtime_capacity_exhausted", err)
+			}
+			return failed(deployment.EffectUnknown, "runtime_capacity_exhausted", errors.Join(err, inspectErr))
+		}
 		return dockerFailure("platform_unavailable", errors.Join(err, inspectErr), true)
+	}
+	if needsAddress {
+		d.refreshCapacity(ctx)
+		d.createMu.Unlock()
 	}
 	return completed()
 }
@@ -400,7 +542,7 @@ func (d *Driver) convergeContainer(
 func (d *Driver) Inspect(
 	ctx context.Context, key deployment.Key,
 ) (deployment.Inspection, error) {
-	container, err := d.engine.InspectContainer(telemetry.WithExpectedDockerAbsence(ctx), containerName(key.AgentID))
+	container, err := d.inspectRuntimeContainer(ctx, key.AgentID)
 	if errors.Is(err, ErrNotFound) {
 		return deployment.Inspection{
 			AgentID: key.AgentID, Generation: key.Generation,
@@ -423,7 +565,7 @@ func (d *Driver) Delete(
 	if err := key.Validate(); err != nil || deployment.ValidateDigest(digest) != nil {
 		return failed(deployment.EffectNotStarted, "invalid_request", errors.New("invalid Runtime identity"))
 	}
-	container, err := d.engine.InspectContainer(telemetry.WithExpectedDockerAbsence(ctx), containerName(key.AgentID))
+	container, err := d.inspectRuntimeContainer(ctx, key.AgentID)
 	if errors.Is(err, ErrNotFound) {
 		if d.config.MCPMountGate != nil {
 			if err := d.config.MCPMountGate.Remove(ctx, key); err != nil {
@@ -490,8 +632,8 @@ func (d *Driver) Delete(
 }
 
 func (d *Driver) EnsureStorage(ctx context.Context, agentID string, limits ...deployment.ResourceLimits) deployment.EffectOutcome {
-	name := workspaceVolume(agentID)
-	volume, err := d.engine.InspectVolume(telemetry.WithExpectedDockerAbsence(ctx), name)
+	name := workspaceVolumeName(d.config.ControllerScope, agentID)
+	volume, err := d.workspaceSelection(ctx, agentID, true)
 	if errors.Is(err, ErrNotFound) {
 		labels := d.workspaceLabels(agentID)
 		var createErr error
@@ -511,7 +653,7 @@ func (d *Driver) EnsureStorage(ctx context.Context, agentID string, limits ...de
 	if err != nil {
 		return dockerFailure("platform_unavailable", err, false)
 	}
-	if !d.workspaceOwnedBy(volume, agentID) {
+	if !d.workspaceOwned(volume, agentID) {
 		return failed(deployment.EffectNotStarted, "storage_ownership_conflict",
 			errors.New("workspace volume ownership labels differ"))
 	}
@@ -522,7 +664,7 @@ func (d *Driver) EnsureStorage(ctx context.Context, agentID string, limits ...de
 }
 
 func (d *Driver) VerifyStorage(ctx context.Context, agentID string, limits ...deployment.ResourceLimits) deployment.EffectOutcome {
-	if err := d.requireWorkspace(ctx, agentID, limits...); err != nil {
+	if _, err := d.requireWorkspace(ctx, agentID, limits...); err != nil {
 		switch {
 		case errors.Is(err, deployment.ErrIdentityConflict):
 			return failed(deployment.EffectNotStarted, "storage_ownership_conflict", err)
@@ -545,20 +687,25 @@ func (d *Driver) DeleteStorage(ctx context.Context, agentID string) deployment.E
 			return failed(deployment.EffectNotStarted, "storage_in_use", errors.New("managed Runtime still exists"))
 		}
 	}
-	name := workspaceVolume(agentID)
-	volume, err := d.engine.InspectVolume(ctx, name)
-	if errors.Is(err, ErrNotFound) {
-		return completed()
-	}
-	if err != nil {
-		return dockerFailure("platform_unavailable", err, false)
-	}
-	if !d.workspaceOwnedBy(volume, agentID) {
-		return failed(deployment.EffectNotStarted, "storage_ownership_conflict",
-			errors.New("workspace volume ownership labels differ"))
-	}
-	if err := d.engine.RemoveVolume(ctx, name); err != nil && !errors.Is(err, ErrNotFound) {
-		return dockerFailure("platform_unavailable", err, true)
+	scopedName := workspaceVolumeName(d.config.ControllerScope, agentID)
+	for index, name := range []string{scopedName, workspaceVolume(agentID)} {
+		volume, err := d.engine.InspectVolume(telemetry.WithExpectedDockerAbsence(ctx), name)
+		if errors.Is(err, ErrNotFound) {
+			continue
+		}
+		if err != nil {
+			return dockerFailure("platform_unavailable", err, false)
+		}
+		if !d.workspaceOwned(volume, agentID) {
+			if index == 0 {
+				return failed(deployment.EffectNotStarted, "storage_ownership_conflict",
+					errors.New("workspace volume ownership labels differ"))
+			}
+			continue
+		}
+		if err := d.engine.RemoveVolume(ctx, name); err != nil && !errors.Is(err, ErrNotFound) {
+			return dockerFailure("platform_unavailable", err, true)
+		}
 	}
 	return completed()
 }
@@ -568,6 +715,17 @@ func (d *Driver) List(ctx context.Context) ([]deployment.Inspection, error) {
 	if err != nil {
 		return nil, err
 	}
+	migrated, err := d.migrateLegacyRuntimes(ctx, containers)
+	if err != nil {
+		return nil, err
+	}
+	if migrated > 0 {
+		containers, err = d.engine.ListManagedContainers(ctx)
+		if err != nil {
+			return nil, err
+		}
+	}
+	d.refreshCapacityWithInventory(ctx, containers)
 	result := make([]deployment.Inspection, 0, len(containers))
 	for _, container := range containers {
 		if !d.owns(container.Labels) {
@@ -621,7 +779,7 @@ func (d *Driver) inspectContainer(container Container) (deployment.Inspection, e
 	if err != nil {
 		return deployment.Inspection{}, fmt.Errorf("normalize managed Runtime container: %w", err)
 	}
-	if container.ID == "" || container.Name != containerName(key.AgentID) {
+	if container.ID == "" || !managedRuntimeName(d.config.ControllerScope, container.Name, key.AgentID) {
 		return deployment.Inspection{}, fmt.Errorf("normalize managed Runtime container: resource identity is malformed")
 	}
 	port, err := strconv.ParseUint(container.Labels["io.antnest.runtime-port"], 10, 16)
@@ -671,45 +829,73 @@ func managedIdentity(labels map[string]string) (deployment.Key, string, error) {
 	return key, digest, nil
 }
 
-func (d *Driver) requireWorkspace(ctx context.Context, agentID string, limits ...deployment.ResourceLimits) error {
-	workspace, err := d.engine.InspectVolume(ctx, workspaceVolume(agentID))
+func (d *Driver) workspaceSelection(ctx context.Context, agentID string, expectedAbsence bool) (Volume, error) {
+	volume, err := d.engine.InspectVolume(telemetry.WithExpectedDockerAbsence(ctx), workspaceVolumeName(d.config.ControllerScope, agentID))
+	if err == nil {
+		return volume, nil
+	}
+	if !errors.Is(err, ErrNotFound) {
+		return Volume{}, err
+	}
+	probe := ctx
+	if expectedAbsence {
+		probe = telemetry.WithExpectedDockerAbsence(ctx)
+	}
+	legacy, err := d.engine.InspectVolume(probe, workspaceVolume(agentID))
 	if err != nil {
-		return fmt.Errorf("workspace volume: %w", err)
+		return Volume{}, err
 	}
-	if !d.workspaceOwnedBy(workspace, agentID) {
-		return fmt.Errorf("workspace volume: %w", deployment.ErrIdentityConflict)
+	if legacy.Labels[labelManaged] != "workspace" || legacy.Labels[labelScope] != d.config.ControllerScope {
+		return Volume{}, ErrNotFound
 	}
-	if err := d.workspaceQuotaMatches(workspace, limits); err != nil {
-		return fmt.Errorf("workspace volume: %w", deployment.ErrIdentityConflict)
-	}
-	return nil
+	return legacy, nil
 }
 
-func (d *Driver) requireCreateStorage(ctx context.Context, agentID string, prepared *skillset.PreparedMaterialization, limits ...deployment.ResourceLimits) error {
-	if err := d.requireWorkspace(ctx, agentID, limits...); err != nil {
-		return err
+func (d *Driver) requireWorkspace(ctx context.Context, agentID string, limits ...deployment.ResourceLimits) (Volume, error) {
+	workspace, err := d.workspaceSelection(ctx, agentID, false)
+	if err != nil {
+		return Volume{}, fmt.Errorf("workspace volume: %w", err)
+	}
+	if !d.workspaceOwned(workspace, agentID) {
+		return Volume{}, fmt.Errorf("workspace volume: %w", deployment.ErrIdentityConflict)
+	}
+	if err := d.workspaceQuotaMatches(workspace, limits); err != nil {
+		return Volume{}, fmt.Errorf("workspace volume: %w", deployment.ErrIdentityConflict)
+	}
+	return workspace, nil
+}
+
+func (d *Driver) requireCreateStorage(ctx context.Context, agentID string, prepared *skillset.PreparedMaterialization, limits ...deployment.ResourceLimits) (Volume, error) {
+	workspace, err := d.requireWorkspace(ctx, agentID, limits...)
+	if err != nil {
+		return Volume{}, err
 	}
 	if prepared != nil {
 		name, err := prepared.Key.VolumeName()
 		if err != nil || name != prepared.VolumeName || prepared.Key.Scope != d.config.ControllerScope || prepared.Key.AgentID != agentID {
-			return deployment.ErrIdentityConflict
+			return Volume{}, deployment.ErrIdentityConflict
 		}
 		volume, err := d.engine.InspectVolume(ctx, name)
 		if err != nil {
-			return fmt.Errorf("prepared system Skills volume: %w", err)
+			return Volume{}, fmt.Errorf("prepared system Skills volume: %w", err)
 		}
 		if !matchLabels(volume.Labels, skillVolumeLabels(prepared.Key)) {
-			return deployment.ErrIdentityConflict
+			return Volume{}, deployment.ErrIdentityConflict
 		}
-		return nil
+		return workspace, nil
 	}
 	if _, err := d.engine.InspectVolume(ctx, d.config.SystemSkillsVolume); err != nil {
-		return fmt.Errorf("system Skills volume: %w", err)
+		return Volume{}, fmt.Errorf("system Skills volume: %w", err)
 	}
-	return nil
+	return workspace, nil
 }
 
-func (d *Driver) containerSpec(value deployment.Deployment, digest string) (ContainerSpec, error) {
+type resourceNames struct {
+	container string
+	workspace string
+}
+
+func (d *Driver) containerSpec(value deployment.Deployment, digest string, names resourceNames) (ContainerSpec, error) {
 	runtimeSpec, err := json.Marshal(value.RuntimeSpec)
 	if err != nil {
 		return ContainerSpec{}, fmt.Errorf("encode RuntimeSpec: %w", err)
@@ -743,7 +929,7 @@ func (d *Driver) containerSpec(value deployment.Deployment, digest string) (Cont
 		backend = "local"
 	}
 	spec := ContainerSpec{
-		Name: containerName(value.RuntimeSpec.AgentID), Image: value.ImageRef, User: "0:0",
+		Name: names.container, Image: value.ImageRef, User: "0:0",
 		Environment: environment,
 		Labels: map[string]string{
 			labelManaged: "runtime", labelScope: d.config.ControllerScope,
@@ -756,7 +942,7 @@ func (d *Driver) containerSpec(value deployment.Deployment, digest string) (Cont
 		},
 		Mounts: map[string]Mount{
 			value.RuntimeSpec.Filesystem.Workspace: {
-				Source: workspaceVolume(value.RuntimeSpec.AgentID),
+				Source: names.workspace,
 			},
 			value.RuntimeSpec.Filesystem.SystemSkills: {
 				Source: skillsVolume, ReadOnly: true, NoCopy: skillsNoCopy,
@@ -853,9 +1039,8 @@ func (d *Driver) workspaceLabels(agentID string) map[string]string {
 	}
 }
 
-func (d *Driver) workspaceOwnedBy(volume Volume, agentID string) bool {
-	return volume.Name == workspaceVolume(agentID) &&
-		volume.Labels[labelManaged] == "workspace" &&
+func (d *Driver) workspaceOwned(volume Volume, agentID string) bool {
+	return volume.Labels[labelManaged] == "workspace" &&
 		volume.Labels[labelScope] == d.config.ControllerScope &&
 		volume.Labels[labelAgentID] == agentID
 }

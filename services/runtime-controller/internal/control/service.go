@@ -100,11 +100,14 @@ func (s *Service) SetSkillVolumeInspector(inspector SkillVolumeInspector) {
 }
 
 type Readiness struct {
-	DatabaseReady     bool
-	PlatformReady     bool
-	ObservationReady  bool
-	MonitorReady      bool
-	DiskQuotaEnforced bool
+	DatabaseReady        bool
+	PlatformReady        bool
+	ObservationReady     bool
+	MonitorReady         bool
+	DiskQuotaEnforced    bool
+	RuntimeCapacity      uint64
+	RuntimeCount         uint64
+	RuntimeCapacityKnown bool
 }
 
 func (r Readiness) Ready() bool {
@@ -163,6 +166,12 @@ func (s *Service) Status(ctx context.Context) (Readiness, error) {
 	status.MonitorReady = s.observations.MonitorReady()
 	if prober, ok := s.platform.(interface{ DiskQuotaEnforced() bool }); ok {
 		status.DiskQuotaEnforced = prober.DiskQuotaEnforced()
+	}
+	if prober, ok := s.platform.(interface{ Capacity() platform.Capacity }); ok {
+		snapshot := prober.Capacity()
+		status.RuntimeCapacity = snapshot.RuntimeCapacity
+		status.RuntimeCount = snapshot.RuntimeCount
+		status.RuntimeCapacityKnown = snapshot.Known
 	}
 	if ctx.Err() != nil {
 		result = errors.Join(result, ctx.Err())
@@ -952,6 +961,8 @@ func sanitizedDetail(outcome deployment.EffectOutcome) string {
 		return "workspace volume is not owned by this Agent"
 	case "storage_not_found":
 		return "Agent workspace is not available"
+	case "runtime_capacity_exhausted":
+		return "Runtime management IPv4 capacity is exhausted"
 	case "platform_unavailable":
 		return "deployment platform did not return a conclusive result"
 	default:

@@ -78,7 +78,7 @@ func (w *InstanceVolumeWriter) Prepare(ctx context.Context, key deployment.Key, 
 	defer clear(tunnel)
 	descriptor := &deployment.RuntimeAuthentication{ConnectionID: record.ConnectionID, CallersFile: instanceauth.CallersFile, ReceiverDigest: record.ReceiverDigest, Tunnel: record.Tunnel.Descriptor()}
 	// Never write a live receiver. Exact running recovery is read-only.
-	runtime, err := w.engine.InspectContainer(telemetry.WithExpectedDockerAbsence(ctx), containerName(key.AgentID))
+	runtime, err := ownedRuntimeContainer(ctx, w.engine, id.Scope, key.AgentID)
 	if err == nil && runtime.Running {
 		return w.VerifyRuntimeMount(ctx, key, descriptor, runtime.ID)
 	}
@@ -228,7 +228,7 @@ func (w *InstanceVolumeWriter) VerifyRuntimeMount(ctx context.Context, key deplo
 	if err != nil {
 		return err
 	}
-	if container.ID != containerID || container.Name != containerName(key.AgentID) || container.Labels[labelManaged] != "runtime" || container.Labels[labelScope] != id.Scope || container.Labels[labelAgentID] != id.AgentID || container.Labels[labelGeneration] != strconv.FormatUint(key.Generation, 10) || !hasInstanceMount(container, name, true) {
+	if container.ID != containerID || !managedRuntimeName(id.Scope, container.Name, key.AgentID) || container.Labels[labelManaged] != "runtime" || container.Labels[labelScope] != id.Scope || container.Labels[labelAgentID] != id.AgentID || container.Labels[labelGeneration] != strconv.FormatUint(key.Generation, 10) || !hasInstanceMount(container, name, true) {
 		return fmt.Errorf("%w: actual instance receiver mount differs", ErrConflict)
 	}
 	volume, err := w.engine.InspectVolume(ctx, name)

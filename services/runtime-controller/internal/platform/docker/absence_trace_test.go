@@ -33,10 +33,10 @@ func TestDockerAbsenceTraceFollowsCreationSemantics(t *testing.T) {
 		want404                                     []codes.Code
 		wantCompleted                               bool
 	}{
-		{"ensure fresh storage", true, false, false, []codes.Code{codes.Unset}, true},
-		{"create fresh container", false, false, false, []codes.Code{codes.Unset}, true},
-		{"required storage missing", false, true, false, []codes.Code{codes.Error}, false},
-		{"post-create storage missing", true, false, true, []codes.Code{codes.Unset, codes.Error}, false},
+		{"ensure fresh storage", true, false, false, []codes.Code{codes.Unset, codes.Unset}, true},
+		{"create fresh container", false, false, false, []codes.Code{codes.Unset, codes.Unset, codes.Error}, true},
+		{"required storage missing", false, true, false, []codes.Code{codes.Unset, codes.Error}, false},
+		{"post-create storage missing", true, false, true, []codes.Code{codes.Unset, codes.Unset, codes.Error}, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			recorder.Reset()
@@ -54,8 +54,10 @@ func TestDockerAbsenceTraceFollowsCreationSemantics(t *testing.T) {
 				case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/volumes/create"):
 					volumeExists = true
 					w.WriteHeader(http.StatusCreated)
-					_, _ = w.Write([]byte(`{"Name":"antnest-workspace-agent-1"}`))
+					_, _ = w.Write([]byte(`{"Name":"antnest-test-controller-workspace-agent-1"}`))
 				case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/containers/"):
+					w.WriteHeader(http.StatusNotFound)
+				case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/networks/"):
 					w.WriteHeader(http.StatusNotFound)
 				case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/containers/create"):
 					w.WriteHeader(http.StatusCreated)

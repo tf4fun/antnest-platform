@@ -1,5 +1,5 @@
 {
-  "revision": 21,
+  "revision": 22,
   "transport": "json-over-http",
   "trust_boundary": "authenticated-workload-with-route-specific-callers",
   "schemas": {
@@ -320,6 +320,7 @@
         "storage_not_found",
         "storage_ownership_conflict",
         "platform_unavailable",
+        "runtime_capacity_exhausted",
         "deadline_exceeded",
         "operation_failed",
         "runtime_not_ready",
@@ -363,6 +364,7 @@
         "tunnel_key_registration_rejected",
         "runtime_drift",
         "platform_unavailable",
+        "runtime_capacity_exhausted",
         "deadline_exceeded",
         "operation_failed",
         "internal_error",
@@ -444,6 +446,7 @@
         "storage_not_found",
         "storage_ownership_conflict",
         "platform_unavailable",
+        "runtime_capacity_exhausted",
         "deadline_exceeded",
         "operation_failed",
         "internal_error",
@@ -741,6 +744,11 @@
       "retryable": true,
       "body": "control-api.schema.json#/$defs/error"
     },
+    "runtime_capacity_exhausted": {
+      "status": 503,
+      "retryable": true,
+      "body": "control-api.schema.json#/$defs/error"
+    },
     "operation_not_found": {
       "status": 404,
       "retryable": false,
@@ -852,6 +860,12 @@
       "retry_same_request_only": true
     },
     "platform_unavailable": {
+      "operation_states": ["failed", "unknown"],
+      "effects": ["not_started", "unknown"],
+      "http_statuses": [503, 202],
+      "retry_same_request_only": true
+    },
+    "runtime_capacity_exhausted": {
       "operation_states": ["failed", "unknown"],
       "effects": ["not_started", "unknown"],
       "http_statuses": [503, 202],

@@ -22,7 +22,7 @@ func quotaDriver(t *testing.T, engine *fakeEngine) *Driver {
 
 func quotaWorkspaceVolume(labels map[string]string) Volume {
 	return Volume{
-		Name: "antnest-workspace-agent-1", Driver: "example-quota",
+		Name: "antnest-test-controller-workspace-agent-1", Driver: "example-quota",
 		Options: map[string]string{"size": "10737418240"},
 		Labels:  labels,
 	}
@@ -37,7 +37,7 @@ func ownedQuotaLabels() map[string]string {
 
 func TestQuotaEnsureStorageCreatesDriverOptionsAndByteLabel(t *testing.T) {
 	engine := newFakeEngine()
-	delete(engine.volumes, "antnest-workspace-agent-1")
+	delete(engine.volumes, "antnest-test-controller-workspace-agent-1")
 	driver := quotaDriver(t, engine)
 
 	outcome := driver.EnsureStorage(context.Background(), "agent-1", testDeployment().Resources)
@@ -48,7 +48,7 @@ func TestQuotaEnsureStorageCreatesDriverOptionsAndByteLabel(t *testing.T) {
 		engine.createQuotaOptions["size"] != "10737418240" {
 		t.Fatalf("quota volume was not created with the configured backend: %+v", engine)
 	}
-	volume := engine.volumes["antnest-workspace-agent-1"]
+	volume := engine.volumes["antnest-test-controller-workspace-agent-1"]
 	if volume.Labels["io.antnest.workspace-bytes"] != "10737418240" {
 		t.Fatalf("byte limit label missing: %+v", volume.Labels)
 	}
@@ -70,7 +70,7 @@ func TestQuotaEnsureStorageRejectsReturnedBackendMismatch(t *testing.T) {
 			engine := newFakeEngine()
 			volume := quotaWorkspaceVolume(ownedQuotaLabels())
 			test.mutate(&volume)
-			engine.volumes["antnest-workspace-agent-1"] = volume
+			engine.volumes["antnest-test-controller-workspace-agent-1"] = volume
 			driver := quotaDriver(t, engine)
 
 			outcome := driver.EnsureStorage(context.Background(), "agent-1", testDeployment().Resources)
@@ -83,7 +83,7 @@ func TestQuotaEnsureStorageRejectsReturnedBackendMismatch(t *testing.T) {
 
 func TestQuotaVerifyStorageChecksRequestedBytesWhenPresent(t *testing.T) {
 	engine := newFakeEngine()
-	engine.volumes["antnest-workspace-agent-1"] = quotaWorkspaceVolume(ownedQuotaLabels())
+	engine.volumes["antnest-test-controller-workspace-agent-1"] = quotaWorkspaceVolume(ownedQuotaLabels())
 	driver := quotaDriver(t, engine)
 
 	if outcome := driver.VerifyStorage(context.Background(), "agent-1"); outcome.State != deployment.EffectCompleted {
@@ -103,16 +103,16 @@ func TestQuotaVerifyStorageChecksRequestedBytesWhenPresent(t *testing.T) {
 
 func TestDefaultLocalStorageAcceptsEmptyDriverAndRejectsForeignBackend(t *testing.T) {
 	engine := newFakeEngine()
-	workspace := engine.volumes["antnest-workspace-agent-1"]
+	workspace := engine.volumes["antnest-test-controller-workspace-agent-1"]
 	workspace.Options = nil
-	engine.volumes["antnest-workspace-agent-1"] = workspace
+	engine.volumes["antnest-test-controller-workspace-agent-1"] = workspace
 	driver := newTestDriver(t, engine)
 
 	if outcome := driver.VerifyStorage(context.Background(), "agent-1"); outcome.State != deployment.EffectCompleted {
 		t.Fatalf("default local workspace must verify: %+v", outcome)
 	}
-	engine.volumes["antnest-workspace-agent-1"] = Volume{
-		Name: "antnest-workspace-agent-1", Driver: "example-quota",
+	engine.volumes["antnest-test-controller-workspace-agent-1"] = Volume{
+		Name: "antnest-test-controller-workspace-agent-1", Driver: "example-quota",
 		Options: map[string]string{"size": "10737418240"},
 		Labels:  map[string]string{labelManaged: "workspace", labelScope: "test-controller", labelAgentID: "agent-1"},
 	}

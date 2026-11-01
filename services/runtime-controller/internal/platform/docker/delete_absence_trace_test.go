@@ -27,7 +27,7 @@ func testDeleteAbsenceTraceMatchesIdempotentResult(t *testing.T, recorder *trace
 			calls := 0
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				calls++
-				if r.Method != http.MethodGet || r.URL.Path != "/v1.47/containers/antnest-runtime-agent-1/json" {
+				if r.Method != http.MethodGet || (r.URL.Path != "/v1.47/containers/antnest-runtime-agent-1/json" && r.URL.Path != "/v1.47/containers/antnest-test-controller-runtime-agent-1/json") {
 					t.Errorf("unexpected Docker request: %s %s", r.Method, r.URL.Path)
 				}
 				w.WriteHeader(tc.status)
@@ -45,9 +45,13 @@ func testDeleteAbsenceTraceMatchesIdempotentResult(t *testing.T, recorder *trace
 			if (outcome.State == deployment.EffectCompleted) != tc.wantCompleted {
 				t.Fatalf("outcome: %+v", outcome)
 			}
+			wantCalls := 1
+			if tc.status == http.StatusNotFound {
+				wantCalls = 2
+			}
 			spans := recorder.Ended()
-			if calls != 1 || len(spans) != 1 {
-				t.Fatalf("calls=%d spans=%d", calls, len(spans))
+			if calls != wantCalls || len(spans) != wantCalls {
+				t.Fatalf("calls=%d spans=%d want=%d", calls, len(spans), wantCalls)
 			}
 			span := spans[0]
 			attrs := map[string]any{}

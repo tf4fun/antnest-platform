@@ -106,7 +106,7 @@ func TestRuntimeResourceDeliveryConsumer(t *testing.T) {
 		for _, rawMount := range mounts {
 			mount, _ := rawMount.(map[string]any)
 			if mount["Target"] == "/workspace" {
-				workspaceFound = mount["Type"] == "volume" && mount["Source"] == "antnest-workspace-agent-1"
+				workspaceFound = mount["Type"] == "volume" && mount["Source"] == "antnest-test-controller-workspace-agent-1"
 			}
 			if mount["Target"] == "/etc/resolv.conf" {
 				options, _ := mount["VolumeOptions"].(map[string]any)

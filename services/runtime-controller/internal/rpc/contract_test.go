@@ -19,8 +19,9 @@ import (
 )
 
 type machineContract struct {
-	Schemas map[string]string `json:"schemas"`
-	Headers map[string]struct {
+	Revision int               `json:"revision"`
+	Schemas  map[string]string `json:"schemas"`
+	Headers  map[string]struct {
 		Required bool   `json:"required"`
 		Schema   string `json:"schema"`
 	} `json:"headers"`

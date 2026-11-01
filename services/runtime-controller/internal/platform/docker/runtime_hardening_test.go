@@ -48,7 +48,7 @@ func TestStopGraceMatchesTheContainerSecurityContract(t *testing.T) {
 	if !(total < grace) {
 		t.Fatalf("Runtime shutdown budget %v must stay below the engine grace %v", total, grace)
 	}
-	spec, err := newTestDriver(t, newFakeEngine()).containerSpec(testDeployment(), testDigest)
+	spec, err := newTestDriver(t, newFakeEngine()).containerSpec(testDeployment(), testDigest, resourceNames{container: containerName("agent-1"), workspace: workspaceVolume("agent-1")})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -120,7 +120,7 @@ func TestContainerSpecMapsCPUMillisToEngineLimits(t *testing.T) {
 	} {
 		value := testDeployment()
 		value.Resources.CPUMillis = &test.cpuMillis
-		spec, err := newTestDriver(t, newFakeEngine()).containerSpec(value, testDigest)
+		spec, err := newTestDriver(t, newFakeEngine()).containerSpec(value, testDigest, resourceNames{container: containerName(value.RuntimeSpec.AgentID), workspace: workspaceVolume(value.RuntimeSpec.AgentID)})
 		if err != nil {
 			t.Fatal(err)
 		}

@@ -10,6 +10,12 @@ import (
 
 var ErrObservationStreamDisconnected = errors.New("platform observation stream disconnected")
 
+type Capacity struct {
+	RuntimeCapacity uint64
+	RuntimeCount    uint64
+	Known           bool
+}
+
 // Lifecycle is the deployment-platform capability used by control use cases.
 type Lifecycle interface {
 	Ready(context.Context) error

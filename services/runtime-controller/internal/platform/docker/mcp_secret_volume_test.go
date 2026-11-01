@@ -117,7 +117,7 @@ func TestManagedSecretDeploymentDigestPinsTemplateRevision(t *testing.T) {
 	if err != nil || first == second {
 		t.Fatal("deployment digest ignored frozen source", err)
 	}
-	spec, err := driver.containerSpec(value, second)
+	spec, err := driver.containerSpec(value, second, resourceNames{container: containerName(value.RuntimeSpec.AgentID), workspace: workspaceVolume(value.RuntimeSpec.AgentID)})
 	if err != nil {
 		t.Fatal(err)
 	}

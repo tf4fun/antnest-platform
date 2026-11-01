@@ -723,6 +723,10 @@ func writeOperationError(response http.ResponseWriter, operation deployment.Oper
 		message = "deployment platform did not return a conclusive result"
 		status = http.StatusServiceUnavailable
 		retryable = true
+	case "runtime_capacity_exhausted":
+		message = "Runtime management IPv4 capacity is exhausted"
+		status = http.StatusServiceUnavailable
+		retryable = true
 	case "runtime_not_found":
 		message = "managed Runtime was not found"
 		status = http.StatusNotFound
