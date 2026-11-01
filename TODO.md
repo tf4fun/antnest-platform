@@ -20,6 +20,8 @@ Issue 状态最后核对于 2026-10-28：141 个 issue，87 个已关闭，54 �
 
 ## 当前批次
 
+- **#40 五批已合入 main（最新合并记录）**：用户授权直接合并，并明确确认允许 GitHub 按仓库设置自动删除五个远程来源分支，本地分支保留。逐一核对受审 head：#422 `29cd796f`／#423 `0f1c6df3`／#424 `6eec8a02`／#425 `449308d3`／#426 `b378e573` 的 Repository／Integration 必需检查及选中服务／组件证据成功，按该顺序保留历史合入 main；对应 merge 为 `dbe080db`／`271581a7`／`15c6a205`／`81dfb1cd`／`fedada04`。下游 PR 转向 main 时 head 未变，每一步 main 文件树均与对应受审 head 完全一致，最终 main `fedada04` 与受审集成候选 `b378e573` 文件树相同。源码交付已合并，未在本次关闭 #40；本记录单独提交，不改已验收服务候选。合并后 main 系统 E2E 由独立工作流跟踪，本次未查询、等待或宣称其通过，不宣称版本集 release-capable；下方待 CI／待消费者／未合并等条目仅为历史记录。
+
 - **#40 PR 冲突同步**：核对 GitHub 后确认 #422 对 main 为 CONFLICTING，#423–#426 对各自父分支可合并。将 main `173d5bef` 普通合入 #422，仅手工拼接 TODO 双方追加记录；#35 已完成勾选取自 main，全部历史保留。随后按 #422 → #423 → #424 → #425 → #426 普通合并下传；父 head 为 `29cd796f`／`0f1c6df3`／`933337e2`／`37516a7b`，集成 head 随本记录提交分配。逐批核对排除 TODO 后的新旧交付 diff 字节相同，所有 main 传入的非 TODO blob 与 main 完全一致；本轮没有服务逻辑、契约、测试或 CI 策略的手工改动，main 已有 E2E 文件仅原样继承、不维护或执行。本地仅做精确内容／祖先关系／diff 检查，不重复全套测试；新候选完整远程 Repository／Integration 门禁须重新确认，不复用旧绿。按依赖顺序推送后停止，不轮询 CI；本次不合并 GitHub PR、不关闭 #40。
 
 - [ ] [#40](https://github.com/tf4fun/antnest-platform/issues/40) 集成批次 PR426 CI 修复（失败 head 28ff0af1）：实际 CI run 41136034564 / job 124338706952 go-lint 报 `jsonNumber` 与 tests/integration/go overlay skill_sources_http_test.go 冲突，组件 overlay RED 复现；仅重命名 helper→`networkPolicyHandoffJSONNumber`，相同组件 overlay 下 handoff＋Skill Source HTTP 3/3（含 race）GREEN，Console lint（本机 v2.15.0）exit 0、gofmt/diff 干净；新 head 完整远程 CI 尚未确认，不改业务/既有组件测试/CI 配置。证据见 artifacts/verification/issue-40-pr426-{red,green}-overlay.log、issue-40-pr426-console-artifact/go-lint/ 与 go-lint/go-lint-1793418713896-94383.result.json；#40 保持 open，push 后停止、不轮询，无 Docker E2E
