@@ -1,3 +1,4 @@
+import { runtimeResourceName } from "../../support/runtime-resource-name.mjs";
 import {
   readDevelopmentConfiguration,
   createDevelopmentWriter,
@@ -77,12 +78,25 @@ const read = async (id) => {
 };
 function inspectRuntime() {
   return inspectDevelopmentRuntime(
-    JSON.parse(docker("inspect", "antnest-runtime-" + agentId)),
+    JSON.parse(
+      docker(
+        "inspect",
+        runtimeResourceName(config.runtimeControllerScope, "runtime", agentId),
+      ),
+    ),
     {
-      name: "antnest-runtime-" + agentId,
+      name: runtimeResourceName(
+        config.runtimeControllerScope,
+        "runtime",
+        agentId,
+      ),
       agentId,
       scope: config.runtimeControllerScope,
-      volume: "antnest-workspace-" + agentId,
+      volume: runtimeResourceName(
+        config.runtimeControllerScope,
+        "workspace",
+        agentId,
+      ),
     },
   );
 }
@@ -246,7 +260,11 @@ try {
         created,
         created.body.operation.request_id,
       );
-      const name = "antnest-runtime-" + agentId;
+      const name = runtimeResourceName(
+        config.runtimeControllerScope,
+        "runtime",
+        agentId,
+      );
       assert.equal(
         ready.name,
         config.fixtureName,
@@ -311,7 +329,11 @@ try {
           name,
           agentId,
           scope: config.runtimeControllerScope,
-          volume: "antnest-workspace-" + agentId,
+          volume: runtimeResourceName(
+            config.runtimeControllerScope,
+            "workspace",
+            agentId,
+          ),
         },
       );
       assert.equal(

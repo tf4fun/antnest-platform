@@ -1,3 +1,4 @@
+import { runtimeResourceName } from "../../support/runtime-resource-name.mjs";
 // Opt-in: actual owned Docker workspaces/containers with local Gateway/Jaeger fixtures.
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
@@ -130,9 +131,7 @@ try {
     abort.signal.throwIfAborted();
     const folder = join(output, kind);
     mkdirSync(folder, { mode: 0o700 });
-    const agentId = "agent_" + randomUUID().replaceAll("-", ""),
-      name = "antnest-runtime-" + agentId,
-      volume = "antnest-workspace-" + agentId;
+    const agentId = "agent_" + randomUUID().replaceAll("-", "");
     let containerOwned = false,
       volumeOwned = false,
       fixture;
@@ -162,6 +161,8 @@ try {
     const runtimeScope =
       snapshots.compose.services["runtime-controller"].environment
         .ANTNEST_RUNTIME_CONTROLLER_SCOPE;
+    const name = runtimeResourceName(runtimeScope, "runtime", agentId);
+    const volume = runtimeResourceName(runtimeScope, "workspace", agentId);
     let exitedObserved = false,
       absentObserved = false;
     const lossObservations = [];

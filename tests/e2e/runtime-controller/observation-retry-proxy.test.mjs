@@ -5,6 +5,52 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { temporaryStorageRoot } from "../../support/storage.mjs";
 import { startObservationProxy } from "./observation-retry-proxy.mjs";
+import { assertMonitorStatus } from "./observation-readiness.mjs";
+
+test("monitor recovery preserves readiness checks with known or unknown capacity", () => {
+  for (const ready of [true, false]) {
+    const row = {
+      status: ready ? "ready" : "not_ready",
+      live: true,
+      ready,
+      database_ready: true,
+      platform_ready: true,
+      observation_ready: true,
+      monitor_ready: ready,
+      disk_quota_enforced: false,
+      runtime_capacity: 127,
+      runtime_count: 1,
+      runtime_capacity_known: true,
+    };
+    assertMonitorStatus(row, ready);
+    assertMonitorStatus(
+      {
+        ...row,
+        runtime_capacity: 0,
+        runtime_count: 0,
+        runtime_capacity_known: false,
+      },
+      ready,
+    );
+    for (const key of [
+      "runtime_capacity",
+      "runtime_count",
+      "runtime_capacity_known",
+    ]) {
+      const missing = { ...row };
+      delete missing[key];
+      assert.throws(() => assertMonitorStatus(missing, ready));
+      for (const value of [null, "0", -1, 0.5])
+        assert.throws(() =>
+          assertMonitorStatus({ ...row, [key]: value }, ready),
+        );
+    }
+    assert.throws(() =>
+      assertMonitorStatus({ ...row, monitor_ready: !ready }, ready),
+    );
+    assert.throws(() => assertMonitorStatus({ ...row, unknown: true }, ready));
+  }
+});
 
 function unixResponse(socketPath, path) {
   return new Promise((resolve, reject) => {

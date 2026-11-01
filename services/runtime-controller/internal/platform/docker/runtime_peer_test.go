@@ -2,9 +2,34 @@ package docker
 
 import (
 	"context"
-	"github.com/tf4fun/antnest-platform/services/runtime-controller/internal/deployment"
+	"strings"
 	"testing"
+
+	"github.com/tf4fun/antnest-platform/services/runtime-controller/internal/deployment"
 )
+
+func TestRuntimeEndpointsFollowObservedManagementIPv4(t *testing.T) {
+	driver := newTestDriver(t, newFakeEngine())
+	container := exactContainer()
+	agent := "agent_" + strings.Repeat("a", 32)
+	container.Labels[labelAgentID] = agent
+	container.Name = runtimeContainerName(driver.config.ControllerScope, agent)
+	if len(container.Name) <= 63 {
+		t.Fatal("regression fixture must exceed a DNS label")
+	}
+	for _, address := range []string{"10.243.1.20", "10.243.1.21"} {
+		container.NetworkIPv4[driver.config.ManagementNetwork] = address
+		inspection, err := driver.inspectContainer(*container)
+		if err != nil || inspection.StatusEndpoint != "http://"+address+":8093/status" || inspection.MCPEndpoint != "http://"+address+":8093/mcp" {
+			t.Fatal("Runtime HTTP endpoints must use the current observed management address", inspection, err)
+		}
+	}
+	delete(container.NetworkIPv4, driver.config.ManagementNetwork)
+	inspection, err := driver.inspectContainer(*container)
+	if err != nil || inspection.StatusEndpoint != "" || inspection.MCPEndpoint != "" {
+		t.Fatal("missing management peer must not advertise HTTP endpoints", inspection, err)
+	}
+}
 
 func TestRuntimePeerUsesOnlyTheConfiguredManagementNetwork(t *testing.T) {
 	driver := newTestDriver(t, newFakeEngine())
@@ -22,7 +47,7 @@ func TestRuntimePeerUsesOnlyTheConfiguredManagementNetwork(t *testing.T) {
 	container.Running = false
 	container.Status = "exited"
 	stopped, err := driver.inspectContainer(*container)
-	if err != nil || stopped.RuntimeEndpoint != "" {
+	if err != nil || stopped.RuntimeEndpoint != "" || stopped.StatusEndpoint != "" || stopped.MCPEndpoint != "" {
 		t.Fatal("stopped compute advertised a peer", stopped.RuntimeEndpoint, err)
 	}
 }

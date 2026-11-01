@@ -303,6 +303,12 @@ impl AdmissionState {
     pub(crate) fn hosts(&self) -> &[String] {
         &self.hosts
     }
+    pub(crate) fn with_management_ipv4(mut self, address: std::net::Ipv4Addr, port: u16) -> Self {
+        if !address.is_unspecified() {
+            self.hosts.push(format!("{address}:{port}"));
+        }
+        self
+    }
 }
 
 fn rejection(status: axum::http::StatusCode, code: &'static str) -> axum::response::Response {

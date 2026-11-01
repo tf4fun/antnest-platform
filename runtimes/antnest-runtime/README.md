@@ -115,8 +115,10 @@ subprocesses. See the [private instance contract](../../contracts/runtime/instan
 
 Requests use the dedicated `Antnest-Service-Authorization` header. Unknown or
 malformed authority returns `401 runtime_unauthorized`; a known wrong caller gets
-`403 caller_not_allowed`. The owned `antnest-runtime-<agent_id>` alias and loopback
-hosts require the exact configured port. MCP remains stateless; execution fences
+`403 caller_not_allowed`. The owned `antnest-runtime-<agent_id>` alias, the current
+management IPv4 observed from the verified Egress UDP socket, and loopback hosts
+require the exact configured port. The same explicit hosts reach the MCP SDK;
+foreign addresses, names and ports remain rejected. MCP remains stateless; execution fences
 and independently signed Skill tickets remain mandatory. JSON POSTs reject
 ambiguous/non-UTF-8 input; the two signed Skill upload routes retain multipart.
 
