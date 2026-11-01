@@ -16,6 +16,12 @@ pub const TIMER_MILLIS: u64 = 250;
 const MAGIC: &[u8; 4] = b"ANT2";
 const MAX_DRAIN: usize = 257;
 
+mod restart;
+pub use restart::{
+    EGRESS_DRAIN_DEFAULT_MILLIS, EGRESS_DRAIN_MAX_MILLIS, egress_restart_packet,
+    parse_egress_restart,
+};
+
 #[derive(Clone, Copy, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub struct KeyId([u8; 16]);
 
