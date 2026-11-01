@@ -2,22 +2,27 @@
 
 This document defines the shared WebSocket liveness, permission connection
 fan-out, permission resolution notice and approval timeout contract. It is a
-contract-first batch: ACP producer implementation and Agent UI consumers
-remain pending, and the contract alone does not advertise a running capability
-or a complete business workflow. The Gateway WebSocket relay was removed by
+contract-first specification. ACP producer and Agent UI consumer candidates
+are delivered separately in PR #441 and PR #442; their complete remote
+admission remains unconfirmed. The contract alone does not advertise a
+running capability or a complete business workflow. The Gateway WebSocket relay was removed by
 #64; Agent UI consumes ACP over Streamable HTTP/SSE, and this contract does
 not reintroduce a relay transport or a Gateway service change.
 
 ## Scope And Status
 
-- Producer pending: ACP WebSocket liveness timers, `PermissionConnections`
+- Producer candidate (PR #441): ACP WebSocket liveness timers, `PermissionConnections`
   multi-attachment fan-out, decision withdrawal, resolution notice
   publication and approval timeout enforcement.
-- Consumer pending: Agent UI handling of the resolution notice and the
+- Consumer candidate (PR #442): Agent UI handling of the resolution notice and the
   `permission_stale` decision rejection.
 - Resolution notices are auxiliary live diagnostics. They cannot pick,
   record or commit a permission outcome, and they are not part of transcript
   replay.
+- Integration sources cover real ACP sockets, controlled HTTP/SSE peers and
+  PostgreSQL persistence. Focused socket and HTTP/SSE checks passed; the new
+  PostgreSQL cases are compile-checked but unexecuted locally. These layers
+  do not establish a complete remote gate or a production business workflow.
 
 ## WebSocket Liveness
 
