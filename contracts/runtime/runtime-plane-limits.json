@@ -1,0 +1,79 @@
+{
+  "revision": 1,
+  "single_docker_host": true,
+  "management_network": {
+    "default_subnet": "172.30.240.0/20",
+    "legacy_subnet": "172.30.255.0/24",
+    "static_ipv4": ["172.30.255.3", "172.30.255.4"],
+    "static_ipv4_status": "retained"
+  },
+  "capacity": {
+    "ipam_pool": "usable IPv4 addresses exclude the subnet network, broadcast, gateway and auxiliary addresses, then subtract other occupied endpoints",
+    "runtime_count": "all attached managed Runtime endpoints across scopes",
+    "runtime_capacity": "total Runtime slots including occupied runtimes, not remaining slots",
+    "exhaustion_error": {
+      "http_status": 503,
+      "code": "runtime_capacity_exhausted",
+      "retryable": true
+    }
+  },
+  "scope_isolation": {
+    "container_name": "antnest-<scope>-runtime-<agent_id>",
+    "workspace_name": "antnest-<scope>-workspace-<agent_id>",
+    "name_max_bytes": 128,
+    "long_or_invalid_identifier": "collision-resistant hash"
+  },
+  "migration": {
+    "ownership_match_only": true,
+    "containers_renamed": true,
+    "legacy_workspace_fallback_releases": 1
+  },
+  "egress_restart": {
+    "drain_millis": {
+      "default": 30000,
+      "min": 1,
+      "max": 120000
+    },
+    "notice": "best-effort authenticated inner frame; abrupt failure sends no notice",
+    "while_draining": "no new flows; existing flows serviced to the deadline then dropped at process exit",
+    "persistence": "flows and NAT state are not persisted",
+    "readiness_pause": "bounded",
+    "old_consumers": "ignore the frame as a valid TCP packet that may be written to TUN; no unsupported-revision signal",
+    "wire": {
+      "total_bytes": 48,
+      "ipv4": {
+        "version": 4,
+        "ihl": 5,
+        "dscp_ecn": 0,
+        "total_length": 48,
+        "identification": 0,
+        "flags_fragment": "0x4000",
+        "ttl": 64,
+        "protocol": 6,
+        "header_checksum": "standard IPv4 header checksum",
+        "source_ipv4": "192.0.2.1",
+        "destination_ipv4": "bound tunnel IPv4"
+      },
+      "tcp": {
+        "source_port": 9,
+        "destination_port": 9,
+        "sequence": 0,
+        "acknowledgement": 0,
+        "data_offset": 5,
+        "flags": ["ack"],
+        "window": 0,
+        "urgent_pointer": 0,
+        "checksum": "IPv4 pseudo-header TCP checksum"
+      },
+      "payload": {
+        "magic": "ANTR",
+        "drain_millis": "u32 big-endian, inclusive range 1-120000"
+      },
+      "transport": "encrypted by the existing Peer session; parsed only from authenticated Event::Ipv4 plaintext, never raw UDP, never written to TUN by the notice path, and grants no workload-credential or binding authority"
+    }
+  },
+  "multi_node": {
+    "in_scope": false,
+    "issue": 74
+  }
+}

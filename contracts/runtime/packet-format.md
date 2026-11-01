@@ -31,6 +31,23 @@ generation context before starting compute, so this preparation does not need
 an open attachment or a plaintext probe exception. Open additionally requires
 the current outer Runtime IPv4 and exact prepared key ID in attachment CAS.
 
+An additive authenticated inner frame carries Egress's bounded drain notice
+before restart. It is exactly one 48-byte IPv4/TCP packet inside the encrypted
+channel: IPv4 version 4/IHL 5, total length 48, identification 0, DF, TTL 64,
+protocol 6, valid header checksum, source `192.0.2.1` to the bound tunnel IPv4;
+TCP ports 9 to 9, sequence and acknowledgement 0, data offset 5, ACK only,
+window and urgent pointer 0, valid pseudo-header checksum; payload `ANTR` plus
+a u32 big-endian drain duration of 1–120000 milliseconds (default 30000).
+Consumers evaluate it only from an authenticated `Event::Ipv4`, never raw UDP;
+recognized frames never enter TUN and grant no workload-credential or binding
+authority. While draining, Egress admits no new flows and services existing
+flows to the deadline, then drops them at process exit with nonpersisted
+flows/NAT; the notice is best-effort, abrupt failure sends none, and consumers
+bound their readiness pause to the received duration. Old consumers ignore the
+frame as an ordinary valid TCP packet without an unsupported-revision signal.
+Exact fields and capacity limits are fixed in `runtime-plane-limits.json`; the
+multi-node design is tracked only by #74.
+
 Initialize/Update/Enable issue new endpoint keypairs and a new 32-byte PSK.
 Process restart retains the protected generation material and establishes fresh
 ephemeral sessions; captured old encrypted data cannot enter the new session.
