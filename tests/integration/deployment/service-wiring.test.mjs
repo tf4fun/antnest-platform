@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import test from "node:test";
 import { composeConfig } from "../../support/compose-config.mjs";
+import { fixtureEnvironment } from "../../support/authenticated-e2e.mjs";
 
 const root = new URL("../../../", import.meta.url);
 const credentials = JSON.parse(
@@ -38,6 +39,82 @@ const require = createRequire(
 const original = require("yaml").parse(
   readFileSync(new URL("compose.yaml", root), "utf8"),
 );
+
+test("example environment derives platform denial from the selected deployment subnets", () => {
+  const environment = fixtureEnvironment(
+    {},
+    {
+      project: "antnest-lifecycle-1234abcd",
+      octet: 187,
+    },
+  );
+  const config = composeConfig(["compose.yaml"], environment, [
+    "docker",
+    "compose",
+    "--env-file",
+    ".env.example",
+  ]);
+  assert.deepEqual(
+    config.services[
+      "runtime-egress"
+    ].environment.ANTNEST_EGRESS_PLATFORM_DENY_CIDRS.split(",").sort(),
+    [
+      "100.64.0.0/10",
+      "10.243.187.0/24",
+      "10.242.187.0/24",
+      "10.244.187.0/24",
+      "172.29.255.0/24",
+      "172.28.255.0/24",
+    ].sort(),
+  );
+});
+
+test("an explicit platform deny override is preserved for fail-closed Egress validation", () => {
+  const override = "100.64.0.0/10,10.0.0.0/8";
+  const config = composeConfig(["compose.yaml"], {
+    ANTNEST_EGRESS_PLATFORM_DENY_CIDRS: override,
+  });
+  assert.equal(
+    config.services["runtime-egress"].environment
+      .ANTNEST_EGRESS_PLATFORM_DENY_CIDRS,
+    override,
+  );
+});
+
+test("Egress authentication fixture denies the tunnel and every connected subnet", () => {
+  const config = composeConfig(
+    ["tests/e2e/service-authentication/egress/compose.yaml"],
+    {
+      EGRESS_AUTH_IMAGE: "antnest/runtime-egress:contract",
+      EGRESS_AUTH_PACKET_IMAGE: "antnest/runtime-egress:packet-contract",
+      EGRESS_AUTH_GID: "1000",
+      EGRESS_AUTH_DATABASE_PASSWORD: "contract-only",
+      EGRESS_AUTH_DIRECTORY: "/never-mounted-auth",
+      EGRESS_AUTH_MASTER_FILE: "/never-mounted-master",
+      EGRESS_AUTH_ATTACKER_KEYS: "/never-mounted-attacker",
+      EGRESS_AUTH_RUNTIME_KEYS: "/never-mounted-runtime",
+      EGRESS_AUTH_CONTROL_SUBNET: "10.242.187.0/24",
+      EGRESS_AUTH_CONTROL_IP: "10.242.187.10",
+      EGRESS_AUTH_PACKET_SUBNET: "10.243.187.0/24",
+      EGRESS_AUTH_PACKET_IP: "10.243.187.10",
+      EGRESS_AUTH_DATABASE_SUBNET: "10.244.187.0/24",
+      EGRESS_AUTH_DATABASE_PROBE_IP: "10.244.187.20",
+      EGRESS_AUTH_EXTERNAL_SUBNET: "100.128.187.0/24",
+      EGRESS_AUTH_EXTERNAL_IP: "100.128.187.10",
+      EGRESS_AUTH_EXTERNAL_PROBE_IP: "100.128.187.20",
+    },
+  );
+  const egress = config.services["runtime-egress"];
+  assert.deepEqual(
+    egress.environment.ANTNEST_EGRESS_PLATFORM_DENY_CIDRS?.split(",").sort(),
+    [
+      egress.environment.ANTNEST_EGRESS_TUNNEL_CIDR,
+      ...Object.keys(egress.networks).map(
+        (name) => config.networks[name].ipam.config[0].subnet,
+      ),
+    ].sort(),
+  );
+});
 
 test("private credential bind mounts explicitly forbid host path creation in the source model", () => {
   let checked = 0;
