@@ -429,10 +429,10 @@ mod tests {
                 .receive(packet, Ipv4Addr::LOCALHOST.into())
                 .unwrap_or_default()
             {
-                if let Event::Ipv4(inner) = event {
-                    if let Ok(millis) = parse_egress_restart(&inner, ip) {
-                        seen.push(millis);
-                    }
+                if let Event::Ipv4(inner) = event
+                    && let Ok(millis) = parse_egress_restart(&inner, ip)
+                {
+                    seen.push(millis);
                 }
             }
         }
@@ -469,10 +469,10 @@ mod tests {
                 .receive(packet, Ipv4Addr::LOCALHOST.into())
                 .unwrap_or_default()
             {
-                if let Event::Ipv4(inner) = event {
-                    if let Ok(millis) = parse_egress_restart(&inner, ip) {
-                        seen.push(millis);
-                    }
+                if let Event::Ipv4(inner) = event
+                    && let Ok(millis) = parse_egress_restart(&inner, ip)
+                {
+                    seen.push(millis);
                 }
             }
         }
