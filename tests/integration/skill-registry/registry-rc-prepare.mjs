@@ -5,6 +5,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { mkdir, writeFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { callerContext } from "../../e2e/service-authentication/registry/auth-fixture.mjs";
+import { runtimeResourceName } from "../../support/runtime-resource-name.mjs";
 
 const registry = process.env.ANTNEST_TEST_REGISTRY_URL;
 const controller = process.env.ANTNEST_TEST_RUNTIME_CONTROLLER_URL;
@@ -361,7 +362,7 @@ assert.equal(
   "completed",
   JSON.stringify(initialized.payload),
 );
-const runtimeContainer = `antnest-runtime-${agentID}`;
+const runtimeContainer = runtimeResourceName(scope, "runtime", agentID);
 const mounts = JSON.parse(
   docker("inspect", "--format", "{{json .Mounts}}", runtimeContainer),
 );

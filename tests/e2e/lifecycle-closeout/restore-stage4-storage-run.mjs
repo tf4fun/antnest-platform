@@ -347,7 +347,8 @@ async function storageScenario(config, docker, directory, work, signal) {
     config.compose([
       "stop",
       "-t",
-      "25",
+      // Include Egress's maximum 120s drain and 5s cleanup.
+      "130",
       ...stage4WriterServices.filter((name) => name !== "temporal"),
     ]),
     true,

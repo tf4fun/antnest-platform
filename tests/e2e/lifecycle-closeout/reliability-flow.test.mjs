@@ -104,6 +104,15 @@ async function scenario(mutate) {
       });
     }
     if (joined.includes("stop")) {
+      assert.equal(
+        long,
+        true,
+        "Egress stop must use the lifecycle command budget",
+      );
+      assert(
+        Number(args[args.indexOf("-t") + 1]) >= 125,
+        "Egress needs its maximum 120s drain and 5s cleanup before forced stop",
+      );
       state.egressStopped = true;
       return "";
     }

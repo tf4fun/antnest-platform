@@ -180,7 +180,8 @@ export function createC4Actions({ signal, output, report }, overrides = {}) {
       });
     },
     async flush(config, current) {
-      const docker = deps.createDocker(config.env, signal, 120000),
+      // Agent UI stops first, followed by Egress's maximum drain and cleanup.
+      const docker = deps.createDocker(config.env, signal, 180000),
         errors = [];
       const observed = (current.producer_flush = {});
       try {
