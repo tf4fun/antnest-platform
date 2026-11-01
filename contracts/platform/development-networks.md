@@ -132,11 +132,20 @@ grant does not claim physical isolation on that shared network. The retirement
 consumer batch still requires the applicable deployment and cross-service gates.
 
 The existing Controller/Egress and Runtime management subnet settings remain
-separate from the `/28` prefix. Management reserves fixed infrastructure addresses
-outside its dynamic allocation range, default `172.30.255.128/25` within
-`172.30.255.0/24`. A changed management subnet requires matching fixed-address
-and dynamic-range settings. Health follows the configured purpose address;
+separate from the `/28` prefix. Management reserves fixed infrastructure
+addresses (`172.30.255.3`-`.6`) inside the parent subnet but outside its dynamic
+allocation range, default `172.30.240.0/21` within `172.30.240.0/20`. A changed
+management subnet requires matching fixed-address and dynamic-range settings;
+the legacy `172.30.255.0/24` subnet with its `172.30.255.128/25` pool remains an
+accepted explicit override. Health follows the configured purpose address;
 RC/Egress keep their separate loopback readiness listeners.
+
+Docker does not resize an existing management network in place. Keep the
+explicit legacy subnet and range during an upgrade until a maintenance window
+can drain and detach its workloads and recreate the deployment-owned network
+with the selected IPAM configuration. Preserve named workspace volumes; changing
+the network is not a workspace migration. Only recreate resources whose
+deployment ownership has been verified.
 
 Each static exporter declares Jaeger as an optional startup dependency. When
 observability is selected, Compose stops those exporters and the Runtime OTLP

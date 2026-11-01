@@ -98,6 +98,7 @@ export const suites = [
     setup: ["go"],
     paths: [
       ...service("runtime-controller"),
+      "contracts/runtime/runtime-plane-limits.json",
       "tests/integration/go/runtime-controller/**",
       "tests/integration/runtime-controller/**",
       "tests/integration/go/agent-controller/observationfixture/**",
@@ -112,6 +113,7 @@ export const suites = [
     run: [
       "make test-runtime-controller-postgres",
       "ANTNEST_RUNTIME_CONTROLLER_TEST_DOCKER_SOCKET=/var/run/docker.sock ANTNEST_RUNTIME_CONTROLLER_TEST_ANONYMOUS_VOLUME_IMAGE=postgres:17.11-bookworm node tests/integration/go/run.mjs runtime-controller --profile integration --package internal/platform/docker -- -race -timeout=3m -run ^TestRemoveContainerDeletesAnonymousVolumesAndPreservesNamedResources$",
+      "ANTNEST_RUNTIME_CONTROLLER_TEST_DOCKER_SOCKET=/var/run/docker.sock ANTNEST_RUNTIME_CONTROLLER_TEST_IMAGE_TAG=postgres:17.11-bookworm node tests/integration/go/run.mjs runtime-controller --profile integration --package internal/platform/docker -- -race -timeout=3m -run ^TestScopedRuntimeResourcesStayIsolatedOnOneDaemon$",
     ],
   },
   {

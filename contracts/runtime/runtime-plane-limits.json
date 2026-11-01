@@ -3,8 +3,14 @@
   "single_docker_host": true,
   "management_network": {
     "default_subnet": "172.30.240.0/20",
+    "default_dynamic_ip_range": "172.30.240.0/21",
     "legacy_subnet": "172.30.255.0/24",
-    "static_ipv4": ["172.30.255.3", "172.30.255.4"],
+    "static_ipv4": [
+      "172.30.255.3",
+      "172.30.255.4",
+      "172.30.255.5",
+      "172.30.255.6"
+    ],
     "static_ipv4_status": "retained"
   },
   "capacity": {

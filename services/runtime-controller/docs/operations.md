@@ -427,9 +427,13 @@ The management IPv4 pool is capacity-accounted. The selected pool (IPAM
 `IPRange` when configured, otherwise the `Subnet`) excludes network/broadcast,
 gateway, auxiliary, and other occupied endpoints; `runtime_count` counts all
 attached managed Runtime endpoints across scopes and `runtime_capacity` is the
-total Runtime slot count. The legacy `172.30.255.0/24` subnet offers about 250
-Runtime slots before static platform endpoints; `172.30.240.0/20` is the
-upcoming default. `/status` reports the cached `runtime_capacity`,
+total Runtime slot count. The default management subnet is `172.30.240.0/20` with
+dynamic pool `172.30.240.0/21` (2048 addresses before IPAM exclusions);
+the legacy `172.30.255.0/24` override with its `172.30.255.128/25` pool offers
+about 127 slots. Only the parent network/broadcast addresses that intersect the
+selected pool are deducted; fixed platform endpoints outside the pool consume
+nothing. Docker remains the final arbiter when capacity is unknown.
+`/status` reports the cached `runtime_capacity`,
 `runtime_count` and `runtime_capacity_known` snapshot without probing Docker.
 When the pool is known to be full, admission refuses new compute with
 HTTP 503 `runtime_capacity_exhausted` (`retryable: true`);

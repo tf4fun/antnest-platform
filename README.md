@@ -129,6 +129,14 @@ and storage schemas can still change between commits. Check the
 work are tracked in [GitHub issues](https://github.com/tf4fun/antnest-platform/issues).
 Feedback and contributions are very welcome.
 
+The Runtime Plane is single-host: one Docker management subnet (default
+`172.30.240.0/20`, dynamic IPAM pool `172.30.240.0/21`), controller-scope-isolated
+Runtime containers and workspaces, management-IPAM capacity accounting, and a
+single non-HA Egress whose flows and NAT are not persisted; a bounded
+authenticated drain mitigates scheduled restarts only — abrupt failure sends no
+notice and Runtime recovery comes from re-handshake plus application retries.
+Multi-node Runtime Plane is future work (#74).
+
 ## Quick start
 
 Requirements: Linux or macOS with Docker Engine and Compose v2, Node.js 24.21.0,
