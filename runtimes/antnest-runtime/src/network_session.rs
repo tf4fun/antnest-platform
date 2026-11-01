@@ -5,7 +5,9 @@ use std::os::fd::AsRawFd;
 use std::sync::Arc;
 use std::time::Duration;
 
-use antnest_runtime_tunnel::{Event, MAX_DATAGRAM, Peer, TIMER_MILLIS};
+use antnest_runtime_tunnel::{
+    EGRESS_DRAIN_MAX_MILLIS, Event, MAX_DATAGRAM, Peer, TIMER_MILLIS, parse_egress_restart,
+};
 use thiserror::Error;
 use tokio::io::unix::AsyncFd;
 use tokio_util::sync::CancellationToken;
@@ -140,6 +142,32 @@ fn record_network_result(
     });
 }
 
+#[derive(Default)]
+pub(crate) struct RestartPause {
+    until: Option<tokio::time::Instant>,
+    seen: bool,
+}
+
+impl RestartPause {
+    fn observe(&mut self, now: tokio::time::Instant, millis: u32) -> Option<Duration> {
+        if self.seen || !(1..=EGRESS_DRAIN_MAX_MILLIS).contains(&millis) {
+            return None;
+        }
+        let grace = Duration::from_millis(u64::from(millis));
+        self.until = Some(now + grace);
+        self.seen = true;
+        Some(grace)
+    }
+
+    fn is_paused(&self, now: tokio::time::Instant) -> bool {
+        self.until.is_some_and(|until| until > now)
+    }
+
+    fn take_resume_due(&mut self, now: tokio::time::Instant) -> bool {
+        self.until.take_if(|until| *until <= now).is_some()
+    }
+}
+
 pub(crate) struct UdpNetwork {
     peer: Peer,
     socket: tokio::net::UdpSocket,
@@ -258,6 +286,7 @@ impl UdpNetwork {
         let mut inbound = vec![0_u8; MAX_DATAGRAM + 1];
         let mut metrics = NetworkMetrics::new(exporter);
         let mut receive_enabled = true;
+        let mut restart_notice_seen = false;
         let mut report = tokio::time::interval_at(
             tokio::time::Instant::now() + Duration::from_secs(30),
             Duration::from_secs(30),
@@ -295,6 +324,16 @@ impl UdpNetwork {
                         match event {
                             Event::Network(frame)=>{tunnel_socket_result(send_udp_bounded(&self.socket,&frame).await,&mut metrics)?;},
                             Event::Ipv4(inner)=>{
+                                if parse_egress_restart(&inner,self.tunnel_ipv4).is_ok() {
+                                    if !restart_notice_seen {
+                                        restart_notice_seen=true;
+                                        tracing::info!(
+                                            network.event = "egress_restart_notice",
+                                            "Authenticated Egress restart notice consumed locally"
+                                        );
+                                    }
+                                    continue;
+                                }
                                 let Some(packet)=validated_inbound_datagram(&inner,self.mtu,self.tunnel_ipv4) else {metrics.malformed_inbound();continue};
                                 write_tun_bounded(&tun,packet).await?;
                                 metrics.inbound(packet.len());
@@ -338,18 +377,33 @@ fn tunnel_socket_result<T>(
     }
 }
 
+fn refused_during_grace(error: &io::Error, paused: bool) -> bool {
+    paused && error.kind() == io::ErrorKind::ConnectionRefused
+}
+
+async fn send_probe_events_with_refused(
+    socket: &tokio::net::UdpSocket,
+    events: Vec<Event>,
+    tolerate_refused: bool,
+) -> Result<(), NetworkSessionError> {
+    for event in events {
+        if let Event::Network(frame) = event
+            && let Err(error) = send_udp_bounded(socket, &frame).await
+        {
+            if refused_during_grace(&error, tolerate_refused) {
+                continue;
+            }
+            return Err(transport_error(error));
+        }
+    }
+    Ok(())
+}
+
 async fn send_probe_events(
     socket: &tokio::net::UdpSocket,
     events: Vec<Event>,
 ) -> Result<(), NetworkSessionError> {
-    for event in events {
-        if let Event::Network(frame) = event {
-            send_udp_bounded(socket, &frame)
-                .await
-                .map_err(transport_error)?;
-        }
-    }
-    Ok(())
+    send_probe_events_with_refused(socket, events, false).await
 }
 
 async fn verify_egress_path(
@@ -361,37 +415,101 @@ async fn verify_egress_path(
     deadline: Duration,
 ) -> Result<(), NetworkSessionError> {
     let source_port = readiness_probe_source_port(generation);
-    let sequence = readiness_probe_sequence(generation);
-    let probe = egress_readiness_probe(tunnel_ipv4, source_port, sequence);
+    let mut sequence = readiness_probe_sequence(generation);
+    let mut probe = egress_readiness_probe(tunnel_ipv4, source_port, sequence);
     let mut reply = vec![0_u8; MAX_DATAGRAM + 1];
     let remote = socket.peer_addr().map_err(transport_error)?.ip();
     let mut clock = tokio::time::interval(Duration::from_millis(TIMER_MILLIS));
+    let mut receive_enabled = true;
+    let mut pause = RestartPause::default();
     for _ in 0..attempts {
         let events = peer.send(&probe).map_err(transport_error)?;
         send_probe_events(socket, events).await?;
-        let response=tokio::time::timeout(deadline,async {
-            loop {
-                tokio::select! {
-                    received=socket.recv(&mut reply)=>{
-                        let size=received.map_err(transport_error)?;
-                        let Ok(events)=peer.receive(&reply[..size],remote) else {continue};
-                        for event in events {
-                            match event {
-                                Event::Network(frame)=>send_udp_bounded(socket,&frame).await.map_err(transport_error)?,
-                                Event::Ipv4(inner)=>{
-                                    if is_egress_readiness_reply(&inner,tunnel_ipv4,source_port,sequence) {return Ok(())}
+        let mut attempt_deadline = tokio::time::Instant::now() + deadline;
+        loop {
+            let now = tokio::time::Instant::now();
+            if pause.take_resume_due(now) {
+                sequence = sequence.wrapping_add(1);
+                probe = egress_readiness_probe(tunnel_ipv4, source_port, sequence);
+                let events = peer.send(&probe).map_err(transport_error)?;
+                send_probe_events(socket, events).await?;
+            }
+            let paused = pause.is_paused(now);
+            let wakeup = match (paused, pause.until) {
+                (true, Some(until)) => until.min(attempt_deadline),
+                _ => attempt_deadline,
+            };
+            tokio::select! {
+                _ = tokio::time::sleep_until(wakeup) => {
+                    if tokio::time::Instant::now() >= attempt_deadline {
+                        break;
+                    }
+                },
+                received = socket.recv(&mut reply), if receive_enabled => {
+                    let size = match received {
+                        Ok(size) => size,
+                        Err(error)
+                            if refused_during_grace(
+                                &error,
+                                pause.is_paused(tokio::time::Instant::now()),
+                            ) =>
+                        {
+                            receive_enabled = false;
+                            continue;
+                        }
+                        Err(error) => return Err(transport_error(error)),
+                    };
+                    let Ok(events) = peer.receive(&reply[..size], remote) else {
+                        continue;
+                    };
+                    for event in events {
+                        match event {
+                            Event::Network(frame) => {
+                                if let Err(error) = send_udp_bounded(socket, &frame).await {
+                                    if refused_during_grace(
+                                        &error,
+                                        pause.is_paused(tokio::time::Instant::now()),
+                                    ) {
+                                        continue;
+                                    }
+                                    return Err(transport_error(error));
+                                }
+                            }
+                            Event::Ipv4(inner) => {
+                                let now = tokio::time::Instant::now();
+                                if let Ok(millis) = parse_egress_restart(&inner, tunnel_ipv4) {
+                                    if let Some(grace) = pause.observe(now, millis) {
+                                        attempt_deadline += grace;
+                                    }
+                                    continue;
+                                }
+                                if pause.until.is_some() {
+                                    continue;
+                                }
+                                if is_egress_readiness_reply(
+                                    &inner,
+                                    tunnel_ipv4,
+                                    source_port,
+                                    sequence,
+                                ) {
+                                    return Ok(());
                                 }
                             }
                         }
-                    },
-                    _=clock.tick()=>{
-                        if let Ok(events)=peer.tick() {send_probe_events(socket,events).await?;}
+                    }
+                },
+                _ = clock.tick() => {
+                    receive_enabled = true;
+                    if let Ok(events) = peer.tick() {
+                        send_probe_events_with_refused(
+                            socket,
+                            events,
+                            pause.is_paused(tokio::time::Instant::now()),
+                        )
+                        .await?;
                     }
                 }
             }
-        }).await;
-        if let Ok(result) = response {
-            return result;
         }
     }
     Err(transport_error("Egress readiness probe timed out"))
@@ -483,13 +601,14 @@ mod tests {
     use std::net::{Ipv4Addr, SocketAddrV4};
     use std::sync::Arc;
     use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::time::Duration;
 
     use tokio_util::sync::CancellationToken;
     use tracing_subscriber::layer::{Context, Layer, SubscriberExt as _};
 
     use super::{
-        NetworkMetrics, NetworkSession, UdpNetwork, connect_management_udp, send_network_events,
-        tunnel_socket_result, validated_inbound_datagram, verify_egress_path,
+        NetworkMetrics, NetworkSession, RestartPause, UdpNetwork, connect_management_udp,
+        send_network_events, tunnel_socket_result, validated_inbound_datagram, verify_egress_path,
     };
     use crate::packet::unsupported_ipv4_rejection;
     use crate::spec::RuntimeIdentity;

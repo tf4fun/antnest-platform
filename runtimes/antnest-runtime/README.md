@@ -145,6 +145,13 @@ reserved `ANTNEST_` prefix:
 - Runtime Egress: the packet path must answer a readiness probe before
   `/status` is served. An established Runtime survives UDP `ConnectionRefused`
   during Egress restart; other socket errors and TUN failures remain fatal.
+  During a scheduled Egress restart, the bounded authenticated restart notice
+  (`contracts/runtime/runtime-plane-limits.json`, max 120s) grants the whole
+  readiness verification one pause: ordinary replies are ignored while paused,
+  a fresh matching readiness reply is required afterwards, and the total wait
+  stays bounded. Live notices are consumed locally (never written to the TUN);
+  outages may drop flows and recover only through the same authenticated tunnel
+  re-handshake and application retries — no connection-loss-free or HA guarantee.
 - Configured managed MCP servers: every server must initialize before
   readiness; losing a required server makes Runtime unavailable and exits.
 - Optional OTLP Collector. Export failure never changes readiness or results.
