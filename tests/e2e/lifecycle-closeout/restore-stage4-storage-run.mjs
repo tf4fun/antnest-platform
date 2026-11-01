@@ -1,3 +1,4 @@
+import { runtimeResourceName } from "../../support/runtime-resource-name.mjs";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
@@ -204,7 +205,9 @@ export function storageFixturePlan(project) {
         .digest("hex")
         .slice(0, 32),
   );
-  const workspaceVolumes = agents.map((agent) => "antnest-workspace-" + agent);
+  const workspaceVolumes = agents.map((agent) =>
+    runtimeResourceName(project, "workspace", agent),
+  );
   const skillVolumes = ["ready-a", "ready-empty-b", "candidate-a"].map(
     (suffix) => `${project}-skill-${suffix}`,
   );

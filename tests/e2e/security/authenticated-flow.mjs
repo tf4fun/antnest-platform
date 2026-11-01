@@ -1,3 +1,4 @@
+import { runtimeResourceName } from "../../support/runtime-resource-name.mjs";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { writeFile } from "node:fs/promises";
@@ -32,7 +33,10 @@ export async function runAuthenticatedPeer({
   const plan = authenticatedPlan({ config, topology, agentId, mode });
   if (mode === "admission") {
     const [runtime] = JSON.parse(
-      await docker(["inspect", `antnest-runtime-${agentId}`]),
+      await docker([
+        "inspect",
+        runtimeResourceName(config.project, "runtime", agentId),
+      ]),
     );
     assert.equal(runtime.Config.Labels[scopeLabel], config.project);
     const network = config.env.ANTNEST_RUNTIME_MANAGEMENT_NETWORK;
@@ -40,7 +44,7 @@ export async function runAuthenticatedPeer({
     assert.match(address, /^10\.243\.[1-9]\d?\d?\.\d+$/u);
     const port = Number(runtime.Config.Labels["io.antnest.runtime-port"]);
     assert(Number.isInteger(port) && port > 0 && port <= 65535);
-    plan.endpoints.runtime = `http://antnest-runtime-${agentId}:${port}`;
+    plan.endpoints.runtime = `http://${address}:${port}`;
     plan.networks.push(network);
   }
   const name = `${config.project}-authenticated-${mode}`;

@@ -1,3 +1,4 @@
+import { runtimeResourceName } from "../../support/runtime-resource-name.mjs";
 import assert from "node:assert/strict";
 import { existsSync } from "node:fs";
 import { mkdir, writeFile } from "node:fs/promises";
@@ -153,7 +154,10 @@ export async function inspectMatrixImages({
     });
   }
   const runtime = JSON.parse(
-    await docker(["inspect", `antnest-runtime-${agentId}`]),
+    await docker([
+      "inspect",
+      runtimeResourceName(config.project, "runtime", agentId),
+    ]),
   );
   assert.equal(runtime.length, 1, "missing actual native Runtime");
   assert.equal(

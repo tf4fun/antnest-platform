@@ -1,3 +1,4 @@
+import { runtimeResourceName } from "../../support/runtime-resource-name.mjs";
 import { durablePath, writeEvidenceFile } from "../../support/storage.mjs";
 import { inspect } from "node:util";
 import { createTraceDiagnostics } from "../../support/trace-diagnostics.mjs";
@@ -481,7 +482,7 @@ try {
         "--cap-drop",
         "ALL",
         "--mount",
-        `type=volume,src=antnest-workspace-${agentId},dst=/workspace,readonly`,
+        `type=volume,src=${runtimeResourceName(project, "workspace", agentId)},dst=/workspace,readonly`,
         "--entrypoint",
         "cat",
         env("ANTNEST_STAGE2_RUNTIME_IMAGE"),
@@ -780,12 +781,23 @@ try {
     evidence.retained_audits = audits.items;
     const containers = execFileSync(
       "docker",
-      ["ps", "-aq", "--filter", `name=^/antnest-runtime-${agentId}$`],
+      [
+        "ps",
+        "-aq",
+        "--filter",
+        `name=^/${runtimeResourceName(project, "runtime", agentId)}$`,
+      ],
       { encoding: "utf8", timeout: 10000 },
     );
     const volumes = execFileSync(
       "docker",
-      ["volume", "ls", "-q", "--filter", `name=^antnest-workspace-${agentId}$`],
+      [
+        "volume",
+        "ls",
+        "-q",
+        "--filter",
+        `name=^${runtimeResourceName(project, "workspace", agentId)}$`,
+      ],
       { encoding: "utf8", timeout: 10000 },
     );
     assert.equal(

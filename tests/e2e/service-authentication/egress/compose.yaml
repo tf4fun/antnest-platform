@@ -70,7 +70,7 @@ services:
       interval: 1s
       timeout: 5s
       retries: 90
-    stop_grace_period: 15s
+    stop_grace_period: 130s
   control-probe:
     image: node:24.21.0-bookworm-slim
     command: [node, -e, "setInterval(()=>{},60000)"]

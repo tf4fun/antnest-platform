@@ -1,3 +1,4 @@
+import { runtimeResourceName } from "../../support/runtime-resource-name.mjs";
 import assert from "node:assert/strict";
 import test from "node:test";
 import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
@@ -60,7 +61,9 @@ async function fixture(t, options = {}) {
     current = row(),
     output = "alive 42 12345",
     clock = 0;
-  const rows = new Map([[`antnest-runtime-${agent}`, current]]);
+  const rows = new Map([
+    [runtimeResourceName(project, "runtime", agent), current],
+  ]);
   const docker = async (args, long, call) => {
     calls.push({ args, long, call });
     assert.equal(long, false);
@@ -135,7 +138,7 @@ async function fixture(t, options = {}) {
     hostOptions: { env, directory, evidence, imageID, docker },
     setRow(value, lookup = value.Config.Labels["io.antnest.agent-id"]) {
       current = value;
-      rows.set(`antnest-runtime-${lookup}`, value);
+      rows.set(runtimeResourceName(project, "runtime", lookup), value);
     },
     setOutput(value) {
       output = value;

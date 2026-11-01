@@ -1,3 +1,4 @@
+import { runtimeResourceName } from "../../support/runtime-resource-name.mjs";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
@@ -48,7 +49,10 @@ if (responseLoss) {
     "lost-response candidate was not retained for recovery",
   );
   const [candidate] = JSON.parse(docker("inspect", references[0]));
-  assert.equal(candidate.Name, `/antnest-runtime-${receipt.agent_id}`);
+  assert.equal(
+    candidate.Name,
+    `/${runtimeResourceName(project, "runtime", receipt.agent_id)}`,
+  );
   assert.equal(candidate.Config.Labels["io.antnest.managed"], "runtime");
   assert.equal(
     candidate.Config.Labels["io.antnest.runtime-controller-scope"],
