@@ -163,6 +163,139 @@ test("not_found is a generic HTTP and Skill-source resource error without admiss
   );
 });
 
+test("permission_timeout is a retryable availability error recovering by permission refresh", () => {
+  assert.deepEqual(catalog.errors.permission_timeout, {
+    class: "availability",
+    json_rpc_code: -32039,
+    http_status: 408,
+    retryable: true,
+    recovery: "refresh_permission",
+    message: "Permission request timed out",
+    surfaces: ["admission", "http"],
+  });
+});
+
+let compiledPermissionResolution;
+const validatePermissionResolution = () => {
+  if (!compiledPermissionResolution) {
+    compiledPermissionResolution = ajv.compile(
+      JSON.parse(
+        readFileSync(
+          new URL("permission-resolution.schema.json", contractRoot),
+          "utf8",
+        ),
+      ),
+    );
+  }
+  return compiledPermissionResolution;
+};
+
+test("permission resolution payloads satisfy their wire schema", () => {
+  const validate = validatePermissionResolution();
+  for (const reason of ["permission_resolved", "permission_timeout"]) {
+    const payload = {
+      version: 1,
+      runId: "run-1",
+      toolCallId: "call-1",
+      reason,
+    };
+    const original = structuredClone(payload);
+    assert.equal(validate(payload), true, JSON.stringify(validate.errors));
+    assert.deepEqual(payload, original);
+  }
+  for (const [runId, toolCallId] of [
+    ["r", "c"],
+    ["r".repeat(200), "c".repeat(200)],
+    ["run:1#opaque/id with spaces", "call\t2"],
+  ]) {
+    assert.equal(
+      validate({
+        version: 1,
+        runId,
+        toolCallId,
+        reason: "permission_resolved",
+      }),
+      true,
+      JSON.stringify(validate.errors),
+    );
+  }
+});
+
+test("permission resolution payloads reject missing, mistyped and extra fields", async (context) => {
+  const validate = validatePermissionResolution();
+  const valid = {
+    version: 1,
+    runId: "run-1",
+    toolCallId: "call-1",
+    reason: "permission_resolved",
+  };
+  const cases = [
+    ...["version", "runId", "toolCallId", "reason"].map((field) => ({
+      name: `${field} is required`,
+      mutate: (value) => {
+        delete value[field];
+      },
+    })),
+    {
+      name: "version must be the literal 1",
+      mutate: (value) => {
+        value.version = 2;
+      },
+    },
+    {
+      name: "version cannot be a string",
+      mutate: (value) => {
+        value.version = "1";
+      },
+    },
+    ...["runId", "toolCallId"].flatMap((field) => [
+      {
+        name: `${field} cannot be empty`,
+        mutate: (value) => {
+          value[field] = "";
+        },
+      },
+      {
+        name: `${field} cannot be a number`,
+        mutate: (value) => {
+          value[field] = 1;
+        },
+      },
+      {
+        name: `${field} cannot exceed 200 characters`,
+        mutate: (value) => {
+          value[field] = "x".repeat(201);
+        },
+      },
+    ]),
+    {
+      name: "reason is a closed enum",
+      mutate: (value) => {
+        value.reason = "permission_cancelled";
+      },
+    },
+    {
+      name: "reason cannot be a number",
+      mutate: (value) => {
+        value.reason = 1;
+      },
+    },
+    {
+      name: "undeclared payload fields are rejected",
+      mutate: (value) => {
+        value.extra = true;
+      },
+    },
+  ];
+  for (const { name, mutate } of cases) {
+    await context.test(name, () => {
+      const changed = structuredClone(valid);
+      mutate(changed);
+      assert.equal(validate(changed), false, name);
+    });
+  }
+});
+
 const invalidCatalogTransformations = [
   {
     name: "availability cannot use the access numeric range",

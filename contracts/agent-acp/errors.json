@@ -126,6 +126,15 @@
       "message": "Runtime connection is unavailable",
       "surfaces": ["admission", "http"]
     },
+    "permission_timeout": {
+      "class": "availability",
+      "json_rpc_code": -32039,
+      "http_status": 408,
+      "retryable": true,
+      "recovery": "refresh_permission",
+      "message": "Permission request timed out",
+      "surfaces": ["admission", "http"]
+    },
     "model_unavailable": {
       "class": "configuration",
       "json_rpc_code": -32040,
