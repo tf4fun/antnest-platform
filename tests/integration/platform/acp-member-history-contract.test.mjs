@@ -540,7 +540,7 @@ test("the implemented manifest freezes the history operation, page size and non-
   assert.equal(manifest.authority.history_is_admission_barrier, false);
 });
 
-test("the implemented history route has exact RC grants, revision 21 aliases and manifest limits", () => {
+test("the implemented history route has exact RC grants, revision 22 aliases and manifest limits", () => {
   const manifest = read(manifestPath);
   assert.equal(manifest.status, "implemented");
   const callers = read("services/runtime-controller/api/callers.json");
@@ -565,7 +565,7 @@ test("the implemented history route has exact RC grants, revision 21 aliases and
   const contract = read(
     "services/runtime-controller/api/control-contract.json",
   );
-  assert.equal(contract.revision, 21);
+  assert.equal(contract.revision, 22);
   const matches = contract.routes.filter((route) => route.path === routePath);
   assert.equal(matches.length, 1);
   const [route] = matches;
