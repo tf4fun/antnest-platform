@@ -660,19 +660,16 @@ try {
   await dataSnapshot((fields) => fields["tunnel.replay_drops"] >= 1);
   checks++;
 
-  await waitFor(
-    "connected public subnet kernel drop",
-    async () => (await kernelDrops()) > beforeDrop,
+  const platformDenied = await dataSnapshot(
+    (fields) => fields["policy.denials"] >= 1,
   );
-  assert(
-    (await dataSnapshot((fields) => fields["policy.allows"] >= 1))[
-      "policy.allows"
-    ] >= 1,
-  );
+  assert.equal(platformDenied["policy.allows"], 0);
+  assert.equal(platformDenied["flow.active"], 0);
+  assert.equal(await kernelDrops(), beforeDrop);
   assert.equal((await peerProbe("database-probe", "count")).connections, 0);
-  checks += 3;
+  checks += 4;
   const kernel = await runCommand({
-    name: "private-destination-kernel-proof",
+    name: "platform-destination-kernel-proof",
     command: [
       "docker",
       ...compose,

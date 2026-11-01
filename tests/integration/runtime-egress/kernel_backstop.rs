@@ -80,6 +80,18 @@ async fn kernel_rejects_database_destination_when_userspace_policy_is_bypassed()
     assert!(!antnest_runtime_egress::policy::is_external_ipv4(
         destination
     ));
+    assert_kernel_rejects(destination).await;
+    let public_destination = std::env::var("ANTNEST_EGRESS_KERNEL_TEST_PUBLIC_DESTINATION")
+        .unwrap()
+        .parse::<Ipv4Addr>()
+        .unwrap();
+    assert!(antnest_runtime_egress::policy::is_external_ipv4(
+        public_destination
+    ));
+    assert_kernel_rejects(public_destination).await;
+}
+
+async fn assert_kernel_rejects(destination: Ipv4Addr) {
     let plan = KernelPlan::new(
         "antnest-egress0",
         "100.64.0.0/29".parse().unwrap(),
