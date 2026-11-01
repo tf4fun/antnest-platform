@@ -1,11 +1,13 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { getEventListeners } from "node:events";
 import { ConnectionTasks } from "../../src/transport/acp/connection-tasks.js";
+import * as permissionRequests from "../../src/transport/acp/permission-request.js";
 import {
   permissionRequest,
   v1Permission,
   v2Permission,
 } from "../../src/transport/acp/permission-request.js";
+import type { PermissionRequest } from "../../src/ports/tool-permissions.js";
 
 describe("ACP permission request lifetime", () => {
   afterEach(() => vi.useRealTimers());
@@ -81,6 +83,57 @@ describe("ACP permission request lifetime", () => {
     expect(v2Permission(request)).not.toHaveProperty("toolCall");
     expect(v2Permission(request)).toHaveProperty("subject.toolCall.toolCallId", "call");
     expect(v2Permission(request).options).toHaveLength(4);
+  });
+  it("carries run and tool call correlation metadata on both version envelopes", () => {
+    const request: PermissionRequest = {
+      runId: "run",
+      sessionId: "session",
+      call: { id: "call", name: "read", arguments: { path: "x" } },
+      tool: {
+        source: "runtime",
+        sourceId: "runtime",
+        name: "read",
+        modelName: "read",
+        description: "read",
+      },
+    };
+    for (const params of [v1Permission(request), v2Permission(request)]) {
+      expect(params).toMatchObject({
+        _meta: {
+          "antnest.dev/permission-request": { version: 1, runId: "run", toolCallId: "call" },
+        },
+      });
+    }
+  });
+  it("builds the optional resolution notice payload", () => {
+    const request: PermissionRequest = {
+      runId: "run",
+      sessionId: "session",
+      call: { id: "call", name: "read", arguments: { path: "x" } },
+      tool: {
+        source: "runtime",
+        sourceId: "runtime",
+        name: "read",
+        modelName: "read",
+        description: "read",
+      },
+    };
+    expect(permissionRequests.permissionResolution(request, "permission_timeout")).toEqual({
+      sessionId: "session",
+      update: {
+        sessionUpdate: "notice",
+        severity: "info",
+        title: "Permission request resolved",
+        _meta: {
+          "antnest.dev/permission-resolution": {
+            version: 1,
+            runId: "run",
+            toolCallId: "call",
+            reason: "permission_timeout",
+          },
+        },
+      },
+    });
   });
   it("reclaims SDK pending requests when cooperative cancellation is ignored", async () => {
     vi.useFakeTimers();

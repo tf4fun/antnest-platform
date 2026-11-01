@@ -1,8 +1,12 @@
 import * as acp from "@agentclientprotocol/sdk/experimental/v2";
 import { fileContent } from "./file-content.js";
 import { v2Configuration } from "../configuration.js";
-import { permissionRequest, v2Permission } from "../permission-request.js";
-import type { PermissionConnectionsPort } from "../../../ports/tool-permissions.js";
+import { permissionRequest, permissionResolution, v2Permission } from "../permission-request.js";
+import type {
+  PermissionConnectionsPort,
+  PermissionRequest,
+  PermissionResolution,
+} from "../../../ports/tool-permissions.js";
 import { createAcpDispatcher } from "../../../telemetry/acp-dispatch.js";
 
 import { errorCapability } from "../../../domain/error-catalog.js";
@@ -55,6 +59,8 @@ export function createAcpV2Agent({
           (error) => connection.close(error),
           tasks,
         ),
+      resolved: (request: PermissionRequest, reason: PermissionResolution) =>
+        client.notify(acp.methods.client.session.update, permissionResolution(request, reason)),
     });
   const sessionSetup = async (sessionId: string) => {
     const result = v2Configuration(

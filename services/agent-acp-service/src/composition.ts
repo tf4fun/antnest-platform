@@ -351,6 +351,7 @@ export async function startAgentAcpService(
         authentication: peerAuthentication,
         apply: built.applyPeerPublication,
         maxWebSocketPayloadBytes: config.maxWebSocketPayloadBytes,
+        wsPingIntervalMs: config.wsPingIntervalMs,
         forward: (request, target, signal) => {
           if (listeningServer === undefined)
             throw new DomainError("agent_unavailable", "ACP ingress is not ready");
@@ -401,6 +402,7 @@ export async function startAgentAcpService(
       application: built.application,
       permissions: built.permissionConnections,
       maxWebSocketPayloadBytes: config.maxWebSocketPayloadBytes,
+      wsPingIntervalMs: config.wsPingIntervalMs,
       connectionLimits: config.connectionLimits,
       maxConfigurationBytes: config.maxConfigurationBytes,
       telemetry,
@@ -634,7 +636,7 @@ export function buildComponents(
       },
     );
   };
-  const permissionConnections = new PermissionConnections();
+  const permissionConnections = new PermissionConnections(config.permissionTimeoutMs);
   const outputs = new SessionOutputStreams();
   let owned: OwnedAgentComponents | undefined;
   let peerAcknowledgement: PeerAcknowledgement | undefined;

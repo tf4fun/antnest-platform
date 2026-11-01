@@ -56,7 +56,14 @@ export class ToolPermissions implements ToolPermissionPort {
     const final = input.signal.aborted
       ? { decision: "cancelled" as const, reason: "run_cancelled" }
       : result;
-    return this.commit(input, request, owner, final);
+    const { outcome, committed } = await this.commit(input, request, owner, final);
+    if (committed)
+      this.connections.resolve(
+        request,
+        owner,
+        outcome.reason === "permission_timeout" ? "permission_timeout" : "permission_resolved",
+      );
+    return outcome;
   }
 
   private async commit(
@@ -64,7 +71,7 @@ export class ToolPermissions implements ToolPermissionPort {
     request: PermissionRequest,
     owner: PermissionOwner,
     result: PermissionResult,
-  ): Promise<PermissionResult> {
+  ): Promise<{ outcome: PermissionResult; committed: boolean }> {
     if (result.decision === "cancelled") return this.persist(input, request, result);
     try {
       return await this.access.withAccess(owner, (revision) => {
@@ -88,7 +95,7 @@ export class ToolPermissions implements ToolPermissionPort {
     input: Parameters<ToolPermissionPort["request"]>[0],
     request: PermissionRequest,
     result: PermissionResult,
-  ): Promise<PermissionResult> {
+  ): Promise<{ outcome: PermissionResult; committed: boolean }> {
     const rule = permissionRule(request.tool, result.decision);
     const committed = await this.repository.decide({
       request,
@@ -97,9 +104,9 @@ export class ToolPermissions implements ToolPermissionPort {
       signal: input.signal,
       authoritySignal: input.authoritySignal,
     });
-    const recorded = committed
+    const outcome = committed
       ? result
       : { decision: "cancelled" as const, reason: "permission_stale" };
-    return recorded;
+    return { outcome, committed };
   }
 }

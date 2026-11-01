@@ -51,6 +51,8 @@ export type AgentAcpConfig = {
   executionControllerUrl?: string;
   skillDiscovery?: { registryUrl: string };
   runTimeoutMs: number;
+  permissionTimeoutMs: number;
+  wsPingIntervalMs: number;
   providerAllowPrivateEndpoints: boolean;
   providerCircuit: { failureThreshold: number; cooldownMs: number };
   maxWebSocketPayloadBytes: number;
@@ -136,6 +138,10 @@ export function loadConfig(environment: NodeJS.ProcessEnv = process.env): AgentA
     listen,
     controlListen,
   ]);
+  const runTimeoutMs = parseDuration(
+    environment.ANTNEST_ACP_RUN_TIMEOUT ?? "30m",
+    "ANTNEST_ACP_RUN_TIMEOUT",
+  );
   const workload = new ServiceAuthentication(environment);
   const identityFetch = workload.fetchFor("identity-service", identityUrl.toString());
   const authentication = new RequestAuthentication(
@@ -219,9 +225,12 @@ export function loadConfig(environment: NodeJS.ProcessEnv = process.env): AgentA
     ...executionController,
     ...parseSkillLearningDebugAgentId(environment, allowDevelopmentSettings),
     ...discovery,
-    runTimeoutMs: parseDuration(
-      environment.ANTNEST_ACP_RUN_TIMEOUT ?? "30m",
-      "ANTNEST_ACP_RUN_TIMEOUT",
+    runTimeoutMs,
+    permissionTimeoutMs: parsePermissionTimeout(environment, runTimeoutMs),
+    wsPingIntervalMs: parseDuration(
+      environment.ANTNEST_ACP_WS_PING_INTERVAL ?? "20s",
+      "ANTNEST_ACP_WS_PING_INTERVAL",
+      300_000,
     ),
     maxWebSocketPayloadBytes: parseInteger(
       environment.ANTNEST_ACP_MAX_PROMPT_BYTES ?? String(DEFAULT_MAX_PAYLOAD_BYTES),
@@ -600,7 +609,7 @@ function parseEncryptionKey(value: string): Buffer {
   return key;
 }
 
-function parseDuration(value: string, name: string): number {
+function parseDuration(value: string, name: string, maximum = 3_600_000): number {
   const match = /^(\d+)(ms|s|m)$/u.exec(value.trim());
   if (match === null) {
     throw new ConfigError(`${name} must be a duration using ms, s, or m`);
@@ -608,7 +617,18 @@ function parseDuration(value: string, name: string): number {
   const amount = Number(requireCapture(match[1]));
   const unit = requireCapture(match[2]);
   const multiplier = unit === "ms" ? 1 : unit === "s" ? 1_000 : 60_000;
-  return boundedNumber(amount * multiplier, name, 1, 3_600_000);
+  return boundedNumber(amount * multiplier, name, 1, maximum);
+}
+
+function parsePermissionTimeout(environment: NodeJS.ProcessEnv, runTimeoutMs: number): number {
+  if (runTimeoutMs <= 1)
+    throw new ConfigError("ANTNEST_ACP_RUN_TIMEOUT leaves no positive permission timeout");
+  const value = environment.ANTNEST_ACP_PERMISSION_TIMEOUT;
+  if (value === undefined) return Math.min(600_000, Math.floor(runTimeoutMs / 2));
+  const timeout = parseDuration(value, "ANTNEST_ACP_PERMISSION_TIMEOUT", 2_147_483_647);
+  if (timeout >= runTimeoutMs)
+    throw new ConfigError("ANTNEST_ACP_PERMISSION_TIMEOUT must be shorter than the Run timeout");
+  return timeout;
 }
 
 function parseInteger(value: string, name: string, minimum: number, maximum: number): number {
