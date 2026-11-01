@@ -166,7 +166,11 @@ export async function runReliability({
       config.project,
       "runtime-egress",
     );
-    await docker(["stop", egressContainer.Id]);
+    // Use the lifecycle budget for Egress's bounded drain and cleanup.
+    await docker(["stop", "-t", "130", egressContainer.Id], true, {
+      signal,
+      timeoutMS: 140000,
+    });
     try {
       const create = await admit(api, "/api/admin/agents", agentBody);
       const created = create.body;

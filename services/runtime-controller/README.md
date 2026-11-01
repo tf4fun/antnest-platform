@@ -70,7 +70,10 @@ Startup rejects published PostgreSQL passwords under the [development secret pol
 Runtime containers and workspace volumes are named `antnest-<scope>-runtime-<agent>`
 and `antnest-<scope>-workspace-<agent>` on its single Docker host; legacy unscoped
 resources with matching ownership labels are adopted once (containers renamed,
-workspaces kept as a one-release fallback). Management IPv4 pool capacity is
+workspaces kept as a one-release fallback). Status and MCP HTTP endpoints use the
+current validated management IPv4, so resource names longer than a DNS label
+remain reachable; disconnected or stopped containers advertise no HTTP endpoint.
+Management IPv4 pool capacity is
 cached by Ready and monitor reconciliation, reported on `/status`, and new
 compute creation over a known-full pool is refused with
 `runtime_capacity_exhausted`. Concurrent Controller scopes share one daemon

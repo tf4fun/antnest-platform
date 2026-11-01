@@ -1,3 +1,4 @@
+import { runtimeResourceName } from "../../support/runtime-resource-name.mjs";
 import assert from "node:assert/strict";
 import { createHash, randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
@@ -42,7 +43,7 @@ function fixture() {
         return "all-matrix-containers";
       if (args[0] === "inspect") {
         const selection = matrix.matrixImageSelection(dependencies.environment);
-        if (args[1] === `antnest-runtime-${agentID}`)
+        if (args[1] === runtimeResourceName(project, "runtime", agentID))
           return JSON.stringify([
             {
               Id: args[1],
@@ -194,7 +195,7 @@ test("matrix verifies actual Compose and native Runtime image IDs, not tag names
   const containers = Object.entries(expected).map(([service, image]) => ({
     Id:
       service === "runtime"
-        ? `antnest-runtime-${agentID}`
+        ? runtimeResourceName(project, "runtime", agentID)
         : `container-${service}`,
     Image: image.id,
     Config: {
@@ -248,7 +249,15 @@ for (const [label, key, value] of [
     const normalDocker = f.dependencies.createDocker();
     f.dependencies.createDocker = () => async (args) => {
       const result = await normalDocker(args);
-      if (args[0] !== "inspect" || !args[1].startsWith("antnest-runtime-"))
+      if (
+        args[0] !== "inspect" ||
+        args[1] !==
+          runtimeResourceName(
+            f.config.project,
+            "runtime",
+            `agent_${"1".repeat(32)}`,
+          )
+      )
         return result;
       const containers = JSON.parse(result);
       if (value === undefined) delete containers[0].Config.Labels[key];

@@ -1,3 +1,4 @@
+import { runtimeResourceName } from "../../support/runtime-resource-name.mjs";
 import assert from "node:assert/strict";
 import { createHash, randomUUID } from "node:crypto";
 import { chmod, mkdir, readFile, stat } from "node:fs/promises";
@@ -19,7 +20,11 @@ export async function isolateCompromisedRuntime({
   nextKeys,
 }) {
   assert.match(fixture.agentID, /^agent_[a-z0-9]+$/u);
-  const runtimeName = `antnest-runtime-${fixture.agentID}`;
+  const runtimeName = runtimeResourceName(
+    config.project,
+    "runtime",
+    fixture.agentID,
+  );
   const before = JSON.parse(await docker(["inspect", runtimeName]))[0];
   const runtimeIp =
     before.NetworkSettings.Networks[

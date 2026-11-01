@@ -637,6 +637,9 @@ async fn serve_runtime(
     )
     .await
     .map_err(|error| runtime_failure(identity.clone(), "network", error.code(), error))?;
+    let management_ipv4 = network_session
+        .management_ipv4()
+        .map_err(|error| runtime_failure(identity.clone(), "network", error.code(), error))?;
     tracing::info!(
         lifecycle.event = "egress_path_verified",
         "antnest.agent.id" = spec.identity().agent_id(),
@@ -717,7 +720,8 @@ async fn serve_runtime(
         managed.catalog(),
         spec.maintenance_verifiers().to_vec(),
         spec.receiver().clone(),
-    );
+    )
+    .with_management_ipv4(management_ipv4);
     tracing::info!(
         listen = %spec.listen(),
         "antnest.agent.id" = spec.identity().agent_id(),

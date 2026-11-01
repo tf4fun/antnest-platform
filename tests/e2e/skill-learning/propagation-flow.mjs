@@ -1,3 +1,4 @@
+import { runtimeResourceName } from "../../support/runtime-resource-name.mjs";
 import assert from "node:assert/strict";
 import { createHash, randomUUID } from "node:crypto";
 import { mkdir, writeFile } from "node:fs/promises";
@@ -185,7 +186,7 @@ export async function openPropagationFlow({
         "inspect",
         "--format",
         "{{json .Mounts}}",
-        `antnest-runtime-${agentId}`,
+        runtimeResourceName(config.project, "runtime", agentId),
       ]),
     );
     const mount = mounts.find((item) => item.Destination === "/skills");
@@ -203,7 +204,7 @@ export async function openPropagationFlow({
         "exec",
         "--user",
         "1000",
-        `antnest-runtime-${agentId}`,
+        runtimeResourceName(config.project, "runtime", agentId),
         "cat",
         "/skills/.antnest-skills.json",
       ]),
@@ -229,7 +230,7 @@ export async function openPropagationFlow({
       "exec",
       "--user",
       "1000",
-      `antnest-runtime-${agentId}`,
+      runtimeResourceName(config.project, "runtime", agentId),
       "cat",
       `/skills/${skillName}/SKILL.md`,
     ]);
@@ -457,7 +458,7 @@ export async function openPropagationFlow({
         "inspect",
         "--format",
         '{"id":{{json .Id}},"mounts":{{json .Mounts}}}',
-        `antnest-runtime-${fixture.agentID}`,
+        runtimeResourceName(config.project, "runtime", fixture.agentID),
       ]),
     );
     const workspace = value.mounts.find(
@@ -618,7 +619,7 @@ export async function openPropagationFlow({
               "ps",
               "-aq",
               "--filter",
-              `name=^/antnest-runtime-${fixture.agentID}$`,
+              `name=^/${runtimeResourceName(config.project, "runtime", fixture.agentID)}$`,
             ]),
             "",
           );

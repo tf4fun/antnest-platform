@@ -1,3 +1,4 @@
+import { runtimeResourceName } from "../../support/runtime-resource-name.mjs";
 import assert from "node:assert/strict";
 import { createHash, randomUUID } from "node:crypto";
 import { linkSync, mkdirSync, realpathSync, rmSync } from "node:fs";
@@ -340,7 +341,11 @@ export function createProgressGateHost({
     finished = false;
   const inspect = async (agent, signal, timeoutMS, capture) => {
     const raw = await docker(
-      ["container", "inspect", `antnest-runtime-${agent}`],
+      [
+        "container",
+        "inspect",
+        runtimeResourceName(config.project, "runtime", agent),
+      ],
       false,
       { signal, timeoutMS },
     );

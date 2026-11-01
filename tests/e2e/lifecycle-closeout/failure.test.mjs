@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   assertStartupFailure,
+  assertRuntimeStorage,
   assertFailureEvents,
   assertMCPStartupLog,
   exerciseStartupFailure,
@@ -129,6 +130,19 @@ function fixture() {
 }
 test("failure proves ownership without executable publication", () => {
   assertStartupFailure(fixture());
+});
+
+test("Runtime storage accounts for the owning Controller scope", () => {
+  const f = fixture();
+  const container = f.physical.containers[0];
+  container.Config = {
+    Labels: { "io.antnest.runtime-controller-scope": "fixture" },
+  };
+  container.Mounts[0].Name = "antnest-fixture-workspace-a";
+  f.physical.volumes[0] = container.Mounts[0].Name;
+  assert.doesNotThrow(() => assertRuntimeStorage(f.physical, "a"));
+  container.Config.Labels["io.antnest.runtime-controller-scope"] = "foreign";
+  assert.throws(() => assertRuntimeStorage(f.physical, "a"));
 });
 for (const [name, mutate] of [
   [
