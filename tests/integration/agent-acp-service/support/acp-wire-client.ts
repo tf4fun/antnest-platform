@@ -69,10 +69,16 @@ export class AcpWireClient {
     }
   }
 
-  public async initialize(version: ProtocolVersion): Promise<WireFrame> {
+  public async initialize(
+    version: ProtocolVersion,
+    notices = false,
+  ): Promise<WireFrame> {
     const params =
       version === 1
-        ? { protocolVersion: v1.PROTOCOL_VERSION, clientCapabilities: {} }
+        ? {
+            protocolVersion: v1.PROTOCOL_VERSION,
+            clientCapabilities: notices ? { session: { notices: {} } } : {},
+          }
         : {
             protocolVersion: v2.PROTOCOL_VERSION,
             info: { name: "boundary-test", version: "1.0.0" },

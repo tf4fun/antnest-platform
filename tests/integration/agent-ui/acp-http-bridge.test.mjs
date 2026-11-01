@@ -8,6 +8,10 @@ import * as acpHttp from "../../../services/agent-ui/web/server/dist/adapters/ac
 import { ConfigurationConflictError } from "../../../services/agent-ui/web/server/dist/bridge/configuration-token.js";
 import { SessionReplay } from "../../../services/agent-ui/web/server/dist/bridge/session-replay.js";
 import { parseDeliveryMark } from "../../../services/agent-ui/web/server/dist/bridge/delivery.js";
+import {
+  PermissionInbox,
+  PermissionDecisionError,
+} from "../../../services/agent-ui/web/server/dist/bridge/permission-inbox.js";
 import { startBridgeTelemetry } from "../../../services/agent-ui/web/server/dist/telemetry.js";
 import { ServiceAuthentication } from "../../../services/agent-ui/web/server/dist/adapters/service-authentication.js";
 import { bridgeHeaders } from "../../../services/agent-ui/web/server/dist/adapters/acp-http.js";
@@ -987,3 +991,203 @@ for (const [index, scenario] of promptErrorCases.entries())
       );
     },
   );
+
+test("permission resolution over HTTP withdraws pending approvals and marks decisions stale", async () => {
+  const failures = [];
+  let bridge;
+  let loadClient;
+  let prompts = 0;
+  let cancels = 0;
+  const agent = acp
+    .agent({ name: "agent-ui-permission-resolution-fixture" })
+    .onRequest(acp.methods.agent.initialize, ({ params }) => {
+      assert.deepEqual(params.clientCapabilities.session?.notices, {});
+      assert.deepEqual(params._meta?.["antnest.dev/bridge"], {
+        intentReceipt: 1,
+        targetCancel: 1,
+        deliveryMark: 1,
+        configurationCas: 1,
+        learningNotices: 1,
+      });
+      return {
+        protocolVersion: acp.PROTOCOL_VERSION,
+        agentCapabilities: { loadSession: true },
+        _meta: {
+          "antnest.dev/bridge": {
+            intentReceipt: 1,
+            targetCancel: 1,
+            deliveryMark: 1,
+            configurationCas: 1,
+          },
+        },
+      };
+    })
+    .onRequest(acp.methods.agent.session.load, ({ params, client }) => {
+      loadClient = client;
+      return {
+        _meta: {
+          "antnest.dev/delivery": { sealedWatermark: 1, appendVersion: 1 },
+        },
+      };
+    })
+    .onRequest(acp.methods.agent.session.prompt, () => {
+      prompts += 1;
+      return { stopReason: "end_turn" };
+    })
+    .onNotification(acp.methods.agent.session.cancel, () => {
+      cancels += 1;
+    });
+  const transport = new AcpServer({ agent });
+  const acpHandler = createNodeHttpHandler(transport);
+  const listener = createServer(acpHandler);
+  let work = 0;
+  const inbox = new PermissionInbox({
+    changed: () => {},
+    retainWork: () => {
+      work += 1;
+      let released = false;
+      return () => {
+        if (released) return;
+        released = true;
+        work -= 1;
+      };
+    },
+  });
+  const notifications = [];
+  const poll = async (check, label) => {
+    for (let attempts = 0; attempts < 200; attempts += 1) {
+      if (check()) return;
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    throw new Error(`timed out waiting for ${label}`);
+  };
+  let workload;
+  try {
+    await new Promise((resolve) => listener.listen(0, "127.0.0.1", resolve));
+    const { port } = listener.address();
+    const scope = testScope({
+      organizationId: "org-1",
+      principalId: "user-1",
+      agentId: "agent-1",
+    });
+    workload = new ServiceAuthentication(testSecurityEnvironment());
+    const fetchImpl = workload.fetchFor(
+      "agent-acp-service",
+      `http://127.0.0.1:${port}`,
+    );
+    bridge = await AcpHttpBridge.open({
+      baseUrl: new URL(`http://127.0.0.1:${port}`),
+      scope,
+      fetchImpl,
+      callbacks: {
+        update: (value) => {
+          const resolution =
+            value.update?._meta?.["antnest.dev/permission-resolution"];
+          if (
+            value.update?.sessionUpdate === "notice" &&
+            resolution !== undefined
+          ) {
+            inbox.resolve(value.sessionId, resolution);
+            return;
+          }
+          notifications.push(value);
+        },
+        requestPermission: (params, signal) => inbox.request(params, signal),
+      },
+    });
+    await bridge.load("session-1");
+    assert.ok(loadClient, "session/load must hand back the SDK client context");
+    const ask = (runId, callId) =>
+      loadClient.request(acp.methods.client.session.requestPermission, {
+        sessionId: "session-1",
+        options: [
+          { optionId: "allow_once", name: "Allow once", kind: "allow_once" },
+        ],
+        toolCall: { toolCallId: callId, title: "Edit" },
+        _meta: {
+          "antnest.dev/permission-request": {
+            version: 1,
+            runId,
+            toolCallId: callId,
+          },
+        },
+      });
+    const notice = (payload) =>
+      loadClient.notify(acp.methods.client.session.update, {
+        sessionId: "session-1",
+        update: {
+          sessionUpdate: "notice",
+          severity: "info",
+          title: "Permission request resolved",
+          _meta: { "antnest.dev/permission-resolution": payload },
+        },
+      });
+    const first = ask("run-1", "call-1");
+    await poll(() => inbox.pending.length === 1, "pending permission");
+    assert.equal(work, 1);
+    const item = inbox.pending[0];
+    await notice({
+      version: 1,
+      runId: "old-run",
+      toolCallId: "call-1",
+      reason: "permission_resolved",
+    });
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    assert.equal(work, 1);
+    assert.equal(inbox.pending.length, 1);
+    await notice({
+      version: 1,
+      runId: "run-1",
+      toolCallId: "call-1",
+      reason: "permission_resolved",
+    });
+    assert.deepEqual(await first, { outcome: { outcome: "cancelled" } });
+    assert.equal(work, 0);
+    assert.equal(inbox.pending.length, 0);
+    const second = ask("run-2", "call-2");
+    await poll(() => inbox.pending.length === 1, "second pending permission");
+    await notice({
+      version: 1,
+      runId: "run-2",
+      toolCallId: "call-2",
+      reason: "permission_timeout",
+    });
+    assert.deepEqual(await second, { outcome: { outcome: "cancelled" } });
+    assert.equal(work, 0);
+    assert.equal(notifications.length, 0);
+    assert.throws(
+      () => inbox.decide(item.permissionId, item.generation, "allow_once"),
+      (error) =>
+        error instanceof PermissionDecisionError &&
+        error.code === "permission_stale",
+    );
+    assert.equal(prompts, 0);
+    assert.equal(cancels, 0);
+  } catch (error) {
+    failures.push(error);
+  } finally {
+    for (const close of [
+      () => bridge?.close(),
+      () => transport.close(),
+      () => workload?.close(),
+      async () => {
+        listener.closeAllConnections();
+        await new Promise((resolve, reject) =>
+          listener.close((error) => (error ? reject(error) : resolve())),
+        );
+      },
+    ]) {
+      try {
+        await close();
+      } catch (error) {
+        failures.push(error);
+      }
+    }
+    if (failures.length === 1) throw failures[0];
+    if (failures.length)
+      throw new AggregateError(
+        failures,
+        "permission resolution test cleanup failed",
+      );
+  }
+});

@@ -1,4 +1,5 @@
 import { Pool } from "pg";
+import { readFileSync } from "node:fs";
 import { afterAll, afterEach, beforeEach, describe, expect, it } from "vitest";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import v1Schema from "@agentclientprotocol/sdk/schema/schema.json" with { type: "json" };
@@ -31,6 +32,37 @@ async function pending(client: AcpWireClient, index = 0) {
 }
 function respond(client: AcpWireClient, id: number, optionId: string) {
   client.respond(id, { outcome: { outcome: "selected", optionId } });
+}
+
+function requestMeta(frame: { params?: unknown }) {
+  return (
+    (frame.params as Record<string, unknown> | undefined)?._meta as
+      Record<string, Record<string, unknown>> | undefined
+  )?.["antnest.dev/permission-request"];
+}
+
+function resolutionMeta(frame: { params?: unknown }) {
+  const update = (frame.params as Record<string, unknown> | undefined)
+    ?.update as Record<string, unknown> | undefined;
+  return (
+    update?._meta as Record<string, Record<string, unknown>> | undefined
+  )?.["antnest.dev/permission-resolution"];
+}
+
+async function waitNotice(client: AcpWireClient, reason: string) {
+  const found = () =>
+    client.frames.find((frame) => {
+      const update = (frame.params as Record<string, unknown> | undefined)
+        ?.update as Record<string, unknown> | undefined;
+      const meta = resolutionMeta(frame);
+      return (
+        frame.method === "session/update" &&
+        update?.sessionUpdate === "notice" &&
+        meta?.reason === reason
+      );
+    });
+  await expect.poll(found).not.toBeUndefined();
+  return found()!;
 }
 
 describe.skipIf(databaseUrl === undefined)(
@@ -214,6 +246,153 @@ describe.skipIf(databaseUrl === undefined)(
           )
         ).rows;
         expect(messages).toHaveLength(2);
+      });
+    }
+
+    for (const version of [1, 2] as const) {
+      it(`v${version}: fans one pending approval to every same-owner attachment and commits once`, async () => {
+        const first = await app.connect(version, "owner", { notices: true });
+        const created = await first.request("session/new", setup);
+        const sessionId = String(created.result?.sessionId);
+        const second = await app.connect(version, "owner", { notices: true });
+        await second.request(
+          version === 1 ? "session/load" : "session/resume",
+          { ...setup, sessionId },
+        );
+        const foreign = await app.connect(version, "other-user");
+        expect(
+          (
+            await foreign.request(
+              version === 1 ? "session/load" : "session/resume",
+              { ...setup, sessionId },
+            )
+          ).error,
+        ).toBeDefined();
+        const prompt = first.request("session/prompt", {
+          sessionId,
+          prompt: [{ type: "text", text: "read" }],
+        });
+        const firstFrame = await pending(first);
+        const secondFrame = await pending(second);
+        expect(
+          foreign.frames.filter((frame) => frame.method === permissionMethod),
+        ).toHaveLength(0);
+        const correlation = requestMeta(firstFrame);
+        expect(correlation).toMatchObject({ version: 1 });
+        expect(typeof correlation?.runId).toBe("string");
+        expect(correlation?.runId).not.toBe("");
+        expect(typeof correlation?.toolCallId).toBe("string");
+        expect(correlation?.toolCallId).not.toBe("");
+        expect(requestMeta(secondFrame)).toEqual(correlation);
+        respond(first, firstFrame.id!, "allow_once");
+        expect((await prompt).error).toBeUndefined();
+        const envelopeDef =
+          version === 1 ? "SessionNotification" : "UpdateSessionNotification";
+        const schema = version === 1 ? v1Schema : v2Schema;
+        const envelope = new Ajv2020({
+          strict: false,
+          validateFormats: false,
+        }).compile({ $ref: `#/$defs/${envelopeDef}`, $defs: schema.$defs });
+        const resolution = new Ajv2020({ strict: false }).compile(
+          JSON.parse(
+            readFileSync(
+              new URL(
+                "../../../../contracts/agent-acp/permission-resolution.schema.json",
+                import.meta.url,
+              ),
+              "utf8",
+            ),
+          ) as Record<string, unknown>,
+        );
+        for (const client of [first, second]) {
+          const notice = await waitNotice(client, "permission_resolved");
+          expect(envelope(notice.params), JSON.stringify(envelope.errors)).toBe(
+            true,
+          );
+          const meta = resolutionMeta(notice);
+          expect(resolution(meta), JSON.stringify(resolution.errors)).toBe(
+            true,
+          );
+          expect(meta).toMatchObject({
+            runId: correlation!.runId,
+            toolCallId: correlation!.toolCallId,
+          });
+        }
+        respond(second, secondFrame.id!, "reject_always");
+        const ordered = await second.request("session/list", {});
+        expect(ordered.error).toBeUndefined();
+        await waitDone();
+        expect(app.tools.call).toHaveBeenCalledTimes(1);
+        expect(
+          (await pool.query("SELECT decision,reason FROM tool_permissions"))
+            .rows,
+        ).toEqual([{ decision: "allow_once", reason: "client_response" }]);
+        const configuration = (
+          await pool.query<{ configuration: SessionConfiguration }>(
+            "SELECT configuration FROM acp_sessions WHERE id = $1",
+            [sessionId],
+          )
+        ).rows[0]?.configuration;
+        expect(configuration?.toolRules?.length ?? 0).toBe(0);
+      });
+
+      it(`v${version}: the approval deadline ends an unanswered wait as permission_timeout`, async () => {
+        await app.close();
+        app = await startBoundaryApplication(pool, undefined, {
+          permissionTimeoutMs: 200,
+          runTimeoutMs: 5000,
+        });
+        const client = await app.connect(version, "owner", { notices: true });
+        const created = await client.request("session/new", setup);
+        const sessionId = String(created.result?.sessionId);
+        const prompt = client.request("session/prompt", {
+          sessionId,
+          prompt: [{ type: "text", text: "read" }],
+        });
+        const frame = await pending(client);
+        const correlation = requestMeta(frame);
+        const resolution = new Ajv2020({ strict: false }).compile(
+          JSON.parse(
+            readFileSync(
+              new URL(
+                "../../../../contracts/agent-acp/permission-resolution.schema.json",
+                import.meta.url,
+              ),
+              "utf8",
+            ),
+          ) as Record<string, unknown>,
+        );
+        const notice = await waitNotice(client, "permission_timeout");
+        const meta = resolutionMeta(notice);
+        expect(resolution(meta), JSON.stringify(resolution.errors)).toBe(true);
+        expect(meta).toMatchObject({
+          runId: correlation!.runId,
+          toolCallId: correlation!.toolCallId,
+        });
+        respond(client, frame.id!, "allow_always");
+        const ordered = await client.request("session/list", {});
+        expect(ordered.error).toBeUndefined();
+        await waitDone(3000);
+        expect((await prompt).error).toBeUndefined();
+        expect(app.tools.call).not.toHaveBeenCalled();
+        expect(
+          (await pool.query("SELECT decision,reason FROM tool_permissions"))
+            .rows,
+        ).toEqual([{ decision: "cancelled", reason: "permission_timeout" }]);
+        expect(
+          (
+            await pool.query<{ state: string; error_class: string | null }>(
+              "SELECT state,error_class FROM runs",
+            )
+          ).rows,
+        ).toEqual([{ state: "completed", error_class: null }]);
+        const configuration = (
+          await pool.query<{ configuration: SessionConfiguration }>(
+            "SELECT configuration FROM acp_sessions WHERE id = $1",
+            [sessionId],
+          )
+        ).rows[0]?.configuration;
+        expect(configuration?.toolRules?.length ?? 0).toBe(0);
       });
     }
 

@@ -52,6 +52,8 @@ export async function startBoundaryApplication(
   information = runtimeInformation(),
   options: {
     runTimeoutMs?: number;
+    permissionTimeoutMs?: number;
+    wsPingIntervalMs?: number;
     configuration?: ExecutionConfigurationV1;
     providerCircuit?: { failureThreshold: number; cooldownMs: number };
     modelTransport?: AuthenticatedModelTransport;
@@ -134,7 +136,7 @@ export async function startBoundaryApplication(
     options.providerCircuit,
   );
   const acquireClient = vi.spyOn(providers, "acquire");
-  const permissions = new PermissionConnections();
+  const permissions = new PermissionConnections(options.permissionTimeoutMs);
   const outputs = new SessionOutputStreams();
   const configurations = new PostgresExecutionConfiguration(
     kernel,
@@ -280,6 +282,9 @@ export async function startBoundaryApplication(
     permissions,
     ready: () => Promise.resolve(true),
     maxWebSocketPayloadBytes: 64 * 1024,
+    ...(options.wsPingIntervalMs === undefined
+      ? {}
+      : { wsPingIntervalMs: options.wsPingIntervalMs }),
   });
   const clients: AcpWireClient[] = [];
   async function close() {
@@ -337,7 +342,11 @@ export async function startBoundaryApplication(
       cancel,
       recoveryRequired,
       close,
-      async connect(version: ProtocolVersion, alias = "owner") {
+      async connect(
+        version: ProtocolVersion,
+        alias = "owner",
+        options?: { notices?: boolean },
+      ) {
         const value = identities.get(alias);
         if (value === undefined)
           throw new Error(`Missing fixture identity: ${alias}`);
@@ -346,7 +355,7 @@ export async function startBoundaryApplication(
           value,
         );
         clients.push(client);
-        await client.initialize(version);
+        await client.initialize(version, options?.notices ?? false);
         return client;
       },
     };
