@@ -241,22 +241,27 @@ func TestCreateWorkflowCancelDuringActivityRequestsTermination(t *testing.T) {
 	stubChildDelete(env, probe)
 	release := make(chan struct{})
 	t.Cleanup(func() { close(release) })
+	var cancelApplied atomic.Bool
 	onCreateActivity(env, "network_ensure", func(ctx context.Context, _ application.CreateAgentInput) (application.OperationView, error) {
 		probe.record("network_ensure")
+		env.RegisterDelayedCallback(func() {
+			env.UpdateWorkflow("cancel_lifecycle_operation", "", &testsuite.TestUpdateCallback{
+				OnAccept: func() {},
+				OnReject: func(err error) { t.Errorf("cancel rejected: %v", err) },
+				OnComplete: func(_ interface{}, err error) {
+					if err != nil {
+						t.Errorf("cancel update failed: %v", err)
+						return
+					}
+					cancelApplied.Store(true)
+				},
+			}, "request-reliability")
+		}, 0)
 		select {
 		case <-ctx.Done():
 			return application.OperationView{}, ctx.Err()
 		case <-release:
 			return application.OperationView{State: domain.OperationRunning}, nil
-		}
-	})
-	env.SetOnActivityStartedListener(func(info *activity.Info, ctx context.Context, args converter.EncodedValues) {
-		if info.ActivityType.Name == "network_ensure" {
-			go env.UpdateWorkflow("cancel_lifecycle_operation", "", &testsuite.TestUpdateCallback{
-				OnAccept:   func() {},
-				OnReject:   func(err error) { t.Errorf("cancel rejected: %v", err) },
-				OnComplete: func(interface{}, error) {},
-			}, "request-reliability")
 		}
 	})
 	env.ExecuteWorkflow(CreateAgentWorkflow, reliabilityCommand())
@@ -266,10 +271,11 @@ func TestCreateWorkflowCancelDuringActivityRequestsTermination(t *testing.T) {
 	var failure *temporal.ApplicationError
 	require.ErrorAs(t, err, &failure)
 	require.Equal(t, "lifecycle_cancelled", failure.Type())
-	order := probe.order()
-	require.Equal(t, "network_ensure", order[0])
-	require.Equal(t, "terminate_lifecycle", order[len(order)-1])
-	require.False(t, slices.Contains(order, "runtime_initialize"))
+	require.True(t, cancelApplied.Load(), "cancel update never completed before workflow error")
+	require.Equal(t, []string{"network_ensure", "terminate_lifecycle"}, probe.order())
+	require.Len(t, probe.terminations, 1)
+	require.Equal(t, domain.PhaseNetworkEnsure, probe.terminations[0].Phase)
+	require.Equal(t, "lifecycle_cancelled", probe.terminations[0].Code)
 	require.Len(t, probe.children, 1)
 }
 
