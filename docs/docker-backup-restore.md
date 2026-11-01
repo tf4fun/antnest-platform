@@ -246,3 +246,32 @@ make e2e-lifecycle-restore
 ```
 
 Do not commit dumps, secret bundles or step-by-step execution logs.
+
+## ACP content retention and restore re-erasure
+
+Agent ACP Service purges deleted Session content automatically under the
+[shared data retention contract](../contracts/agent-acp/data-retention.md);
+the per-table inventory lives in
+[architecture Persistence](../services/agent-acp-service/docs/architecture.md#persistence).
+`ANTNEST_ACP_DELETED_SESSION_RETENTION` (default `30d`) is measured by the
+durable `deleted_at` timestamp; rows deleted before the column existed were
+backfilled conservatively at migration time. `0` disables the worker.
+`ANTNEST_ACP_PURGE_BATCH` bounds each transactional batch (default `500`,
+bound 1..500) and `ANTNEST_ACP_PURGE_INTERVAL` (default `60s`) is the delay
+between completed scan passes, not between batches. In peer mode the worker
+covers only the Agent scopes of active owned generations; orphan Sessions
+require the offline CLI. Purged content covers transcripts, attachments, Tool
+arguments and results, context checkpoints, client MCP snapshots and learning
+evidence copies. Applied Skill artifacts stay readable with explicitly
+tombstoned provenance, and budget/accounting rows including unknown charges
+are retained and never reduced. Active and closed Session history is not
+automatically compacted until issue #19, and independent fork copies survive
+their source Session's purge.
+
+A restored pre-erasure backup can reintroduce erased content. Keep protected
+erasure request records separately from the database, reapply the same
+selective erasure after a restore before reopening the service to traffic,
+and preserve all accounting and signing keys needed by snapshots until their
+legitimate retirement. Backups, WAL archives, replicas, logs and published
+Skill distribution each keep a separate operator lifecycle; this is not a
+comprehensive GDPR erasure claim.
