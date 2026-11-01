@@ -1,11 +1,11 @@
 {
   "contract": "antnest.agent-acp.data-retention",
   "version": 1,
-  "status": "planned",
+  "status": "active",
   "issue": 55,
   "owner_service": "agent-acp-service",
   "semantics": "data-retention.md",
-  "activation": "Shared contract only. No route, worker, migration or CLI is activated by this batch; activation changes land with the owning service implementation batch.",
+  "activation": "Activated by the owning agent-acp-service implementation batch: migration 0035, the bounded fenced purge worker, the offline purge CLI and the durable audit ledger now implement this contract.",
   "config": {
     "deleted_session_retention": {
       "environment": "ANTNEST_ACP_DELETED_SESSION_RETENTION",
@@ -114,7 +114,13 @@
       "run_usage"
     ],
     "published_artifact_table": "learning_managed_skills",
-    "documentation": "table documentation identifies the intentional metadata and derived-record exceptions"
+    "published_artifact_tables": [
+      "learning_managed_skills",
+      "learning_candidates",
+      "learning_changes",
+      "skill_source_projections"
+    ],
+    "documentation": "table documentation identifies the intentional metadata and derived-record exceptions; retained metadata and ownership-infrastructure tables are inventory-defined in the architecture Persistence table"
   },
   "boundaries": {
     "separate_operator_lifecycle": [

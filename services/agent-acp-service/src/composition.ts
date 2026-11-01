@@ -466,6 +466,12 @@ export async function startAgentAcpService(
         if (!ownership.signal.aborted) recoveryRequired(asError(error));
       });
     if (temporaryCleanupRun !== undefined) background.push(temporaryCleanupRun);
+    const contentPurgeRun = (built.owned === undefined ? built.contentPurgeWorker : undefined)
+      ?.run(ownership.signal)
+      .catch((error: unknown) => {
+        if (!ownership.signal.aborted) recoveryRequired(asError(error));
+      });
+    if (contentPurgeRun !== undefined) background.push(contentPurgeRun);
     telemetry.log("info", "service_started", {
       listen_host: config.listen.host,
       listen_port: config.listen.port,
@@ -603,7 +609,7 @@ export function buildComponents(
           peerAuthentication.membership.members.map((member) => member.member_id),
           peerAvailability === undefined ? undefined : () => peerAvailability.current(),
         );
-  const repositories = createLegacyAgentRepositories(kernel, secretBox, ownershipSignal);
+  const repositories = createLegacyAgentRepositories(kernel, secretBox, ownershipSignal, telemetry);
   const { permissions: permissionRepository, executions } = repositories;
 
   const model = new InstrumentedModel(
@@ -787,6 +793,7 @@ export function buildComponents(
     rawTools,
     temporarySkills,
     temporarySkillCleanupWorker,
+    contentPurgeWorker,
     sessionService,
   } = agent;
   if (registration !== undefined)
@@ -951,6 +958,7 @@ export function buildComponents(
     skillSources,
     skillProjectionWorker,
     temporarySkillCleanupWorker,
+    contentPurgeWorker,
     directory,
     skillCommands:
       owned?.skillCommands ??

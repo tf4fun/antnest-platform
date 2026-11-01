@@ -4,6 +4,10 @@ import { CallerContextVerifier } from "./adapters/caller-context.js";
 import { RequestAuthentication } from "./transport/request-authentication.js";
 import { parse as parsePostgresConnection } from "pg-connection-string";
 import type { ConnectionCapacityLimits } from "./application/connection-capacity.js";
+import {
+  parseContentRetentionConfig,
+  type ContentRetentionConfig,
+} from "./domain/content-retention.js";
 import { isIP } from "node:net";
 import ipaddr from "ipaddr.js";
 const MAX_PAYLOAD_BYTES = 64 * 1024 * 1024;
@@ -58,6 +62,7 @@ export type AgentAcpConfig = {
   maxWebSocketPayloadBytes: number;
   maxConfigurationBytes: number;
   connectionLimits: ConnectionCapacityLimits;
+  contentRetention?: ContentRetentionConfig;
   shutdownTimeoutMs: number;
   telemetry: {
     captureRpcContent?: boolean;
@@ -188,6 +193,7 @@ export function loadConfig(environment: NodeJS.ProcessEnv = process.env): AgentA
     authentication,
     dependencyFetchers,
     connectionLimits,
+    contentRetention: parseContentRetentionConfig(environment),
     providerCircuit: {
       failureThreshold: parseInteger(
         environment.ANTNEST_ACP_PROVIDER_CIRCUIT_FAILURE_THRESHOLD ?? "3",

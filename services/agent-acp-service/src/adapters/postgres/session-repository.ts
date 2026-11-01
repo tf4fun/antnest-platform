@@ -456,11 +456,10 @@ export class PostgresSessionRepository implements SessionRepository {
         if (state === "deleted") return;
         throw new Error("Session does not exist");
       }
-      await client.query("UPDATE acp_sessions SET state = $2, updated_at = $3 WHERE id = $1", [
-        sessionId,
-        state,
-        changedAt,
-      ]);
+      await client.query(
+        "UPDATE acp_sessions SET state=$2,updated_at=$3,deleted_at=CASE WHEN $2='deleted' THEN COALESCE(deleted_at,$3::timestamptz) ELSE deleted_at END WHERE id=$1",
+        [sessionId, state, changedAt],
+      );
       await markRunsCancelled(client, sessionId, changedAt);
     });
   }

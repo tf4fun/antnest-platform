@@ -66,7 +66,9 @@ export class PostgresSkillSourceProjections {
     >(
       `SELECT p.organization_id,p.agent_id,p.name,p.owner_id,p.description,p.sequence,p.content_digest,p.active,
       p.candidate_id,c.skill_text,c.artifact,c.artifact_digest,c.package_path,
-      i.task_id,i.generation,i.request_id AS effect_request_id
+      COALESCE(i.task_id,c.purged_task_id) AS task_id,
+      COALESCE(i.generation,c.generation) AS generation,
+      COALESCE(i.request_id,c.purged_effect_request_id) AS effect_request_id
       FROM skill_source_projections p
       JOIN learning_managed_skills m ON m.organization_id=p.organization_id AND m.agent_id=p.agent_id
         AND m.package_path='.antnest/skills/' || p.name AND m.owner_principal_id=p.owner_id
@@ -75,8 +77,12 @@ export class PostgresSkillSourceProjections {
       JOIN learning_candidates c ON c.candidate_id=p.candidate_id AND c.state='applied' AND c.target_digest=p.content_digest
       JOIN learning_changes ch ON ch.candidate_id=p.candidate_id AND ch.organization_id=p.organization_id
         AND ch.agent_id=p.agent_id AND ch.owner_principal_id=p.owner_id AND ch.after_digest=p.content_digest
-      JOIN learning_maintenance_intents i ON i.request_id=ch.effect_request_id AND i.state='settled' AND i.action IN ('install','commit')
-      WHERE p.organization_id=$1 AND p.agent_id=$2 AND p.name=$3 AND p.active`,
+      LEFT JOIN learning_maintenance_intents i ON i.request_id=ch.effect_request_id AND i.state='settled' AND i.action IN ('install','commit')
+      WHERE p.organization_id=$1 AND p.agent_id=$2 AND p.name=$3 AND p.active
+        AND (i.request_id IS NOT NULL OR (c.provenance_purged_at IS NOT NULL
+          AND ch.provenance_purged_at IS NOT NULL AND c.task_id IS NULL AND ch.task_id IS NULL
+          AND ch.effect_request_id IS NULL AND ch.source_session_id IS NULL AND ch.source_run_id IS NULL
+          AND c.purged_task_id IS NOT NULL AND c.purged_effect_request_id IS NOT NULL))`,
       [organizationId, key.agent_id, key.name],
     );
     const row = result.rows[0];

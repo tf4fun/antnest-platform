@@ -1,0 +1,14 @@
+ALTER TABLE acp_sessions ADD COLUMN deleted_at timestamptz;
+UPDATE acp_sessions SET deleted_at=clock_timestamp() WHERE state='deleted';
+CREATE FUNCTION stamp_acp_session_deleted_at() returns trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.state='deleted' THEN IF TG_OP='UPDATE' AND OLD.state='deleted' THEN NEW.deleted_at:=OLD.deleted_at; ELSE NEW.deleted_at:=COALESCE(NEW.deleted_at,clock_timestamp()); END IF; END IF; RETURN NEW; END $$;
+CREATE TRIGGER acp_sessions_stamp_deleted_at BEFORE INSERT OR UPDATE OF state,deleted_at ON acp_sessions FOR EACH ROW EXECUTE FUNCTION stamp_acp_session_deleted_at();
+ALTER TABLE acp_sessions ADD CONSTRAINT acp_sessions_deleted_at_shape CHECK ((state='deleted')=(deleted_at IS NOT NULL));
+CREATE INDEX acp_sessions_retention_idx ON acp_sessions(deleted_at,id) WHERE state='deleted';
+ALTER TABLE acp_sessions DROP CONSTRAINT acp_sessions_forked_from_session_id_fkey, ADD CONSTRAINT acp_sessions_forked_from_session_id_fkey FOREIGN KEY(forked_from_session_id) REFERENCES acp_sessions(id) ON DELETE SET NULL;
+ALTER TABLE learning_candidates ALTER COLUMN task_id DROP NOT NULL, ADD COLUMN provenance_purged_at timestamptz, ADD COLUMN purged_task_id text, ADD COLUMN purged_effect_request_id text;
+ALTER TABLE learning_candidates DROP CONSTRAINT learning_candidates_evidence_ids_check;
+ALTER TABLE learning_candidates ADD CONSTRAINT learning_candidates_retention_shape CHECK ((provenance_purged_at IS NULL AND task_id IS NOT NULL AND purged_task_id IS NULL AND purged_effect_request_id IS NULL AND cardinality(evidence_ids) BETWEEN 1 AND 64) OR (provenance_purged_at IS NOT NULL AND task_id IS NULL AND state='applied' AND purged_task_id IS NOT NULL AND purged_effect_request_id IS NOT NULL AND cardinality(evidence_ids)=0));
+ALTER TABLE learning_changes ALTER COLUMN effect_request_id DROP NOT NULL, ADD COLUMN provenance_purged_at timestamptz;
+ALTER TABLE learning_changes DROP CONSTRAINT learning_changes_check;
+ALTER TABLE learning_changes ADD CONSTRAINT learning_changes_retention_shape CHECK (candidate_id IS NOT NULL AND after_digest IS NOT NULL AND ((provenance_purged_at IS NULL AND task_id IS NOT NULL AND effect_request_id IS NOT NULL) OR (provenance_purged_at IS NOT NULL AND task_id IS NULL AND effect_request_id IS NULL AND source_run_id IS NULL AND source_session_id IS NULL)));
+CREATE TABLE content_purge_audit (batch_id uuid PRIMARY KEY, occurred_at timestamptz NOT NULL DEFAULT clock_timestamp(), counts jsonb NOT NULL CHECK (jsonb_typeof(counts)='object' AND counts ?& ARRAY['sessions','runs','messages','toolAttempts','learningTasks','evidenceItems','evidenceSnapshots','candidates','publishedCandidates','learningChanges'] AND counts - ARRAY['sessions','runs','messages','toolAttempts','learningTasks','evidenceItems','evidenceSnapshots','candidates','publishedCandidates','learningChanges']='{}'::jsonb));

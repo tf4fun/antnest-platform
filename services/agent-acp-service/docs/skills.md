@@ -265,3 +265,20 @@ Runtime tool that collides with these names fails explicitly. See the
 - Registry errors are sanitized and stay distinct from an empty search. The
   `skill.discovery.search` and `skill.discovery.load` spans carry Run, source and
   digest identities without queries, package bodies or credentials.
+
+## Skill Learning Storage
+
+Learned Skill records live in Agent ACP Service's own PostgreSQL schema; the
+full per-table inventory and retention rules are maintained in
+[architecture Persistence](architecture.md#persistence) under the
+[shared data retention contract](../../../contracts/agent-acp/data-retention.md).
+Scan and task state (`learning_tasks`, evidence snapshots/items, model calls,
+review attempts, source decisions and scan cursors), apply bases, maintenance
+intents, candidates and changes are derived Learning records: they are purged
+together with their source Session under the retention rules. A published
+managed Skill artifact (`learning_managed_skills`, its applied
+`learning_candidates` row and `skill_source_projections` entry) is an
+intentional exception — it stays readable and re-publishable after the source
+Session is purged, with provenance explicitly tombstoned on the candidate and
+change rows rather than copied into new content. Budget and accounting rows are
+separate retained records and are never reduced by erasure.

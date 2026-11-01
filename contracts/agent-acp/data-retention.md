@@ -3,10 +3,10 @@
 This document is the semantics half of
 [`data-retention.json`](data-retention.json), version 1, the shared contract for
 issue #55. It codifies how Agent ACP Service retains and purges deleted Session
-content and how an operator requests scoped erasure. The contract is planned
-only: publishing it activates no route, worker, migration or CLI. The owning
-`agent-acp-service` implementation batch activates the behavior; consumers and
-the explicit integration batch follow separately.
+content and how an operator requests scoped erasure. The owning
+`agent-acp-service` implementation batch activated it: migration 0035, the
+bounded fenced purge worker, the offline purge CLI and the durable audit
+ledger now implement this contract.
 
 ## Configuration
 
@@ -103,10 +103,24 @@ unknown charges. The intentional metadata and derived-record exceptions are:
 | `organization_spend`             | accounting totals including unknown charges; retained, never reduced or zeroed |
 | `run_usage`                      | per-Run usage accounting; retained, never reduced                              |
 | `learning_managed_skills`        | published managed Skill artifacts; retained with tombstoned provenance         |
+| `learning_candidates`            | applied candidate artifact retained tombstoned; unpublished rows purge         |
+| `learning_changes`               | applied change retained tombstoned without task or source references           |
+| `skill_source_projections`       | published Skill source projection retained and re-projectable                  |
 
-Table documentation in the owning service identifies these intentional
-exceptions; Session-owned content and derived learning records outside this list
+Ownership and service metadata tables — agent leases, peer membership and
+participation, Runtime barrier cycles, owner stop receipts, execution
+configurations, change sequences and migration/audit journals — are retained
+infrastructure inventory, not Session content; they are identified row-by-row in
+the owning service
+[architecture Persistence table](../../services/agent-acp-service/docs/architecture.md#persistence).
+Session-owned content and derived learning records outside these exceptions
 follow the purge scope above.
+
+Independent fork copies survive their source Session's purge; erasure by user
+or organization selector covers only the selected copies. In peer mode the
+automated worker erases only the Agent scopes of its active owned generations;
+orphan Sessions without a live generation are never purged automatically and
+require the operator CLI.
 
 ## Boundaries
 

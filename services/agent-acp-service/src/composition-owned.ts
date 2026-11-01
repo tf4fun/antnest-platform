@@ -813,6 +813,7 @@ export class OwnedAgentComponents {
       kernel,
       new SecretBox(config.clientMcpKey),
       generation.authority,
+      telemetry,
     );
     const callbacks = {
       onSettled: (requestId: string) => runtimeConnections.releaseOperation(requestId),
@@ -837,6 +838,7 @@ export class OwnedAgentComponents {
             kernel,
             new SecretBox(config.clientMcpKey),
             generation.authority,
+            telemetry,
           );
     const signer =
       config.skillMaintenanceSigning === undefined
@@ -968,6 +970,7 @@ export class OwnedAgentComponents {
       entry.graph.temporarySkillCleanupWorker.run(entry.signal),
       entry.legacyCleanup.run(entry.signal),
     ];
+    work.push(entry.graph.contentPurgeWorker.run(entry.signal));
     if (entry.graph.learningWorker !== undefined)
       work.push(entry.graph.learningWorker.run(entry.signal));
     if (entry.legacyPaused !== undefined) work.push(this.recoverLegacyLearning(entry));
