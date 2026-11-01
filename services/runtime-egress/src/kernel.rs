@@ -141,6 +141,27 @@ fn protected_ipv4_networks(tunnel_cidr: Ipv4Net, connected: &[Ipv4Net]) -> Vec<I
     let mut networks = crate::policy::PROTECTED_IPV4_NETWORKS.to_vec();
     networks.push(tunnel_cidr);
     networks.extend_from_slice(connected);
+    normalize_networks(networks)
+}
+
+fn protected_ipv4_networks_with_platform(
+    tunnel_cidr: Ipv4Net,
+    connected: &[Ipv4Net],
+    platform_deny: &[Ipv4Net],
+) -> Vec<Ipv4Net> {
+    let rfc1918 = crate::policy::RFC1918_IPV4_NETWORKS;
+    let mut networks: Vec<Ipv4Net> = crate::policy::PROTECTED_IPV4_NETWORKS
+        .iter()
+        .copied()
+        .filter(|network| !rfc1918.contains(network))
+        .collect();
+    networks.push(tunnel_cidr);
+    networks.extend_from_slice(connected);
+    networks.extend_from_slice(platform_deny);
+    normalize_networks(networks)
+}
+
+fn normalize_networks(mut networks: Vec<Ipv4Net>) -> Vec<Ipv4Net> {
     networks.sort_by_key(|network| (network.prefix_len(), network.network()));
     let mut protected: Vec<Ipv4Net> = Vec::new();
     for network in networks {
@@ -149,6 +170,58 @@ fn protected_ipv4_networks(tunnel_cidr: Ipv4Net, connected: &[Ipv4Net]) -> Vec<I
         }
     }
     protected
+}
+
+pub fn nft_rules_with_platform(
+    tun_name: &str,
+    tunnel_cidr: Ipv4Net,
+    resolver_ipv4: Ipv4Addr,
+    connected: &[Ipv4Net],
+    platform_deny: &[Ipv4Net],
+) -> String {
+    let protected = protected_ipv4_networks_with_platform(tunnel_cidr, connected, platform_deny);
+    let destinations = protected
+        .iter()
+        .map(ToString::to_string)
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!(
+        r#"table ip antnest_egress {{
+  chain forward {{
+    type filter hook forward priority filter; policy drop;
+    iifname "{tun_name}" ip daddr {{ {destinations} }} counter drop
+    iifname "{tun_name}" ip saddr {tunnel_cidr} meta l4proto tcp accept
+    oifname "{tun_name}" ip daddr {tunnel_cidr} ct state established,related accept
+  }}
+  chain input {{
+    type filter hook input priority filter; policy accept;
+    iifname "{tun_name}" ip saddr {tunnel_cidr} ip daddr {resolver_ipv4} tcp dport 53 accept
+    iifname "{tun_name}" drop
+  }}
+  chain postrouting {{
+    type nat hook postrouting priority srcnat; policy accept;
+    ip saddr {tunnel_cidr} masquerade
+  }}
+}}
+"#
+    )
+}
+
+pub fn validate_connected_coverage(
+    connected: &[Ipv4Net],
+    platform_deny: &[Ipv4Net],
+) -> Result<(), KernelError> {
+    for network in connected {
+        let covered = platform_deny
+            .iter()
+            .any(|deny| deny.contains(&network.network()) && deny.contains(&network.broadcast()));
+        if !covered {
+            return Err(KernelError::InvalidPlan(
+                "platform deny set does not cover a connected subnet",
+            ));
+        }
+    }
+    Ok(())
 }
 
 pub fn connected_ipv4_subnets(routes: &str) -> Result<Vec<Ipv4Net>, KernelError> {
@@ -224,10 +297,20 @@ pub struct LinuxKernel {
 impl LinuxKernel {
     pub async fn bootstrap(
         plan: &KernelPlan,
+        platform_deny: &[Ipv4Net],
         command_timeout: Duration,
     ) -> Result<(Self, TunDevice), KernelError> {
+        let tunnel = plan.tunnel_cidr();
+        let covered = platform_deny.iter().any(|network| {
+            network.contains(&tunnel.network()) && network.contains(&tunnel.broadcast())
+        });
+        if !covered {
+            return Err(KernelError::InvalidPlan(
+                "platform deny set does not cover the tunnel pool",
+            ));
+        }
         let device = platform::create_tun(plan.tun_name()).await?;
-        let protected_networks = platform::configure(plan, command_timeout).await?;
+        let protected_networks = platform::configure(plan, platform_deny, command_timeout).await?;
         Ok((
             Self {
                 tunnel_cidr: plan.tunnel_cidr(),
@@ -273,7 +356,10 @@ mod platform {
         time::timeout,
     };
 
-    use super::{KernelError, KernelPlan, nft_rules, protected_ipv4_networks};
+    use super::{
+        KernelError, KernelPlan, nft_rules_with_platform, protected_ipv4_networks_with_platform,
+        validate_connected_coverage,
+    };
     use crate::network::PacketDevice;
     use ipnet::Ipv4Net;
 
@@ -369,6 +455,7 @@ mod platform {
 
     pub(super) async fn configure(
         plan: &KernelPlan,
+        platform_deny: &[Ipv4Net],
         command_timeout: Duration,
     ) -> Result<Vec<Ipv4Net>, KernelError> {
         let forwarding = timeout(
@@ -397,11 +484,13 @@ mod platform {
         .map_err(|_| KernelError::Command("IPv4 subnet discovery timed out".to_owned()))?
         .map_err(|_| KernelError::Command("IPv4 subnet discovery failed".to_owned()))?;
         let connected = super::connected_ipv4_subnets(&routes)?;
-        let rules = nft_rules(
+        validate_connected_coverage(&connected, platform_deny)?;
+        let rules = nft_rules_with_platform(
             plan.tun_name(),
             plan.tunnel_cidr(),
             plan.resolver_ipv4,
             &connected,
+            platform_deny,
         );
         run(
             "nft",
@@ -412,7 +501,11 @@ mod platform {
         )
         .await?;
         clear_conntrack(&plan.tunnel_cidr().to_string(), command_timeout).await?;
-        Ok(protected_ipv4_networks(plan.tunnel_cidr(), &connected))
+        Ok(protected_ipv4_networks_with_platform(
+            plan.tunnel_cidr(),
+            &connected,
+            platform_deny,
+        ))
     }
 
     pub(super) async fn clear_conntrack(
@@ -568,6 +661,7 @@ mod platform {
 
     pub(super) async fn configure(
         _: &KernelPlan,
+        _: &[ipnet::Ipv4Net],
         _: Duration,
     ) -> Result<Vec<ipnet::Ipv4Net>, KernelError> {
         Err(KernelError::UnsupportedPlatform)

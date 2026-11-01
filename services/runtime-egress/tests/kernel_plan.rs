@@ -157,3 +157,45 @@ fn issue_34_kernel_drops_protected_destinations_before_accepting_uplink() {
         assert!(forward[..accept].contains(range), "{range}");
     }
 }
+
+#[test]
+fn platform_rules_deny_platform_and_special_but_transit_rfc1918() {
+    use antnest_runtime_egress::kernel::nft_rules_with_platform;
+    let platform: Vec<ipnet::Ipv4Net> = vec![
+        "172.30.255.0/24".parse().unwrap(),
+        "10.241.0.0/24".parse().unwrap(),
+    ];
+    let rules = nft_rules_with_platform(
+        "antnest-egress0",
+        "100.64.0.0/10".parse().unwrap(),
+        "100.64.0.1".parse().unwrap(),
+        &[],
+        &platform,
+    );
+    assert!(rules.contains("172.30.255.0/24"));
+    assert!(rules.contains("10.241.0.0/24"));
+    assert!(rules.contains("127.0.0.0/8"));
+    assert!(rules.contains("169.254.0.0/16"));
+    assert!(!rules.contains("10.0.0.0/8"));
+    assert!(!rules.contains("172.16.0.0/12"));
+    assert!(!rules.contains("192.168.0.0/16"));
+    assert!(
+        rules
+            .contains("iifname \"antnest-egress0\" ip saddr 100.64.0.0/10 meta l4proto tcp accept")
+    );
+    assert!(rules.contains("ip daddr 100.64.0.1 tcp dport 53 accept"));
+}
+
+#[test]
+fn connected_subnets_must_be_fully_covered_by_platform_deny() {
+    use antnest_runtime_egress::kernel::validate_connected_coverage;
+    let deny: Vec<ipnet::Ipv4Net> = vec!["172.30.0.0/16".parse().unwrap()];
+    let connected = ["172.30.255.0/24".parse().unwrap()];
+    assert!(validate_connected_coverage(&connected, &deny).is_ok());
+    let narrow: Vec<ipnet::Ipv4Net> = vec!["172.30.255.5/32".parse().unwrap()];
+    assert!(validate_connected_coverage(&connected, &narrow).is_err());
+    let unrelated: Vec<ipnet::Ipv4Net> = vec!["93.184.216.0/24".parse().unwrap()];
+    assert!(validate_connected_coverage(&connected, &unrelated).is_err());
+    let other = ["172.31.0.0/24".parse().unwrap()];
+    assert!(validate_connected_coverage(&other, &deny).is_err());
+}

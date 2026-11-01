@@ -263,9 +263,8 @@ external decision except for this resolver access; callers needing total DNS
 denial keep `deny_all`. Domain rules bind only validated answers from the
 Agent's own resolver queries; they can never grant platform addresses.
 
-Revision 9 reserves the document ahead of implementation: the current Egress
-service still accepts only schema_version 1 at this route, and the owning
-Egress, Controller and Console batches remain pending.
+Revision 9 is implemented by the Egress service; the owning Controller and
+Console consumer batches remain pending.
 
 `GET /internal/policies/{policy_id}/revisions/{revision}` reads the exact
 immutable revision, including its policy document:

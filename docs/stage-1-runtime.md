@@ -238,9 +238,14 @@ agent_policy_assignments
 row continues to occupy its address. A sweeper makes the slot reusable only
 after the deadline and a final zero-state check.
 
-The first policy schema supports `allow_all` and `deny_all`. Immutable,
-schema-versioned revisions allow later destination CIDR, port, protocol, or
-domain-derived rules without changing Runtime. A missing, invalid, or
+The implemented policy schema supports `allow_all` and `deny_all`. Egress
+control contract revision 9 additionally publishes a schema_version 2
+document — a `default` plus ordered first-match rules over TCP ports and
+either canonical IPv4 CIDRs or DNS domains — now implemented by the owning
+Egress service while the Controller and Console consumer batches remain
+pending. Explicit v2 allows may cover RFC1918 destinations only; the
+configured platform deny set and hard special-use ranges stay
+non-bypassable. A missing, invalid, or
 unavailable Agent policy assignment is always interpreted as `deny_all`.
 
 Runtime generation, outer UDP peer, packet, flow, DNS cache, compiled policy,

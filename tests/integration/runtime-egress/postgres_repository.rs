@@ -1170,3 +1170,77 @@ async fn generation_keys_are_sealed_durable_bounded_and_retired_atomically() {
             .is_empty()
     );
 }
+
+#[tokio::test]
+#[ignore = "requires ANTNEST_EGRESS_TEST_DATABASE_URL"]
+async fn postgres_persists_v2_policy_revisions_with_stable_digest_and_recovery() {
+    let database_url =
+        env::var("ANTNEST_EGRESS_TEST_DATABASE_URL").expect("ANTNEST_EGRESS_TEST_DATABASE_URL");
+    let suffix = format!("{}-{}", std::process::id(), monotonic_suffix());
+    let repository = PostgresRepository::connect(
+        &database_url,
+        DatabaseTlsMode::Disable,
+        RepositoryConfig {
+            pool_id: format!("test-{suffix}"),
+            tunnel_cidr: "100.64.0.0/29".parse().unwrap(),
+            resolver_ipv4: "100.64.0.1".parse().unwrap(),
+            quarantine: Duration::from_secs(300),
+        },
+    )
+    .await
+    .expect("connect and migrate");
+    let agent = AgentId::parse(format!("agent-{suffix}")).unwrap();
+    let policy = PolicyId::parse(format!("custom-{suffix}")).unwrap();
+    let spec: PolicySpec = serde_json::from_str(
+        r#"{"schema_version":2,"default":"deny","rules":[{"action":"deny","ports":[25]},{"action":"allow","domains":["api.github.com"],"ports":[443]},{"action":"allow","cidrs":["10.20.0.15/32"],"ports":[443]}]}"#,
+    )
+    .unwrap();
+    repository
+        .ensure_agent_network(agent.clone())
+        .await
+        .unwrap();
+    let stored = repository
+        .put_policy_revision(policy.clone(), 1, spec.clone())
+        .await
+        .unwrap();
+    assert_eq!(stored.spec, spec);
+    assert_eq!(stored.revision, 1);
+    let reread = repository.policy_revision(&policy, 1).await.unwrap();
+    assert_eq!(reread, stored);
+    let repeated = repository
+        .put_policy_revision(policy.clone(), 1, spec.clone())
+        .await
+        .unwrap();
+    assert_eq!(repeated, stored);
+    let conflicting = repository
+        .put_policy_revision(policy.clone(), 1, PolicySpec::allow_all())
+        .await;
+    assert!(matches!(
+        conflicting,
+        Err(antnest_runtime_egress::repository::RepositoryError::PolicyRevisionConflict)
+    ));
+    repository
+        .compare_and_swap_assignment(&agent, policy.clone(), 1, 1)
+        .await
+        .unwrap();
+    drop(repository);
+    let recovered = PostgresRepository::connect(
+        &database_url,
+        DatabaseTlsMode::Disable,
+        RepositoryConfig {
+            pool_id: format!("test-{suffix}"),
+            tunnel_cidr: "100.64.0.0/29".parse().unwrap(),
+            resolver_ipv4: "100.64.0.1".parse().unwrap(),
+            quarantine: Duration::from_secs(300),
+        },
+    )
+    .await
+    .expect("reconnect");
+    let bound = recovered.policy_revision(&policy, 1).await.unwrap();
+    assert_eq!(bound.spec, spec);
+    assert_eq!(bound.digest, stored.digest);
+    let assignment = recovered.policy_assignment(&agent).await.unwrap();
+    assert_eq!(assignment.policy_id, policy);
+    assert_eq!(assignment.revision, 1);
+    assert_eq!(assignment.resource_version, 2);
+}

@@ -9,7 +9,7 @@ use antnest_runtime_egress::{
     application::{ControlConfig, ControlService},
     config::{Config, health_listen_from_env},
     control::{health_router, router},
-    dns::{DnsMetrics, DnsProxyConfig, run_dns_proxy},
+    dns::{DnsMetrics, DnsProxyConfig, run_dns_proxy_with_engine},
     kernel::{KernelPlan, LinuxKernel},
     network::run_packet_loop,
     packet::INNER_MTU,
@@ -84,7 +84,8 @@ async fn run(
         config.resolver_ipv4,
         INNER_MTU,
     )?;
-    let (kernel, tun) = LinuxKernel::bootstrap(&plan, config.command_timeout).await?;
+    let (kernel, tun) =
+        LinuxKernel::bootstrap(&plan, &config.platform_deny_cidrs, config.command_timeout).await?;
     let dns_protected_networks = kernel.protected_ipv4_networks().to_vec();
     kernel.clear_all().await?;
     let service = Arc::new(ControlService::new(
@@ -99,6 +100,11 @@ async fn run(
         },
         key_box,
     ));
+    service
+        .dataplane()
+        .lock()
+        .map_err(|_| "data-plane state is poisoned")?
+        .set_platform_deny(config.platform_deny_cidrs.clone());
     let recovered = service.recover().await?;
 
     let udp = UdpSocket::bind(config.udp_advertise).await?;
@@ -141,10 +147,11 @@ async fn run(
     });
     let dns_cancellation = cancellation.clone();
     let dns_task_metrics = dns_metrics.clone();
+    let dns_engine = service.dataplane();
     tasks.spawn(async move {
         task_result(
             "DNS",
-            run_dns_proxy(
+            run_dns_proxy_with_engine(
                 dns_listener,
                 DnsProxyConfig {
                     upstream: config.dns_upstream,
@@ -154,6 +161,7 @@ async fn run(
                     connection_timeout: Duration::from_secs(10),
                 },
                 dns_task_metrics,
+                dns_engine,
                 dns_cancellation,
             )
             .await,

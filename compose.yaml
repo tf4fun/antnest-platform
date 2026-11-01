@@ -153,6 +153,7 @@ services:
       ANTNEST_EGRESS_TUNNEL_CIDR: 100.64.0.0/10
       ANTNEST_EGRESS_RESOLVER_IPV4: 100.64.0.1
       ANTNEST_EGRESS_DNS_UPSTREAM: ${ANTNEST_EGRESS_DNS_UPSTREAM:-127.0.0.11:53}
+      ANTNEST_EGRESS_PLATFORM_DENY_CIDRS: "${ANTNEST_EGRESS_PLATFORM_DENY_CIDRS:-100.64.0.0/10,${ANTNEST_RUNTIME_MANAGEMENT_SUBNET:-172.30.255.0/24},${ANTNEST_EGRESS_CONTROL_SUBNET:-172.31.255.0/24},${ANTNEST_SERVICE_NETWORK_PREFIX:-10.241.0}.0/24,${ANTNEST_EGRESS_DATABASE_SUBNET:-172.29.255.0/24},${ANTNEST_EGRESS_SUBNET:-172.28.255.0/24}}"
       ANTNEST_TELEMETRY_CAPTURE_RPC_CONTENT: ${ANTNEST_TELEMETRY_CAPTURE_RPC_CONTENT:-false}
       OTEL_SDK_DISABLED: ${OTEL_SDK_DISABLED:-true}
       OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://jaeger:4318}
@@ -1223,6 +1224,9 @@ networks:
     internal: true
     driver_opts:
       com.docker.network.bridge.gateway_mode_ipv4: isolated
+    ipam:
+      config:
+        - subnet: ${ANTNEST_EGRESS_DATABASE_SUBNET:-172.29.255.0/24}
   runtime-controller-database:
     internal: true
     driver_opts:
@@ -1255,6 +1259,9 @@ networks:
     internal: false
   egress:
     internal: false
+    ipam:
+      config:
+        - subnet: ${ANTNEST_EGRESS_SUBNET:-172.28.255.0/24}
   runtime-management:
     name: ${ANTNEST_RUNTIME_MANAGEMENT_NETWORK:-antnest-runtime-management}
     internal: true
