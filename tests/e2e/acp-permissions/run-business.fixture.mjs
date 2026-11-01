@@ -403,6 +403,22 @@ export function permissionRunBusinessFixture() {
             record.run.state === "cancelled" ? "cancelled" : "end_turn",
         });
     };
+    const resolved = (record) => {
+      for (const permission of record.permissions.items)
+        received(connection, record.run.session_id, {
+          sessionUpdate: "notice",
+          severity: "info",
+          title: "Permission request resolved",
+          _meta: {
+            "antnest.dev/permission-resolution": {
+              version: 1,
+              runId: record.run.run_id,
+              toolCallId: permission.tool_call_id,
+              reason: "permission_resolved",
+            },
+          },
+        });
+    };
     for (const row of connection.evidence) {
       if (row.method === "session/prompt") {
         const phase = row.requestParams.prompt[0].text;
@@ -416,6 +432,7 @@ export function permissionRunBusinessFixture() {
           });
         deliver(phase);
         if (!phase.endsWith("-reconnect")) {
+          resolved(saved);
           emit(saved, saved.events.items.slice(prefixLength));
           idle(saved);
           if (connection.version === 1) rawReply(connection, row);
@@ -426,6 +443,7 @@ export function permissionRunBusinessFixture() {
         emit(saved, saved.events.items.slice(0, prefixLength));
         rawReply(connection, row);
         deliver(phase);
+        resolved(saved);
         emit(saved, saved.events.items.slice(prefixLength));
         idle(saved);
       } else rawReply(connection, row);
