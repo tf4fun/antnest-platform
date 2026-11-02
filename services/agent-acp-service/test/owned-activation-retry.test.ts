@@ -13,6 +13,7 @@ import { PostgresExecutionConfiguration } from "../src/adapters/postgres/executi
 import { PostgresOwnerRecovery } from "../src/adapters/postgres/owner-recovery.js";
 import { AgentAssignment } from "../src/application/agent-assignment.js";
 import { AgentGenerations, type AgentGeneration } from "../src/application/agent-generations.js";
+import { ContentPurgeWorker } from "../src/application/content-purge-worker.js";
 import { LearningWorker } from "../src/application/learning-worker.js";
 import { TemporarySkillCleanupWorker } from "../src/application/temporary-skill-cleanup-worker.js";
 import { publicExecutionConfiguration } from "../src/domain/execution-configuration.js";
@@ -113,6 +114,12 @@ it("starts a prepared owned graph on the next refresh when cancellation prevente
     const learningRun = vi
       .spyOn(LearningWorker.prototype, "run")
       .mockImplementation((signal) => run(signal));
+    const purgeRun = vi.spyOn(ContentPurgeWorker.prototype, "run").mockImplementation(function (
+      this: ContentPurgeWorker,
+      signal,
+    ) {
+      return run(signal);
+    });
 
     mkdirSync(join(directory, "tokens"));
     writeFileSync(
@@ -179,6 +186,7 @@ it("starts a prepared owned graph on the next refresh when cancellation prevente
     manager.start();
     expect(cleanupRun).not.toHaveBeenCalled();
     expect(learningRun).not.toHaveBeenCalled();
+    expect(purgeRun).not.toHaveBeenCalled();
 
     owns.mockReturnValue(true);
     expect(manager.needsPreparation(next)).toBe(true);
@@ -202,6 +210,7 @@ it("starts a prepared owned graph on the next refresh when cancellation prevente
     expect(published).not.toHaveBeenCalled();
     expect(cleanupRun).not.toHaveBeenCalled();
     expect(learningRun).not.toHaveBeenCalled();
+    expect(purgeRun).not.toHaveBeenCalled();
     expect(release).not.toHaveBeenCalled();
     expect(components.directory.capturePublication(configuration.organization_id)).toBe(capture);
 
@@ -230,7 +239,14 @@ it("starts a prepared owned graph on the next refresh when cancellation prevente
     expect(legacyCleanup).not.toBe(components.temporarySkillCleanupWorker);
     for (const worker of [ownedCleanup, legacyCleanup])
       expect(cleanupRun.mock.contexts.filter((receiver) => receiver === worker)).toHaveLength(1);
-    expect(tasks.length).toBe(2 + learningRun.mock.calls.length);
+    expect(purgeRun).toHaveBeenCalledOnce();
+    const [ownedPurge] = purgeRun.mock.contexts;
+    expect(ownedPurge).toBeInstanceOf(ContentPurgeWorker);
+    expect(ownedPurge).not.toBe(components.contentPurgeWorker);
+    const [purgeSignal] = purgeRun.mock.calls[0]!;
+    expect(purgeSignal).not.toBe(generation.signal);
+    expect(purgeSignal.aborted).toBe(false);
+    expect(tasks.length).toBe(2 + learningRun.mock.calls.length + purgeRun.mock.calls.length);
     expect(tasks.every((task) => !task.finished && !task.signal.aborted)).toBe(true);
 
     await manager.shutdown();

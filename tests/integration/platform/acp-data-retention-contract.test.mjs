@@ -204,6 +204,12 @@ test("retained budget and accounting records are never reduced by purge", () => 
   assert.match(retained.budget_accounting, /unknown charges/iu);
   assert.deepEqual(sorted(retained.budget_tables), sorted(budgetTables));
   assert.equal(retained.published_artifact_table, "learning_managed_skills");
+  assert.deepEqual(sorted(retained.published_artifact_tables), [
+    "learning_candidates",
+    "learning_changes",
+    "learning_managed_skills",
+    "skill_source_projections",
+  ]);
   assert.match(retained.documentation, /table documentation/iu);
   assert.match(retained.documentation, /exception/iu);
 });

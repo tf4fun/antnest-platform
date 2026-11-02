@@ -802,3 +802,37 @@ Compose or Kubernetes network policy permits:
   Skill Registry internal API, only when those optional features are configured;
 - inbound from Skill Registry to `/internal/skill-sources/*` when Skill
   discovery is configured.
+
+## Content Retention And Operator Erasure
+
+The service purges deleted Session content under the
+[shared data retention contract](../../../contracts/agent-acp/data-retention.md).
+`ANTNEST_ACP_DELETED_SESSION_RETENTION` (default `30d`, `0` disables automated
+purge) is measured by the durable `deleted_at` timestamp; rows deleted before
+that column existed are backfilled conservatively at migration time. The
+bounded worker removes at most `ANTNEST_ACP_PURGE_BATCH` Sessions (default 500)
+per transactional batch and runs batches continuously until a pass is
+exhausted; `ANTNEST_ACP_PURGE_INTERVAL` (default `60s`) is the delay between
+exhausted passes, not between batches. The worker runs under the legacy worker
+lock or the per-Agent generation fence with a live fence check at commit. In
+peer mode automatic cleanup runs only for the Agent scopes of active owned
+generations; orphan Sessions without a live generation are never purged
+automatically and require the offline CLI below. Sessions blocked by
+nonterminal, unresolved or non-quiescent Runs, unreleased temporary Skills,
+running Learning tasks or unsettled maintenance are skipped and reported once
+per batch, never counted as cleanup; each committed batch appends a count-only
+`acp_content_purge_batch` audit row. Active and closed Session history is
+retained indefinitely — there is no Run compaction until issue #19.
+Independent fork copies survive their source Session's purge; erasing a
+Session by user or organization selector covers only the selected copies.
+
+`node dist/purge.js --organization <id> | --user <id> | --session <id> [--dry-run]`
+is offline operator erasure. It takes the exclusive ACP worker lock and refuses
+a live ACP including peer/shared lock holders; `--user` selects a principal
+across organizations and `--organization` all Session principals. `--dry-run`
+requires the same lock and reports bounded-batch counts only; real deletion
+requires `--confirm`. The CLI starts no listeners and runs no migrations; a
+hard failure or a blocked remainder exits nonzero and a rerun resumes. Scope
+applies only to Session content and its derived Learning records — budget and
+accounting rows, published Skill artifacts, backups, WAL archives, replicas and
+logs keep their own operator lifecycle.

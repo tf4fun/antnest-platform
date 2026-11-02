@@ -639,23 +639,57 @@ adapter tests are retained, but that adapter is not wired as a client tool sourc
 
 ## Persistence
 
-Agent ACP Service owns one PostgreSQL database/schema and migrations for:
+Agent ACP Service owns one PostgreSQL database/schema and migrations for the
+following tables. Deleted-Session retention and operator erasure follow the
+[shared data retention contract](../../../contracts/agent-acp/data-retention.md):
+the purge removes only the selected Sessions' content and derived Learning
+records, while budget/accounting rows and published Skill artifacts are
+intentional retained exceptions that are never reduced or zeroed. Backups, WAL,
+replicas and logs have a separate operator lifecycle; no comprehensive GDPR
+erasure is claimed.
 
-```text
-acp_sessions
-client_mcp_revisions
-session_messages
-context_checkpoints
-runs
-tool_attempts
-tool_permissions
-execution_configurations
-owner_stop_receipts
-run_owner_recoveries
-learning_owner_recoveries
-learning_runtime_protections
-acp_peer_membership
-```
+| Table                            | Context                                      | Content class           | Retention                                                                         | Owner module                |
+| -------------------------------- | -------------------------------------------- | ----------------------- | --------------------------------------------------------------------------------- | --------------------------- |
+| `schema_migrations`              | migration journal                            | metadata                | kept permanently                                                                  | migrate.ts                  |
+| `acp_sessions`                   | Session identity and lifecycle               | session metadata        | deleted Sessions purged after retention; active and closed retained indefinitely  | session-repository.ts       |
+| `client_mcp_revisions`           | encrypted client MCP source snapshots        | session content         | purged with the owning Session                                                    | session-repository.ts       |
+| `session_messages`               | Session transcript entries                   | session content         | purged with the owning Session                                                    | session-repository.ts       |
+| `context_checkpoints`            | Session context checkpoints                  | session content         | purged with the owning Session                                                    | context-repository.ts       |
+| `runs`                           | Run records and snapshots                    | session content         | purged with the owning Session; active and closed Session Runs never purged       | run-repository.ts           |
+| `tool_attempts`                  | Run Tool attempt records                     | session content         | purged with the owning Run                                                        | tool attempt writers        |
+| `tool_permissions`               | Session and Run permission decisions         | session metadata        | purged with the owning Session                                                    | tool-permissions.ts         |
+| `execution_configurations`       | published execution configuration            | service metadata        | retained; replaced by newer revisions                                             | execution-configuration.ts  |
+| `content_purge_audit`            | count-only purge batch receipts              | audit metadata          | retained indefinitely                                                             | content-purge.ts            |
+| `temporary_skill_scopes`         | Runtime temporary Skill leases               | session content         | released scopes purge with the owning Run; unreleased scopes block purge          | temporary-skills.ts         |
+| `learning_tasks`                 | Skill learning task state                    | derived learning record | purged with the source Session                                                    | learning repositories       |
+| `learning_scan_cursors`          | Learning source scan cursor                  | derived learning record | cursor cleared when its Run is purged                                             | learning-scan.ts            |
+| `learning_source_decisions`      | per-Run learning source decision             | derived learning record | purged with the source Run or task                                                | learning-scan.ts            |
+| `learning_review_attempts`       | Learning review generations                  | derived learning record | purged with the task                                                              | learning repositories       |
+| `learning_model_calls`           | Learning model call ledger                   | derived learning record | purged with the task                                                              | learning-budget.ts          |
+| `learning_evidence_snapshots`    | Learning evidence snapshot                   | derived learning record | purged with the task                                                              | learning-evidence.ts        |
+| `learning_evidence_items`        | Learning evidence text                       | derived learning record | purged with the task                                                              | learning-evidence.ts        |
+| `learning_maintenance_intents`   | Learning maintenance requests and receipts   | derived learning record | purged with the task; tombstoned identity survives on published candidates        | learning maintenance ledger |
+| `learning_apply_bases`           | candidate apply basis                        | derived learning record | purged with the task                                                              | learning-apply-bases.ts     |
+| `learning_candidates`            | candidate and published artifact bytes       | derived learning record | unpublished rows purge with the task; applied rows survive as explicit tombstones | learning-candidates.ts      |
+| `learning_changes`               | applied change journal                       | derived learning record | rows survive tombstoned without task or source references                         | learning-changes.ts         |
+| `learning_change_sequences`      | per-Agent change sequence                    | derived metadata        | retained; never references Session content                                        | learning-changes.ts         |
+| `learning_managed_skills`        | published managed Skill identity             | published artifact      | retained; artifact stays readable and re-publishable after source purge           | learning-managed-skills.ts  |
+| `learning_owner_recoveries`      | Learning ownership recovery                  | derived learning record | purged with the task                                                              | owner recovery              |
+| `learning_runtime_protections`   | Learning Runtime protection                  | derived learning record | purged with the task; unretired rows block purge                                  | owner recovery              |
+| `run_owner_recoveries`           | Run ownership recovery                       | run metadata            | purged with the owning Run                                                        | owner recovery              |
+| `owner_stop_receipts`            | predecessor stop proofs                      | service metadata        | retained; immutable proofs independent of Runs                                    | owner recovery              |
+| `agent_leases`                   | per-Agent ownership fence                    | service metadata        | retained; ownership infrastructure, never Session content                         | agent-leases.ts             |
+| `acp_peer_membership`            | pinned peer membership                       | service metadata        | retained; deployment pin, never Session content                                   | peer-membership.ts          |
+| `acp_peer_participation`         | peer participation singleton                 | service metadata        | retained; never Session content                                                   | peer-participation.ts       |
+| `acp_peer_participants`          | peer registration ledger                     | service metadata        | retained; never Session content                                                   | peer-participation.ts       |
+| `runtime_barrier_cycles`         | Runtime barrier cycles                       | service metadata        | retained; never Session content                                                   | runtime-barrier.ts          |
+| `run_usage`                      | per-Run token and cost usage                 | accounting              | retained, never reduced or zeroed                                                 | model-budget.ts             |
+| `organization_spend`             | organization spend including unknown charges | accounting              | retained, never reduced or zeroed                                                 | model-budget.ts             |
+| `model_budget_history`           | budget ledger cutover                        | accounting              | retained, never reduced or zeroed                                                 | model-budget.ts             |
+| `model_budget_reservations`      | per-Run budget reservations                  | accounting              | retained, never reduced or zeroed                                                 | model-budget.ts             |
+| `model_budget_baseline_attempts` | baseline attempt starts                      | accounting              | retained, never reduced or zeroed                                                 | model-budget.ts             |
+| `model_budget_baseline_receipts` | baseline attempt receipts                    | accounting              | retained, never reduced or zeroed                                                 | model-budget.ts             |
+| `skill_source_projections`       | managed Skill source projections             | published artifact      | retained; reprojectable after source Session purge                                | skill-source-projections.ts |
 
 There are no cross-service foreign keys, views, triggers, or SQL queries.
 External identifiers are opaque text values. One transaction may update only

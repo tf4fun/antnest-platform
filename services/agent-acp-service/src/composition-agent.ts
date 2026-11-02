@@ -25,6 +25,8 @@ import { SkillDiscoveryTools } from "./application/skill-discovery-tools.js";
 import { TemporarySkills } from "./application/temporary-skills.js";
 import { ToolPermissions } from "./application/tool-permissions.js";
 import { TemporarySkillCleanupWorker } from "./application/temporary-skill-cleanup-worker.js";
+import { ContentPurgeWorker } from "./application/content-purge-worker.js";
+import { parseContentRetentionConfig } from "./domain/content-retention.js";
 import type { AgentAcpConfig } from "./config.js";
 import { DomainError } from "./domain/errors.js";
 import type { AgentOwnershipLostError } from "./domain/agent-ownership.js";
@@ -205,6 +207,11 @@ export function buildAgentComponents(input: {
     }),
     telemetry,
   );
+  const contentPurgeWorker = new ContentPurgeWorker({
+    purge: input.repositories.contentPurge,
+    retention: config.contentRetention ?? parseContentRetentionConfig({}),
+    report: (blocked) => telemetry.log("warn", "acp_content_purge_blocked", { sessions: blocked }),
+  });
   const learningWorker = buildLearningWorker({
     ...(input.retainModelRequest === undefined
       ? {}
@@ -229,6 +236,7 @@ export function buildAgentComponents(input: {
     rawTools,
     temporarySkills,
     temporarySkillCleanupWorker,
+    contentPurgeWorker,
     sessionService,
   };
 }

@@ -174,6 +174,7 @@ describe.skipIf(databaseUrl === undefined)(
         "0032_model_budget_ledger.sql",
         "0033_context_compaction.sql",
         "0034_model_token_calibration.sql",
+        "0035_content_retention.sql",
       ]);
       expect(
         (

@@ -3,6 +3,7 @@ import { readFile, readdir } from "node:fs/promises";
 import { Pool } from "pg";
 import { describe, expect, it } from "vitest";
 import { migrate } from "../../../../../services/agent-acp-service/src/adapters/postgres/migrate.js";
+import { contentRetentionFacts } from "../../support/content-retention-migration.js";
 import type { RunState } from "../../../../../services/agent-acp-service/src/domain/types.js";
 
 const databaseUrl = process.env.ANTNEST_ACP_TEST_DATABASE_URL;
@@ -231,11 +232,13 @@ async function facts(pool: Pool) {
     "context_checkpoints",
   ]) {
     const expression =
-      table === "runs"
-        ? "('{\"budget_reason\":null}'::jsonb || to_jsonb(stored)) - 'organization_id' - 'agent_id' - 'execution_owner_registration_id' - 'execution_owner_member_id' - 'execution_owner_incarnation_id' - 'execution_owner_epoch'"
-        : table === "context_checkpoints"
-          ? '\'{"compaction_prompt_version":null,"pinned_message_ids":[]}\'::jsonb || to_jsonb(stored)'
-          : "to_jsonb(stored)";
+      table === "acp_sessions"
+        ? "(to_jsonb(stored)-'deleted_at')"
+        : table === "runs"
+          ? "('{\"budget_reason\":null}'::jsonb || to_jsonb(stored)) - 'organization_id' - 'agent_id' - 'execution_owner_registration_id' - 'execution_owner_member_id' - 'execution_owner_incarnation_id' - 'execution_owner_epoch'"
+          : table === "context_checkpoints"
+            ? '\'{"compaction_prompt_version":null,"pinned_message_ids":[]}\'::jsonb || to_jsonb(stored)'
+            : "to_jsonb(stored)";
     result[table] = (
       await pool.query<{ value: unknown }>(
         `SELECT ${expression} AS value FROM ${table} AS stored ORDER BY id`,
@@ -333,6 +336,7 @@ describe.skipIf(databaseUrl === undefined)(
         const before = await facts(pool);
         const applied = await journal(pool);
         await migrate(pool);
+        const metadataBefore = await contentRetentionFacts(pool);
         expect(await scopeColumns(pool)).toEqual([
           { column_name: "agent_id", is_nullable: "NO" },
           { column_name: "organization_id", is_nullable: "NO" },
@@ -377,6 +381,7 @@ describe.skipIf(databaseUrl === undefined)(
           "0032_model_budget_ledger.sql",
           "0033_context_compaction.sql",
           "0034_model_token_calibration.sql",
+          "0035_content_retention.sql",
         ]);
         const index = await pool.query<{ indexdef: string }>(
           "SELECT indexdef FROM pg_indexes WHERE schemaname='public' AND indexname='runs_agent_nonterminal_unique'",
@@ -392,6 +397,7 @@ describe.skipIf(databaseUrl === undefined)(
         expect(index.rows[0]!.indexdef).toContain("'running'");
         await migrate(pool);
         expect(await facts(pool)).toEqual(before);
+        expect(await contentRetentionFacts(pool)).toEqual(metadataBefore);
         expect(await journal(pool)).toEqual(migrated);
       });
     });

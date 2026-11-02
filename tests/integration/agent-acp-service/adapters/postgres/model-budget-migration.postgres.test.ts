@@ -3,6 +3,7 @@ import { readFile, readdir } from "node:fs/promises";
 import { Pool, type PoolClient } from "pg";
 import { describe, expect, it } from "vitest";
 import { migrate } from "../../../../../services/agent-acp-service/src/adapters/postgres/migrate.js";
+import { contentRetentionFacts } from "../../support/content-retention-migration.js";
 import { deriveResourceId } from "../../../../../services/agent-acp-service/src/domain/resource-id.js";
 
 const databaseUrl = process.env.ANTNEST_ACP_TEST_DATABASE_URL;
@@ -168,15 +169,16 @@ async function journal(pool: Pool) {
   ).rows;
 }
 
-async function checkedJournal(pool: Pool, length: 31 | 34) {
+async function checkedJournal(pool: Pool, length: 31 | 35) {
   const rows = await journal(pool);
   expect(rows).toHaveLength(length);
   expect(rows[0]?.version).toBe("0001_initial.sql");
   expect(rows.at(-1)?.version).toBe(
     length === 31
       ? "0031_peer_participation.sql"
-      : "0034_model_token_calibration.sql",
+      : "0035_content_retention.sql",
   );
+  if (length === 35) await contentRetentionFacts(pool);
   for (const [index, row] of rows.entries()) {
     expect(
       row.version.startsWith(String(index + 1).padStart(4, "0") + "_"),
@@ -200,9 +202,10 @@ async function originalFacts(pool: Pool) {
   const result: Record<string, string[]> = {};
   for (const table of ["acp_sessions", "session_messages"]) {
     const rows = await pool.query<{ value: string }>(
-      "SELECT to_jsonb(stored)::text AS value FROM " +
+      "SELECT (to_jsonb(stored)-$1::text[])::text AS value FROM " +
         table +
         " AS stored ORDER BY id",
+      [table === "acp_sessions" ? ["deleted_at"] : []],
     );
     result[table] = rows.rows.map((row) => row.value);
   }
@@ -330,7 +333,8 @@ describe.skipIf(databaseUrl === undefined)(
           const upgrading = migrate(pool);
           originals.push(upgrading);
           await upgrading;
-          const upgraded = await checkedJournal(pool, 34);
+          const upgraded = await checkedJournal(pool, 35);
+          const metadataBefore = await contentRetentionFacts(pool);
           expect(upgraded.slice(0, 31)).toEqual(applied);
           expect(await presentLedgerTables(pool)).toEqual(
             [...ledgerTables].sort(),
@@ -340,6 +344,7 @@ describe.skipIf(databaseUrl === undefined)(
           originals.push(replay);
           await replay;
           expect(await journal(pool)).toEqual(upgraded);
+          expect(await contentRetentionFacts(pool)).toEqual(metadataBefore);
           expect(await accounting(pool)).toEqual(balances);
         } catch (error: unknown) {
           failures.push(error);
@@ -396,7 +401,8 @@ describe.skipIf(databaseUrl === undefined)(
         ).toEqual([{ id: deletedSession, state: "deleted" }]);
 
         await migrate(pool);
-        const upgraded = await checkedJournal(pool, 34);
+        const metadataBefore = await contentRetentionFacts(pool);
+        const upgraded = await checkedJournal(pool, 35);
         expect(upgraded.slice(0, 31)).toEqual(applied);
         expect(await originalFacts(pool)).toEqual(before);
         expect(
@@ -433,6 +439,7 @@ describe.skipIf(databaseUrl === undefined)(
         const balances = await accounting(pool);
         await migrate(pool);
         expect(await journal(pool)).toEqual(upgraded);
+        expect(await contentRetentionFacts(pool)).toEqual(metadataBefore);
         expect(await accounting(pool)).toEqual(balances);
         expect(await originalFacts(pool)).toEqual(before);
 
@@ -638,7 +645,10 @@ describe.skipIf(databaseUrl === undefined)(
                   (table === "runs"
                     ? "jsonb_build_object('budget_reason', NULL) || "
                     : "") +
-                  "to_jsonb(stored))::text AS value FROM " +
+                  (table === "acp_sessions"
+                    ? "(to_jsonb(stored)-'deleted_at')"
+                    : "to_jsonb(stored)") +
+                  ")::text AS value FROM " +
                   table +
                   " AS stored ORDER BY id",
               );
@@ -649,7 +659,7 @@ describe.skipIf(databaseUrl === undefined)(
           const applied = await checkedJournal(pool, 31);
           const before = await sourceFacts();
           await migrate(pool);
-          const upgraded = await checkedJournal(pool, 34);
+          const upgraded = await checkedJournal(pool, 35);
           expect(upgraded.slice(0, 31)).toEqual(applied);
           expect(await sourceFacts()).toEqual(before);
           expect(
@@ -1015,7 +1025,10 @@ describe.skipIf(databaseUrl === undefined)(
                   (table === "runs"
                     ? "jsonb_build_object('budget_reason', NULL) || "
                     : "") +
-                  "to_jsonb(stored))::text AS value FROM " +
+                  (table === "acp_sessions"
+                    ? "(to_jsonb(stored)-'deleted_at')"
+                    : "to_jsonb(stored)") +
+                  ")::text AS value FROM " +
                   table +
                   " AS stored ORDER BY id",
               );
@@ -1043,7 +1056,7 @@ describe.skipIf(databaseUrl === undefined)(
           const applied = await checkedJournal(pool, 31);
           const before = await sourceFacts();
           await migrate(pool);
-          const upgraded = await checkedJournal(pool, 34);
+          const upgraded = await checkedJournal(pool, 35);
           expect(upgraded.slice(0, 31)).toEqual(applied);
           expect(await sourceFacts()).toEqual(before);
           expect(
@@ -1233,7 +1246,7 @@ describe.skipIf(databaseUrl === undefined)(
             "SELECT clock_timestamp()::text AS observed_at",
           )
         ).rows[0]!.observed_at;
-        const upgraded = await checkedJournal(pool, 34);
+        const upgraded = await checkedJournal(pool, 35);
         expect(upgraded.slice(0, 31)).toEqual(applied);
         expect(
           (

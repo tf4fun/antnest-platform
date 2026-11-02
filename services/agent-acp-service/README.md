@@ -392,3 +392,10 @@ package checks.
   [Skill commands](../../contracts/agent-acp/skill-commands.md),
   [Skill discovery tools](../../contracts/agent-acp/skill-discovery-tools.md),
   [resource identifiers](../../contracts/resource-identifiers.md).
+
+### Data retention and erasure
+
+Deleted Session content is purged under a bounded, fenced retention worker and
+an offline `node dist/purge.js` operator CLI; see
+[operations](docs/operations.md) and the
+[shared data retention contract](../../contracts/agent-acp/data-retention.md).
