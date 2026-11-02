@@ -3,6 +3,7 @@ package registry
 import (
 	"errors"
 	"fmt"
+	"github.com/tf4fun/antnest-platform/services/skill-registry/internal/apierror"
 )
 
 type Error struct {
@@ -21,5 +22,5 @@ func Code(err error) string {
 	if errors.As(err, &typed) {
 		return typed.Kind
 	}
-	return "temporarily_unavailable"
+	return apierror.TemporarilyUnavailable
 }

@@ -235,3 +235,10 @@ Test-only variables:
   HTTP span model.
 - [Deployment wiring](../../contracts/skill-registry/deployment.md) - Compose
   wiring for source and trace settings.
+
+### Error envelope
+
+HTTP failures use the [common error contract](../../contracts/common/error.schema.json) five-field
+envelope at the top level **and** inside the legacy `error` member (one-release alias for
+old consumers) with the [Skill Registry slice](../../contracts/common/slices/skill-registry.json) of
+emitted codes.

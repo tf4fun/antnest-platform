@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"github.com/tf4fun/antnest-platform/services/skill-registry/internal/apierror"
 	"regexp"
 )
 
@@ -122,13 +123,13 @@ func fingerprint(input PublishInput, artifactDigest string) string {
 
 func (s *Service) Publish(ctx context.Context, input PublishInput) (Version, error) {
 	if !validRequestID(input.RequestID) || !organizationID.MatchString(input.OrganizationID) || !userID.MatchString(input.ActorID) {
-		return Version{}, failure("invalid_request", "invalid publication identity")
+		return Version{}, failure(apierror.InvalidRequest, "invalid publication identity")
 	}
 	if input.SkillID == "" && input.ExpectedVersion != 0 || input.SkillID != "" && (!skillID.MatchString(input.SkillID) || input.ExpectedVersion < 1) {
-		return Version{}, failure("invalid_request", "invalid Skill/version target")
+		return Version{}, failure(apierror.InvalidRequest, "invalid Skill/version target")
 	}
 	if len(input.Artifact) == 0 || len(input.Artifact) > MaxArtifactBytes {
-		return Version{}, failure("limit_exceeded", "ZIP size must be 1–8 MiB")
+		return Version{}, failure(apierror.LimitExceeded, "ZIP size must be 1–8 MiB")
 	}
 	fingerprint := fingerprint(input, digest(input.Artifact))
 	stored, previous, exists, err := s.store.Receipt(ctx, input.OrganizationID, input.RequestID)
@@ -137,7 +138,7 @@ func (s *Service) Publish(ctx context.Context, input PublishInput) (Version, err
 	}
 	if exists {
 		if stored != fingerprint {
-			return Version{}, failure("request_conflict", "request ID was used with different input")
+			return Version{}, failure(apierror.RequestConflict, "request ID was used with different input")
 		}
 		return previous, nil
 	}
@@ -161,14 +162,14 @@ func pageLimit(limit int) (int, error) {
 		return 50, nil
 	}
 	if limit < 0 || limit > 100 {
-		return 0, failure("invalid_request", "limit must be 1–100")
+		return 0, failure(apierror.InvalidRequest, "limit must be 1–100")
 	}
 	return limit, nil
 }
 
 func (s *Service) List(ctx context.Context, org, after string, limit int) (SkillPage, error) {
 	if !organizationID.MatchString(org) || after != "" && !skillID.MatchString(after) {
-		return SkillPage{}, failure("invalid_request", "invalid organization or cursor")
+		return SkillPage{}, failure(apierror.InvalidRequest, "invalid organization or cursor")
 	}
 	limit, err := pageLimit(limit)
 	if err != nil {
@@ -188,7 +189,7 @@ func (s *Service) List(ctx context.Context, org, after string, limit int) (Skill
 
 func (s *Service) Versions(ctx context.Context, org, id string, after int64, limit int) (VersionPage, error) {
 	if !organizationID.MatchString(org) || !skillID.MatchString(id) || after < 0 {
-		return VersionPage{}, failure("invalid_request", "invalid organization, Skill or cursor")
+		return VersionPage{}, failure(apierror.InvalidRequest, "invalid organization, Skill or cursor")
 	}
 	limit, err := pageLimit(limit)
 	if err != nil {
@@ -208,14 +209,14 @@ func (s *Service) Versions(ctx context.Context, org, id string, after int64, lim
 
 func (s *Service) Resolve(ctx context.Context, org string, refs []Reference) ([]Version, error) {
 	if !organizationID.MatchString(org) || len(refs) > 32 {
-		return nil, failure("invalid_request", "invalid organization or reference count")
+		return nil, failure(apierror.InvalidRequest, "invalid organization or reference count")
 	}
 	items := make([]Version, 0, len(refs))
 	seenSkill, seenName := map[string]bool{}, map[string]bool{}
 	var total uint64
 	for _, ref := range refs {
 		if !skillID.MatchString(ref.SkillID) || ref.Version < 1 || seenSkill[ref.SkillID] {
-			return nil, failure("invalid_request", "invalid or repeated Skill reference")
+			return nil, failure(apierror.InvalidRequest, "invalid or repeated Skill reference")
 		}
 		seenSkill[ref.SkillID] = true
 		item, err := s.store.GetVersion(ctx, org, ref.SkillID, ref.Version)
@@ -223,7 +224,7 @@ func (s *Service) Resolve(ctx context.Context, org string, refs []Reference) ([]
 			return nil, err
 		}
 		if seenName[item.Name] || total+item.UnpackedSize > MaxResolvedBytes {
-			return nil, failure("limit_exceeded", "resolved Skill set has duplicate names or exceeds 128 MiB")
+			return nil, failure(apierror.LimitExceeded, "resolved Skill set has duplicate names or exceeds 128 MiB")
 		}
 		seenName[item.Name] = true
 		total += item.UnpackedSize
@@ -234,7 +235,7 @@ func (s *Service) Resolve(ctx context.Context, org string, refs []Reference) ([]
 
 func (s *Service) Artifact(ctx context.Context, org, id string, version int64) (Version, []byte, error) {
 	if !organizationID.MatchString(org) || !skillID.MatchString(id) || version < 1 {
-		return Version{}, nil, failure("invalid_request", "invalid artifact identity")
+		return Version{}, nil, failure(apierror.InvalidRequest, "invalid artifact identity")
 	}
 	return s.store.Artifact(ctx, org, id, version)
 }

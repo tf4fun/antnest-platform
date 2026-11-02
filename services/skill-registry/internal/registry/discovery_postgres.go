@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"github.com/jackc/pgx/v5"
+	"github.com/tf4fun/antnest-platform/services/skill-registry/internal/apierror"
 )
 
 func (s *PostgresStore) UpsertProjection(ctx context.Context, p Projection) (ProjectionResult, error) {
@@ -32,7 +33,7 @@ func (s *PostgresStore) UpsertProjection(ctx context.Context, p Projection) (Pro
 		}
 		if p.Sequence == old.Sequence {
 			if p != old {
-				return ProjectionResult{}, failure("request_conflict", "source sequence was used with different metadata")
+				return ProjectionResult{}, failure(apierror.RequestConflict, "source sequence was used with different metadata")
 			}
 			return ProjectionResult{Outcome: "replayed", Sequence: old.Sequence}, nil
 		}
@@ -53,7 +54,7 @@ func (s *PostgresStore) GetProjection(ctx context.Context, org, agent, name stri
  FROM skill_projections WHERE organization_id=$1 AND agent_id=$2 AND name=$3`, org, agent, name).
 		Scan(&p.OrganizationID, &p.AgentID, &p.Name, &p.OwnerID, &p.Description, &p.Sequence, &p.ContentDigest, &p.Active)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return Projection{}, failure("not_found", "Skill source not found")
+		return Projection{}, failure(apierror.NotFound, "Skill source not found")
 	}
 	return p, databaseError(err)
 }
