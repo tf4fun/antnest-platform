@@ -1,6 +1,17 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { existsSync, readdirSync, readFileSync } from "node:fs";
+import {
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  realpathSync,
+  readFileSync,
+  rmSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { stripTypeScriptTypes } from "node:module";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
@@ -257,13 +268,38 @@ test("the generator CLI refuses a service without a slice", () => {
 });
 
 test("the generator CLI --check rejects unknown or missing slices", () => {
-  for (const service of ["no_such_service", "identity-service"]) {
-    const result = spawnSync(
-      process.execPath,
-      [generator, "--check", "--service", service],
-      { cwd: fileURLToPath(root), encoding: "utf8" },
+  const unknown = spawnSync(
+    process.execPath,
+    [generator, "--check", "--service", "no_such_service"],
+    { cwd: fileURLToPath(root), encoding: "utf8" },
+  );
+  assert.notEqual(unknown.status, 0, "no_such_service must be rejected");
+  const fixture = realpathSync(mkdtempSync(join(tmpdir(), "api-errors-cli-")));
+  try {
+    mkdirSync(join(fixture, "scripts"), { recursive: true });
+    mkdirSync(join(fixture, "contracts", "common"), { recursive: true });
+    copyFileSync(
+      fileURLToPath(new URL("scripts/generate-api-errors.mjs", root)),
+      join(fixture, "scripts", "generate-api-errors.mjs"),
     );
-    assert.notEqual(result.status, 0, `${service} must be rejected`);
+    for (const name of ["errors.json", "error.schema.json"]) {
+      copyFileSync(
+        fileURLToPath(new URL(join("contracts", "common", name), root)),
+        join(fixture, "contracts", "common", name),
+      );
+    }
+    const missing = spawnSync(
+      process.execPath,
+      [join(fixture, "scripts", "generate-api-errors.mjs"), "--check", "--service", "identity-service"],
+      { cwd: fixture, encoding: "utf8" },
+    );
+    assert.notEqual(missing.status, 0, "identity-service must be rejected without a slice");
+    assert.match(
+      missing.stderr,
+      /contracts\/common\/slices\/identity-service\.json is not checked in/,
+    );
+  } finally {
+    rmSync(fixture, { recursive: true, force: true });
   }
 });
 
@@ -623,4 +659,17 @@ test("generated TypeScript falls back safely for hostile lookups", async () => {
   assert.equal(alias.message, "stale version");
   assert.equal(alias.retryable, false);
   assert.equal(alias.request_id, "req-2");
+});
+
+test("the generated Go request-id validator uses a positive allow branch", () => {
+  const source = renderGo(validRegistry(), ["internal"]);
+  const helper = source.match(/func validRequestID[\s\S]*?\n}/)?.[0];
+  assert.ok(helper, "rendered Go includes validRequestID");
+  assert.doesNotMatch(helper, /!\(/, "negated compound conditions trip staticcheck QF1001");
+  assert.match(helper, /\bcontinue\b/, "allowed bytes take a positive continue branch");
+  assert.match(
+    helper,
+    /c >= 'a' && c <= 'z' && c <= 'Z'|c >= 'a' && c <= 'z' \|\| c >= 'A' && c <= 'Z' \|\| c >= '0' && c <= '9' \|\| c == '\.' \|\| c == '_' \|\| c == ':' \|\| c == '-'/,
+    "allowed byte ranges a-z A-Z 0-9 . _ : - are preserved",
+  );
 });

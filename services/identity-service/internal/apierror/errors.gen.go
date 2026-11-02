@@ -161,9 +161,10 @@ func validRequestID(requestID string) bool {
 	}
 	for i := 0; i < len(requestID); i++ {
 		c := requestID[i]
-		if !(c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '.' || c == '_' || c == ':' || c == '-') {
-			return false
+		if c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '.' || c == '_' || c == ':' || c == '-' {
+			continue
 		}
+		return false
 	}
 	return true
 }
