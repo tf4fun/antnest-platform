@@ -20,6 +20,8 @@ Issue 状态最后核对于 2026-10-28：141 个 issue，87 个已关闭，54 �
 
 ## 当前批次
 
+- **#56 Agent UI 服务批次（2026-11-02）**：堆叠 ACP [#450](https://github.com/tf4fun/antnest-platform/pull/450)，将 HTTP SDK 导入收口到 `server/src/adapters/acp-sdk.ts`，原 transport lifecycle 仅替换 import，不改连接／初始化／关闭逻辑。新增三个服务内测试先 RED 后 GREEN；利用现有 TypeScript AST 检查整个生产 server 源码的 static／type-only／multiline／dynamic 导入边界，随既有 `test:server` 进入 CI，不额外引入 ESLint 依赖。定向 server typecheck 成功，格式检查发现的新测试格式已校正。README 明确支持 pin、HTTP／v2 实验属性及直接客户端的稳定 WebSocket v1 默认；双包真实 HTTP component 与升级触发选择器为下一独立集成批次。创建 #450 后仅一次查看 #449，当时完整门仍运行，未计远程准入通过。
+
 - **#56 ACP 服务批次（2026-11-02）**：堆叠共享依赖 [#449](https://github.com/tf4fun/antnest-platform/pull/449)，仅将七处生产 experimental 导入收口到 `src/transport/acp/sdk.ts`，ESLint 限制其余生产源码导入；业务逻辑不变。新增 `test:sdk` 与 CI 步骤，按已安装 SDK 的公共 export map、六个运行时入口及 stable／draft schema 哈希生成可审查的 `docs/acp-sdk-surface.json`，旧逐方法审计及其历史证据保留。六个测试先 RED 后 GREEN；定向 ESLint／格式与 ACP typecheck 成功。SDK 保持 `1.5.0`，文档明确直接客户端以 WebSocket v1 为稳定默认、HTTP／v2 为实验面且 Agent UI 仍使用 HTTP；Agent UI 边界与双包 HTTP 互操作门禁继续下一独立批次，远程精确候选准入未等待。
 
 - **#56 共享依赖批次（2026-11-02）**：固定 `tests/support/shared-versions.json` 中 ACP SDK `1.5.0`，在 Repository checks 校验两个生产包及所有发现的 npm 声明／锁文件（含嵌套 SDK 解析与跨依赖字段冲突），拒绝删除 SDK 约束；Dependabot 按 npm 多目录 `acp-sdk` 分组，另覆盖 Go、Cargo 与 Actions。首批 12 个测试在实现前因缺少 checker 全 RED，审查补齐遮蔽回归后 15/15 GREEN，仓库实际版本校验与定向格式检查通过。最小日志位于该批次 worktree 的 `artifacts/verification/issue-56/`，不入 Git。ACP／Agent UI 适配器、可重复 SDK surface 审计及真实双包 HTTP component 门禁为后续独立批次；本批不升级 SDK，不宣称完整 #56 已验收，不运行或跟踪 Docker E2E。

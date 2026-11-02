@@ -1,4 +1,4 @@
-import { createHttpStream } from "@agentclientprotocol/sdk/experimental/http-client";
+import { createHttpStream } from "./acp-sdk.ts";
 import { captureAcpCloseTrace, type AcpCloseTrigger } from "../telemetry.ts";
 import { OwnedHttpResponse } from "./owned-http-response.ts";
 import { AcpCloseFailures, type AcpCloseFailureStage } from "./acp-close-diagnostics.ts";

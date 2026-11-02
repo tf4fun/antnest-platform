@@ -337,6 +337,23 @@ accepted model work; #58 owns future long-lived renewal. Credentials never enter
 Views or cursors. Invalid security configuration fails before listening. The
 production health probe supports the configured port and TLS/mTLS transport.
 
+The supported `@agentclientprotocol/sdk` version, currently `1.5.0`, is pinned
+by the shared [`tests/support/shared-versions.json`](../../tests/support/shared-versions.json)
+manifest together with `web/package.json` and `web/package-lock.json`; all
+three move in one reviewed upgrade. The stable v1 WebSocket transport remains
+the supported default for direct ACP clients; the SDK's HTTP client and draft
+v2 modules are experimental surfaces. Agent UI intentionally uses the
+experimental HTTP transport against the Agent ACP Service — it has not moved
+to WebSocket — and reaches that module only through the
+`server/src/adapters/acp-sdk.ts` re-export. `server/test/acp-sdk.test.ts`,
+picked up by the existing `npm run test:server` glob in CI, enforces the
+boundary with an AST import check built on the existing `typescript`
+dependency: it parses every `server/src` source with `ts.createSourceFile` and
+collects static, type-only, multiline and dynamic specifiers instead of adding
+an ESLint dependency. The shared manifest gate and this boundary check cover
+the pin today; the upcoming cross-package interop gate remains separate
+acceptance.
+
 ## Build and test
 
 Commands run from the repository root unless stated.
