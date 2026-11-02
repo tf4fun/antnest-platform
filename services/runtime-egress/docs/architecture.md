@@ -275,8 +275,12 @@ destinations. This invariant prevents an Agent from routing through Egress back
 into Docker/Kubernetes control networks or another Runtime's unauthenticated
 MCP listener. Schema version 1 can never reach any private range.
 
-Control contract revision 9 publishes schema version 2, implemented by this
-service; the owning Controller and Console batches remain pending. A version 2 document is a `default` of `allow` or `deny`
+Control contract revision 9 publishes schema version 2. Egress enforces the
+policy, Agent Controller accepts scoped specs and publishes immutable revisions
+before assignment CAS, and Admin Console exposes the ordered-rule editor.
+The [shared wire fixture](../../../tests/integration/runtime-egress/policy-v2-handoff.json)
+is checked by the owning service contract/component tests, not a deployed
+system acceptance result. A version 2 document is a `default` of `allow` or `deny`
 plus an ordered `rules` array of at most 128 entries evaluated first-match:
 the first rule whose selectors match the destination decides, and there is no
 longest-prefix or priority precedence. `protocol` is implicitly TCP only. A
