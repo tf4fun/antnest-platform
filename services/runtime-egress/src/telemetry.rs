@@ -28,6 +28,8 @@ use tracing_subscriber::{
 
 pub const SERVICE_NAME: &str = "antnest-runtime-egress";
 
+const OTLP_EXPORT_TIMEOUT: Duration = Duration::from_secs(2);
+
 pub fn capture_rpc_content_from_environment() -> bool {
     env::var("ANTNEST_TELEMETRY_CAPTURE_RPC_CONTENT")
         .is_ok_and(|value| value.trim().eq_ignore_ascii_case("true"))
@@ -46,6 +48,7 @@ pub struct Telemetry {
     meter_provider: Option<SdkMeterProvider>,
     metrics: EgressMetrics,
     otlp_enabled: bool,
+    metrics_enabled: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -114,6 +117,10 @@ impl Telemetry {
             .boxed();
 
         let otlp_enabled = !sdk_disabled();
+        let metrics_exporter = env::var("OTEL_METRICS_EXPORTER").ok();
+        let metrics_enabled = metrics_export_enabled(otlp_enabled, metrics_exporter.as_deref());
+        let metrics_exporter_rejected =
+            !metrics_exporter_supported(otlp_enabled, metrics_exporter.as_deref());
         let tracer_provider = if !otlp_enabled {
             SdkTracerProvider::builder()
                 .with_max_events_per_span(32)
@@ -125,6 +132,7 @@ impl Telemetry {
             let exporter = opentelemetry_otlp::SpanExporter::builder()
                 .with_http()
                 .with_endpoint(endpoint)
+                .with_timeout(OTLP_EXPORT_TIMEOUT)
                 .build()
                 .map_err(|error| TelemetryError::Exporter(error.to_string()))?;
             SdkTracerProvider::builder()
@@ -133,7 +141,7 @@ impl Telemetry {
                 .with_resource(service_resource())
                 .build()
         };
-        let meter_provider = if !otlp_enabled {
+        let meter_provider = if !metrics_enabled {
             SdkMeterProvider::builder()
                 .with_resource(service_resource())
                 .build()
@@ -143,6 +151,7 @@ impl Telemetry {
             let exporter = opentelemetry_otlp::MetricExporter::builder()
                 .with_http()
                 .with_endpoint(endpoint)
+                .with_timeout(OTLP_EXPORT_TIMEOUT)
                 .build()
                 .map_err(|error| TelemetryError::Exporter(error.to_string()))?;
             SdkMeterProvider::builder()
@@ -169,13 +178,18 @@ impl Telemetry {
             "service.name" = SERVICE_NAME,
             "service.version" = env!("CARGO_PKG_VERSION"),
             otlp_enabled,
+            metrics_enabled,
             "Runtime Egress telemetry initialized"
         );
+        if metrics_exporter_rejected {
+            tracing::warn!("{UNSUPPORTED_METRICS_EXPORTER_WARNING}");
+        }
         Ok(Self {
             tracer_provider: Some(tracer_provider),
             meter_provider: Some(meter_provider),
             metrics,
             otlp_enabled,
+            metrics_enabled,
         })
     }
 
@@ -184,18 +198,44 @@ impl Telemetry {
     }
 
     pub fn shutdown(mut self) {
+        let mut metrics_status = if self.metrics_enabled {
+            "stopped"
+        } else {
+            "disabled"
+        };
+        let mut tracing_status = if self.otlp_enabled {
+            "stopped"
+        } else {
+            "disabled"
+        };
         if let Some(provider) = self.meter_provider.take()
             && let Err(error) = provider.shutdown_with_timeout(Duration::from_secs(5))
         {
+            metrics_status = "failed";
             tracing::error!(%error, "Runtime Egress metrics shutdown failed");
         }
         if let Some(provider) = self.tracer_provider.take()
             && let Err(error) = provider.shutdown_with_timeout(Duration::from_secs(5))
         {
+            tracing_status = "failed";
             tracing::error!(%error, "Runtime Egress tracing shutdown failed");
+        }
+        if metrics_status == "failed" || tracing_status == "failed" {
+            tracing::warn!(
+                otlp_enabled = self.otlp_enabled,
+                metrics_enabled = self.metrics_enabled,
+                metrics_status,
+                tracing_status,
+                export_delivery = "unverified",
+                "Runtime Egress telemetry stopped with export failures"
+            );
         } else {
             tracing::info!(
                 otlp_enabled = self.otlp_enabled,
+                metrics_enabled = self.metrics_enabled,
+                metrics_status,
+                tracing_status,
+                export_delivery = "unverified",
                 "Runtime Egress telemetry stopped"
             );
         }
@@ -456,6 +496,25 @@ fn sdk_disabled() -> bool {
         .unwrap_or(true)
 }
 
+const UNSUPPORTED_METRICS_EXPORTER_WARNING: &str =
+    "OTEL_METRICS_EXPORTER is not supported; Runtime Egress metrics export disabled";
+
+fn metrics_exporter_value(exporter: Option<&str>) -> Option<&str> {
+    exporter.map(str::trim).filter(|value| !value.is_empty())
+}
+
+fn metrics_export_enabled(sdk_enabled: bool, exporter: Option<&str>) -> bool {
+    sdk_enabled
+        && metrics_exporter_value(exporter).is_some_and(|value| value.eq_ignore_ascii_case("otlp"))
+}
+
+fn metrics_exporter_supported(sdk_enabled: bool, exporter: Option<&str>) -> bool {
+    !sdk_enabled
+        || metrics_exporter_value(exporter).is_none_or(|value| {
+            value.eq_ignore_ascii_case("otlp") || value.eq_ignore_ascii_case("none")
+        })
+}
+
 fn configured_otlp_endpoint(signal_key: &str, signal_path: &str) -> String {
     let specific = env::var(signal_key).ok();
     let generic = env::var("OTEL_EXPORTER_OTLP_ENDPOINT").ok();
@@ -527,7 +586,10 @@ mod tests {
     use opentelemetry::metrics::MeterProvider as _;
     use opentelemetry_sdk::metrics::{InMemoryMetricExporter, PeriodicReader, SdkMeterProvider};
 
-    use super::{EgressMetrics, SERVICE_NAME, is_control_otlp_target, is_service_target};
+    use super::{
+        EgressMetrics, SERVICE_NAME, is_control_otlp_target, is_service_target,
+        metrics_export_enabled, metrics_exporter_supported,
+    };
 
     #[test]
     fn generic_otlp_endpoint_is_a_base_url() {
@@ -552,6 +614,43 @@ mod tests {
             "http://collector:4318/custom-traces"
         );
     }
+    #[test]
+    fn metrics_export_requires_explicit_otlp_opt_in() {
+        for exporter in [None, Some(""), Some("   "), Some("none"), Some("NONE")] {
+            assert!(!metrics_export_enabled(true, exporter), "{exporter:?}");
+        }
+        for exporter in [Some("otlp"), Some(" OTLP ")] {
+            assert!(metrics_export_enabled(true, exporter), "{exporter:?}");
+        }
+        for exporter in [Some("grpc"), Some("otlp,trace")] {
+            assert!(!metrics_export_enabled(true, exporter), "{exporter:?}");
+        }
+        for exporter in [None, Some("otlp"), Some("grpc")] {
+            assert!(!metrics_export_enabled(false, exporter), "{exporter:?}");
+        }
+    }
+
+    #[test]
+    fn unsupported_metrics_exporter_is_detected_only_when_sdk_enabled() {
+        for exporter in [
+            None,
+            Some(""),
+            Some("   "),
+            Some("none"),
+            Some("NoNe"),
+            Some("otlp"),
+            Some(" OTLP "),
+        ] {
+            assert!(metrics_exporter_supported(true, exporter), "{exporter:?}");
+        }
+        for exporter in [Some("grpc"), Some("otlp,trace")] {
+            assert!(!metrics_exporter_supported(true, exporter), "{exporter:?}");
+        }
+        for exporter in [None, Some("grpc")] {
+            assert!(metrics_exporter_supported(false, exporter), "{exporter:?}");
+        }
+    }
+
     use crate::{
         application::HealthMetricsSnapshot, dataplane::DataPlaneMetrics, dns::DnsMetricsSnapshot,
     };

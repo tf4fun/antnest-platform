@@ -377,6 +377,36 @@ before TUN from packets independently rejected by the kernel. Connected IPv4
 subnet discovery is required at startup; recreate/restart Egress after an
 operator changes its network attachments.
 
+Metrics export is off by default even when `OTEL_SDK_DISABLED` enables tracing:
+only the trimmed, case-insensitive value `OTEL_METRICS_EXPORTER=otlp` opts in,
+and it requires an actual metrics-capable OTLP HTTP/protobuf receiver on the
+configured endpoint.
+A trace-only backend such as the Jaeger OTLP endpoint is not a metrics backend;
+leaving `OTEL_METRICS_EXPORTER` unset, empty, or `none` keeps the meter pipeline
+local with no exporter or periodic reader. Any other value is rejected with a
+stable warning that never echoes the raw setting, and metrics stay disabled
+rather than failing service delivery. Endpoint selection is unchanged:
+`OTEL_EXPORTER_OTLP_METRICS_ENDPOINT` is used verbatim, otherwise the generic
+`OTEL_EXPORTER_OTLP_ENDPOINT` base gains `/v1/metrics`.
+
+Each OTLP HTTP export carries a fixed two-second client-side budget set by the
+service, which intentionally overrides any `OTEL_EXPORTER_OTLP_TIMEOUT` family
+environment value so a stalled collector cannot outlast provider shutdown. At
+stop, each provider is shut down sequentially with a wait of up to five
+seconds and no extra flush step; the tracing signal is always attempted even
+after a metrics failure. Telemetry is best-effort: shutdown failures log a
+per-signal error and a warning summary, but never change the application exit
+result or business cleanup.
+The final `Runtime Egress telemetry stopped` event carries
+`metrics_status`/`tracing_status` of `disabled`, `stopped`, or `failed`; these
+report provider shutdown results only and do not prove remote persistence, so
+every summary carries `export_delivery = "unverified"`. A known OpenTelemetry
+SDK limitation makes this stricter for tracing: its batch span processor can
+omit an underlying export failure from the shutdown result, so `stopped` must
+never be read as acknowledged or durable delivery. Any failed signal instead
+emits the `Runtime Egress telemetry stopped with export failures` warning, so
+a clean provider stop is never claimed after a returned shutdown failure.
+
 ## 8. Recovery
 
 - Container restart is the recovery mechanism for fatal TUN, UDP, or kernel

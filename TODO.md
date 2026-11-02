@@ -20,6 +20,9 @@ Issue 状态最后核对于 2026-10-28：141 个 issue，87 个已关闭，54 �
 
 ## 当前批次
 
+- **#252 Runtime Egress 服务批次（2026-11-02，已审查、待 PR）**：修复 `Telemetry::init` 忽略 `OTEL_METRICS_EXPORTER` 的配置缺陷；metrics 仅显式 `otlp` 启用，缺失／空／`none` 禁用，未知值稳定告警并禁用。两个 HTTP exporter 使用服务自有 2s 预算（覆盖 OTLP timeout 环境变量）；provider 独立顺序 shutdown、各等至 5s，无额外 flush；摘要分别记录 `disabled`／`stopped`／`failed`，任一返回失败不再记录干净停止，始终标记 `export_delivery=unverified`。已知 SDK tracing shutdown 可能不返回底层导出失败，仅保留非阻塞诊断，不添加 SDK 绕行。
+  - **TDD 与边界**：原代码定向 RED 为 5 failed／2 passed，真实 HTTP receiver 复现 `none` 仍发送与 404→`Failed to shutdown`→误报成功，不据此断言历史 Jaeger 返回码；最终 8／8 receiver 回归、9／9 telemetry unit、fmt／聚焦 clippy 通过。日志临时位于 `artifacts/verification/issue-252/`。Compose 尚缺 metrics exporter／专用端点透传，下一独立部署批次处理；完整远程 unit／contract／component 准入未验，不关闭 #252／#82，不运行或等待 Docker E2E。
+
 - **#40 既有交付核对与文档收口（2026-11-02）**：代码与历史确认共享契约 #422、Egress #423、Controller #424、Console #425、显式组件集成 #426 已合入 main，对应 merge 为 `dbe080db`／`271581a7`／`15c6a205`／`81dfb1cd`／`fedada04`，受审 head 为 `29cd796f`／`0f1c6df3`／`6eec8a02`／`449308d3`／`b378e573`；先前“功能未交付”判断来自滞后 issue，现已纠正，不重复实现。既有精确候选 Repository／Integration 成功证据由协调者核对，永久链接将写入 #40。当前独立批次仅修正三个文档中 Controller／Console 仍 pending 的陈旧说法，并为已交付消费方与共享 fixture 链接补 RED→GREEN 回归；无新服务行为、契约版本或 CI／安全策略变更。#40 等本文档 PR 审查合并后再收口，#82 仍开放；Docker/system E2E 未运行、查询、等待或计为通过，不作为开发后续项，不宣称发布能力。
 
 - **#56 CI 修复（2026-11-02，用户通知后）**：核对精确候选 #450 `d32088e7`、#451 `3ac64ef7`、#452 `2f1e4a97` 的已完成日志，Repository checks 均在三个既有调用者目录测试报相同两项 `requires route catalog review`。逐字节对照共享父提交，确认 `http-transport.ts`／`validated-node-handler.ts` 仅将 `AcpServer` 的 type-only import 指向 `./sdk.js`，其他源码字节完全一致；调用者目录仍记录旧源码 SHA-256。经源码审查，仅同步这两个指纹，不改任何路由、调用者、认证分类、守卫、校验器或测试预期。修复位于 ACP #450 `4e9d7d7f`，非重写 merge 向下游同步到 UI #451 `4eb8a930` 与集成 [#452](https://github.com/tf4fun/antnest-platform/pull/452)；共享 #449 无此变更，不更新。

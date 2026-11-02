@@ -126,7 +126,8 @@ Egress remains one non-HA instance with non-persisted flows and NAT; Runtime
 reconnects and application retries recover without controller intervention.
 
 | `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`            | no            | `http://127.0.0.1:4318/v1/traces`  | OTLP HTTP traces endpoint                                                                                         |
-| `OTEL_EXPORTER_OTLP_METRICS_ENDPOINT`           | no            | `http://127.0.0.1:4318/v1/metrics` | OTLP HTTP metrics endpoint                                                                                        |
+| `OTEL_METRICS_EXPORTER`                         | no            | `none`                             | `otlp` (trimmed, case-insensitive) opts in to OTLP metrics export and requires a metrics-capable HTTP/protobuf receiver; unset, empty, or `none` disables metrics; any other value is rejected with a stable warning and metrics stay disabled |
+| `OTEL_EXPORTER_OTLP_METRICS_ENDPOINT`           | no            | `http://127.0.0.1:4318/v1/metrics` | OTLP HTTP metrics endpoint; used only when `OTEL_METRICS_EXPORTER=otlp`                                           |
 | `OTEL_EXPORTER_OTLP_ENDPOINT`                   | no            | `http://127.0.0.1:4318`            | Fallback OTLP HTTP base URL; `/v1/traces` and `/v1/metrics` are appended                                          |
 
 Packet revision and inner MTU come only from the packet contract and have no
@@ -162,7 +163,8 @@ Controller receives 404.
 - Agent Controller is the lifecycle/policy client; RC privately prepares generation keys. Runtime containers send packets over
   UDP. Egress does not call either service.
 - An OTLP collector is optional and used only when `OTEL_SDK_DISABLED` is not
-  `true` or `1`. It is not part of `/status` readiness.
+  `true` or `1`. Metrics export additionally requires
+  `OTEL_METRICS_EXPORTER=otlp`. It is not part of `/status` readiness.
 
 ## Build and test
 
