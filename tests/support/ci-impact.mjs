@@ -191,6 +191,14 @@ function referenceGraph(sources) {
   return sourceDependents;
 }
 
+const sharedSdkFiles = new Set([
+  "tests/support/shared-versions.json",
+  "services/agent-acp-service/package.json",
+  "services/agent-acp-service/package-lock.json",
+  "services/agent-ui/web/package.json",
+  "services/agent-ui/web/package-lock.json",
+]);
+
 // The component names a change set exercises, sorted. Service code and its
 // tests select only their own component; contracts expand through declared
 // ownership; shared modules and repository-wide inputs stay conservative.
@@ -205,8 +213,11 @@ export function selectComponents(files, { all = false, sources } = {}) {
     /(?:^|\/)(?:test_[^/]*\.py|[^/]*_test\.go|[^/]*\.test\.[^./]+)$/iu;
   const workflowService = /^\.github\/workflows\/([\w-]+)\.yml$/u;
   for (const file of files) {
-    if (file === "services/agent-acp-service/package-lock.json")
+    if (sharedSdkFiles.has(file)) {
+      selected.add("agent-acp-service");
       selected.add("agent-ui");
+      continue;
+    }
     if (file === "tests/integration/skill-registry/package-rules-v1.json")
       selected.add("antnest-runtime");
     if (file.startsWith("contracts/")) {

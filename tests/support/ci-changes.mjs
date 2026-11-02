@@ -73,6 +73,14 @@ const parsedProse = ["contracts/**", "tests/**"];
 // the pull request gate, system suites on main, stress suites nightly.
 export const kinds = ["component", "system", "stress"];
 
+const acpSdkVersions = [
+  "tests/support/shared-versions.json",
+  "services/agent-acp-service/package.json",
+  "services/agent-acp-service/package-lock.json",
+  "services/agent-ui/web/package.json",
+  "services/agent-ui/web/package-lock.json",
+];
+
 // A `disabled` suite is never selected; the reason names the known breakage.
 // `images` are prebuilt as antnest/<image>:local before `run`, for runners
 // that start them with `--no-build` or inspect them without building.
@@ -153,6 +161,7 @@ export const suites = [
     paths: [
       ...service("agent-acp-service"),
       "tests/integration/agent-acp-service/**",
+      ...acpSdkVersions,
       ...compose,
     ],
     pull: base,
@@ -179,7 +188,11 @@ export const suites = [
     name: "Agent UI browser",
     kind: "component",
     setup: ["agent-ui-web", "chromium"],
-    paths: [...service("agent-ui"), "tests/integration/agent-ui/**"],
+    paths: [
+      ...service("agent-ui"),
+      "tests/integration/agent-ui/**",
+      ...acpSdkVersions,
+    ],
     run: ["npm --prefix services/agent-ui/web run test:browser"],
   },
   {

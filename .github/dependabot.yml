@@ -11,6 +11,12 @@ updates:
       default-days: 7
     groups:
       acp-sdk:
+        group-by: dependency-name
+        patterns:
+          - "@agentclientprotocol/*"
+      acp-sdk-security:
+        applies-to: security-updates
+        group-by: dependency-name
         patterns:
           - "@agentclientprotocol/*"
   - package-ecosystem: "gomod"
