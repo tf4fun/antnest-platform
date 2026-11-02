@@ -1,4 +1,4 @@
-import type { UsageUpdate } from "@agentclientprotocol/sdk";
+import type { UsageUpdate } from "@agentclientprotocol/sdk/unstable";
 import type { SessionCost, SessionUsage } from "./types";
 
 export function projectUsage(current: SessionUsage | undefined, update: UsageUpdate): SessionUsage | undefined {

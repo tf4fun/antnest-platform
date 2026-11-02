@@ -3,7 +3,7 @@ import { DomainError } from "../../../../services/agent-acp-service/src/domain/e
 import { ModelBudgetExceededError } from "../../../../services/agent-acp-service/src/domain/model-budget.js";
 import { sessionConfigurationView } from "../../../../services/agent-acp-service/test/support/fixtures.js";
 import { v1Configuration } from "../../../../services/agent-acp-service/src/transport/acp/configuration.js";
-import * as acp from "@agentclientprotocol/sdk";
+import * as acp from "@agentclientprotocol/sdk/unstable";
 import { describe, expect, it, vi } from "vitest";
 import {
   withOutputHistory,

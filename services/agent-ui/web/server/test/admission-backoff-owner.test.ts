@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
-import { RequestError } from "@agentclientprotocol/sdk";
+import { RequestError } from "@agentclientprotocol/sdk/unstable";
 import { AcpPromptError, AgentAccessRevokedError } from "../src/adapters/acp-http.ts";
 import { AgentBridgeOwner, type AcpBridgePort } from "../src/bridge/agent-owner.ts";
 

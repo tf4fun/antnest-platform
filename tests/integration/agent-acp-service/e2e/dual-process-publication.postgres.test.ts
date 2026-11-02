@@ -10,7 +10,7 @@ import {
 import { createConnection } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import * as acp from "@agentclientprotocol/sdk";
+import * as acp from "@agentclientprotocol/sdk/unstable";
 import { createHttpStream } from "@agentclientprotocol/sdk/experimental/http-client";
 import { createMcpHandler, McpServer } from "@modelcontextprotocol/server";
 import { Pool } from "pg";

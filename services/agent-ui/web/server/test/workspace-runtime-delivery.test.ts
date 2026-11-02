@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import type { SessionNotification } from "@agentclientprotocol/sdk";
+import type { SessionNotification } from "@agentclientprotocol/sdk/unstable";
 import { TestRequest as Request } from "./support/auth-fixture.ts";
 import { createWorkspaceRuntime } from "../src/workspace-runtime.ts";
 import {

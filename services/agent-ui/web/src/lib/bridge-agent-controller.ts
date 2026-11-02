@@ -1,4 +1,4 @@
-import type { ContentBlock } from "@agentclientprotocol/sdk";
+import type { ContentBlock } from "@agentclientprotocol/sdk/unstable";
 import { openBridgeObserver } from "./bridge-observer.ts";
 import { BridgeOperationTracker, type BridgeOperation } from "./bridge-operations.ts";
 import { BridgePermissionStore } from "./bridge-permissions.ts";

@@ -16,7 +16,9 @@ import { AcpHttpBridge } from "../../../../services/agent-ui/web/server/dist/ada
 const requireUi = createRequire(
   new URL("../../../../services/agent-ui/web/package.json", import.meta.url),
 );
-const acp = await import(requireUi.resolve("@agentclientprotocol/sdk"));
+const acp = await import(
+  requireUi.resolve("@agentclientprotocol/sdk/unstable")
+);
 const { AcpServer } = await import(
   requireUi.resolve("@agentclientprotocol/sdk/experimental/server")
 );

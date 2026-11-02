@@ -7,7 +7,7 @@ import type {
   SessionUpdate,
   ToolCallUpdate,
   UsageUpdate,
-} from "@agentclientprotocol/sdk";
+} from "@agentclientprotocol/sdk/unstable";
 import type { DeliveredBatch } from "./delivery.ts";
 import { projectAvailableCommands, type WorkspaceCommand } from "../protocol/available-commands.ts";
 

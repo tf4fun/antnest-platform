@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { SessionReplay } from "../src/bridge/session-replay.ts";
 import { CompactTranscript } from "../src/bridge/compact-transcript.ts";
-import type { SessionUpdate } from "@agentclientprotocol/sdk";
+import type { SessionUpdate } from "@agentclientprotocol/sdk/unstable";
 
 const part = (sequence: number, partIndex = 0, partCount = 1) => ({
   kind: "part" as const,

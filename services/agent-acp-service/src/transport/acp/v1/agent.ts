@@ -1,4 +1,4 @@
-import * as acp from "@agentclientprotocol/sdk";
+import * as acp from "@agentclientprotocol/sdk/unstable";
 import { fileContent } from "./file-content.js";
 import { targetCancelRunId } from "./target-cancel.js";
 import { configurationCondition } from "./configuration-condition.js";

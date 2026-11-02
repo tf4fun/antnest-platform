@@ -1,4 +1,4 @@
-import type { ListSessionsResponse } from "@agentclientprotocol/sdk";
+import type { ListSessionsResponse } from "@agentclientprotocol/sdk/unstable";
 import type { AgentView } from "../protocol/agent-view-delta.ts";
 import { controlCatalogue, isReservedControlName, parseControlCommand,
   type ControlRequest, type ControlResult } from "../protocol/workspace-commands.ts";

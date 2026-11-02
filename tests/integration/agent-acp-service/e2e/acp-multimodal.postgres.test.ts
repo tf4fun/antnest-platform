@@ -1,5 +1,5 @@
 import { syntheticProviderDestination } from "../../../../services/agent-acp-service/test/support/model-network.js";
-import * as acp from "@agentclientprotocol/sdk";
+import * as acp from "@agentclientprotocol/sdk/unstable";
 import { createHttpStream } from "@agentclientprotocol/sdk/experimental/http-client";
 import { Pool } from "pg";
 import {

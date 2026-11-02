@@ -1,5 +1,5 @@
-import * as v1 from "@agentclientprotocol/sdk";
-import * as v2 from "@agentclientprotocol/sdk/experimental/v2";
+import * as v1 from "@agentclientprotocol/sdk/unstable";
+import * as v2 from "@agentclientprotocol/sdk/experimental/v2/unstable";
 import { expect } from "vitest";
 import WebSocket from "ws";
 import type { ExecutionIdentity } from "../../../../services/agent-acp-service/src/domain/execution-configuration.js";

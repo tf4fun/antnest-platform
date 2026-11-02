@@ -11,7 +11,7 @@ import {
   sessionConfigurationView,
 } from "../../../../services/agent-acp-service/test/support/fixtures.js";
 import { v1Configuration } from "../../../../services/agent-acp-service/src/transport/acp/configuration.js";
-import * as acp from "@agentclientprotocol/sdk";
+import * as acp from "@agentclientprotocol/sdk/unstable";
 import { createHttpStream } from "@agentclientprotocol/sdk/experimental/http-client";
 import { AcpServer } from "@agentclientprotocol/sdk/experimental/server";
 import {

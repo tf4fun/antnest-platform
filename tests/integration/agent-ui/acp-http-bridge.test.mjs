@@ -21,7 +21,7 @@ import { testScope, testSecurityEnvironment } from "./auth-fixture.mjs";
 const fromUi = createRequire(
   new URL("../../../services/agent-ui/web/package.json", import.meta.url),
 );
-const acp = await import(fromUi.resolve("@agentclientprotocol/sdk"));
+const acp = await import(fromUi.resolve("@agentclientprotocol/sdk/unstable"));
 const { AcpServer } = await import(
   fromUi.resolve("@agentclientprotocol/sdk/experimental/server")
 );

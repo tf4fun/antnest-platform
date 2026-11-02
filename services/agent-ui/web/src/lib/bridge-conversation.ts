@@ -1,4 +1,4 @@
-import type { SessionConfigOption } from "@agentclientprotocol/sdk";
+import type { SessionConfigOption } from "@agentclientprotocol/sdk/unstable";
 import { availableCommandsSchema } from "../../server/src/protocol/available-commands.ts";
 import { initialBridgeContent, type BridgeContentState } from "./bridge-content.ts";
 import { contentView } from "./content-view.ts";

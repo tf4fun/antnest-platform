@@ -7,7 +7,7 @@ import type {
   ForkSessionResponse,
   SessionConfigOption,
   SessionNotification,
-} from "@agentclientprotocol/sdk";
+} from "@agentclientprotocol/sdk/unstable";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import {
   AcpHttpBridge,

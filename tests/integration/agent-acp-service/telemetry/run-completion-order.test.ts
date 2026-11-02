@@ -1,5 +1,5 @@
-import * as v1 from "@agentclientprotocol/sdk";
-import * as v2 from "@agentclientprotocol/sdk/experimental/v2";
+import * as v1 from "@agentclientprotocol/sdk/unstable";
+import * as v2 from "@agentclientprotocol/sdk/experimental/v2/unstable";
 import { context, propagation, trace, type Span } from "@opentelemetry/api";
 import { core, node, tracing } from "@opentelemetry/sdk-node";
 import { afterAll, beforeAll, beforeEach, expect, it, vi } from "vitest";

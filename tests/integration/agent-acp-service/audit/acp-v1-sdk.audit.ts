@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import type { ValidateFunction } from "ajv";
-import schema from "@agentclientprotocol/sdk/schema/schema.json" with { type: "json" };
+import schema from "@agentclientprotocol/sdk/schema/v1/schema.unstable.json" with { type: "json" };
 import { Pool } from "pg";
 import {
   afterAll,
@@ -102,7 +102,7 @@ it("SDK-00: every SDK v1 method has an audit disposition and the oracle is pinne
         "../../../../services/agent-acp-service/package.json",
         import.meta.url,
       ),
-    ).resolve("@agentclientprotocol/sdk/schema/schema.json"),
+    ).resolve("@agentclientprotocol/sdk/schema/v1/schema.unstable.json"),
   );
   expect(createHash("sha256").update(bytes).digest("hex")).toBe(
     inventory.schemaSha256,

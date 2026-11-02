@@ -1,4 +1,4 @@
-import type * as v1 from "@agentclientprotocol/sdk";
+import type * as v1 from "@agentclientprotocol/sdk/unstable";
 import type { v2 } from "./sdk.js";
 import {
   authorizationModes,

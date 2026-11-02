@@ -22,10 +22,21 @@ const implementation = await import(moduleURL).catch((error) => {
   return {};
 });
 
-const ENTRYPOINTS = ["root", "v2", "http-client", "ws-client", "server", "node"];
+const ENTRYPOINTS = [
+  "root",
+  "v1-unstable",
+  "v2",
+  "v2-unstable",
+  "http-client",
+  "ws-client",
+  "server",
+  "node",
+];
 const KNOWN_RUNTIME_EXPORTS = {
   root: "ndJsonStream",
+  "v1-unstable": "agent",
   v2: "agent",
+  "v2-unstable": "agent",
   "http-client": "createHttpStream",
   "ws-client": "createWebSocketStream",
   server: "AcpServer",
@@ -56,7 +67,7 @@ test("the collected surface records the installed SDK version and public shape",
   assert.deepEqual(actual.exports, manifest.exports);
   assert.equal(
     actual.schemaSha256.v1,
-    schemaHash("node_modules/@agentclientprotocol/sdk/schema/schema.json"),
+    schemaHash("node_modules/@agentclientprotocol/sdk/schema/v1/schema.unstable.json"),
   );
   assert.equal(
     actual.schemaSha256.v2,

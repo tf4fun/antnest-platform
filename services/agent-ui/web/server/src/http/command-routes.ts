@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { recordPromptInputPrepared } from "../telemetry.ts";
-import type { ContentBlock } from "@agentclientprotocol/sdk";
+import type { ContentBlock } from "@agentclientprotocol/sdk/unstable";
 import { z } from "zod";
 import { AgentAccessRevokedError, SessionNotFoundError } from "../adapters/acp-http.ts";
 import type {

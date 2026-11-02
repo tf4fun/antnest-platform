@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { PermissionInbox } from "./permissions.ts";
-import type { RequestPermissionRequest } from "@agentclientprotocol/sdk";
+import type { RequestPermissionRequest } from "@agentclientprotocol/sdk/unstable";
 
 const request: RequestPermissionRequest = { sessionId: "s1", toolCall: { toolCallId: "t1", title: "Write file", rawInput: { path: "notes.txt" } },
   options: [{ optionId: "yes", name: "Allow once", kind: "allow_once" }, { optionId: "no", name: "Reject once", kind: "reject_once" }] };

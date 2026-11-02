@@ -5,7 +5,7 @@ import {
   withOutputHistory,
   type OutputApplication,
 } from "../support/output-application.js";
-import * as acp from "@agentclientprotocol/sdk/experimental/v2";
+import * as acp from "@agentclientprotocol/sdk/experimental/v2/unstable";
 
 import { createAcpV2Agent } from "../../../../services/agent-acp-service/src/transport/acp/v2/agent.js";
 import {

@@ -1,5 +1,5 @@
 import { Ajv2020 } from "ajv/dist/2020.js";
-import v1Schema from "@agentclientprotocol/sdk/schema/schema.json" with { type: "json" };
+import v1Schema from "@agentclientprotocol/sdk/schema/v1/schema.unstable.json" with { type: "json" };
 import v2Schema from "@agentclientprotocol/sdk/schema/v2/schema.unstable.json" with { type: "json" };
 import { Pool } from "pg";
 import { afterAll, afterEach, beforeEach, describe, expect, it } from "vitest";

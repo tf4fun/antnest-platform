@@ -1,5 +1,5 @@
 import { learningStatusSchema, type LearningStatus } from "../protocol/learning-status.ts";
-import * as acp from "@agentclientprotocol/sdk";
+import * as acp from "@agentclientprotocol/sdk/unstable";
 import { AcpTransportLifecycle } from "./acp-transport-lifecycle.ts";
 import { OwnedHttpResponse } from "./owned-http-response.ts";
 import {

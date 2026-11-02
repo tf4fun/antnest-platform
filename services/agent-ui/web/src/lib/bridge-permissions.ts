@@ -1,4 +1,4 @@
-import type { RequestPermissionRequest } from "@agentclientprotocol/sdk";
+import type { RequestPermissionRequest } from "@agentclientprotocol/sdk/unstable";
 import type { PendingPermission } from "./permissions.ts";
 import { WorkspaceApiError, type BridgeHttpClient } from "./workspace-api-client.ts";
 

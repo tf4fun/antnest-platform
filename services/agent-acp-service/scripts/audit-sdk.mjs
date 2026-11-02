@@ -5,12 +5,14 @@ import { fileURLToPath } from "node:url";
 
 const PACKAGE = "@agentclientprotocol/sdk";
 const SCHEMAS = {
-  v1: `${PACKAGE}/schema/schema.json`,
+  v1: `${PACKAGE}/schema/v1/schema.unstable.json`,
   v2: `${PACKAGE}/schema/v2/schema.unstable.json`,
 };
 const ENTRYPOINTS = {
   root: PACKAGE,
+  "v1-unstable": `${PACKAGE}/unstable`,
   v2: `${PACKAGE}/experimental/v2`,
+  "v2-unstable": `${PACKAGE}/experimental/v2/unstable`,
   "http-client": `${PACKAGE}/experimental/http-client`,
   "ws-client": `${PACKAGE}/experimental/ws-client`,
   server: `${PACKAGE}/experimental/server`,
@@ -38,7 +40,7 @@ export async function collectSdkSurface() {
   const schemaPaths = {};
   for (const [name, specifier] of Object.entries(SCHEMAS))
     schemaPaths[name] = fileURLToPath(import.meta.resolve(specifier));
-  const packageRoot = dirname(dirname(schemaPaths.v1));
+  const packageRoot = dirname(dirname(dirname(schemaPaths.v1)));
   const manifest = JSON.parse(readFileSync(join(packageRoot, "package.json"), "utf8"));
   const runtimeExports = {};
   for (const [name, specifier] of Object.entries(ENTRYPOINTS))

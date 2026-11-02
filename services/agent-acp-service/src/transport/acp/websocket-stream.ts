@@ -1,4 +1,4 @@
-import type * as acpV1 from "@agentclientprotocol/sdk";
+import type * as acpV1 from "@agentclientprotocol/sdk/unstable";
 import type { v2 as acpV2 } from "./sdk.js";
 import type { RawData } from "ws";
 import { strictJson } from "../../adapters/strict-json.js";

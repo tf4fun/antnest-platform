@@ -2,14 +2,14 @@ import { Pool } from "pg";
 import { readFileSync } from "node:fs";
 import { afterAll, afterEach, beforeEach, describe, expect, it } from "vitest";
 import { Ajv2020 } from "ajv/dist/2020.js";
-import v1Schema from "@agentclientprotocol/sdk/schema/schema.json" with { type: "json" };
+import v1Schema from "@agentclientprotocol/sdk/schema/v1/schema.unstable.json" with { type: "json" };
 import v2Schema from "@agentclientprotocol/sdk/schema/v2/schema.unstable.json" with { type: "json" };
 import { migrate } from "../../../../services/agent-acp-service/src/adapters/postgres/migrate.js";
 import { startBoundaryApplication } from "../support/postgres-boundary-application.js";
 import type { AcpWireClient } from "../support/acp-wire-client.js";
 import { identityHeaders } from "../../../../services/agent-acp-service/test/support/fixtures.js";
 import type { SessionConfiguration } from "../../../../services/agent-acp-service/src/domain/session-configuration.js";
-import * as acp from "@agentclientprotocol/sdk";
+import * as acp from "@agentclientprotocol/sdk/unstable";
 import { createHttpStream } from "@agentclientprotocol/sdk/experimental/http-client";
 
 const databaseUrl = process.env.ANTNEST_ACP_TEST_DATABASE_URL;

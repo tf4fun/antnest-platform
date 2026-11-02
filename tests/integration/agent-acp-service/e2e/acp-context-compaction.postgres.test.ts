@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import * as acp from "@agentclientprotocol/sdk";
+import * as acp from "@agentclientprotocol/sdk/unstable";
 import type { Pool } from "pg";
 
 import { createTokenEstimator } from "../../../../services/agent-acp-service/src/application/token-estimator.js";

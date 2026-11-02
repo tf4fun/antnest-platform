@@ -955,7 +955,7 @@ test("ACP configuration condition carries one producer revision", () => {
 
 test("ACP 1.4.0 permits namespaced metadata in the four official wire shapes", () => {
   const sdk = json(
-    "../../../services/agent-acp-service/node_modules/@agentclientprotocol/sdk/schema/schema.json",
+    "../../../services/agent-acp-service/node_modules/@agentclientprotocol/sdk/schema/v1/schema.unstable.json",
   );
   const compatible = new Ajv2020({ strict: false, validateFormats: false });
   for (const [name, value] of [

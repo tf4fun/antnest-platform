@@ -1,5 +1,5 @@
-import * as acpV1 from "@agentclientprotocol/sdk";
-import * as acp from "@agentclientprotocol/sdk/experimental/v2";
+import * as acpV1 from "@agentclientprotocol/sdk/unstable";
+import * as acp from "@agentclientprotocol/sdk/experimental/v2/unstable";
 import { createWebSocketStream } from "@agentclientprotocol/sdk/experimental/ws-client";
 import { Pool } from "pg";
 import { afterAll, afterEach, beforeEach, describe, expect, it } from "vitest";

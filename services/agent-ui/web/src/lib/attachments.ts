@@ -1,4 +1,4 @@
-import type { PromptCapabilities } from "@agentclientprotocol/sdk";
+import type { PromptCapabilities } from "@agentclientprotocol/sdk/unstable";
 
 type Capabilities = PromptCapabilities | null | undefined;
 export type FileDescription = { kind: "image" | "audio" | "pdf" | "text"; mimeType: string };
