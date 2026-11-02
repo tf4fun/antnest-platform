@@ -20,6 +20,10 @@ Issue 状态最后核对于 2026-10-28：141 个 issue，87 个已关闭，54 �
 
 ## 当前批次
 
+- **#56 源码／PR 交付（2026-11-02，最终集成批次后停止）**：按共享依赖 [#449](https://github.com/tf4fun/antnest-platform/pull/449) → ACP [#450](https://github.com/tf4fun/antnest-platform/pull/450) → Agent UI [#451](https://github.com/tf4fun/antnest-platform/pull/451) → `fix/issue-56-sdk-interop` 堆叠交付，每个服务独立 PR。SDK 保持 `1.5.0`；共享版本约束、两个生产 adapter、ESLint／AST 导入边界、可重复 public export／运行时入口／schema 哈希审计、版本与安全更新的跨目录 Dependabot `group-by: dependency-name` 配置已实现。三个历史 E2E 文件仅机械替换 SDK `dist/` import 为公共入口 helper，未改变或运行场景，其他依赖的 #70 卫生范围不混入。新增 `acp-sdk-interop` 使用真实生产 `AcpHttpBridge` → `AcpHttpTransport`、各包独立 SDK 与真实 HTTP/SSE，覆盖 initialize／new Session／两次流式 Prompt／end_turn／指定 Run 取消／单次 DELETE 202／旧连接 404／容量再取得及 listener/socket 关闭；业务与可信 ingress 为 fixture，不计 PostgreSQL 持久化、JWT 鉴权或系统验收。
+  - **TDD 与定向证据**：共享版本初始 12 项 RED，审查补回归后 15/15 GREEN；ACP 边界／surface 六项及 UI 边界三项均先 RED 后 GREEN。最终门禁 10/10（含分组配置独立 RED→GREEN）、真实跨包 wire 1/1、现有选择器回归 100/100；ACP／UI server 类型检查、跨包构建、定向 lint／格式及实际版本校验成功。Repository checks 无条件构建双端并运行 interop，版本清单或任一 package／lock 变更显式选中两服务 unit 与 ACP／UI component；不以部分结果替代完整远程准入。最小原始日志临时位于各批次 worktree 的 `artifacts/verification/issue-56/`，不入 Git。
+  - **停止点**：#449、#450 各只在后一个 PR 创建后查看一次，当时完整远程门仍在运行；后续未继续检查。最终 PR 推送后不等待／轮询任何 CI、不合并 PR、不关闭 #56；精确候选完整准入由用户后续通知。未运行、安排或跟踪 Docker E2E，不将其列为本开发交付的待办。Dependabot 实际更新 PR 需配置合入默认分支后由平台产生，本轮不伪称已观察到机器人升级 PR。
+
 - **#56 Agent UI 服务批次（2026-11-02）**：堆叠 ACP [#450](https://github.com/tf4fun/antnest-platform/pull/450)，将 HTTP SDK 导入收口到 `server/src/adapters/acp-sdk.ts`，原 transport lifecycle 仅替换 import，不改连接／初始化／关闭逻辑。新增三个服务内测试先 RED 后 GREEN；利用现有 TypeScript AST 检查整个生产 server 源码的 static／type-only／multiline／dynamic 导入边界，随既有 `test:server` 进入 CI，不额外引入 ESLint 依赖。定向 server typecheck 成功，格式检查发现的新测试格式已校正。README 明确支持 pin、HTTP／v2 实验属性及直接客户端的稳定 WebSocket v1 默认；双包真实 HTTP component 与升级触发选择器为下一独立集成批次。创建 #450 后仅一次查看 #449，当时完整门仍运行，未计远程准入通过。
 
 - **#56 ACP 服务批次（2026-11-02）**：堆叠共享依赖 [#449](https://github.com/tf4fun/antnest-platform/pull/449)，仅将七处生产 experimental 导入收口到 `src/transport/acp/sdk.ts`，ESLint 限制其余生产源码导入；业务逻辑不变。新增 `test:sdk` 与 CI 步骤，按已安装 SDK 的公共 export map、六个运行时入口及 stable／draft schema 哈希生成可审查的 `docs/acp-sdk-surface.json`，旧逐方法审计及其历史证据保留。六个测试先 RED 后 GREEN；定向 ESLint／格式与 ACP typecheck 成功。SDK 保持 `1.5.0`，文档明确直接客户端以 WebSocket v1 为稳定默认、HTTP／v2 为实验面且 Agent UI 仍使用 HTTP；Agent UI 边界与双包 HTTP 互操作门禁继续下一独立批次，远程精确候选准入未等待。
@@ -269,7 +273,7 @@ Issue 状态最后核对于 2026-10-28：141 个 issue，87 个已关闭，54 �
 
 ### 8 ACP协议与连接活性
 
-- [ ] [#56](https://github.com/tf4fun/antnest-platform/issues/56) Production paths depend on experimental ACP SDK surfaces pinned separately in two packages, with no upgrade gate
+- [ ] [#56](https://github.com/tf4fun/antnest-platform/issues/56) Production paths depend on experimental ACP SDK surfaces pinned separately in two packages, with no upgrade gate — 四批源码／独立 PR 已交付（#449／#450／#451 与 `fix/issue-56-sdk-interop`）；精确候选远程准入待用户通知，不轮询、不提前关闭
 - [ ] [#54](https://github.com/tf4fun/antnest-platform/issues/54) Real-time path liveness: no WebSocket ping/pong in ACP or Gateway relay; permission approvals wait on possibly-dead connections; Agent UI bridge state is single-instance — 共享契约／ACP／Agent UI／独立集成源已分批提交，完整远程 CI 待用户通知；不合并或关闭，不将独立 Docker E2E 作为服务开发后续项。
 - [ ] 待独立复现与登记：Agent UI 在所有浏览器离开、最后 execution 仍 active 时，CCT 到期会阻止终态查询，`activeRunWork` 可持续占用 owner。#58 的只读审计确认现有释放路径缺少年龄上限；先补真实 CCT 过期反例，再定义有界本地退休，不能延长旧凭据或取消已接受 Run。与 #54 生命周期工作相关，尚未计入任何 issue 的交付；详见私有 `issue-58/agent-ui-headless-retention-review.json`。
 

@@ -6,8 +6,8 @@ import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { promisify } from "node:util";
 import { setTimeout as delay } from "node:timers/promises";
-import * as acp from "../../../services/agent-acp-service/node_modules/@agentclientprotocol/sdk/dist/acp.js";
-import { createHttpStream } from "../../../services/agent-acp-service/node_modules/@agentclientprotocol/sdk/dist/http-stream.js";
+import { acp } from "../../support/acp-sdk.mjs";
+import { createHttpStream } from "../../support/acp-sdk.mjs";
 import {
   createMcpHandler,
   McpServer,

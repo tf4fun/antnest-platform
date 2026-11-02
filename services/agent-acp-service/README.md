@@ -352,7 +352,12 @@ runs the boundary checks and the SDK surface audit against
 installed version, public export map, runtime entrypoint exports and stable/draft
 schema hashes, and fails on any drift. After reviewing an upgrade, regenerate
 that baseline explicitly with `node scripts/audit-sdk.mjs --write` and review
-the diff; the audit does not replace the later interop gate.
+the diff; the audit does not replace the wire-level interoperability check in
+[`tests/integration/agent-ui/acp-sdk-interop.test.mjs`](../../tests/integration/agent-ui/acp-sdk-interop.test.mjs),
+which runs as a required Repository CI step. Running it from the repository
+root requires the ACP build first — `npm --prefix services/agent-acp-service run build` —
+then `npm --prefix services/agent-ui/web run test:sdk:interop`; the script
+builds only the Agent UI server.
 
 When execution contract definitions change, regenerate the shared schemas with
 `node --import tsx scripts/execution-contract.mjs --write`, review the diff and
