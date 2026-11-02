@@ -16,6 +16,7 @@ on:
       - contracts/edge-gateway/**
       - contracts/identity/**
       - contracts/platform/**
+      - contracts/common/**
       - go.work
       - go.work.sum
       - .golangci.yml
@@ -36,6 +37,7 @@ on:
       - contracts/edge-gateway/**
       - contracts/identity/**
       - contracts/platform/**
+      - contracts/common/**
       - go.work
       - go.work.sum
       - .golangci.yml
