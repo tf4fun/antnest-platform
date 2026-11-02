@@ -1,4 +1,4 @@
-import type { ListSessionsResponse, NewSessionResponse } from "@agentclientprotocol/sdk/unstable";
+import type { ListSessionsResponse, NewSessionResponse } from "@agentclientprotocol/sdk";
 import { z } from "zod";
 import { AgentAccessRevokedError } from "../adapters/acp-http.ts";
 import { BridgeCapacityError, type BridgeScope } from "../bridge/registry.ts";
