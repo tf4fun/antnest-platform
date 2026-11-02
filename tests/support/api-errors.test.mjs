@@ -667,9 +667,8 @@ test("the generated Go request-id validator uses a positive allow branch", () =>
   assert.ok(helper, "rendered Go includes validRequestID");
   assert.doesNotMatch(helper, /!\(/, "negated compound conditions trip staticcheck QF1001");
   assert.match(helper, /\bcontinue\b/, "allowed bytes take a positive continue branch");
-  assert.match(
-    helper,
-    /c >= 'a' && c <= 'z' && c <= 'Z'|c >= 'a' && c <= 'z' \|\| c >= 'A' && c <= 'Z' \|\| c >= '0' && c <= '9' \|\| c == '\.' \|\| c == '_' \|\| c == ':' \|\| c == '-'/,
+  assert.ok(
+    helper.includes("if c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '.' || c == '_' || c == ':' || c == '-' {"),
     "allowed byte ranges a-z A-Z 0-9 . _ : - are preserved",
   );
 });
