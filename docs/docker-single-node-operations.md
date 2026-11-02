@@ -313,3 +313,41 @@ Never use global Docker prune as an application cleanup procedure.
 Disposable E2E runners own their cleanup on success, failure and interruption;
 they stop resource creators first and verify exact-label container, volume and
 network absence. They never remove stacks they did not create.
+
+## ACP content retention and operator erasure
+
+Automatic retention follows the
+[shared data retention contract](../contracts/agent-acp/data-retention.md) and
+the [table inventory](../services/agent-acp-service/docs/architecture.md#persistence):
+`ANTNEST_ACP_DELETED_SESSION_RETENTION` (default `30d`, `0` disables) measured
+by durable `deleted_at` with a conservative backfill for previously deleted
+rows, `ANTNEST_ACP_PURGE_BATCH` (default `500`, bound 1..500) per transactional
+batch, and `ANTNEST_ACP_PURGE_INTERVAL` (default `60s`) between completed scan
+passes. Sessions blocked by nonterminal, unresolved or non-quiescent Runs,
+unreleased temporary Skills, running Learning tasks or unsettled
+maintenance/unknown outcomes are skipped and reported — a nonzero incomplete
+result, never a force bypass. Active and closed Sessions are not automatically
+compacted before issue #19. In peer mode the worker covers only active owned
+generations; orphan Sessions require the offline CLI. An independently
+deleted fork copy is itself eligible, while surviving fork copies remain
+until they are separately deleted and selected.
+
+Offline operator erasure runs inside the existing image against the migrated
+private schema. Quiesce ingress and ACP mutations, wait for ordinary execution
+and resource cleanup, then stop every ACP replica and peer process while
+keeping PostgreSQL — stopping containers never settles unknown Runtime
+effects. Review a bounded dry run first, then confirm:
+
+```sh
+docker compose run --rm --no-deps -T --entrypoint node agent-acp-service dist/purge.js --session 'session-id' --dry-run
+docker compose run --rm --no-deps -T --entrypoint node agent-acp-service dist/purge.js --session 'session-id' --confirm
+```
+
+Exactly one selector is required: `--session 'session-id'`, `--user 'user-id'`
+(one principal across organizations) or `--organization 'org-id'` (all Session
+principals). The CLI takes the exclusive worker lock and refuses a live ACP
+including peer/shared lock holders; it starts no listeners and runs no
+migrations. Output and audit are count-only — no passwords, identifiers or
+content. A hard failure or a blocked remainder exits nonzero, and a rerun
+resumes remaining work. Resume services only after reviewing a successful
+result; an incomplete result is not success.

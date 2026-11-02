@@ -521,10 +521,9 @@ describe.skipIf(url === undefined)("PostgreSQL content purge", () => {
     } finally {
       try {
         await client.query("ROLLBACK");
-      } catch {
-        // transaction already closed
+      } finally {
+        client.release();
       }
-      client.release();
       await pool.query("DROP SCHEMA public CASCADE");
       await pool.query("CREATE SCHEMA public");
       await migrate(pool);
