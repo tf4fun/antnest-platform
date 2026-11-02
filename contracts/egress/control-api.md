@@ -263,8 +263,11 @@ external decision except for this resolver access; callers needing total DNS
 denial keep `deny_all`. Domain rules bind only validated answers from the
 Agent's own resolver queries; they can never grant platform addresses.
 
-Revision 9 is implemented by the Egress service; the owning Controller and
-Console consumer batches remain pending.
+Revision 9 is implemented by Egress and consumed by Agent Controller and
+Admin Console; it is not a future-only contract. The
+[frozen v2 wire fixture](../../tests/integration/runtime-egress/policy-v2-handoff.json)
+is checked by the owning service contract/component tests. Deployed system
+acceptance remains separate.
 
 `GET /internal/policies/{policy_id}/revisions/{revision}` reads the exact
 immutable revision, including its policy document:
