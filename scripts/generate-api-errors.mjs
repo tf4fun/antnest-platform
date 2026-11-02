@@ -292,9 +292,10 @@ func validRequestID(requestID string) bool {
 \t}
 \tfor i := 0; i < len(requestID); i++ {
 \t\tc := requestID[i]
-\t\tif !(c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '.' || c == '_' || c == ':' || c == '-') {
-\t\t\treturn false
+\t\tif c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '.' || c == '_' || c == ':' || c == '-' {
+\t\t\tcontinue
 \t\t}
+\t\treturn false
 \t}
 \treturn true
 }
