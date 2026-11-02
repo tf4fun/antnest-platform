@@ -5,7 +5,7 @@ go 1.27.0
 toolchain go1.27.1
 
 require (
-	github.com/jackc/pgx/v5 v5.10.0
+	github.com/jackc/pgx/v5 v5.11.0
 	github.com/santhosh-tekuri/jsonschema/v6 v6.0.3
 	github.com/tf4fun/antnest-platform/modules/service-authentication v0.0.0
 	go.opentelemetry.io/otel v1.46.0
