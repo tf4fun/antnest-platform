@@ -1,0 +1,142 @@
+{
+  "version": 1,
+  "categories": [
+    "invalid_request",
+    "unauthenticated",
+    "forbidden",
+    "not_found",
+    "conflict",
+    "precondition_failed",
+    "rate_limited",
+    "unavailable",
+    "internal"
+  ],
+  "errors": [
+    {
+      "code": "invalid_request",
+      "category": "invalid_request",
+      "retryable": false,
+      "http_status": 400,
+      "owner": "platform",
+      "description": "Request fields are missing, malformed, or failed validation."
+    },
+    {
+      "code": "unauthenticated",
+      "category": "unauthenticated",
+      "retryable": false,
+      "http_status": 401,
+      "owner": "platform",
+      "description": "Authentication credentials are missing, invalid, or expired."
+    },
+    {
+      "code": "forbidden",
+      "category": "forbidden",
+      "retryable": false,
+      "http_status": 403,
+      "owner": "platform",
+      "description": "The caller is authenticated but not allowed to perform the request."
+    },
+    {
+      "code": "not_found",
+      "category": "not_found",
+      "retryable": false,
+      "http_status": 404,
+      "owner": "platform",
+      "description": "The requested resource does not exist."
+    },
+    {
+      "code": "conflict",
+      "category": "conflict",
+      "retryable": false,
+      "http_status": 409,
+      "owner": "platform",
+      "description": "The request conflicts with the current state of the resource."
+    },
+    {
+      "code": "precondition_failed",
+      "category": "precondition_failed",
+      "retryable": false,
+      "http_status": 412,
+      "owner": "platform",
+      "description": "A required precondition, such as a resource version check, failed."
+    },
+    {
+      "code": "rate_limited",
+      "category": "rate_limited",
+      "retryable": true,
+      "http_status": 429,
+      "owner": "platform",
+      "description": "Admission rate limiting rejected the request; retry after the announced delay."
+    },
+    {
+      "code": "unavailable",
+      "category": "unavailable",
+      "retryable": true,
+      "http_status": 503,
+      "owner": "platform",
+      "description": "A required dependency is temporarily unavailable; retrying is safe."
+    },
+    {
+      "code": "internal",
+      "category": "internal",
+      "retryable": false,
+      "http_status": 500,
+      "owner": "platform",
+      "description": "An unexpected internal failure occurred while serving the request."
+    },
+    {
+      "code": "internal_error",
+      "category": "internal",
+      "retryable": false,
+      "http_status": 500,
+      "owner": "platform",
+      "description": "Deprecated wire name for internal errors from earlier envelopes.",
+      "deprecated_alias_of": "internal"
+    },
+    {
+      "code": "unauthorized",
+      "category": "unauthenticated",
+      "retryable": false,
+      "http_status": 401,
+      "owner": "platform",
+      "description": "Deprecated wire name for unauthenticated from earlier envelopes.",
+      "deprecated_alias_of": "unauthenticated"
+    },
+    {
+      "code": "version_conflict",
+      "category": "conflict",
+      "retryable": false,
+      "http_status": 409,
+      "owner": "platform",
+      "description": "Deprecated wire name for conflict on stale resource versions.",
+      "deprecated_alias_of": "conflict"
+    },
+    {
+      "code": "resource_version_conflict",
+      "category": "conflict",
+      "retryable": false,
+      "http_status": 409,
+      "owner": "platform",
+      "description": "Deprecated wire name for conflict on resource version mismatches.",
+      "deprecated_alias_of": "conflict"
+    },
+    {
+      "code": "revision_conflict",
+      "category": "conflict",
+      "retryable": false,
+      "http_status": 409,
+      "owner": "platform",
+      "description": "Deprecated wire name for conflict on revision mismatches.",
+      "deprecated_alias_of": "conflict"
+    },
+    {
+      "code": "request_conflict",
+      "category": "conflict",
+      "retryable": false,
+      "http_status": 409,
+      "owner": "platform",
+      "description": "Deprecated wire name for conflict on repeated or racing requests.",
+      "deprecated_alias_of": "conflict"
+    }
+  ]
+}

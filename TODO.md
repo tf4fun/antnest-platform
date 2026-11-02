@@ -20,6 +20,8 @@ Issue 状态最后核对于 2026-10-28：141 个 issue，87 个已关闭，54 �
 
 ## 当前批次
 
+- **#67 公共错误契约基础批次（2026-11-02，源码已交付、待独立 PR）**：交付共享错误契约与生成器——`contracts/common/error.schema.json`（draft 2020-12 信封：必填 code/category/message/retryable/request_id，details 可选，允许扩展）与 `errors.json` v1 注册表（九个规范码标准 HTTP 映射，仅 rate_limited/unavailable 默认 retryable，六个别名保留旧 wire 值，owner platform）；零依赖 `scripts/generate-api-errors.mjs` 导出 validateRegistry/三语言渲染与 `--check`/`--service`/`--all` CLI，按 `contracts/common/slices/<service>.json` 映射十服务输出（Console 双发 Go+TS），校验器强制精确九类与 internal 不变量、拒绝未知服务或缺失切片，Go 输出经 gofmt、TS/Rust 对齐 ACP Prettier/rustfmt（README 已记 gofmt 前置）。`tests/support/api-errors.test.mjs` 38 项（37 通过＋1 有意跳过，含生成 TS 运行时回归、formatter 稳定性、CLI --check 由 support glob 进入远程检查）；`ci-ownership.json` 注册 common→十服务。本地聚焦 node --test GREEN、锁定 Prettier 通过，日志 `artifacts/verification/issue-67-common/`。远程 CI 未跑、未建 PR，不关闭 #67；服务切片与信封迁移逐批随后，不涉 Docker E2E。
+
 - **#252 Runtime Egress 部署接线批次（2026-11-02，已审查、待独立 PR）**：基于服务批 [PR #501](https://github.com/tf4fun/antnest-platform/pull/501) `cc6daf1f`，只给 Compose 的 Runtime Egress 新增 metrics selector（默认 `none`）与专用 endpoint 透传，不加接收器、端口、依赖或网络／安全变更。五项渲染契约先 RED 5／5，再 GREEN 5／5；完整 `service-wiring.test.mjs` 25／25、JS syntax／Prettier 通过，日志临时位于 `artifacts/verification/issue-252/`。操作文档已更新。本批为显式部署契约集成与交接，不修改第二个服务实现；两个 PR 的完整远程准入均未等待／核对，不关闭 #252／#82，不运行或等待 Docker E2E。最终 PR 提交后停止查询 CI，由用户通知后续结果。
 
 - **#252 Runtime Egress 服务批次（2026-11-02，已审查、待 PR）**：修复 `Telemetry::init` 忽略 `OTEL_METRICS_EXPORTER` 的配置缺陷；metrics 仅显式 `otlp` 启用，缺失／空／`none` 禁用，未知值稳定告警并禁用。两个 HTTP exporter 使用服务自有 2s 预算（覆盖 OTLP timeout 环境变量）；provider 独立顺序 shutdown、各等至 5s，无额外 flush；摘要分别记录 `disabled`／`stopped`／`failed`，任一返回失败不再记录干净停止，始终标记 `export_delivery=unverified`。已知 SDK tracing shutdown 可能不返回底层导出失败，仅保留非阻塞诊断，不添加 SDK 绕行。
@@ -226,7 +228,7 @@ Issue 状态最后核对于 2026-10-28：141 个 issue，87 个已关闭，54 �
 
 ### 2 共享契约与依赖清单
 
-- [ ] [#67](https://github.com/tf4fun/antnest-platform/issues/67) Error responses use at least four envelope shapes and overlapping code vocabularies across services
+- [ ] [#67](https://github.com/tf4fun/antnest-platform/issues/67) Error responses use at least four envelope shapes and overlapping code vocabularies across services — 公共契约与生成器批次源码已交付（远程 CI／PR 待跑），服务信封迁移批次随后
 - [ ] [#68](https://github.com/tf4fun/antnest-platform/issues/68) Contract conventions drift: pagination, idempotency and optimistic-concurrency fields have several names; schema dialect and $id bases are mixed
 - [ ] [#16](https://github.com/tf4fun/antnest-platform/issues/16) contracts: Agent, Organization and User ID grammars differ across services and contradict the opaque-ID rule
 - [ ] [#48](https://github.com/tf4fun/antnest-platform/issues/48) Contract tests validate hand-written literals, not real output; no schema_version or N-1 compatibility, so services must deploy in lockstep
