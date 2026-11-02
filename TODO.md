@@ -20,6 +20,8 @@ Issue 状态最后核对于 2026-10-28：141 个 issue，87 个已关闭，54 �
 
 ## 当前批次
 
+- **#252 Runtime Egress 部署接线批次（2026-11-02，已审查、待独立 PR）**：基于服务批 [PR #501](https://github.com/tf4fun/antnest-platform/pull/501) `cc6daf1f`，只给 Compose 的 Runtime Egress 新增 metrics selector（默认 `none`）与专用 endpoint 透传，不加接收器、端口、依赖或网络／安全变更。五项渲染契约先 RED 5／5，再 GREEN 5／5；完整 `service-wiring.test.mjs` 25／25、JS syntax／Prettier 通过，日志临时位于 `artifacts/verification/issue-252/`。操作文档已更新。本批为显式部署契约集成与交接，不修改第二个服务实现；两个 PR 的完整远程准入均未等待／核对，不关闭 #252／#82，不运行或等待 Docker E2E。最终 PR 提交后停止查询 CI，由用户通知后续结果。
+
 - **#252 Runtime Egress 服务批次（2026-11-02，已审查、待 PR）**：修复 `Telemetry::init` 忽略 `OTEL_METRICS_EXPORTER` 的配置缺陷；metrics 仅显式 `otlp` 启用，缺失／空／`none` 禁用，未知值稳定告警并禁用。两个 HTTP exporter 使用服务自有 2s 预算（覆盖 OTLP timeout 环境变量）；provider 独立顺序 shutdown、各等至 5s，无额外 flush；摘要分别记录 `disabled`／`stopped`／`failed`，任一返回失败不再记录干净停止，始终标记 `export_delivery=unverified`。已知 SDK tracing shutdown 可能不返回底层导出失败，仅保留非阻塞诊断，不添加 SDK 绕行。
   - **TDD 与边界**：原代码定向 RED 为 5 failed／2 passed，真实 HTTP receiver 复现 `none` 仍发送与 404→`Failed to shutdown`→误报成功，不据此断言历史 Jaeger 返回码；最终 8／8 receiver 回归、9／9 telemetry unit、fmt／聚焦 clippy 通过。日志临时位于 `artifacts/verification/issue-252/`。Compose 尚缺 metrics exporter／专用端点透传，下一独立部署批次处理；完整远程 unit／contract／component 准入未验，不关闭 #252／#82，不运行或等待 Docker E2E。
 
