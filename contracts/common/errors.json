@@ -865,6 +865,38 @@
       "http_status": 500,
       "owner": "identity-service",
       "description": "OIDC persistence operation failed"
+    },
+    {
+      "code": "runtime_image_invalid",
+      "category": "invalid_request",
+      "retryable": false,
+      "http_status": 400,
+      "owner": "agent-controller",
+      "description": "Runtime image reference is invalid"
+    },
+    {
+      "code": "agent_not_ready",
+      "category": "conflict",
+      "retryable": true,
+      "http_status": 409,
+      "owner": "agent-controller",
+      "description": "Agent is not ready"
+    },
+    {
+      "code": "configuration_conflict",
+      "category": "conflict",
+      "retryable": false,
+      "http_status": 409,
+      "owner": "agent-controller",
+      "description": "Agent configuration conflicts with the current revision"
+    },
+    {
+      "code": "lifecycle_timeout",
+      "category": "unavailable",
+      "retryable": true,
+      "http_status": 504,
+      "owner": "agent-controller",
+      "description": "Lifecycle operation timed out"
     }
   ]
 }
