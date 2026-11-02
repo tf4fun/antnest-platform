@@ -20,6 +20,8 @@ Issue 状态最后核对于 2026-10-28：141 个 issue，87 个已关闭，54 �
 
 ## 当前批次
 
+- **#40 既有交付核对与文档收口（2026-11-02）**：代码与历史确认共享契约 #422、Egress #423、Controller #424、Console #425、显式组件集成 #426 已合入 main，对应 merge 为 `dbe080db`／`271581a7`／`15c6a205`／`81dfb1cd`／`fedada04`，受审 head 为 `29cd796f`／`0f1c6df3`／`6eec8a02`／`449308d3`／`b378e573`；先前“功能未交付”判断来自滞后 issue，现已纠正，不重复实现。既有精确候选 Repository／Integration 成功证据由协调者核对，永久链接将写入 #40。当前独立批次仅修正三个文档中 Controller／Console 仍 pending 的陈旧说法，并为已交付消费方与共享 fixture 链接补 RED→GREEN 回归；无新服务行为、契约版本或 CI／安全策略变更。#40 等本文档 PR 审查合并后再收口，#82 仍开放；Docker/system E2E 未运行、查询、等待或计为通过，不作为开发后续项，不宣称发布能力。
+
 - **#56 CI 修复（2026-11-02，用户通知后）**：核对精确候选 #450 `d32088e7`、#451 `3ac64ef7`、#452 `2f1e4a97` 的已完成日志，Repository checks 均在三个既有调用者目录测试报相同两项 `requires route catalog review`。逐字节对照共享父提交，确认 `http-transport.ts`／`validated-node-handler.ts` 仅将 `AcpServer` 的 type-only import 指向 `./sdk.js`，其他源码字节完全一致；调用者目录仍记录旧源码 SHA-256。经源码审查，仅同步这两个指纹，不改任何路由、调用者、认证分类、守卫、校验器或测试预期。修复位于 ACP #450 `4e9d7d7f`，非重写 merge 向下游同步到 UI #451 `4eb8a930` 与集成 [#452](https://github.com/tf4fun/antnest-platform/pull/452)；共享 #449 无此变更，不更新。
   - **定向复现／验证**：既有实际路由覆盖测试先 RED；远程失败的三个测试 GREEN 3/3，另三个移除 caller／修改 matcher／新增 matcher 的负例 GREEN 3/3，确保守卫仍 fail-closed。按失败 Deployment render contracts 组件原样串行执行六个目标 `test-deployment-wiring`、`test-deployment-ports`、`test-deployment-transports`、`test-service-authentication`、`test-service-authentication-integration`、`test-skill-deployment`，均成功；JSON 定向格式与 diff 检查成功。未重跑完整 Repository／服务 CI，未运行 Docker E2E；子进程已随定向验证正常退出。
   - **证据边界与停止点**：远程 Deployment 产物仅保留退出码 2、无原始断言日志，因此不把它的具体根因直接等同于 Repository 失败；六目标本地通过不代表新候选远程准入已通过。最小已完成日志、产物和 RED/GREEN 输出临时保留在主工作区 `artifacts/verification/issue-56-ci/`，不入 Git。更新既有 #450／#451／#452 后停止，不等待或轮询新 CI，不合并、不关闭 #56，结果继续由用户通知。
@@ -291,7 +293,7 @@ Issue 状态最后核对于 2026-10-28：141 个 issue，87 个已关闭，54 �
 
 ### 10 网络策略与Runtime扩展边界
 
-- [ ] [#40](https://github.com/tf4fun/antnest-platform/issues/40) Egress policy model is allow-all/deny-all only; planned enterprise-internal destinations conflict with the private-address baseline
+- [ ] [#40](https://github.com/tf4fun/antnest-platform/issues/40) Egress policy model is allow-all/deny-all only; planned enterprise-internal destinations conflict with the private-address baseline — #422–#426 已合并，策略 v2 与三服务消费已交付；仅剩本轮文档状态修正待 PR 审查合并，不重复实现或追认系统验收。
 - [ ] [#74](https://github.com/tf4fun/antnest-platform/issues/74) P2: Kubernetes adapter readiness: Docker types leak through the Runtime Controller platform port, and Runtime requirements (TUN, NET_ADMIN, management network, Skill volumes) have no platform-neutral model
 - [ ] [#41](https://github.com/tf4fun/antnest-platform/issues/41) Runtime plane is single-node: /24 management subnet, single Egress instance, Docker resource names not scoped by controller
 
