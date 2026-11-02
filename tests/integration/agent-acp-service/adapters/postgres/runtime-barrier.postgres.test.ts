@@ -459,8 +459,18 @@ describe.skipIf(databaseUrl === undefined)(
            DROP COLUMN execution_owner_member_id, DROP COLUMN execution_owner_incarnation_id,
            DROP COLUMN execution_owner_epoch`,
         );
+        await client.query(
+          `DROP TABLE content_purge_audit;
+          ALTER TABLE learning_changes DROP CONSTRAINT learning_changes_retention_shape, ALTER COLUMN effect_request_id SET NOT NULL, DROP COLUMN provenance_purged_at, ADD CONSTRAINT learning_changes_check CHECK(task_id IS NOT NULL AND candidate_id IS NOT NULL AND after_digest IS NOT NULL);
+          ALTER TABLE learning_candidates DROP CONSTRAINT learning_candidates_retention_shape, ALTER COLUMN task_id SET NOT NULL, DROP COLUMN provenance_purged_at, DROP COLUMN purged_task_id, DROP COLUMN purged_effect_request_id, ADD CONSTRAINT learning_candidates_evidence_ids_check CHECK(cardinality(evidence_ids) BETWEEN 1 AND 64);
+          DROP TRIGGER acp_sessions_stamp_deleted_at ON acp_sessions;
+          DROP FUNCTION stamp_acp_session_deleted_at();
+          DROP INDEX acp_sessions_retention_idx;
+          ALTER TABLE acp_sessions DROP CONSTRAINT acp_sessions_deleted_at_shape, DROP COLUMN deleted_at;
+          ALTER TABLE acp_sessions DROP CONSTRAINT acp_sessions_forked_from_session_id_fkey, ADD CONSTRAINT acp_sessions_forked_from_session_id_fkey FOREIGN KEY(forked_from_session_id) REFERENCES acp_sessions(id) ON DELETE RESTRICT`,
+        );
         const removed = await client.query(
-          "DELETE FROM schema_migrations WHERE version IN ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)",
+          "DELETE FROM schema_migrations WHERE version IN ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)",
           [
             "0023_runtime_barrier_cycles.sql",
             "0024_agent_run_admission.sql",
@@ -474,9 +484,10 @@ describe.skipIf(databaseUrl === undefined)(
             "0032_model_budget_ledger.sql",
             "0033_context_compaction.sql",
             "0034_model_token_calibration.sql",
+            "0035_content_retention.sql",
           ],
         );
-        expect(removed.rowCount).toBe(12);
+        expect(removed.rowCount).toBe(13);
         await client.query("COMMIT");
       } catch (error) {
         await client.query("ROLLBACK");

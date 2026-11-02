@@ -1104,9 +1104,9 @@ describe.skipIf(url === undefined)("PostgreSQL content purge", () => {
     await seedRun("run-1", "s-1");
     await pool.query(
       `INSERT INTO tool_attempts(id,run_id,tool_call_id,source,source_id,tool_name,request_digest,
-        state,tool_effect_state,started_at,finished_at,runtime_call_stopped,created_at,updated_at)
+        state,tool_effect_state,result_summary,started_at,finished_at,runtime_call_stopped,created_at,updated_at)
        VALUES ('attempt-1','run-1','call-1','runtime','runtime','bash','digest','completed',
-        'settled',now(),now(),false,now(),now())`,
+        'settled','[]'::jsonb,now(),now(),false,now(),now())`,
     );
     const blocked = await purge().batch({
       cutoff: new Date(),

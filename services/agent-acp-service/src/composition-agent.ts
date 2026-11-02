@@ -210,8 +210,7 @@ export function buildAgentComponents(input: {
   const contentPurgeWorker = new ContentPurgeWorker({
     purge: input.repositories.contentPurge,
     retention: config.contentRetention ?? parseContentRetentionConfig({}),
-    report: (blocked) =>
-      telemetry.log("warn", "acp_content_purge_blocked", { sessions: blocked }),
+    report: (blocked) => telemetry.log("warn", "acp_content_purge_blocked", { sessions: blocked }),
   });
   const learningWorker = buildLearningWorker({
     ...(input.retainModelRequest === undefined
