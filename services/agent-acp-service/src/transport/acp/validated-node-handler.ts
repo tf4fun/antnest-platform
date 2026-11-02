@@ -2,7 +2,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import type { ReadableStream } from "node:stream/web";
-import type { AcpServer } from "@agentclientprotocol/sdk/experimental/server";
+import type { AcpServer } from "./sdk.js";
 import { readRpcRequest, readRequestBytes, RpcRequestError, rpcJson } from "../rpc-request.js";
 import { httpFailure } from "../public-error.js";
 

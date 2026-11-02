@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
 
 import { createValidatedNodeHttpHandler } from "./validated-node-handler.js";
-import type { AcpServer } from "@agentclientprotocol/sdk/experimental/server";
+import type { AcpServer } from "./sdk.js";
 import { TracedAcpHttpServer, recordAcpAccessDenial } from "../../telemetry/acp-http.js";
 import type { Span } from "@opentelemetry/api";
 

@@ -1,4 +1,4 @@
-import type { ToolCallContent } from "@agentclientprotocol/sdk/experimental/v2";
+import type { ToolCallContent } from "../sdk.js";
 import { formatPatch, parsePatch, structuredPatch } from "diff";
 import type { ToolFileObservation } from "../../../domain/tool-presentation.js";
 

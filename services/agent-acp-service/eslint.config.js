@@ -26,6 +26,24 @@ export default tseslint.config(
     },
   },
   {
+    files: ["src/**/*.ts"],
+    ignores: ["src/transport/acp/sdk.ts"],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          patterns: [
+            {
+              group: ["@agentclientprotocol/sdk/experimental/*"],
+              message:
+                "Import the ACP SDK adapter src/transport/acp/sdk.ts for experimental modules.",
+            },
+          ],
+        },
+      ],
+    },
+  },
+  {
     files: ["scripts/**/*.mjs", "**/support/persistence/*.mjs"],
     ...tseslint.configs.disableTypeChecked,
   },

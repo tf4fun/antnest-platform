@@ -1,5 +1,5 @@
 import { isSpanContextValid, propagation, ROOT_CONTEXT, trace } from "@opentelemetry/api";
-import { AcpServer } from "@agentclientprotocol/sdk/experimental/server";
+import { AcpServer } from "../transport/acp/sdk.js";
 import { activeHttpSpan } from "./http.js";
 import { boundaryConfig } from "./diagnostics.js";
 import type { Span } from "@opentelemetry/api";
