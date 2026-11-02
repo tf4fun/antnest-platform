@@ -22,6 +22,7 @@
   "notes": [
     "2026-11-02：仅更新 SDK 2.0.2 所选 v1 unstable schema 的清单与哈希；移除该入口不再发布的 12 个 NES／MCP connect/disconnect 方法，保留其余 30 个方法的原处置；mcp/message 必填字段同步为 serverId、requestId、method，仍不宣告该实验能力。",
     "下方 verification、initialVerification、gapFixVerification 及历史说明均属于 SDK 1.5.0；本次未重跑 PostgreSQL 审计或 Docker/system，不作为 SDK 2.0.2 的业务通过证据。",
+    "SDK 2.0.2 的 v1 unstable SessionUpdate 新增 notice、compaction_update、compaction_summary_chunk；三者仅在客户端宣告对应能力后适用。",
     "receiver 是 SDK x-side，client 表示由 Agent 调用客户端，不是 Agent 应接收的端点。",
     "JSON Schema 验证形状；描述中的 MUST/时序/上下文语义需要独立断言。",
     "架构排除、明确拒绝和获准延期均不计作已实现。",

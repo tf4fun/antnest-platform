@@ -8,7 +8,7 @@ import {
 import { summarizeFailure } from "../../support/verification/failure.mjs";
 import * as implementation from "./cleanup.mjs";
 
-const { RequestError } = await import("@agentclientprotocol/sdk");
+const { RequestError } = await import("@agentclientprotocol/sdk/unstable");
 const { withPrivateCommandResources } =
   await import("../acp-commands/connection.mjs");
 const entry = () => {

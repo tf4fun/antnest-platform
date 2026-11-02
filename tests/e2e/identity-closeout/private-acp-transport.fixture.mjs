@@ -9,8 +9,8 @@ const [
   { createPrivateACPTelemetry },
 ] = await Promise.all([
   import("ws"),
-  import("@agentclientprotocol/sdk"),
-  import("@agentclientprotocol/sdk/experimental/v2"),
+  import("@agentclientprotocol/sdk/unstable"),
+  import("@agentclientprotocol/sdk/experimental/v2/unstable"),
   import("./acp-connection.mjs"),
   import("./private-acp-telemetry.mjs"),
 ]);

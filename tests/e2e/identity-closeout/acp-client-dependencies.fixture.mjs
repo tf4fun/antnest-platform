@@ -8,8 +8,8 @@ const require = createRequire(
 );
 const mappings = Object.fromEntries(
   [
-    "@agentclientprotocol/sdk",
-    "@agentclientprotocol/sdk/experimental/v2",
+    "@agentclientprotocol/sdk/unstable",
+    "@agentclientprotocol/sdk/experimental/v2/unstable",
     "@agentclientprotocol/sdk/experimental/ws-client",
     "@agentclientprotocol/sdk/experimental/http-client",
     "@agentclientprotocol/sdk/experimental/server",

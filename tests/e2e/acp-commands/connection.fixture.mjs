@@ -7,8 +7,8 @@ import { admissionErrorReceipt } from "../../support/acp-errors.mjs";
 import { GatewayClient } from "../identity-closeout/support.mjs";
 const [v1, v2, { AcpServer }, adapters, { WebSocketServer }, telemetryModule] =
   await Promise.all([
-    import("@agentclientprotocol/sdk"),
-    import("@agentclientprotocol/sdk/experimental/v2"),
+    import("@agentclientprotocol/sdk/unstable"),
+    import("@agentclientprotocol/sdk/experimental/v2/unstable"),
     import("@agentclientprotocol/sdk/experimental/server"),
     import("@agentclientprotocol/sdk/experimental/node"),
     import("ws"),

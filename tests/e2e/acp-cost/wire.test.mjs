@@ -18,7 +18,9 @@ test("privacy oracle sees receipt leakage before the real SDK strips it", async 
       import.meta.url,
     ),
   );
-  const sdk = await import(require.resolve("@agentclientprotocol/sdk"));
+  const sdk = await import(
+    require.resolve("@agentclientprotocol/sdk/unstable")
+  );
   let input, received;
   const parsed = new Promise((resolve) => {
     received = resolve;

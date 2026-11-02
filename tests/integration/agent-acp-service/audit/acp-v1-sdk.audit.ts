@@ -137,7 +137,7 @@ describe("ACP v1 SDK conformance audit against real service and PostgreSQL", () 
   });
   afterAll(async () => pool.end());
 
-  it("SDK-01: lifecycle responses, reverse permission and all 11 non-experimental update variants match SDK schemas", async () => {
+  it("SDK-01: lifecycle responses, reverse permission and all unconditional non-experimental update variants match SDK schemas", async () => {
     const client = await app.connect(1);
     validate("InitializeResponse", client.frames[0]?.result);
     const sessionId = String(
@@ -198,10 +198,17 @@ describe("ACP v1 SDK conformance audit against real service and PostgreSQL", () 
     const updateKinds = new Set(
       updates(client).map((frame) => frame.params?.update?.sessionUpdate),
     );
-    const stableKinds = schema.$defs.SessionUpdate.oneOf
-      .filter((variant) => !variant.description.includes("UNSTABLE"))
+    // This client advertised no session capabilities, so variants the schema
+    // restricts to an advertised ClientSessionCapabilities entry (notices,
+    // compaction) MUST NOT be sent and are not required here.
+    const unconditionalKinds = schema.$defs.SessionUpdate.oneOf
+      .filter(
+        (variant) =>
+          !variant.description.includes("UNSTABLE") &&
+          !variant.description.includes("Client advertised"),
+      )
       .map((variant) => variant.properties.sessionUpdate.const);
-    expect([...updateKinds].sort()).toEqual(stableKinds.sort());
+    expect([...updateKinds].sort()).toEqual(unconditionalKinds.sort());
     validateUpdates(client);
     await request(client, "session/list", {});
     const cursor = client.frames.length;

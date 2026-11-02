@@ -83,7 +83,7 @@ export async function createFoundationPrivateAccess(
       return specifier === "ws" ||
         specifier === "ajv/dist/2020.js" ||
         specifier.startsWith("@opentelemetry/") ||
-        specifier === "@agentclientprotocol/sdk" ||
+        specifier === "@agentclientprotocol/sdk/unstable" ||
         specifier.startsWith("@agentclientprotocol/sdk/")
         ? next(specifier, { ...context, parentURL: dependencyRoot })
         : next(specifier, context);

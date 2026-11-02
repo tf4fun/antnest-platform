@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { inspect } from "node:util";
-import * as v1 from "@agentclientprotocol/sdk";
+import * as v1 from "@agentclientprotocol/sdk/unstable";
 import { createPrivateACPHTTP } from "../identity-closeout/private-acp-http.mjs";
 import { observeStream } from "../acp-commands/transport.mjs";
 import { requestWithin } from "../acp-closeout/connection.mjs";

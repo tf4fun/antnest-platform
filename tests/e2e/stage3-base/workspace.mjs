@@ -1,7 +1,7 @@
 import { assertResourceId } from "./contracts.mjs";
 import assert from "node:assert/strict";
 import { Ajv2020 } from "ajv/dist/2020.js";
-import v1Schema from "@agentclientprotocol/sdk/schema/schema.json" with { type: "json" };
+import v1Schema from "@agentclientprotocol/sdk/schema/v1/schema.unstable.json" with { type: "json" };
 import v2Schema from "@agentclientprotocol/sdk/schema/v2/schema.unstable.json" with { type: "json" };
 import { withPrivateCommandConnection } from "../acp-commands/connection.mjs";
 import { openStage3Connection } from "./connection.mjs";

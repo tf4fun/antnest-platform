@@ -13,7 +13,7 @@ const [
 ] = await Promise.all([
   import("ws"),
   import("../identity-closeout/private-acp-telemetry.mjs"),
-  import("@agentclientprotocol/sdk"),
+  import("@agentclientprotocol/sdk/unstable"),
   import("@agentclientprotocol/sdk/experimental/server"),
   import("@agentclientprotocol/sdk/experimental/node"),
 ]);

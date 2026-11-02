@@ -9,7 +9,7 @@ const [
   { createNodeHttpHandler },
   { createPrivateACPTelemetry },
 ] = await Promise.all([
-  import("@agentclientprotocol/sdk"),
+  import("@agentclientprotocol/sdk/unstable"),
   import("@agentclientprotocol/sdk/experimental/server"),
   import("@agentclientprotocol/sdk/experimental/node"),
   import("./private-acp-telemetry.mjs"),
