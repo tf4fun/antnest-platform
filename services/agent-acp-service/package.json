@@ -16,6 +16,7 @@
     "test:integration": "vitest run --config vitest.integration.config.ts --maxWorkers=1",
     "test:postgres": "vitest run --config vitest.postgres.config.ts --maxWorkers=1",
     "test:audit:v1": "vitest run --config vitest.audit.config.ts --maxWorkers=1",
+    "test:sdk": "node --test scripts/sdk-boundary.test.mjs scripts/audit-sdk.test.mjs && node scripts/audit-sdk.mjs",
     "start": "node dist/main.js",
     "dev": "tsx watch src/main.ts"
   },

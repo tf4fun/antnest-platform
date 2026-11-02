@@ -86,7 +86,12 @@ the unchanged signed user context. Browser traffic reaches Agent UI through the
 retained Gateway workspace Bridge; the old direct Gateway ACP routes and its ACP
 caller grant are retired. The private v1 HTTP and v1/v2 WebSocket protocols remain
 available to Agent UI. Official SDK protocol tests continue to exercise those
-private transports. Browser business, cancellation and trace consumers must be
+private transports. The stable v1 WebSocket transport remains the supported
+default for direct clients; the v1 HTTP transport and the draft v2 protocol are
+experimental SDK surfaces confined to the `src/transport/acp/sdk.ts` adapter and
+watched by the `npm run test:sdk` surface audit. Agent UI intentionally
+continues on the v1 HTTP transport; it has not moved to the stable WebSocket
+transport. Browser business, cancellation and trace consumers must be
 migrated to the Bridge and admitted in the explicit cross-service batch; earlier
 direct-Gateway evidence does not establish that acceptance.
 

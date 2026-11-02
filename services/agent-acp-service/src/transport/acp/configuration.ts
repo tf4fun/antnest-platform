@@ -1,5 +1,5 @@
 import type * as v1 from "@agentclientprotocol/sdk";
-import type * as v2 from "@agentclientprotocol/sdk/experimental/v2";
+import type { v2 } from "./sdk.js";
 import {
   authorizationModes,
   type SessionConfigurationView,

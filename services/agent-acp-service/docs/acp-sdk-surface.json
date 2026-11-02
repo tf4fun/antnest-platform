@@ -1,0 +1,115 @@
+{
+  "sdkVersion": "1.5.0",
+  "exports": {
+    ".": {
+      "types": "./dist/acp.d.ts",
+      "import": "./dist/acp.js",
+      "default": "./dist/acp.js"
+    },
+    "./experimental/v2": {
+      "types": "./dist/v2/acp.d.ts",
+      "import": "./dist/v2/acp.js",
+      "default": "./dist/v2/acp.js"
+    },
+    "./experimental/http-client": {
+      "types": "./dist/http-stream.d.ts",
+      "import": "./dist/http-stream.js",
+      "default": "./dist/http-stream.js"
+    },
+    "./experimental/ws-client": {
+      "types": "./dist/ws-stream.d.ts",
+      "import": "./dist/ws-stream.js",
+      "default": "./dist/ws-stream.js"
+    },
+    "./experimental/server": {
+      "types": "./dist/server.d.ts",
+      "import": "./dist/server.js",
+      "default": "./dist/server.js"
+    },
+    "./experimental/node": {
+      "types": "./dist/node-adapter.d.ts",
+      "import": "./dist/node-adapter.js",
+      "default": "./dist/node-adapter.js"
+    },
+    "./schema/schema.json": "./schema/schema.json",
+    "./schema/v2/schema.unstable.json": "./schema/v2/schema.unstable.json"
+  },
+  "runtimeExports": {
+    "root": [
+      "AGENT_METHODS",
+      "ActiveSession",
+      "AgentApp",
+      "AgentContext",
+      "AgentSideConnection",
+      "CLIENT_METHODS",
+      "ClientApp",
+      "ClientContext",
+      "ClientSideConnection",
+      "CreateElicitationRequest",
+      "CreateElicitationResponse",
+      "ElicitationPropertySchema",
+      "MultiSelectItems",
+      "PROTOCOL_METHODS",
+      "PROTOCOL_VERSION",
+      "RequestError",
+      "SessionBuilder",
+      "TerminalHandle",
+      "agent",
+      "client",
+      "methods",
+      "ndJsonStream"
+    ],
+    "v2": [
+      "AGENT_METHODS",
+      "ActiveSession",
+      "AgentApp",
+      "AgentContext",
+      "AgentProtocolRouter",
+      "AuthMethod",
+      "AvailableCommandInput",
+      "CLIENT_METHODS",
+      "ClientApp",
+      "ClientContext",
+      "ContentBlock",
+      "CreateElicitationRequest",
+      "CreateElicitationResponse",
+      "DiffChange",
+      "ElicitationPropertySchema",
+      "McpServer",
+      "MultiSelectItems",
+      "NesSuggestion",
+      "PROTOCOL_METHODS",
+      "PROTOCOL_VERSION",
+      "PlanUpdateContent",
+      "ReplayFrom",
+      "RequestError",
+      "RequestPermissionOutcome",
+      "RequestPermissionSubject",
+      "SessionBuilder",
+      "SessionConfigOption",
+      "SessionUpdate",
+      "SetSessionConfigOptionRequest",
+      "StateUpdate",
+      "ToolCallContent",
+      "agent",
+      "agentProtocolRouter",
+      "batchNotification",
+      "batchRequest",
+      "client",
+      "methods",
+      "ndJsonStream"
+    ],
+    "http-client": ["MemoryAcpCookieStore", "createHttpStream"],
+    "ws-client": ["MemoryAcpCookieStore", "createWebSocketStream"],
+    "server": ["AcpServer"],
+    "node": [
+      "DEFAULT_MAX_REQUEST_BODY_BYTES",
+      "createNodeHttpHandler",
+      "createNodeWebSocketUpgradeHandler"
+    ]
+  },
+  "schemaSha256": {
+    "v1": "2a920d3c0f76443e07ffa7801443e3cdf008e2a3095e565581a0433fd728ce41",
+    "v2": "c18a7e718ca6d05e486e018f3d0cdb8139786fd7baef831eae7f002b8c783621"
+  }
+}

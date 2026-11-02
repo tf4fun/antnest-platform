@@ -1,4 +1,4 @@
-import * as acp from "@agentclientprotocol/sdk/experimental/v2";
+import { v2 as acp } from "../sdk.js";
 import { fileContent } from "./file-content.js";
 import { v2Configuration } from "../configuration.js";
 import { permissionRequest, permissionResolution, v2Permission } from "../permission-request.js";

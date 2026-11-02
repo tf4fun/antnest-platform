@@ -341,6 +341,19 @@ Test-only variables:
   database whose name ends in `_audit`. The per-method inventory is in
   [`docs/acp-v1-sdk-audit.json`](docs/acp-v1-sdk-audit.json).
 
+The supported `@agentclientprotocol/sdk` version, currently `1.5.0`, is pinned
+by the shared [`tests/support/shared-versions.json`](../../tests/support/shared-versions.json)
+manifest together with this package's `package.json` and `package-lock.json`;
+all three move in one reviewed upgrade. Production code reaches the SDK's
+experimental modules only through the `src/transport/acp/sdk.ts` adapter, which
+`eslint.config.js` enforces with `no-restricted-imports`. `npm run test:sdk`
+runs the boundary checks and the SDK surface audit against
+[`docs/acp-sdk-surface.json`](docs/acp-sdk-surface.json): the audit records the
+installed version, public export map, runtime entrypoint exports and stable/draft
+schema hashes, and fails on any drift. After reviewing an upgrade, regenerate
+that baseline explicitly with `node scripts/audit-sdk.mjs --write` and review
+the diff; the audit does not replace the later interop gate.
+
 When execution contract definitions change, regenerate the shared schemas with
 `node --import tsx scripts/execution-contract.mjs --write`, review the diff and
 run the check and contract tests.
