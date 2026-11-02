@@ -295,7 +295,7 @@
   },
   "guarded_sources": {
     "services/agent-acp-service/src/transport/acp/http-transport.ts": {
-      "sha256": "fa30f7bb12016bcb82c5bd498e2990a7cc18a4e107eecf61665acfe04d3ba786",
+      "sha256": "83c9192f19757a660f6a52f4982d74e48b91203111cce8cccc3e52f0716eba10",
       "routes": ["POST /v1/acp", "GET /v1/acp", "DELETE /v1/acp"]
     },
     "services/agent-acp-service/src/transport/agent-execution-state.ts": {
@@ -387,7 +387,7 @@
       ]
     },
     "services/agent-acp-service/src/transport/acp/validated-node-handler.ts": {
-      "sha256": "ee80f664869ae7b6fa40a8434323ff674f87a980ea1cd6df69faed2647f2f57e",
+      "sha256": "34c712531ae56b4e4325406ee5b4271498f2b48590083a262c6692c0d744bee1",
       "routes": []
     },
     "services/agent-acp-service/src/transport/trusted-identity.ts": {
