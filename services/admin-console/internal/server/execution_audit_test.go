@@ -135,9 +135,9 @@ func TestExecutionAuditUnavailableOrInvalidDataIsNotEmptyHistory(t *testing.T) {
 		path, body                     string
 		upstreamStatus, expectedStatus int
 	}{
-		{"/api/admin/execution-audits", `{"code":"unavailable"}`, 503, 503},
-		{"/api/admin/execution-audits/run-1", `{"code":"not_found"}`, 404, 404},
-		{"/api/admin/execution-audits", `{"code":"access_denied"}`, 403, 403},
+		{"/api/admin/execution-audits", `{"code":"unavailable","message":"ACP is unavailable"}`, 503, 503},
+		{"/api/admin/execution-audits/run-1", `{"code":"not_found","message":"Audit was not found"}`, 404, 404},
+		{"/api/admin/execution-audits", `{"code":"access_denied","message":"Access denied"}`, 403, 403},
 		{"/api/admin/execution-audits", `{}`, 200, 502},
 		{"/api/admin/execution-audits", `{"items":null,"next_cursor":null}`, 200, 502},
 		{"/api/admin/execution-audits", `{"items":[],"next_cursor":5}`, 200, 502},

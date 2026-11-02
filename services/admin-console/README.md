@@ -32,6 +32,10 @@ Route authorization and management projections remain Console-owned.
 - Builtin Provider and model catalog defaults (`internal/server/builtin_catalog.go`).
 - Model selection and a thin proxy to Controller-owned Provider discovery.
 - Skill inventory, upload, discovery and promotion through Skill Registry.
+- Common-envelope error projection (`internal/apierror`, from
+  [`contracts/common/slices/admin-console.json`](../../contracts/common/slices/admin-console.json)),
+  including bounded re-projection of non-2xx upstream payloads and the
+  browser-side `web/src/lib/api-errors.ts` adapter over generated metadata.
 - Static application delivery and lifecycle event forwarding (SSE).
 - Browser activity reporting, self session controls through Gateway, and organization session administration through Identity.
 - [OIDC policy review, SCIM pairing and external login controls](docs/oidc-linking.md), including personal binding notices.

@@ -434,8 +434,11 @@ export type Overview = {
 
 export type RemoteErrorBody = {
   code?: string;
+  category?: string;
   message?: string;
   retryable?: boolean;
+  request_id?: string;
+  details?: Record<string, unknown>;
   references?: unknown;
   references_truncated?: unknown;
 };

@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/tf4fun/antnest-platform/services/admin-console/internal/apierror"
 	"github.com/tf4fun/antnest-platform/services/admin-console/internal/principal"
 	"github.com/tf4fun/antnest-platform/services/admin-console/internal/upstream"
 )
@@ -38,7 +39,7 @@ func (h *handler) discoverDraftModels(w http.ResponseWriter, r *http.Request, ac
 	}
 	if (input.ProviderKey != "deepseek" && input.ProviderKey != "openrouter" && input.ProviderKey != "openai_compatible") ||
 		input.Credential.Method != "api_key" || strings.TrimSpace(input.Credential.Secret) == "" || strings.TrimSpace(input.BaseURL) == "" {
-		writeError(w, http.StatusBadRequest, "invalid_request", "A supported provider, endpoint and API key are required")
+		writeError(w, http.StatusBadRequest, apierror.InvalidRequest, "A supported provider, endpoint and API key are required")
 		return
 	}
 	h.proxyDiscovery(w, r, "/internal/provider-discovery/draft", map[string]any{
@@ -49,7 +50,7 @@ func (h *handler) discoverDraftModels(w http.ResponseWriter, r *http.Request, ac
 func (h *handler) proxyDiscovery(w http.ResponseWriter, r *http.Request, path string, input any) {
 	body, err := json.Marshal(input)
 	if err != nil {
-		writeError(w, 500, "encoding_failed", "Request could not be encoded")
+		writeError(w, 500, apierror.EncodingFailed, "Request could not be encoded")
 		return
 	}
 	result, ok := h.read(w, r, upstream.AgentController, http.MethodPost, path, "", body)
@@ -92,7 +93,7 @@ func writeDiscoveryFailure(w http.ResponseWriter, result bufferedResponse) {
 			return
 		}
 	}
-	writeError(w, http.StatusBadGateway, "provider_discovery_failed", "The provider model list could not be fetched. Check the connection or try again.")
+	writeError(w, http.StatusBadGateway, apierror.ProviderDiscoveryFailed, "The provider model list could not be fetched. Check the connection or try again.")
 }
 
 var discoveryFailures = map[string]struct {

@@ -199,7 +199,7 @@ func TestBrowserSessionOperationsRetainSignedAdministratorAndDependencyFailures(
 			}
 			for _, status := range []int{401, 403, 503} {
 				backend := newBackendStub()
-				backend.enqueue(status, `{"code":"upstream_denied"}`)
+				backend.enqueue(status, `{"code":"`+map[int]string{401: "unauthenticated", 403: "forbidden", 503: "dependency_unavailable"}[status]+`","message":"Denied"}`)
 				w := requestAdmin(t, newTestHandler(t, backend), method, path, body)
 				if w.Code != status || len(w.Result().Cookies()) != 0 || !reflect.DeepEqual(w.Header().Values("Cache-Control"), []string{"no-store"}) {
 					t.Fatalf("failure changed: status=%d wanted=%d", w.Code, status)

@@ -10,6 +10,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"github.com/tf4fun/antnest-platform/services/admin-console/internal/apierror"
 	"github.com/tf4fun/antnest-platform/services/admin-console/internal/principal"
 )
 
@@ -39,18 +40,18 @@ func validAgentSkillSource(ref agentSkillSourceRef) bool {
 
 func readSkillSourceRequest(w http.ResponseWriter, r *http.Request, out any) (map[string]json.RawMessage, bool) {
 	if r.URL.RawQuery != "" {
-		writeError(w, 400, "invalid_request", "Skill source queries are not accepted")
+		writeError(w, 400, apierror.InvalidRequest, "Skill source queries are not accepted")
 		return nil, false
 	}
 	media, _, _ := mime.ParseMediaType(r.Header.Get("Content-Type"))
 	if media != "application/json" {
-		writeError(w, 415, "invalid_request", "Content-Type must be application/json")
+		writeError(w, 415, apierror.InvalidRequest, "Content-Type must be application/json")
 		return nil, false
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, 4<<10)
 	data, err := io.ReadAll(r.Body)
 	if err != nil {
-		writeError(w, 400, "invalid_request", "Skill source request exceeds 4 KiB")
+		writeError(w, 400, apierror.InvalidRequest, "Skill source request exceeds 4 KiB")
 		return nil, false
 	}
 	decoder := json.NewDecoder(bytes.NewReader(data))
@@ -58,7 +59,7 @@ func readSkillSourceRequest(w http.ResponseWriter, r *http.Request, out any) (ma
 	var extra json.RawMessage
 	var fields map[string]json.RawMessage
 	if decoder.Decode(out) != nil || decoder.Decode(&extra) != io.EOF || json.Unmarshal(data, &fields) != nil || fields == nil {
-		writeError(w, 400, "invalid_request", "Skill source request is invalid")
+		writeError(w, 400, apierror.InvalidRequest, "Skill source request is invalid")
 		return nil, false
 	}
 	return fields, true
@@ -77,7 +78,7 @@ func (h *handler) searchSkillSources(w http.ResponseWriter, r *http.Request, act
 	_, hasLimit := fields["limit"]
 	if len(input.Query) < 1 || len(input.Query) > 256 || !utf8.ValidString(input.Query) || strings.ContainsRune(input.Query, 0) ||
 		input.Limit < 0 || input.Limit > 50 || hasLimit && input.Limit == 0 {
-		writeError(w, 400, "invalid_request", "Skill source search is invalid")
+		writeError(w, 400, apierror.InvalidRequest, "Skill source search is invalid")
 		return
 	}
 	if !hasLimit {
@@ -85,7 +86,7 @@ func (h *handler) searchSkillSources(w http.ResponseWriter, r *http.Request, act
 	}
 	body, err := json.Marshal(map[string]any{"organization_id": actor.OrganizationID, "actor_id": actor.UserID, "query": input.Query, "limit": input.Limit})
 	if err != nil {
-		writeError(w, 500, "encoding_failed", "Skill search could not be encoded")
+		writeError(w, 500, apierror.EncodingFailed, "Skill search could not be encoded")
 		return
 	}
 	data, _, ok := h.skillResponse(w, r, http.MethodPost, "/internal/skill-discovery/search", "", "application/json", body, 200, 64<<10)
@@ -109,7 +110,7 @@ func (h *handler) searchSkillSources(w http.ResponseWriter, r *http.Request, act
 		Items []sourceItem `json:"items"`
 	}
 	if json.Unmarshal(data, &page) != nil || page.Items == nil || len(page.Items) > input.Limit {
-		writeError(w, 502, "invalid_upstream_response", "Skill source search response is invalid")
+		writeError(w, 502, apierror.InvalidUpstreamResponse, "Skill source search response is invalid")
 		return
 	}
 	items := make([]sourceItem, 0, len(page.Items))
@@ -129,7 +130,7 @@ func (h *handler) searchSkillSources(w http.ResponseWriter, r *http.Request, act
 			valid = false
 		}
 		if !valid {
-			writeError(w, 502, "invalid_upstream_response", "Skill source search response is invalid")
+			writeError(w, 502, apierror.InvalidUpstreamResponse, "Skill source search response is invalid")
 			return
 		}
 		if ref.Kind == "agent" {
@@ -147,7 +148,7 @@ func (h *handler) admitSkillSource(w http.ResponseWriter) (func(), bool) {
 	case h.skillUploads <- struct{}{}:
 		return func() { <-h.skillUploads }, true
 	default:
-		writeError(w, 429, "busy", "Skill package capacity is exhausted")
+		writeError(w, 429, apierror.Busy, "Skill package capacity is exhausted")
 		return nil, false
 	}
 }
@@ -158,7 +159,7 @@ func (h *handler) previewSkillSource(w http.ResponseWriter, r *http.Request, act
 		return
 	}
 	if !validAgentSkillSource(input.SkillRef) || !sourceDigestPattern.MatchString(input.ExpectedDigest) {
-		writeError(w, 400, "invalid_request", "Selected Skill source is invalid")
+		writeError(w, 400, apierror.InvalidRequest, "Selected Skill source is invalid")
 		return
 	}
 	release, ok := h.admitSkillSource(w)
@@ -168,7 +169,7 @@ func (h *handler) previewSkillSource(w http.ResponseWriter, r *http.Request, act
 	defer release()
 	body, err := json.Marshal(map[string]any{"organization_id": actor.OrganizationID, "actor_id": actor.UserID, "skill_ref": input.SkillRef, "expected_digest": input.ExpectedDigest})
 	if err != nil {
-		writeError(w, 500, "encoding_failed", "Skill preview could not be encoded")
+		writeError(w, 500, apierror.EncodingFailed, "Skill preview could not be encoded")
 		return
 	}
 	data, headers, ok := h.skillResponse(w, r, http.MethodPost, "/internal/skill-discovery/load", "", "application/json", body, 200, maximumSkillUpload)
@@ -178,7 +179,7 @@ func (h *handler) previewSkillSource(w http.ResponseWriter, r *http.Request, act
 	media, _, _ := mime.ParseMediaType(headers.Get("Content-Type"))
 	preview, err := inspectSourcePackage(r.Context(), input, data, headers.Get("X-Antnest-Artifact-Digest"), headers.Get("X-Antnest-Content-Digest"))
 	if media != "application/zip" || err != nil {
-		writeError(w, 502, "invalid_upstream_response", "Skill source package response is invalid")
+		writeError(w, 502, apierror.InvalidUpstreamResponse, "Skill source package response is invalid")
 		return
 	}
 	w.Header().Set("Cache-Control", "no-store")
@@ -200,7 +201,7 @@ func (h *handler) promoteSkillSource(w http.ResponseWriter, r *http.Request, act
 	_, hasVersion := fields["expected_version"]
 	if !validAgentSkillSource(input.SkillRef) || !sourceDigestPattern.MatchString(input.ExpectedDigest) || hasTarget != hasVersion ||
 		hasTarget && (!skillIDPattern.MatchString(input.SkillID) || input.ExpectedVersion < 1 || input.ExpectedVersion > maximumSourceSequence) {
-		writeError(w, 400, "invalid_request", "Selected Skill source or publication target is invalid")
+		writeError(w, 400, apierror.InvalidRequest, "Selected Skill source or publication target is invalid")
 		return
 	}
 	requestID, ok := commandRequestID(w, r, actor.OrganizationID, "skill")
@@ -219,7 +220,7 @@ func (h *handler) promoteSkillSource(w http.ResponseWriter, r *http.Request, act
 	}
 	body, err := json.Marshal(metadata)
 	if err != nil {
-		writeError(w, 500, "encoding_failed", "Skill promotion could not be encoded")
+		writeError(w, 500, apierror.EncodingFailed, "Skill promotion could not be encoded")
 		return
 	}
 	data, _, ok := h.skillResponse(w, r, http.MethodPost, "/internal/skill-projections/promote", "", "application/json", body, 201, 4<<10)
@@ -231,7 +232,7 @@ func (h *handler) promoteSkillSource(w http.ResponseWriter, r *http.Request, act
 		version.ContentDigest != input.ExpectedDigest || !sourceDigestPattern.MatchString(version.ArtifactDigest) || version.Version < 1 || version.Version > maximumSourceSequence ||
 		version.PackageRulesVersion != 1 || version.ArtifactSize < 1 || version.ArtifactSize > maximumSkillUpload || version.UnpackedSize < 1 || version.UnpackedSize > 32<<20 ||
 		len(version.Description) < 1 || len(version.Description) > 512 || !hasTarget && version.Version != 1 || hasTarget && (version.SkillID != input.SkillID || version.Version != input.ExpectedVersion+1) {
-		writeError(w, 502, "invalid_upstream_response", "Skill promotion response is invalid")
+		writeError(w, 502, apierror.InvalidUpstreamResponse, "Skill promotion response is invalid")
 		return
 	}
 	w.Header().Set("Cache-Control", "no-store")
