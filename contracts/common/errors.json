@@ -137,6 +137,118 @@
       "owner": "platform",
       "description": "Deprecated wire name for conflict on repeated or racing requests.",
       "deprecated_alias_of": "conflict"
+    },
+    {
+      "code": "method_not_allowed",
+      "category": "invalid_request",
+      "retryable": false,
+      "http_status": 405,
+      "owner": "edge-gateway",
+      "description": "The HTTP method is not supported for this route."
+    },
+    {
+      "code": "request_too_large",
+      "category": "invalid_request",
+      "retryable": false,
+      "http_status": 413,
+      "owner": "edge-gateway",
+      "description": "The request body or headers exceed the admission limit."
+    },
+    {
+      "code": "principal_changed",
+      "category": "conflict",
+      "retryable": false,
+      "http_status": 409,
+      "owner": "edge-gateway",
+      "description": "The authenticated principal changed since the session evidence was issued."
+    },
+    {
+      "code": "csrf_failed",
+      "category": "forbidden",
+      "retryable": false,
+      "http_status": 403,
+      "owner": "edge-gateway",
+      "description": "The request failed origin or CSRF token verification."
+    },
+    {
+      "code": "identity_unavailable",
+      "category": "unavailable",
+      "retryable": true,
+      "http_status": 503,
+      "owner": "edge-gateway",
+      "description": "Identity Service could not be reached to serve the request."
+    },
+    {
+      "code": "console_unavailable",
+      "category": "unavailable",
+      "retryable": true,
+      "http_status": 503,
+      "owner": "edge-gateway",
+      "description": "Admin Console could not be reached to serve the request."
+    },
+    {
+      "code": "workspace_unavailable",
+      "category": "unavailable",
+      "retryable": true,
+      "http_status": 503,
+      "owner": "edge-gateway",
+      "description": "Agent UI could not be reached to serve the browser workspace."
+    },
+    {
+      "code": "agent_unavailable",
+      "category": "unavailable",
+      "retryable": true,
+      "http_status": 503,
+      "owner": "edge-gateway",
+      "description": "The Agent service could not be reached to serve the request."
+    },
+    {
+      "code": "login_method_unavailable",
+      "category": "invalid_request",
+      "retryable": false,
+      "http_status": 400,
+      "owner": "edge-gateway",
+      "description": "The requested login method is not enabled for the organization."
+    },
+    {
+      "code": "login_rate_limited",
+      "category": "rate_limited",
+      "retryable": true,
+      "http_status": 429,
+      "owner": "edge-gateway",
+      "description": "Login admission rate limiting rejected the attempt; retry after the announced delay."
+    },
+    {
+      "code": "invalid_current_password",
+      "category": "invalid_request",
+      "retryable": false,
+      "http_status": 400,
+      "owner": "edge-gateway",
+      "description": "The supplied current password is incorrect."
+    },
+    {
+      "code": "external_identity_last_method",
+      "category": "conflict",
+      "retryable": false,
+      "http_status": 409,
+      "owner": "edge-gateway",
+      "description": "The external identity is the membership's last available login method."
+    },
+    {
+      "code": "credential_busy",
+      "category": "unavailable",
+      "retryable": true,
+      "http_status": 503,
+      "owner": "edge-gateway",
+      "description": "Password verification capacity is saturated; retry after the announced delay."
+    },
+    {
+      "code": "credential_rate_limited",
+      "category": "rate_limited",
+      "retryable": true,
+      "http_status": 429,
+      "owner": "edge-gateway",
+      "description": "Password verification attempts were rate limited; retry after the announced delay."
     }
   ]
 }
