@@ -7,7 +7,9 @@ on:
     paths:
       - services/agent-ui/**
       - tests/integration/agent-ui/**
+      - services/agent-acp-service/package.json
       - services/agent-acp-service/package-lock.json
+      - tests/support/shared-versions.json
       - contracts/agent-acp/**
       - contracts/agent-controller/**
       - contracts/agent-ui/**
@@ -23,7 +25,9 @@ on:
     paths:
       - services/agent-ui/**
       - tests/integration/agent-ui/**
+      - services/agent-acp-service/package.json
       - services/agent-acp-service/package-lock.json
+      - tests/support/shared-versions.json
       - contracts/agent-acp/**
       - contracts/agent-controller/**
       - contracts/agent-ui/**
@@ -70,6 +74,13 @@ jobs:
       # Contract tests validate with the ACP service's locked Ajv and ACP SDK schema.
       - name: Install ACP contract tooling
         run: npm --prefix ../../agent-acp-service ci
+
+      - name: Build ACP HTTP interoperability peer
+        working-directory: .
+        run: npm --prefix services/agent-acp-service run build
+
+      - name: ACP SDK HTTP interoperability
+        run: npm run test:sdk:interop
 
       - run: npm run typecheck
 

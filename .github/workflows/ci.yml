@@ -62,6 +62,11 @@ jobs:
       - name: Shared dependency versions
         run: node scripts/check-shared-versions.mjs
 
+      - name: ACP SDK HTTP interoperability
+        run: |
+          npm --prefix services/agent-acp-service run build
+          npm --prefix services/agent-ui/web run test:sdk:interop
+
       - name: Markdown links
         run: make check-links
 

@@ -236,3 +236,28 @@ is not a substitute for these combinations.
   covered by the E2E suites under [`tests/e2e`](../../../tests/README.md).
 - This is Antnest's restricted ACP profile, not a claim of full generic ACP
   conformance.
+
+## SDK upgrades
+
+The supported `@agentclientprotocol/sdk` version is pinned by the shared
+[`tests/support/shared-versions.json`](../../../tests/support/shared-versions.json)
+manifest together with the ACP service and Agent UI `package.json` and
+`package-lock.json` files; all five move in one reviewed upgrade. The stable v1
+WebSocket transport remains the supported default for direct clients; the HTTP
+and draft v2 surfaces stay experimental, and Agent UI intentionally continues
+to use the HTTP transport.
+
+Dependabot groups `@agentclientprotocol/*` version and security proposals by
+dependency name across both npm directories (`acp-sdk` and `acp-sdk-security`
+groups), but a grouped proposal never bumps the pin by itself: the shared
+manifest, both package/lock pairs and the audited
+[`acp-sdk-surface.json`](acp-sdk-surface.json) baseline still require an
+explicit reviewed update, with `node scripts/audit-sdk.mjs --write`
+regenerating the surface inventory only after review. Selection, unit,
+contract and component checks gate the exact candidate commit; an upgrade
+establishes no system-release or end-to-end claims.
+
+The [`acp-sdk-interop` wire check](../../../tests/integration/agent-ui/acp-sdk-interop.test.mjs)
+exercises the production HTTP transport on both services over real wire frames
+with business and ingress fixtures; it is not PostgreSQL persistence, JWT
+authorization or system acceptance evidence.

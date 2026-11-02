@@ -351,8 +351,12 @@ boundary with an AST import check built on the existing `typescript`
 dependency: it parses every `server/src` source with `ts.createSourceFile` and
 collects static, type-only, multiline and dynamic specifiers instead of adding
 an ESLint dependency. The shared manifest gate and this boundary check cover
-the pin today; the upcoming cross-package interop gate remains separate
-acceptance.
+the pin today; the wire-level interoperability test in
+[`tests/integration/agent-ui/acp-sdk-interop.test.mjs`](../../tests/integration/agent-ui/acp-sdk-interop.test.mjs),
+driven by `npm run test:sdk:interop`, runs as a required Repository CI gate.
+The script builds only the Agent UI server, so a local run from the repository
+root first needs `npm --prefix services/agent-acp-service run build`, then
+`npm --prefix services/agent-ui/web run test:sdk:interop`.
 
 ## Build and test
 

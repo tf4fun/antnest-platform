@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
-import * as acp from "../../../services/agent-acp-service/node_modules/@agentclientprotocol/sdk/dist/acp.js";
-import { createHttpStream } from "../../../services/agent-acp-service/node_modules/@agentclientprotocol/sdk/dist/http-stream.js";
+import { acp } from "../../support/acp-sdk.mjs";
+import { createHttpStream } from "../../support/acp-sdk.mjs";
 
 // Real production receiver and official SDK. Hold the client's automatic
 // DELETE before sending it, so a prior server close cannot be hidden by timing.

@@ -2,9 +2,9 @@ import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import { setImmediate as turn } from "node:timers/promises";
 import test from "node:test";
-import * as acp from "../../../services/agent-acp-service/node_modules/@agentclientprotocol/sdk/dist/acp.js";
-import { AcpServer } from "../../../services/agent-acp-service/node_modules/@agentclientprotocol/sdk/dist/server.js";
-import { createNodeHttpHandler } from "../../../services/agent-acp-service/node_modules/@agentclientprotocol/sdk/dist/node-adapter.js";
+import { acp } from "../../support/acp-sdk.mjs";
+import { AcpServer } from "../../support/acp-sdk.mjs";
+import { createNodeHttpHandler } from "../../support/acp-sdk.mjs";
 import { remoteCloseReceipt } from "./http-close-receipt.mjs";
 
 async function reach(barrier, completed, label) {
