@@ -6,7 +6,7 @@ const require = createRequire(
 );
 
 const PUBLIC_SPECIFIERS = {
-  acp: "@agentclientprotocol/sdk",
+  acp: "@agentclientprotocol/sdk/unstable",
   httpClient: "@agentclientprotocol/sdk/experimental/http-client",
   server: "@agentclientprotocol/sdk/experimental/server",
   node: "@agentclientprotocol/sdk/experimental/node",

@@ -79,7 +79,7 @@ export function v2Configuration(view: SessionConfigurationView): {
         if (!("group" in choice)) return choice;
         const { group, ...fields } = choice;
         return { ...fields, groupId: group };
-      });
+      }) as v2.SessionConfigSelectOptions;
       return { ...option, configId: id, options };
     },
   );

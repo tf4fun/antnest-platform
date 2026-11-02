@@ -406,6 +406,19 @@ async function observeRun({
   }
 }
 
+const idleStopReasons = {
+  end_turn: { stopReason: "end_turn" },
+  max_tokens: { stopReason: "max_tokens" },
+  max_turn_requests: { stopReason: "max_turn_requests" },
+  refusal: { stopReason: "refusal" },
+  cancelled: { stopReason: "cancelled" },
+  _failed: { stopReason: "_failed" },
+  _unresolved: { stopReason: "_unresolved" },
+} as const satisfies Record<
+  NonNullable<Extract<SessionEvent, { kind: "state" }>["stopReason"]>,
+  acp.IdleStateUpdate
+>;
+
 async function sendEvent(
   event: SessionEvent,
   send: (update: acp.SessionUpdate) => Promise<void>,
@@ -414,13 +427,14 @@ async function sendEvent(
     (event.kind === "agent_message" || event.kind === "agent_thought") &&
     event.responseId !== undefined
   ) {
+    const messageId = event.responseId;
     for (const content of event.content) {
-      await send({
-        sessionUpdate:
-          event.kind === "agent_message" ? "agent_message_chunk" : "agent_thought_chunk",
-        messageId: event.responseId,
-        content: content as acp.ContentBlock,
-      });
+      const block = content as acp.ContentBlock;
+      await send(
+        event.kind === "agent_message"
+          ? { sessionUpdate: "agent_message_chunk", messageId, content: block }
+          : { sessionUpdate: "agent_thought_chunk", messageId, content: block },
+      );
     }
     return;
   }
@@ -444,12 +458,17 @@ function toAcpUpdate(event: SessionEvent): acp.SessionUpdate {
       };
     case "user_message":
     case "agent_message":
-    case "agent_thought":
-      return {
-        sessionUpdate: event.kind,
+    case "agent_thought": {
+      const message = {
         messageId: event.messageId,
         content: event.content as acp.ContentBlock[],
       };
+      return event.kind === "user_message"
+        ? { sessionUpdate: "user_message", ...message }
+        : event.kind === "agent_message"
+          ? { sessionUpdate: "agent_message", ...message }
+          : { sessionUpdate: "agent_thought", ...message };
+    }
     case "tool_call":
       return {
         sessionUpdate: "tool_call_update",
@@ -471,7 +490,7 @@ function toAcpUpdate(event: SessionEvent): acp.SessionUpdate {
               content: [
                 ...(event.content ?? []).map((content) => ({
                   type: "content" as const,
-                  content: content,
+                  content: content as acp.ContentBlock,
                 })),
                 ...fileContent(event.file),
               ],
@@ -484,12 +503,12 @@ function toAcpUpdate(event: SessionEvent): acp.SessionUpdate {
         size: event.size,
         ...(event.cost === undefined ? {} : { cost: event.cost }),
       };
-    case "state":
-      return {
-        sessionUpdate: "state_update",
-        state: event.state,
-        ...(event.stopReason === undefined ? {} : { stopReason: event.stopReason }),
-      };
+    case "state": {
+      const stopReason = event.stopReason === undefined ? {} : idleStopReasons[event.stopReason];
+      return event.state === "running"
+        ? { sessionUpdate: "state_update", state: "running", ...stopReason }
+        : { sessionUpdate: "state_update", state: "idle", ...stopReason };
+    }
   }
 }
 

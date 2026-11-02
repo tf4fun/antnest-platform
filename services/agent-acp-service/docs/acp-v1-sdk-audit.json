@@ -1,10 +1,12 @@
 {
-  "auditedAt": "2026-09-26",
-  "baselineCommit": "c286fd287462aa00953ec92366d2cff4b0d8ac6d",
-  "authority": "latest stable @agentclientprotocol/sdk npm package; user instruction on 2026-09-16",
-  "sdkVersion": "1.5.0",
-  "sdkRelease": "https://github.com/agentclientprotocol/typescript-sdk/releases/tag/v1.5.0",
-  "registryMetadata": {
+  "auditedAt": null,
+  "schemaReviewedAt": "2026-11-02",
+  "previousSdkAuditedAt": "2026-09-26",
+  "previousSdkBaselineCommit": "c286fd287462aa00953ec92366d2cff4b0d8ac6d",
+  "authority": "SDK 2.0.2 explicit unstable v1 public schema; schema inventory review only, not a new full behavioral audit",
+  "sdkVersion": "2.0.2",
+  "sdkRelease": "https://github.com/agentclientprotocol/typescript-sdk/releases/tag/v2.0.2",
+  "previousRegistryMetadata": {
     "checkedAt": "2026-09-26T03:35:12.488331+00:00",
     "url": "https://registry.npmjs.org/@agentclientprotocol/sdk/1.5.0",
     "version": "1.5.0",
@@ -12,11 +14,14 @@
     "integrity": "sha512-524jwbB2iYWA+kWWyv9fhKbhU89dH/lu9u5EXwVNmfYzopV8BujCDxByBDZhxRUkB7RWIJzISCnwivdDk+bdVg==",
     "tarball": "https://registry.npmjs.org/@agentclientprotocol/sdk/-/sdk-1.5.0.tgz"
   },
-  "schemaPath": "@agentclientprotocol/sdk/schema/schema.json",
-  "schemaSha256": "2a920d3c0f76443e07ffa7801443e3cdf008e2a3095e565581a0433fd728ce41",
-  "methodCount": 42,
+  "schemaPath": "@agentclientprotocol/sdk/schema/v1/schema.unstable.json",
+  "schemaSha256": "97ba7e979ceca18e24f5e47cf2f38adfe28e03de268a0f22c124ab4c5660b7bd",
+  "methodCount": 30,
   "nonExperimentalMethodCount": 25,
+  "verificationSdkVersion": "1.5.0",
   "notes": [
+    "2026-11-02：仅更新 SDK 2.0.2 所选 v1 unstable schema 的清单与哈希；移除该入口不再发布的 12 个 NES／MCP connect/disconnect 方法，保留其余 30 个方法的原处置；mcp/message 必填字段同步为 serverId、requestId、method，仍不宣告该实验能力。",
+    "下方 verification、initialVerification、gapFixVerification 及历史说明均属于 SDK 1.5.0；本次未重跑 PostgreSQL 审计或 Docker/system，不作为 SDK 2.0.2 的业务通过证据。",
     "receiver 是 SDK x-side，client 表示由 Agent 调用客户端，不是 Agent 应接收的端点。",
     "JSON Schema 验证形状；描述中的 MUST/时序/上下文语义需要独立断言。",
     "架构排除、明确拒绝和获准延期均不计作已实现。",
@@ -24,155 +29,6 @@
     "2026-09-26 升级 SDK 1.5.0：v1 42 个方法未增删；tool name 转为稳定可选字段，notice 为新增 UNSTABLE 能力，当前不宣告、不发送。升级后验证结果见依赖更新报告。"
   ],
   "methods": [
-    {
-      "method": "document/didChange",
-      "receiver": "agent",
-      "schemas": ["DidChangeDocumentNotification"],
-      "requiredFields": {
-        "DidChangeDocumentNotification": ["sessionId", "uri", "version", "contentChanges"]
-      },
-      "stability": "experimental",
-      "requirement": "属于 SDK AgentCapabilities.nes 标记 UNSTABLE 的通知能力；未宣告，不应作为请求测试",
-      "coverage": "awaiting-stability",
-      "implementation": ["src/transport/acp/v1/agent.ts"],
-      "tests": [],
-      "findings": []
-    },
-    {
-      "method": "document/didClose",
-      "receiver": "agent",
-      "schemas": ["DidCloseDocumentNotification"],
-      "requiredFields": {
-        "DidCloseDocumentNotification": ["sessionId", "uri"]
-      },
-      "stability": "experimental",
-      "requirement": "属于 SDK AgentCapabilities.nes 标记 UNSTABLE 的通知能力；未宣告，不应作为请求测试",
-      "coverage": "awaiting-stability",
-      "implementation": ["src/transport/acp/v1/agent.ts"],
-      "tests": [],
-      "findings": []
-    },
-    {
-      "method": "document/didFocus",
-      "receiver": "agent",
-      "schemas": ["DidFocusDocumentNotification"],
-      "requiredFields": {
-        "DidFocusDocumentNotification": ["sessionId", "uri", "version", "position", "visibleRange"]
-      },
-      "stability": "experimental",
-      "requirement": "属于 SDK AgentCapabilities.nes 标记 UNSTABLE 的通知能力；未宣告，不应作为请求测试",
-      "coverage": "awaiting-stability",
-      "implementation": ["src/transport/acp/v1/agent.ts"],
-      "tests": [],
-      "findings": []
-    },
-    {
-      "method": "document/didOpen",
-      "receiver": "agent",
-      "schemas": ["DidOpenDocumentNotification"],
-      "requiredFields": {
-        "DidOpenDocumentNotification": ["sessionId", "uri", "languageId", "version", "text"]
-      },
-      "stability": "experimental",
-      "requirement": "属于 SDK AgentCapabilities.nes 标记 UNSTABLE 的通知能力；未宣告，不应作为请求测试",
-      "coverage": "awaiting-stability",
-      "implementation": ["src/transport/acp/v1/agent.ts"],
-      "tests": [],
-      "findings": []
-    },
-    {
-      "method": "document/didSave",
-      "receiver": "agent",
-      "schemas": ["DidSaveDocumentNotification"],
-      "requiredFields": {
-        "DidSaveDocumentNotification": ["sessionId", "uri"]
-      },
-      "stability": "experimental",
-      "requirement": "属于 SDK AgentCapabilities.nes 标记 UNSTABLE 的通知能力；未宣告，不应作为请求测试",
-      "coverage": "awaiting-stability",
-      "implementation": ["src/transport/acp/v1/agent.ts"],
-      "tests": [],
-      "findings": []
-    },
-    {
-      "method": "nes/accept",
-      "receiver": "agent",
-      "schemas": ["AcceptNesNotification"],
-      "requiredFields": {
-        "AcceptNesNotification": ["sessionId", "id"]
-      },
-      "stability": "experimental",
-      "requirement": "属于 SDK AgentCapabilities.nes 标记 UNSTABLE 的通知能力；未宣告，不应作为请求测试",
-      "coverage": "awaiting-stability",
-      "implementation": ["src/transport/acp/v1/agent.ts"],
-      "tests": [],
-      "findings": []
-    },
-    {
-      "method": "nes/close",
-      "receiver": "agent",
-      "schemas": ["CloseNesResponse", "CloseNesRequest"],
-      "requiredFields": {
-        "CloseNesRequest": ["sessionId"]
-      },
-      "stability": "experimental",
-      "requirement": "SDK 的 UNSTABLE 方法或 AgentCapabilities.nes 下的实验能力；不宣告并拒绝请求",
-      "coverage": "awaiting-stability",
-      "implementation": ["src/transport/acp/v1/agent.ts"],
-      "tests": [
-        "tests/integration/agent-acp-service/transport/acp-v1-agent.test.ts",
-        "tests/integration/agent-acp-service/e2e/acp-v1-lifecycle.postgres.test.ts"
-      ],
-      "findings": []
-    },
-    {
-      "method": "nes/reject",
-      "receiver": "agent",
-      "schemas": ["RejectNesNotification"],
-      "requiredFields": {
-        "RejectNesNotification": ["sessionId", "id"]
-      },
-      "stability": "experimental",
-      "requirement": "属于 SDK AgentCapabilities.nes 标记 UNSTABLE 的通知能力；未宣告，不应作为请求测试",
-      "coverage": "awaiting-stability",
-      "implementation": ["src/transport/acp/v1/agent.ts"],
-      "tests": [],
-      "findings": []
-    },
-    {
-      "method": "nes/start",
-      "receiver": "agent",
-      "schemas": ["StartNesResponse", "StartNesRequest"],
-      "requiredFields": {
-        "StartNesRequest": []
-      },
-      "stability": "experimental",
-      "requirement": "SDK 的 UNSTABLE 方法或 AgentCapabilities.nes 下的实验能力；不宣告并拒绝请求",
-      "coverage": "awaiting-stability",
-      "implementation": ["src/transport/acp/v1/agent.ts"],
-      "tests": [
-        "tests/integration/agent-acp-service/transport/acp-v1-agent.test.ts",
-        "tests/integration/agent-acp-service/e2e/acp-v1-lifecycle.postgres.test.ts"
-      ],
-      "findings": []
-    },
-    {
-      "method": "nes/suggest",
-      "receiver": "agent",
-      "schemas": ["SuggestNesResponse", "SuggestNesRequest"],
-      "requiredFields": {
-        "SuggestNesRequest": ["sessionId", "uri", "version", "position", "triggerKind"]
-      },
-      "stability": "experimental",
-      "requirement": "SDK 的 UNSTABLE 方法或 AgentCapabilities.nes 下的实验能力；不宣告并拒绝请求",
-      "coverage": "awaiting-stability",
-      "implementation": ["src/transport/acp/v1/agent.ts"],
-      "tests": [
-        "tests/integration/agent-acp-service/transport/acp-v1-agent.test.ts",
-        "tests/integration/agent-acp-service/e2e/acp-v1-lifecycle.postgres.test.ts"
-      ],
-      "findings": []
-    },
     {
       "method": "providers/disable",
       "receiver": "agent",
@@ -258,36 +114,8 @@
       "receiver": "both",
       "schemas": ["MessageMcpRequest", "MessageMcpResponse", "MessageMcpNotification"],
       "requiredFields": {
-        "MessageMcpRequest": ["connectionId", "method"],
-        "MessageMcpNotification": ["connectionId", "method"]
-      },
-      "stability": "experimental",
-      "requirement": "SDK 明确 UNSTABLE 的 MCP-over-ACP；不宣告，不建立客户端 MCP 桥",
-      "coverage": "awaiting-stability",
-      "implementation": ["src/transport/acp/v1/agent.ts"],
-      "tests": [],
-      "findings": ["PROFILE-01"]
-    },
-    {
-      "method": "mcp/connect",
-      "receiver": "client",
-      "schemas": ["ConnectMcpRequest", "ConnectMcpResponse"],
-      "requiredFields": {
-        "ConnectMcpRequest": ["serverId"]
-      },
-      "stability": "experimental",
-      "requirement": "SDK 明确 UNSTABLE 的 MCP-over-ACP；不宣告，不建立客户端 MCP 桥",
-      "coverage": "awaiting-stability",
-      "implementation": ["src/transport/acp/v1/agent.ts"],
-      "tests": [],
-      "findings": ["PROFILE-01"]
-    },
-    {
-      "method": "mcp/disconnect",
-      "receiver": "client",
-      "schemas": ["DisconnectMcpRequest", "DisconnectMcpResponse"],
-      "requiredFields": {
-        "DisconnectMcpRequest": ["connectionId"]
+        "MessageMcpRequest": ["serverId", "requestId", "method"],
+        "MessageMcpNotification": ["serverId", "requestId", "method"]
       },
       "stability": "experimental",
       "requirement": "SDK 明确 UNSTABLE 的 MCP-over-ACP；不宣告，不建立客户端 MCP 桥",

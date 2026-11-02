@@ -57,7 +57,7 @@ it.each(["v1", "v2"] as const)(
     const updates: string[] = [];
     const idle = Promise.withResolvers<void>();
     let idleReceived = false;
-    const observe = (update: { sessionUpdate: string; state?: string }) => {
+    const observe = (update: { sessionUpdate: string; state?: unknown }) => {
       updates.push(update.sessionUpdate);
       if (update.sessionUpdate === "state_update" && update.state === "idle") {
         idleReceived = true;

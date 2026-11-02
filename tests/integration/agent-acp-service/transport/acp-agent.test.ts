@@ -1530,7 +1530,10 @@ describe("ACP v2 agent mapping", () => {
           sessionId: "session-1",
           cwd: "/workspace",
           mcpServers: [],
-          replayFrom: { type: "message", messageId: "message-1" },
+          replayFrom: {
+            type: "message",
+            messageId: "message-1",
+          } as unknown as acp.ReplayFrom,
         }),
       ).rejects.toMatchObject({ code: -32602 });
     });
