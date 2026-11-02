@@ -1,0 +1,129 @@
+{
+  "contract": "antnest.agent-acp.data-retention",
+  "version": 1,
+  "status": "planned",
+  "issue": 55,
+  "owner_service": "agent-acp-service",
+  "semantics": "data-retention.md",
+  "activation": "Shared contract only. No route, worker, migration or CLI is activated by this batch; activation changes land with the owning service implementation batch.",
+  "config": {
+    "deleted_session_retention": {
+      "environment": "ANTNEST_ACP_DELETED_SESSION_RETENTION",
+      "default": "30d",
+      "disabled": "0"
+    },
+    "purge_batch": {
+      "environment": "ANTNEST_ACP_PURGE_BATCH",
+      "default": 500,
+      "minimum": 1,
+      "maximum": 500
+    },
+    "purge_interval": {
+      "environment": "ANTNEST_ACP_PURGE_INTERVAL",
+      "default": "60s"
+    }
+  },
+  "retention": {
+    "applies_to": "Sessions whose durable state is deleted",
+    "measured_by": "durable deleted_at",
+    "pre_existing_deleted_rows": "backfilled conservatively at migration time",
+    "eligibility": "strict deleted_at < cutoff",
+    "disabled": "a retention of 0 disables automated purge; operator erasure remains available through the CLI"
+  },
+  "purge_scope": {
+    "automated_removes": "only deleted Sessions and their Session-owned content, including derived learning records inside the selected scope",
+    "automated_never_removes": [
+      "active Sessions",
+      "closed Sessions that are not deleted",
+      "Run history of Sessions that are not deleted"
+    ],
+    "retained_session_receipts": "unchanged",
+    "purged_session_lookup": "session_not_found after ordinary authorization",
+    "not_activated": [
+      "issue 19 active-history compaction",
+      "expired receipt outcomes"
+    ]
+  },
+  "worker": {
+    "batch_maximum": "config.purge_batch Sessions per batch",
+    "transactional": true,
+    "rollback_safe": true,
+    "ownership": "the existing legacy worker lock, or the immutable per-Agent generation fence in peer mode",
+    "commit_check": "live fence check at commit",
+    "never_purges": [
+      "nonterminal, unresolved or non-quiescent Runs",
+      "unreleased temporary Skills",
+      "running Learning tasks",
+      "unsettled maintenance or protection"
+    ],
+    "blocked_disposition": "blocked work is skipped and reported, never counted as cleanup success",
+    "scan_progress": "bounded scans continue past blocked rows without starvation"
+  },
+  "cli": {
+    "command": "node dist/purge.js",
+    "selectors": ["--organization", "--user", "--session"],
+    "selector_cardinality": "exactly one",
+    "selector_semantics": {
+      "--organization": "all Session principals of the organization",
+      "--user": "one principal across ACP organizations",
+      "--session": "one Session"
+    },
+    "scope_limit": "Session content and its derived learning records only; never arbitrary external Identity, Controller, Runtime or Registry deletion",
+    "retention_override": "explicit confirmed erasure includes active, closed and deleted Sessions without grace-period delay; quiescence and cleanup guards still apply",
+    "mode": "offline maintenance",
+    "lock": "the exclusive existing ACP worker lock",
+    "live_acp": "refused, including peer or shared lock holders",
+    "dry_run": "requires the same lock and only reports bounded-batch counts",
+    "confirm": "required for deletion and rejected together with --dry-run",
+    "side_effects": {
+      "starts_service_or_listeners": false,
+      "runs_migrations": false
+    },
+    "exit": {
+      "hard_failure": "nonzero",
+      "blocked_counts": "reported with a nonzero incomplete result",
+      "rerun": "resumes remaining work"
+    }
+  },
+  "audit": {
+    "event": "acp_content_purge_batch",
+    "emitted": "once per committed batch",
+    "payload": "counts only",
+    "excludes": [
+      "content",
+      "Session IDs",
+      "Run IDs",
+      "user IDs",
+      "organization IDs",
+      "SQL"
+    ]
+  },
+  "published_skill": {
+    "artifact": "remains readable and re-publishable after its source Session is purged",
+    "provenance": "explicitly tombstoned",
+    "removed": ["evidence bodies", "request bodies", "unpublished candidates"]
+  },
+  "retained_records": {
+    "budget_accounting": "retained rows and unknown charges are never reduced or turned into zero",
+    "budget_tables": [
+      "model_budget_history",
+      "model_budget_reservations",
+      "model_budget_baseline_attempts",
+      "model_budget_baseline_receipts",
+      "organization_spend",
+      "run_usage"
+    ],
+    "published_artifact_table": "learning_managed_skills",
+    "documentation": "table documentation identifies the intentional metadata and derived-record exceptions"
+  },
+  "boundaries": {
+    "separate_operator_lifecycle": [
+      "backups",
+      "WAL",
+      "replicas",
+      "logs",
+      "published Skill distribution"
+    ],
+    "comprehensive_gdpr_erasure_claimed": false
+  }
+}
