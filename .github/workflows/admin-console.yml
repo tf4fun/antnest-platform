@@ -18,6 +18,7 @@ on:
       - contracts/edge-gateway/**
       - contracts/identity/**
       - contracts/platform/**
+      - contracts/common/**
       - contracts/skill-learning/**
       - contracts/skill-registry/**
       - go.work
@@ -42,6 +43,7 @@ on:
       - contracts/edge-gateway/**
       - contracts/identity/**
       - contracts/platform/**
+      - contracts/common/**
       - contracts/skill-learning/**
       - contracts/skill-registry/**
       - go.work

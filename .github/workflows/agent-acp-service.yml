@@ -11,6 +11,7 @@ on:
       - contracts/agent-controller/**
       - contracts/identity/**
       - contracts/platform/**
+      - contracts/common/**
       - contracts/runtime/**
       - contracts/skill-learning/**
       - contracts/skill-registry/**
@@ -26,6 +27,7 @@ on:
       - contracts/agent-controller/**
       - contracts/identity/**
       - contracts/platform/**
+      - contracts/common/**
       - contracts/runtime/**
       - contracts/skill-learning/**
       - contracts/skill-registry/**
