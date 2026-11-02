@@ -154,8 +154,11 @@ test.
 
 ## Limits
 
-- Automated tests do not cover collector export failures, queue pressure,
-  concurrent memory pressure, or bounded shutdown under load.
+- Automated tests cover a single pending metrics export at shutdown —
+  success, HTTP rejection, and a stalled endpoint — plus tracing shutdown
+  still attempted after a metrics failure, including the per-signal summary
+  statuses. They do not cover trace-export delivery outcomes, collector queue
+  pressure, concurrent memory pressure, or bounded shutdown under load.
 - Sampling and retention can remove linked upstream spans.
 - The service has no SSE/WS business RPC, durable control attempt runner, or
   operation/session IDs; none are invented for tracing.
