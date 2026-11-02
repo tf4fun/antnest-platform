@@ -1,4 +1,4 @@
-import type { ContentBlock } from "@agentclientprotocol/sdk";
+import type { ContentBlock } from "@agentclientprotocol/sdk/unstable";
 import { BrowserSessionChanged, type BrowserSessionClient, type BrowserRequest } from "./browser-session.ts";
 import { validAgentView } from "../../server/src/protocol/agent-view-delta.ts";
 import type { LearningStatus } from "../../server/src/protocol/learning-status.ts";

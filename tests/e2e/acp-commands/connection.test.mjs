@@ -358,7 +358,7 @@ for (const profile of profiles) {
         assert.equal(posts.length, 6);
         assert(
           posts.every(
-            (item) => item.status === 202 && item.bodyOutcome === "pending",
+            (item) => item.status === 202 && item.bodyOutcome === "cancelled",
           ),
         );
         assert.equal(new Set(posts.map((item) => item.connectionID)).size, 1);

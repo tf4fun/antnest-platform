@@ -1,4 +1,4 @@
-import type { ToolCallContent } from "@agentclientprotocol/sdk";
+import type { ToolCallContent } from "@agentclientprotocol/sdk/unstable";
 import type { ToolFileObservation } from "../../../domain/tool-presentation.js";
 
 export function fileContent(file?: ToolFileObservation): ToolCallContent[] {

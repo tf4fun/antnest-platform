@@ -1,37 +1,54 @@
 {
-  "sdkVersion": "1.5.0",
+  "sdkVersion": "2.0.2",
   "exports": {
     ".": {
-      "types": "./dist/acp.d.ts",
-      "import": "./dist/acp.js",
-      "default": "./dist/acp.js"
+      "types": "./dist/v1/stable/acp.d.ts",
+      "import": "./dist/v1/stable/acp.js",
+      "default": "./dist/v1/stable/acp.js"
+    },
+    "./unstable": {
+      "types": "./dist/v1/unstable/acp.d.ts",
+      "import": "./dist/v1/unstable/acp.js",
+      "default": "./dist/v1/unstable/acp.js"
     },
     "./experimental/v2": {
-      "types": "./dist/v2/acp.d.ts",
-      "import": "./dist/v2/acp.js",
-      "default": "./dist/v2/acp.js"
+      "types": "./dist/v2/stable/acp.d.ts",
+      "import": "./dist/v2/stable/acp.js",
+      "default": "./dist/v2/stable/acp.js"
+    },
+    "./experimental/v2/unstable": {
+      "types": "./dist/v2/unstable/acp.d.ts",
+      "import": "./dist/v2/unstable/acp.js",
+      "default": "./dist/v2/unstable/acp.js"
+    },
+    "./experimental/nes": {
+      "types": "./dist/nes/acp.d.ts",
+      "import": "./dist/nes/acp.js",
+      "default": "./dist/nes/acp.js"
     },
     "./experimental/http-client": {
-      "types": "./dist/http-stream.d.ts",
-      "import": "./dist/http-stream.js",
-      "default": "./dist/http-stream.js"
+      "types": "./dist/transports/http-stream.d.ts",
+      "import": "./dist/transports/http-stream.js",
+      "default": "./dist/transports/http-stream.js"
     },
     "./experimental/ws-client": {
-      "types": "./dist/ws-stream.d.ts",
-      "import": "./dist/ws-stream.js",
-      "default": "./dist/ws-stream.js"
+      "types": "./dist/transports/ws-stream.d.ts",
+      "import": "./dist/transports/ws-stream.js",
+      "default": "./dist/transports/ws-stream.js"
     },
     "./experimental/server": {
-      "types": "./dist/server.d.ts",
-      "import": "./dist/server.js",
-      "default": "./dist/server.js"
+      "types": "./dist/transports/server.d.ts",
+      "import": "./dist/transports/server.js",
+      "default": "./dist/transports/server.js"
     },
     "./experimental/node": {
-      "types": "./dist/node-adapter.d.ts",
-      "import": "./dist/node-adapter.js",
-      "default": "./dist/node-adapter.js"
+      "types": "./dist/transports/node-adapter.d.ts",
+      "import": "./dist/transports/node-adapter.js",
+      "default": "./dist/transports/node-adapter.js"
     },
-    "./schema/schema.json": "./schema/schema.json",
+    "./schema/v1/schema.json": "./schema/v1/schema.json",
+    "./schema/v1/schema.unstable.json": "./schema/v1/schema.unstable.json",
+    "./schema/v2/schema.json": "./schema/v2/schema.json",
     "./schema/v2/schema.unstable.json": "./schema/v2/schema.unstable.json"
   },
   "runtimeExports": {
@@ -40,19 +57,45 @@
       "ActiveSession",
       "AgentApp",
       "AgentContext",
-      "AgentSideConnection",
       "CLIENT_METHODS",
       "ClientApp",
       "ClientContext",
-      "ClientSideConnection",
       "CreateElicitationRequest",
       "CreateElicitationResponse",
+      "DEFAULT_MAX_MESSAGE_BYTES",
       "ElicitationPropertySchema",
+      "MessageTooLargeError",
       "MultiSelectItems",
       "PROTOCOL_METHODS",
       "PROTOCOL_VERSION",
       "RequestError",
       "SessionBuilder",
+      "TerminalHandle",
+      "agent",
+      "client",
+      "methods",
+      "ndJsonStream"
+    ],
+    "v1-unstable": [
+      "AGENT_METHODS",
+      "ActiveSession",
+      "AgentApp",
+      "AgentContext",
+      "CLIENT_METHODS",
+      "ClientApp",
+      "ClientContext",
+      "CreateElicitationRequest",
+      "CreateElicitationResponse",
+      "DEFAULT_MAX_MESSAGE_BYTES",
+      "ElicitationPropertySchema",
+      "IdleStateUpdate",
+      "MessageTooLargeError",
+      "MultiSelectItems",
+      "PROTOCOL_METHODS",
+      "PROTOCOL_VERSION",
+      "RequestError",
+      "SessionBuilder",
+      "StateUpdate",
       "TerminalHandle",
       "agent",
       "client",
@@ -73,11 +116,13 @@
       "ContentBlock",
       "CreateElicitationRequest",
       "CreateElicitationResponse",
+      "DEFAULT_MAX_MESSAGE_BYTES",
       "DiffChange",
       "ElicitationPropertySchema",
+      "IdleStateUpdate",
       "McpServer",
+      "MessageTooLargeError",
       "MultiSelectItems",
-      "NesSuggestion",
       "PROTOCOL_METHODS",
       "PROTOCOL_VERSION",
       "PlanUpdateContent",
@@ -99,9 +144,62 @@
       "methods",
       "ndJsonStream"
     ],
-    "http-client": ["MemoryAcpCookieStore", "createHttpStream"],
+    "v2-unstable": [
+      "AGENT_METHODS",
+      "ActiveSession",
+      "AgentApp",
+      "AgentContext",
+      "AgentProtocolRouter",
+      "AuthMethod",
+      "AvailableCommandInput",
+      "CLIENT_METHODS",
+      "ClientApp",
+      "ClientContext",
+      "ContentBlock",
+      "CreateElicitationRequest",
+      "CreateElicitationResponse",
+      "DEFAULT_MAX_MESSAGE_BYTES",
+      "DiffChange",
+      "ElicitationPropertySchema",
+      "IdleStateUpdate",
+      "McpServer",
+      "MessageTooLargeError",
+      "MultiSelectItems",
+      "PROTOCOL_METHODS",
+      "PROTOCOL_VERSION",
+      "PlanUpdateContent",
+      "ReplayFrom",
+      "RequestError",
+      "RequestPermissionOutcome",
+      "RequestPermissionSubject",
+      "SessionBuilder",
+      "SessionConfigOption",
+      "SessionUpdate",
+      "SetSessionConfigOptionRequest",
+      "StateUpdate",
+      "ToolCallContent",
+      "agent",
+      "agentProtocolRouter",
+      "batchNotification",
+      "batchRequest",
+      "client",
+      "methods",
+      "ndJsonStream"
+    ],
+    "http-client": [
+      "DEFAULT_MAX_MESSAGE_BYTES",
+      "MemoryAcpCookieStore",
+      "MessageTooLargeError",
+      "createHttpStream"
+    ],
     "ws-client": ["MemoryAcpCookieStore", "createWebSocketStream"],
-    "server": ["AcpServer"],
+    "server": [
+      "AcpServer",
+      "DEFAULT_MAX_BUFFERED_BYTES",
+      "DEFAULT_MAX_BUFFERED_SESSION_STREAMS",
+      "DEFAULT_MAX_ID_LENGTH",
+      "DEFAULT_MAX_OUTPUT_STALL_MS"
+    ],
     "node": [
       "DEFAULT_MAX_REQUEST_BODY_BYTES",
       "createNodeHttpHandler",
@@ -109,7 +207,7 @@
     ]
   },
   "schemaSha256": {
-    "v1": "2a920d3c0f76443e07ffa7801443e3cdf008e2a3095e565581a0433fd728ce41",
-    "v2": "c18a7e718ca6d05e486e018f3d0cdb8139786fd7baef831eae7f002b8c783621"
+    "v1": "97ba7e979ceca18e24f5e47cf2f38adfe28e03de268a0f22c124ab4c5660b7bd",
+    "v2": "42cfef92addff96a7cbf01272eedcbfb20b2642ef0bd17a33d229384cf0b41e5"
   }
 }

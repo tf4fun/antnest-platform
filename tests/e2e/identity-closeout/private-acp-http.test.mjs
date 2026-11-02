@@ -78,7 +78,9 @@ for (const holdExports of [false, true])
         await f.telemetry.flush();
         // Match the failing Cost connection's transport inventory: initialize,
         // one connection SSE, four Session SSEs, thirty ACKs, then one DELETE.
-        // These are real SDK requests. ACK bodies remain unconsumed until close.
+        // These are real SDK requests. SDK 2 cancels each POST ACK body after
+        // the response and initialize is read to eof, so only the five GET SSE
+        // bodies remain pending until close.
         for (const count of [12, 7, 4, 3]) {
           const session = await bounded(newSession(c.connection));
           for (let index = 0; index < count; index++)
@@ -103,7 +105,7 @@ for (const holdExports of [false, true])
         assert.equal(
           live.requests.filter((receipt) => receipt.bodyOutcome === "pending")
             .length,
-          35,
+          5,
         );
         assert.equal(live.requests[32].method, "GET");
         // Hold real OTLP responses to make the export concurrency boundary

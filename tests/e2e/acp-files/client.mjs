@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { applyPatch, parsePatch } from "diff";
 import { Ajv2020 } from "ajv/dist/2020.js";
-import v1Schema from "@agentclientprotocol/sdk/schema/schema.json" with { type: "json" };
+import v1Schema from "@agentclientprotocol/sdk/schema/v1/schema.unstable.json" with { type: "json" };
 import v2Schema from "@agentclientprotocol/sdk/schema/v2/schema.unstable.json" with { type: "json" };
 import { GatewayClient } from "../identity-closeout/support.mjs";
 import { gateway } from "../identity-closeout/acp-connection.mjs";

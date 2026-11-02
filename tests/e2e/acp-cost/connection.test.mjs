@@ -22,7 +22,7 @@ const require = createRequire(
 const dependencies = Object.fromEntries(
   [
     "ajv/dist/2020.js",
-    "@agentclientprotocol/sdk/schema/schema.json",
+    "@agentclientprotocol/sdk/schema/v1/schema.unstable.json",
     "@agentclientprotocol/sdk/schema/v2/schema.unstable.json",
   ].map((name) => [name, pathToFileURL(require.resolve(name)).href]),
 );

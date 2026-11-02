@@ -10,7 +10,7 @@ export { collectLifecycleACPTrace } from "./acp-trace.mjs";
 const require = createRequire(
   new URL("../../../services/agent-acp-service/package.json", import.meta.url),
 );
-const acp = await import(require.resolve("@agentclientprotocol/sdk"));
+const acp = await import(require.resolve("@agentclientprotocol/sdk/unstable"));
 const { createWebSocketStream } = await import(
   require.resolve("@agentclientprotocol/sdk/experimental/ws-client")
 );

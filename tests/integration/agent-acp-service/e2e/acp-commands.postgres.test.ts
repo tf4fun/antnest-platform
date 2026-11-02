@@ -1,7 +1,7 @@
 import { Pool } from "pg";
 import { afterAll, afterEach, beforeEach, describe, expect, it } from "vitest";
 import { Ajv2020 } from "ajv/dist/2020.js";
-import v1Schema from "@agentclientprotocol/sdk/schema/schema.json" with { type: "json" };
+import v1Schema from "@agentclientprotocol/sdk/schema/v1/schema.unstable.json" with { type: "json" };
 import v2Schema from "@agentclientprotocol/sdk/schema/v2/schema.unstable.json" with { type: "json" };
 import { migrate } from "../../../../services/agent-acp-service/src/adapters/postgres/migrate.js";
 import { createLegacyRunRepositories } from "../../../../services/agent-acp-service/src/adapters/postgres/run-repositories.js";

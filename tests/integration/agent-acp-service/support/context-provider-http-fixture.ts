@@ -1,6 +1,6 @@
 import { createServer, type ServerResponse } from "node:http";
 import type { Socket } from "node:net";
-import * as acp from "@agentclientprotocol/sdk";
+import * as acp from "@agentclientprotocol/sdk/unstable";
 import { createHttpStream } from "@agentclientprotocol/sdk/experimental/http-client";
 import type { Pool } from "pg";
 import { expect } from "vitest";

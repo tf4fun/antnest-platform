@@ -5,7 +5,7 @@ import type { AddressInfo } from "node:net";
 import { test } from "node:test";
 import { setFlagsFromString } from "node:v8";
 import { runInNewContext } from "node:vm";
-import { RequestError } from "@agentclientprotocol/sdk";
+import { RequestError } from "@agentclientprotocol/sdk/unstable";
 import { testScope } from "./support/auth-fixture.ts";
 import * as acpHttp from "../src/adapters/acp-http.ts";
 import { classifyAcpError, readAcpErrorCapability } from "../src/adapters/acp-errors.ts";

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import type { ContentBlock } from "@agentclientprotocol/sdk";
+import type { ContentBlock } from "@agentclientprotocol/sdk/unstable";
 import { BridgeAgentController } from "./bridge-agent-controller.ts";
 import type { BridgeAgentView } from "./bridge-stream.ts";
 import type { PromptAdmission } from "./workspace-api-client.ts";

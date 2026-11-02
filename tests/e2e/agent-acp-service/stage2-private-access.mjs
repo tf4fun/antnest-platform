@@ -31,7 +31,7 @@ export async function createStage2PrivateAccess(
     resolve(specifier, context, next) {
       return specifier === "ws" ||
         specifier.startsWith("@opentelemetry/") ||
-        specifier === "@agentclientprotocol/sdk" ||
+        specifier === "@agentclientprotocol/sdk/unstable" ||
         specifier.startsWith("@agentclientprotocol/sdk/")
         ? next(specifier, { ...context, parentURL: dependencyRoot })
         : next(specifier, context);

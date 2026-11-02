@@ -1,4 +1,4 @@
-import type { AvailableCommand } from "@agentclientprotocol/sdk";
+import type { AvailableCommand } from "@agentclientprotocol/sdk/unstable";
 import { z } from "zod";
 
 const commandName = /^[^\s/]+$/u;

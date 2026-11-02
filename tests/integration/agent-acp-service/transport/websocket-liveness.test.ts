@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { Ajv2020 } from "ajv/dist/2020.js";
-import * as acpV1 from "@agentclientprotocol/sdk";
-import * as acpV2 from "@agentclientprotocol/sdk/experimental/v2";
+import * as acpV1 from "@agentclientprotocol/sdk/unstable";
+import * as acpV2 from "@agentclientprotocol/sdk/experimental/v2/unstable";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import WebSocket, { type RawData } from "ws";
 

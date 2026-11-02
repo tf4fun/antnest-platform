@@ -1,4 +1,4 @@
-import type { RequestPermissionRequest, RequestPermissionResponse } from "@agentclientprotocol/sdk";
+import type { RequestPermissionRequest, RequestPermissionResponse } from "@agentclientprotocol/sdk/unstable";
 
 export type PendingPermission = { id: string; request: RequestPermissionRequest };
 type Entry = PendingPermission & { finish: (optionId?: string) => void };

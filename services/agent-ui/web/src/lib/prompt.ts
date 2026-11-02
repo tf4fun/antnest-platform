@@ -1,4 +1,4 @@
-import type { ContentBlock, PromptCapabilities } from "@agentclientprotocol/sdk";
+import type { ContentBlock, PromptCapabilities } from "@agentclientprotocol/sdk/unstable";
 import type { Attachment } from "./types";
 
 import { describeAttachment, validateAttachmentCount } from "./attachments.ts";

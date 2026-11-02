@@ -1,6 +1,6 @@
 import { createServer } from "node:http";
 import { once } from "node:events";
-import * as acp from "@agentclientprotocol/sdk";
+import * as acp from "@agentclientprotocol/sdk/unstable";
 import { createHttpStream } from "@agentclientprotocol/sdk/experimental/http-client";
 import type { AcpServer } from "@agentclientprotocol/sdk/experimental/server";
 import { TracedAcpHttpServer } from "../../../../services/agent-acp-service/src/telemetry/acp-http.js";

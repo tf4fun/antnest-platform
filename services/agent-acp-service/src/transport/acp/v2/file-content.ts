@@ -1,20 +1,19 @@
-import type { ToolCallContent } from "../sdk.js";
+import type { ToolCallContent, v2 } from "../sdk.js";
 import { formatPatch, parsePatch, structuredPatch } from "diff";
 import type { ToolFileObservation } from "../../../domain/tool-presentation.js";
 
 export function fileContent(file?: ToolFileObservation): ToolCallContent[] {
   if (file?.change === undefined || file.change.before === file.change.after) return [];
   const patch = renderPatch(file.path, file.change);
+  const payload = { path: file.path, fileType: "text" };
+  const change: v2.DiffChange =
+    file.change.before === null
+      ? { ...payload, operation: "add" }
+      : { ...payload, operation: "modify" };
   return [
     {
       type: "diff",
-      changes: [
-        {
-          path: file.path,
-          operation: file.change.before === null ? "add" : "modify",
-          fileType: "text",
-        },
-      ],
+      changes: [change],
       ...(patch === undefined ? {} : { patch }),
     },
   ];

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import type { RequestPermissionRequest } from "@agentclientprotocol/sdk";
+import type { RequestPermissionRequest } from "@agentclientprotocol/sdk/unstable";
 import {
   PermissionInbox,
   PermissionDecisionError,

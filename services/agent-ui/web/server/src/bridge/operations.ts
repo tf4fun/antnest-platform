@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { setImmediate as nextTurn } from "node:timers/promises";
-import type { ContentBlock } from "@agentclientprotocol/sdk";
+import type { ContentBlock } from "@agentclientprotocol/sdk/unstable";
 import { AcpPromptError, acpPromptRequestBytes, type IntentReceipt } from "../adapters/acp-http.ts";
 import type { OperationError } from "../protocol/agent-view-delta.ts";
 

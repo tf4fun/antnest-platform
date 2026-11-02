@@ -18,24 +18,26 @@
     "types": ["node", "vitest/globals"],
     "typeRoots": ["./node_modules/@types", "./node_modules"],
     "paths": {
-      "@agentclientprotocol/sdk": ["./node_modules/@agentclientprotocol/sdk/dist/acp.d.ts"],
+      "@agentclientprotocol/sdk/unstable": [
+        "./node_modules/@agentclientprotocol/sdk/dist/v1/unstable/acp.d.ts"
+      ],
       "@agentclientprotocol/sdk/experimental/http-client": [
-        "./node_modules/@agentclientprotocol/sdk/dist/http-stream.d.ts"
+        "./node_modules/@agentclientprotocol/sdk/dist/transports/http-stream.d.ts"
       ],
       "@agentclientprotocol/sdk/experimental/server": [
-        "./node_modules/@agentclientprotocol/sdk/dist/server.d.ts"
+        "./node_modules/@agentclientprotocol/sdk/dist/transports/server.d.ts"
       ],
       "@agentclientprotocol/sdk/experimental/node": [
-        "./node_modules/@agentclientprotocol/sdk/dist/node-adapter.d.ts"
+        "./node_modules/@agentclientprotocol/sdk/dist/transports/node-adapter.d.ts"
       ],
-      "@agentclientprotocol/sdk/experimental/v2": [
-        "./node_modules/@agentclientprotocol/sdk/dist/v2/acp.d.ts"
+      "@agentclientprotocol/sdk/experimental/v2/unstable": [
+        "./node_modules/@agentclientprotocol/sdk/dist/v2/unstable/acp.d.ts"
       ],
       "@agentclientprotocol/sdk/experimental/ws-client": [
-        "./node_modules/@agentclientprotocol/sdk/dist/ws-stream.d.ts"
+        "./node_modules/@agentclientprotocol/sdk/dist/transports/ws-stream.d.ts"
       ],
-      "@agentclientprotocol/sdk/schema/schema.json": [
-        "./node_modules/@agentclientprotocol/sdk/schema/schema.json"
+      "@agentclientprotocol/sdk/schema/v1/schema.unstable.json": [
+        "./node_modules/@agentclientprotocol/sdk/schema/v1/schema.unstable.json"
       ],
       "@agentclientprotocol/sdk/schema/v2/schema.unstable.json": [
         "./node_modules/@agentclientprotocol/sdk/schema/v2/schema.unstable.json"

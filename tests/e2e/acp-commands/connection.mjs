@@ -1,8 +1,8 @@
 import { gatewayOrigin } from "../../support/gateway-origin.mjs";
 import assert from "node:assert/strict";
 import { randomBytes } from "node:crypto";
-import * as v1 from "@agentclientprotocol/sdk";
-import * as v2 from "@agentclientprotocol/sdk/experimental/v2";
+import * as v1 from "@agentclientprotocol/sdk/unstable";
+import * as v2 from "@agentclientprotocol/sdk/experimental/v2/unstable";
 import { createHttpStream } from "@agentclientprotocol/sdk/experimental/http-client";
 import { createWebSocketStream } from "@agentclientprotocol/sdk/experimental/ws-client";
 import { WebSocket } from "ws";

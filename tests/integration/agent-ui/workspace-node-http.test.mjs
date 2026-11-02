@@ -19,7 +19,7 @@ const fromUi = createRequire(
   new URL("../../../services/agent-ui/web/package.json", import.meta.url),
 );
 const { RequestError } = await import(
-  fromUi.resolve("@agentclientprotocol/sdk")
+  fromUi.resolve("@agentclientprotocol/sdk/unstable")
 );
 const loadPending = JSON.parse(
   readFileSync(

@@ -8,13 +8,13 @@ export const integrationRoot = fileURLToPath(
 // Resolve the root tests against this service's existing, locked installation.
 // Exact matches preserve SDK subpath exports and their ESM import conditions.
 const modules = [
-  "@agentclientprotocol/sdk",
+  "@agentclientprotocol/sdk/unstable",
   "@agentclientprotocol/sdk/experimental/http-client",
   "@agentclientprotocol/sdk/experimental/server",
   "@agentclientprotocol/sdk/experimental/node",
-  "@agentclientprotocol/sdk/experimental/v2",
+  "@agentclientprotocol/sdk/experimental/v2/unstable",
   "@agentclientprotocol/sdk/experimental/ws-client",
-  "@agentclientprotocol/sdk/schema/schema.json",
+  "@agentclientprotocol/sdk/schema/v1/schema.unstable.json",
   "@agentclientprotocol/sdk/schema/v2/schema.unstable.json",
   "@modelcontextprotocol/server",
   "@opentelemetry/api",

@@ -1,5 +1,5 @@
-import * as v1 from "@agentclientprotocol/sdk";
-import * as v2 from "@agentclientprotocol/sdk/experimental/v2";
+import * as v1 from "@agentclientprotocol/sdk/unstable";
+import * as v2 from "@agentclientprotocol/sdk/experimental/v2/unstable";
 import { context, propagation, trace, type Span } from "@opentelemetry/api";
 import { core, node, tracing } from "@opentelemetry/sdk-node";
 import { afterAll, beforeAll, beforeEach, expect, it, vi } from "vitest";
@@ -57,7 +57,7 @@ it.each(["v1", "v2"] as const)(
     const updates: string[] = [];
     const idle = Promise.withResolvers<void>();
     let idleReceived = false;
-    const observe = (update: { sessionUpdate: string; state?: string }) => {
+    const observe = (update: { sessionUpdate: string; state?: unknown }) => {
       updates.push(update.sessionUpdate);
       if (update.sessionUpdate === "state_update" && update.state === "idle") {
         idleReceived = true;

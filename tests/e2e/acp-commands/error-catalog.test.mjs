@@ -9,8 +9,8 @@ import {
 
 const implementation = await import("./connection.mjs");
 const [v1, v2] = await Promise.all([
-  import("@agentclientprotocol/sdk"),
-  import("@agentclientprotocol/sdk/experimental/v2"),
+  import("@agentclientprotocol/sdk/unstable"),
+  import("@agentclientprotocol/sdk/experimental/v2/unstable"),
 ]);
 const profiles = [
   { name: "v1-http", version: 1, http: true },

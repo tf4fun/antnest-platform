@@ -3,7 +3,7 @@ import { z } from "zod";
 import type {
   RequestPermissionRequest,
   RequestPermissionResponse,
-} from "@agentclientprotocol/sdk";
+} from "@agentclientprotocol/sdk/unstable";
 
 const maxPending = 64;
 const maxVisibleInputBytes = 256 * 1024;

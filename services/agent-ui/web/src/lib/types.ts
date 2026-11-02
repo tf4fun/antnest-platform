@@ -98,4 +98,4 @@ export type WorkspaceSnapshot = {
   activeConversationId: string | null;
   preview: boolean;
 };
-import type { SessionConfigOption } from "@agentclientprotocol/sdk";
+import type { SessionConfigOption } from "@agentclientprotocol/sdk/unstable";

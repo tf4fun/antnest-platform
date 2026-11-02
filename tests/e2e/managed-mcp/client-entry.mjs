@@ -15,7 +15,7 @@ const hook = registerHooks({
         "@opentelemetry/sdk-node",
         "@opentelemetry/exporter-trace-otlp-http",
       ].includes(specifier) ||
-      specifier === "@agentclientprotocol/sdk" ||
+      specifier === "@agentclientprotocol/sdk/unstable" ||
       specifier.startsWith("@agentclientprotocol/sdk/")
     ) {
       return nextResolve(specifier, { ...context, parentURL: dependencyRoot });

@@ -3,7 +3,7 @@ import {
   identityHeaders,
   sessionConfigurationView,
 } from "../../../../services/agent-acp-service/test/support/fixtures.js";
-import * as acp from "@agentclientprotocol/sdk";
+import * as acp from "@agentclientprotocol/sdk/unstable";
 import { createHttpStream } from "@agentclientprotocol/sdk/experimental/http-client";
 import { Pool } from "pg";
 import { afterAll, afterEach, beforeEach, describe, expect, it } from "vitest";

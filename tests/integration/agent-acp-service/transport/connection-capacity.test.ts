@@ -1,7 +1,7 @@
 import { once } from "node:events";
 import { request as httpRequest } from "node:http";
-import * as acpV1 from "@agentclientprotocol/sdk";
-import * as acpV2 from "@agentclientprotocol/sdk/experimental/v2";
+import * as acpV1 from "@agentclientprotocol/sdk/unstable";
+import * as acpV2 from "@agentclientprotocol/sdk/experimental/v2/unstable";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import WebSocket, { WebSocketServer, type RawData } from "ws";
 import {
