@@ -233,8 +233,11 @@ type observationsResponse struct {
 }
 
 type errorResponse struct {
-	Code          string  `json:"code"`
-	Message       string  `json:"message"`
-	Retryable     bool    `json:"retryable"`
-	ResetSequence *uint64 `json:"reset_sequence,omitempty"`
+	Code          string         `json:"code"`
+	Category      string         `json:"category"`
+	Message       string         `json:"message"`
+	Retryable     bool           `json:"retryable"`
+	RequestID     string         `json:"request_id"`
+	Details       map[string]any `json:"details,omitempty"`
+	ResetSequence *uint64        `json:"reset_sequence,omitempty"`
 }

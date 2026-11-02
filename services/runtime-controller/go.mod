@@ -9,6 +9,7 @@ require (
 	github.com/exaring/otelpgx v0.12.0
 	github.com/jackc/pgx/v5 v5.11.0
 	github.com/opencontainers/go-digest v1.0.0
+	github.com/santhosh-tekuri/jsonschema/v6 v6.0.3
 	github.com/tf4fun/antnest-platform/modules/service-authentication v0.0.0
 	go.opentelemetry.io/contrib/bridges/otelslog v0.20.1
 	go.opentelemetry.io/otel v1.47.0

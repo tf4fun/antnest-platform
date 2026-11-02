@@ -897,6 +897,270 @@
       "http_status": 504,
       "owner": "agent-controller",
       "description": "Lifecycle operation timed out"
+    },
+    {
+      "code": "acp_member_not_allowed",
+      "category": "forbidden",
+      "retryable": false,
+      "http_status": 403,
+      "owner": "runtime-controller",
+      "description": "Acp member not allowed"
+    },
+    {
+      "code": "acp_incarnation_unverified",
+      "category": "forbidden",
+      "retryable": false,
+      "http_status": 403,
+      "owner": "runtime-controller",
+      "description": "Acp incarnation unverified"
+    },
+    {
+      "code": "acp_incarnation_conflict",
+      "category": "conflict",
+      "retryable": false,
+      "http_status": 409,
+      "owner": "runtime-controller",
+      "description": "Acp incarnation conflict"
+    },
+    {
+      "code": "skill_preparation_closed",
+      "category": "conflict",
+      "retryable": false,
+      "http_status": 409,
+      "owner": "runtime-controller",
+      "description": "Skill preparation closed"
+    },
+    {
+      "code": "runtime_lifecycle_conflict",
+      "category": "conflict",
+      "retryable": false,
+      "http_status": 409,
+      "owner": "runtime-controller",
+      "description": "Runtime lifecycle conflict"
+    },
+    {
+      "code": "runtime_revision_conflict",
+      "category": "conflict",
+      "retryable": false,
+      "http_status": 409,
+      "owner": "runtime-controller",
+      "description": "Runtime revision conflict"
+    },
+    {
+      "code": "prepared_skill_set_invalidated",
+      "category": "conflict",
+      "retryable": false,
+      "http_status": 409,
+      "owner": "runtime-controller",
+      "description": "Prepared skill set invalidated"
+    },
+    {
+      "code": "tunnel_key_registration_rejected",
+      "category": "conflict",
+      "retryable": false,
+      "http_status": 409,
+      "owner": "runtime-controller",
+      "description": "Tunnel key registration rejected"
+    },
+    {
+      "code": "runtime_drift",
+      "category": "conflict",
+      "retryable": false,
+      "http_status": 409,
+      "owner": "runtime-controller",
+      "description": "Runtime drift"
+    },
+    {
+      "code": "storage_in_use",
+      "category": "conflict",
+      "retryable": false,
+      "http_status": 409,
+      "owner": "runtime-controller",
+      "description": "Storage in use"
+    },
+    {
+      "code": "storage_ownership_conflict",
+      "category": "conflict",
+      "retryable": false,
+      "http_status": 409,
+      "owner": "runtime-controller",
+      "description": "Storage ownership conflict"
+    },
+    {
+      "code": "runtime_connection_stale",
+      "category": "conflict",
+      "retryable": false,
+      "http_status": 409,
+      "owner": "runtime-controller",
+      "description": "Runtime connection stale"
+    },
+    {
+      "code": "agent_mutation_in_progress",
+      "category": "conflict",
+      "retryable": true,
+      "http_status": 409,
+      "owner": "runtime-controller",
+      "description": "Agent mutation in progress"
+    },
+    {
+      "code": "acp_registration_unavailable",
+      "category": "unavailable",
+      "retryable": true,
+      "http_status": 503,
+      "owner": "runtime-controller",
+      "description": "Acp registration unavailable"
+    },
+    {
+      "code": "acp_registry_unavailable",
+      "category": "unavailable",
+      "retryable": true,
+      "http_status": 503,
+      "owner": "runtime-controller",
+      "description": "Acp registry unavailable"
+    },
+    {
+      "code": "mutation_lock_lost",
+      "category": "unavailable",
+      "retryable": true,
+      "http_status": 503,
+      "owner": "runtime-controller",
+      "description": "Mutation lock lost"
+    },
+    {
+      "code": "skill_preparation_unavailable",
+      "category": "unavailable",
+      "retryable": true,
+      "http_status": 503,
+      "owner": "runtime-controller",
+      "description": "Skill preparation unavailable"
+    },
+    {
+      "code": "skill_cleanup_in_progress",
+      "category": "unavailable",
+      "retryable": true,
+      "http_status": 503,
+      "owner": "runtime-controller",
+      "description": "Skill cleanup in progress"
+    },
+    {
+      "code": "tunnel_registration_unavailable",
+      "category": "unavailable",
+      "retryable": true,
+      "http_status": 503,
+      "owner": "runtime-controller",
+      "description": "Tunnel registration unavailable"
+    },
+    {
+      "code": "skill_preflight_unavailable",
+      "category": "unavailable",
+      "retryable": true,
+      "http_status": 503,
+      "owner": "runtime-controller",
+      "description": "Skill preflight unavailable"
+    },
+    {
+      "code": "platform_unavailable",
+      "category": "unavailable",
+      "retryable": true,
+      "http_status": 503,
+      "owner": "runtime-controller",
+      "description": "Platform unavailable"
+    },
+    {
+      "code": "runtime_capacity_exhausted",
+      "category": "unavailable",
+      "retryable": true,
+      "http_status": 503,
+      "owner": "runtime-controller",
+      "description": "Runtime capacity exhausted"
+    },
+    {
+      "code": "runtime_connection_unavailable",
+      "category": "unavailable",
+      "retryable": true,
+      "http_status": 503,
+      "owner": "runtime-controller",
+      "description": "Runtime connection unavailable"
+    },
+    {
+      "code": "deadline_exceeded",
+      "category": "unavailable",
+      "retryable": true,
+      "http_status": 504,
+      "owner": "runtime-controller",
+      "description": "Deadline exceeded"
+    },
+    {
+      "code": "runtime_not_ready",
+      "category": "internal",
+      "retryable": false,
+      "http_status": 500,
+      "owner": "runtime-controller",
+      "description": "Runtime not ready"
+    },
+    {
+      "code": "operation_failed",
+      "category": "internal",
+      "retryable": false,
+      "http_status": 500,
+      "owner": "runtime-controller",
+      "description": "Operation failed"
+    },
+    {
+      "code": "image_not_found",
+      "category": "not_found",
+      "retryable": false,
+      "http_status": 404,
+      "owner": "runtime-controller",
+      "description": "Image not found"
+    },
+    {
+      "code": "runtime_not_found",
+      "category": "not_found",
+      "retryable": false,
+      "http_status": 404,
+      "owner": "runtime-controller",
+      "description": "Runtime not found"
+    },
+    {
+      "code": "storage_not_found",
+      "category": "not_found",
+      "retryable": false,
+      "http_status": 404,
+      "owner": "runtime-controller",
+      "description": "Storage not found"
+    },
+    {
+      "code": "route_not_found",
+      "category": "not_found",
+      "retryable": false,
+      "http_status": 404,
+      "owner": "runtime-controller",
+      "description": "Route not found"
+    },
+    {
+      "code": "observation_cursor_expired",
+      "category": "not_found",
+      "retryable": false,
+      "http_status": 410,
+      "owner": "runtime-controller",
+      "description": "Observation cursor expired"
+    },
+    {
+      "code": "idempotency_key_required",
+      "category": "invalid_request",
+      "retryable": false,
+      "http_status": 400,
+      "owner": "runtime-controller",
+      "description": "Idempotency key required"
+    },
+    {
+      "code": "image_not_allowed",
+      "category": "invalid_request",
+      "retryable": false,
+      "http_status": 422,
+      "owner": "runtime-controller",
+      "description": "Image not allowed"
     }
   ]
 }
