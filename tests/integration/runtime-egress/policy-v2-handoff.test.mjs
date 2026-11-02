@@ -195,3 +195,20 @@ test("browser codec round-trips the frozen v2 projection and pending intent", ()
     "implemented",
   );
 });
+
+for (const path of [
+  "../../../services/runtime-egress/docs/architecture.md",
+  "../../../docs/stage-1-runtime.md",
+  "../../../contracts/egress/control-api.md",
+]) {
+  test(`v2 policy delivery docs match implemented consumers: ${path}`, () => {
+    const text = readFileSync(new URL(path, import.meta.url), "utf8");
+    assert.doesNotMatch(
+      text,
+      /Controller and\s+Console (?:consumer )?batches remain\s+pending/,
+    );
+    assert.match(text, /Agent Controller/);
+    assert.match(text, /Admin Console/);
+    assert.match(text, /policy-v2-handoff\.json/);
+  });
+}
