@@ -167,6 +167,73 @@ test("optional observability outlives every exporter during normal Compose stop"
   );
 });
 
+test("Egress metrics stay disabled by default while the generic trace endpoint is retained", () => {
+  const environment = base.services["runtime-egress"].environment;
+  assert.equal(environment.OTEL_METRICS_EXPORTER, "none");
+  assert.equal(environment.OTEL_EXPORTER_OTLP_METRICS_ENDPOINT, "");
+  assert.equal(environment.OTEL_EXPORTER_OTLP_ENDPOINT, "http://jaeger:4318");
+});
+
+test("Egress metrics overrides forward the selector and signal endpoint exactly", () => {
+  const config = composeConfig(["compose.yaml"], {
+    OTEL_SDK_DISABLED: "false",
+    OTEL_EXPORTER_OTLP_ENDPOINT: "http://trace-collector:4318/base",
+    OTEL_METRICS_EXPORTER: "otlp",
+    OTEL_EXPORTER_OTLP_METRICS_ENDPOINT:
+      "http://metrics-receiver:4318/custom-metrics",
+  });
+  const egress = config.services["runtime-egress"];
+  assert.equal(egress.environment.OTEL_SDK_DISABLED, "false");
+  assert.equal(
+    egress.environment.OTEL_EXPORTER_OTLP_ENDPOINT,
+    "http://trace-collector:4318/base",
+  );
+  assert.equal(egress.environment.OTEL_METRICS_EXPORTER, "otlp");
+  assert.equal(
+    egress.environment.OTEL_EXPORTER_OTLP_METRICS_ENDPOINT,
+    "http://metrics-receiver:4318/custom-metrics",
+  );
+  assert.deepEqual(egress.ports, base.services["runtime-egress"].ports);
+  assert.deepEqual(
+    egress.depends_on,
+    base.services["runtime-egress"].depends_on,
+  );
+});
+
+test("Egress metrics endpoint alone never enables export without the otlp selector", () => {
+  const config = composeConfig(["compose.yaml"], {
+    OTEL_METRICS_EXPORTER: "none",
+    OTEL_EXPORTER_OTLP_METRICS_ENDPOINT:
+      "http://metrics-receiver:4318/v1/metrics",
+  });
+  const environment = config.services["runtime-egress"].environment;
+  assert.equal(environment.OTEL_METRICS_EXPORTER, "none");
+  assert.equal(
+    environment.OTEL_EXPORTER_OTLP_METRICS_ENDPOINT,
+    "http://metrics-receiver:4318/v1/metrics",
+  );
+});
+
+test("Egress metrics selector forwards unchanged when the SDK is disabled", () => {
+  const config = composeConfig(["compose.yaml"], {
+    OTEL_SDK_DISABLED: "true",
+    OTEL_METRICS_EXPORTER: "otlp",
+  });
+  const environment = config.services["runtime-egress"].environment;
+  assert.equal(environment.OTEL_SDK_DISABLED, "true");
+  assert.equal(environment.OTEL_METRICS_EXPORTER, "otlp");
+});
+
+test("Egress metrics selector falls back to none when left empty", () => {
+  const config = composeConfig(["compose.yaml"], {
+    OTEL_METRICS_EXPORTER: "",
+  });
+  assert.equal(
+    config.services["runtime-egress"].environment.OTEL_METRICS_EXPORTER,
+    "none",
+  );
+});
+
 test("production-image admission changes image ownership without weakening deployment boundaries", () => {
   const candidate = composeConfig(
     ["compose.yaml", "tests/integration/deployment/compose.admission.yaml"],

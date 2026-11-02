@@ -174,6 +174,16 @@ docker compose -f compose.yaml -f compose.stage3.yaml \
   --profile stage3 --profile observability ps
 ```
 
+Runtime Egress metrics stay disabled independently of tracing: exporting
+`OTEL_SDK_DISABLED=false` does not emit them. Metrics require the explicit
+`OTEL_METRICS_EXPORTER=otlp` selector plus a reachable metrics-capable OTLP
+HTTP/protobuf receiver addressed by the exact
+`OTEL_EXPORTER_OTLP_METRICS_ENDPOINT` signal URL; the default trace-only
+Jaeger endpoint is not one, and a configured endpoint alone never enables
+export. The Egress telemetry shutdown summary reports per-signal provider
+outcomes, not confirmed delivery. See
+[Runtime Egress operations](../services/runtime-egress/docs/operations.md#7-telemetry).
+
 The base Compose file publishes only Gateway, including when the observability
 profile is enabled. Expected host binding with the example config:
 
