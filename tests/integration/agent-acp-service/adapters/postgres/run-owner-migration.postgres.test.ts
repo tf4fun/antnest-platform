@@ -3,6 +3,7 @@ import { readFile, readdir } from "node:fs/promises";
 import { Pool, type PoolClient } from "pg";
 import { describe, expect, it } from "vitest";
 import { migrate } from "../../../../../services/agent-acp-service/src/adapters/postgres/migrate.js";
+import { contentRetentionFacts } from "../../support/content-retention-migration.js";
 import type { RunState } from "../../../../../services/agent-acp-service/src/domain/types.js";
 
 const databaseUrl = process.env.ANTNEST_ACP_TEST_DATABASE_URL;
@@ -261,11 +262,13 @@ async function facts(pool: Pool): Promise<Record<string, string[]>> {
     "agent_leases",
   ]) {
     const expression =
-      table === "runs"
-        ? "('{\"budget_reason\":null}'::jsonb || to_jsonb(stored)) - $1::text[]"
-        : table === "context_checkpoints"
-          ? '\'{"compaction_prompt_version":null,"pinned_message_ids":[]}\'::jsonb || to_jsonb(stored)'
-          : "to_jsonb(stored)";
+      table === "acp_sessions"
+        ? "(to_jsonb(stored)-'deleted_at')"
+        : table === "runs"
+          ? "('{\"budget_reason\":null}'::jsonb || to_jsonb(stored)) - $1::text[]"
+          : table === "context_checkpoints"
+            ? '\'{"compaction_prompt_version":null,"pinned_message_ids":[]}\'::jsonb || to_jsonb(stored)'
+            : "to_jsonb(stored)";
     const order = table === "agent_leases" ? "organization_id, agent_id" : "id";
     const rows = await pool.query<{ value: string }>(
       `SELECT (${expression})::text AS value FROM ${table} AS stored ORDER BY ${order}`,
@@ -399,6 +402,7 @@ describe.skipIf(databaseUrl === undefined)(
         const applied = await journal(pool);
         expect(applied).toHaveLength(25);
         await migrate(pool);
+        const metadataBefore = await contentRetentionFacts(pool);
         const migratedColumns = await columns(pool);
         expect(migratedColumns).toEqual(
           [...ownerColumns]
@@ -428,6 +432,7 @@ describe.skipIf(databaseUrl === undefined)(
           "0032_model_budget_ledger.sql",
           "0033_context_compaction.sql",
           "0034_model_token_calibration.sql",
+          "0035_content_retention.sql",
         ]);
         expect(
           migrated.find((entry) => entry.version === migration)?.checksum,
@@ -440,6 +445,7 @@ describe.skipIf(databaseUrl === undefined)(
         expect(await origins(pool)).toEqual(expectedOrigins);
         expect(await columns(pool)).toEqual(migratedColumns);
         expect(await facts(pool)).toEqual(before);
+        expect(await contentRetentionFacts(pool)).toEqual(metadataBefore);
         expect(await journal(pool)).toEqual(migrated);
       });
     }, 30_000);
