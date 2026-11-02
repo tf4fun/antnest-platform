@@ -59,6 +59,9 @@ jobs:
         timeout-minutes: 28
         run: sh tests/support/ci-install-chromium.sh services/agent-ui/web/node_modules/.bin/playwright
 
+      - name: Shared dependency versions
+        run: node scripts/check-shared-versions.mjs
+
       - name: Markdown links
         run: make check-links
 

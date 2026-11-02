@@ -1,0 +1,42 @@
+version: 2
+updates:
+  - package-ecosystem: "npm"
+    directories:
+      - "/services/agent-acp-service"
+      - "/services/agent-ui/web"
+      - "/services/admin-console/web"
+    schedule:
+      interval: "weekly"
+    cooldown:
+      default-days: 7
+    groups:
+      acp-sdk:
+        patterns:
+          - "@agentclientprotocol/*"
+  - package-ecosystem: "gomod"
+    directories:
+      - "/modules/secret-encryption"
+      - "/modules/service-authentication"
+      - "/services/admin-console"
+      - "/services/agent-controller"
+      - "/services/edge-gateway"
+      - "/services/identity-service"
+      - "/services/runtime-controller"
+      - "/services/skill-registry"
+    schedule:
+      interval: "weekly"
+    cooldown:
+      default-days: 7
+  - package-ecosystem: "cargo"
+    directories:
+      - "/modules/runtime-tunnel"
+      - "/runtimes/antnest-runtime"
+      - "/services/runtime-egress"
+    schedule:
+      interval: "weekly"
+    cooldown:
+      default-days: 7
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
