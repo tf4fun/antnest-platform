@@ -1,7 +1,6 @@
 package server
 
 import (
-	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
@@ -25,12 +24,10 @@ func loginAdmissionRequest(handler http.Handler, path, source, body string) *htt
 
 func assertLoginAdmissionRefusal(t *testing.T, response *httptest.ResponseRecorder, retryAfter string) {
 	t.Helper()
-	var body map[string]any
-	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
-		t.Fatal(err)
-	}
-	if response.Code != http.StatusTooManyRequests ||
-		!reflect.DeepEqual(body, map[string]any{"code": "login_rate_limited", "message": "Too many login attempts"}) ||
+	assertCommonError(t, compileCommonErrorSchema(t), response, http.StatusTooManyRequests,
+		"login_rate_limited", "rate_limited", true)
+	body := commonErrorBody(t, response)
+	if len(body) != 5 || body["message"] != "Too many login attempts" ||
 		response.Header().Get("Cache-Control") != "no-store" ||
 		!reflect.DeepEqual(response.Header().Values("Retry-After"), []string{retryAfter}) ||
 		len(response.Header().Values("Set-Cookie")) != 0 {
