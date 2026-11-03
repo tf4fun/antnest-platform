@@ -290,10 +290,19 @@ test("the generator CLI --check rejects unknown or missing slices", () => {
     }
     const missing = spawnSync(
       process.execPath,
-      [join(fixture, "scripts", "generate-api-errors.mjs"), "--check", "--service", "identity-service"],
+      [
+        join(fixture, "scripts", "generate-api-errors.mjs"),
+        "--check",
+        "--service",
+        "identity-service",
+      ],
       { cwd: fixture, encoding: "utf8" },
     );
-    assert.notEqual(missing.status, 0, "identity-service must be rejected without a slice");
+    assert.notEqual(
+      missing.status,
+      0,
+      "identity-service must be rejected without a slice",
+    );
     assert.match(
       missing.stderr,
       /contracts\/common\/slices\/identity-service\.json is not checked in/,
