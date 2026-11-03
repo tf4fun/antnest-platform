@@ -15,6 +15,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -24,6 +25,7 @@ import (
 	"github.com/tf4fun/antnest-platform/modules/service-authentication/serviceauth"
 	"github.com/tf4fun/antnest-platform/services/runtime-controller/internal/acpincarnation"
 	"github.com/tf4fun/antnest-platform/services/runtime-controller/internal/acpincarnationprobe"
+	"github.com/tf4fun/antnest-platform/services/runtime-controller/internal/apierror"
 	"github.com/tf4fun/antnest-platform/services/runtime-controller/internal/observation"
 	platformdocker "github.com/tf4fun/antnest-platform/services/runtime-controller/internal/platform/docker"
 	"github.com/tf4fun/antnest-platform/services/runtime-controller/internal/rpc"
@@ -352,6 +354,7 @@ func acpIncarnationRPCOutbound(t *testing.T) serviceauth.LookupEnv {
 
 type acpIncarnationRPCResponse struct {
 	status int
+	header http.Header
 	raw    []byte
 	fields map[string]json.RawMessage
 }
@@ -390,7 +393,7 @@ func acpIncarnationRPCCall(t *testing.T, parent context.Context, client *http.Cl
 	if readErr != nil || closeErr != nil || len(raw) > 8192 || response.Header.Get("Content-Type") != "application/json" || response.Header.Get("Cache-Control") != "no-store" {
 		t.Fatal("component response did not completely read and close within its private wire boundary")
 	}
-	result := acpIncarnationRPCResponse{status: response.StatusCode, raw: raw}
+	result := acpIncarnationRPCResponse{status: response.StatusCode, header: response.Header.Clone(), raw: raw}
 	if serviceauth.DecodeObject(raw, &result.fields) != nil {
 		t.Fatal("component response was not a strict JSON object")
 	}
@@ -431,15 +434,46 @@ func (r acpIncarnationRPCResponse) decode(t *testing.T, status int, target any) 
 	}
 }
 
+func TestAcpIncarnationRPCFailureCommonErrorAssertion(t *testing.T) {
+	for _, scenario := range []struct {
+		status int
+		code   string
+	}{
+		{http.StatusUnauthorized, apierror.ServiceUnauthenticated},
+		{http.StatusForbidden, apierror.AcpMemberNotAllowed},
+	} {
+		t.Run(scenario.code, func(t *testing.T) {
+			recorder := httptest.NewRecorder()
+			apierror.WriteError(recorder, scenario.status, scenario.code, "probe", false)
+			response := acpIncarnationRPCResponse{
+				status: recorder.Code,
+				header: recorder.Header().Clone(),
+				raw:    recorder.Body.Bytes(),
+			}
+			if err := serviceauth.DecodeObject(response.raw, &response.fields); err != nil {
+				t.Fatalf("synthetic response is not a strict object: %v", err)
+			}
+			response.assertFailure(t, scenario.status, scenario.code)
+		})
+	}
+}
+
+var commonRequestIDPattern = regexp.MustCompile(`^[A-Za-z0-9._:-]{1,128}$`)
+
 func (r acpIncarnationRPCResponse) assertFailure(t *testing.T, status int, code string) {
 	t.Helper()
 	var failure struct {
 		Code      string `json:"code"`
+		Category  string `json:"category"`
 		Message   string `json:"message"`
 		Retryable bool   `json:"retryable"`
+		RequestID string `json:"request_id"`
 	}
 	r.decode(t, status, &failure)
-	if len(r.fields) != 3 || failure.Code != code || failure.Retryable || failure.Message == "" {
+	if len(r.fields) != 5 || failure.Code != code || failure.Retryable || failure.Message == "" ||
+		failure.Category != string(apierror.New(code, "", "probe").Category) ||
+		!commonRequestIDPattern.MatchString(failure.RequestID) ||
+		failure.RequestID != r.header.Get("X-Request-ID") {
 		t.Fatal("workload denial lost its strict nonretryable error contract")
 	}
 }

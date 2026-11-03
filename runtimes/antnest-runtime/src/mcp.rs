@@ -1780,17 +1780,15 @@ fn common_protocol_error(mut error: rmcp::ErrorData, request_id: &str) -> rmcp::
         _ => crate::api_errors_gen::INTERNAL,
     };
     let mut legacy_code = None;
-    if let Some(data) = &error.data {
-        if let Some(candidate) = data
+    if let Some(data) = &error.data
+        && let Some(candidate) = data
             .get("error_code")
             .or_else(|| data.get("code"))
             .and_then(|value| value.as_str())
-        {
-            if crate::api_errors_gen::metadata(candidate).is_some() {
-                code = candidate;
-                legacy_code = Some(candidate.to_owned());
-            }
-        }
+        && crate::api_errors_gen::metadata(candidate).is_some()
+    {
+        code = candidate;
+        legacy_code = Some(candidate.to_owned());
     }
     let retryable = crate::api_errors_gen::metadata(code)
         .map(|meta| meta.retryable)

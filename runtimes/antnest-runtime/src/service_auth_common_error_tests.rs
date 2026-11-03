@@ -20,12 +20,9 @@ fn assert_common_error(
     status: StatusCode,
     headers: &HeaderMap,
     body: &serde_json::Value,
-    want_status: StatusCode,
-    code: &str,
-    category: &str,
-    message: &str,
-    retryable: bool,
+    expected: (StatusCode, &str, &str, &str, bool),
 ) {
+    let (want_status, code, category, message, retryable) = expected;
     assert_eq!(status, want_status);
     let request_id = headers
         .get("x-request-id")
@@ -59,11 +56,13 @@ async fn common_error_rejection_unauthorized() {
         status,
         &headers,
         &body,
-        StatusCode::UNAUTHORIZED,
-        "runtime_unauthorized",
-        "unauthenticated",
-        "Runtime request rejected",
-        false,
+        (
+            StatusCode::UNAUTHORIZED,
+            "runtime_unauthorized",
+            "unauthenticated",
+            "Runtime request rejected",
+            false,
+        ),
     );
 }
 
@@ -75,11 +74,13 @@ async fn common_error_rejection_forbidden() {
         status,
         &headers,
         &body,
-        StatusCode::FORBIDDEN,
-        "host_not_allowed",
-        "forbidden",
-        "Runtime request rejected",
-        false,
+        (
+            StatusCode::FORBIDDEN,
+            "host_not_allowed",
+            "forbidden",
+            "Runtime request rejected",
+            false,
+        ),
     );
 }
 
@@ -91,10 +92,12 @@ async fn common_error_rejection_unknown_code_sanitizes() {
         status,
         &headers,
         &body,
-        StatusCode::INTERNAL_SERVER_ERROR,
-        "internal",
-        "internal",
-        "Internal service error",
-        false,
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "internal",
+            "internal",
+            "Internal service error",
+            false,
+        ),
     );
 }
