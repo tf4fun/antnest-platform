@@ -1,3 +1,5 @@
+import { ERROR_CODES, ERROR_METADATA } from "../../../errors.gen.js";
+import { commonError } from "../../public-error.js";
 import * as acp from "@agentclientprotocol/sdk/unstable";
 import { fileContent } from "./file-content.js";
 import { targetCancelRunId } from "./target-cancel.js";
@@ -623,8 +625,7 @@ function promptResponse(result: ExecuteRunResult): acp.PromptResponse {
       return { stopReason: "cancelled" };
     case "failed":
       throw new acp.RequestError(-32022, "Agent Run failed", {
-        code: result.errorClass,
-        retryable: false,
+        ...terminalErrorData(result.errorClass, "Agent Run failed"),
         ...terminalBudgetDetails(result),
       });
     case "unresolved":
@@ -633,11 +634,15 @@ function promptResponse(result: ExecuteRunResult): acp.PromptResponse {
       if (result.errorClass === "cancelled_tool_outcome_unknown")
         return { stopReason: "cancelled" };
       throw new acp.RequestError(-32023, "Agent Run outcome is unresolved", {
-        code: result.errorClass,
-        retryable: false,
+        ...terminalErrorData(result.errorClass, "Agent Run outcome is unresolved"),
         ...terminalBudgetDetails(result),
       });
   }
+}
+
+function terminalErrorData(errorClass: string, message: string) {
+  const code = Object.hasOwn(ERROR_METADATA, errorClass) ? errorClass : ERROR_CODES.INTERNAL;
+  return commonError(code, message, false);
 }
 
 function terminalBudgetDetails(

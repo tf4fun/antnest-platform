@@ -2073,6 +2073,118 @@
       "http_status": 413,
       "owner": "agent-acp-service",
       "description": "Configuration too large"
+    },
+    {
+      "code": "acp_peer_membership_conflict",
+      "category": "conflict",
+      "retryable": false,
+      "http_status": 409,
+      "owner": "agent-acp-service",
+      "description": "Acp peer membership conflict"
+    },
+    {
+      "code": "acp_peer_incarnation_mismatch",
+      "category": "conflict",
+      "retryable": false,
+      "http_status": 409,
+      "owner": "agent-acp-service",
+      "description": "Acp peer incarnation mismatch"
+    },
+    {
+      "code": "acp_peer_hop_rejected",
+      "category": "conflict",
+      "retryable": false,
+      "http_status": 409,
+      "owner": "agent-acp-service",
+      "description": "Acp peer hop rejected"
+    },
+    {
+      "code": "acp_probe_intent_mismatch",
+      "category": "conflict",
+      "retryable": false,
+      "http_status": 409,
+      "owner": "agent-acp-service",
+      "description": "Acp probe intent mismatch"
+    },
+    {
+      "code": "model_unsupported_content",
+      "category": "invalid_request",
+      "retryable": false,
+      "http_status": 400,
+      "owner": "agent-acp-service",
+      "description": "Model unsupported content"
+    },
+    {
+      "code": "context_overflow",
+      "category": "invalid_request",
+      "retryable": false,
+      "http_status": 422,
+      "owner": "agent-acp-service",
+      "description": "Context overflow"
+    },
+    {
+      "code": "model_http_error",
+      "category": "internal",
+      "retryable": false,
+      "http_status": 502,
+      "owner": "agent-acp-service",
+      "description": "Model http error"
+    },
+    {
+      "code": "model_invalid_response",
+      "category": "internal",
+      "retryable": false,
+      "http_status": 502,
+      "owner": "agent-acp-service",
+      "description": "Model invalid response"
+    },
+    {
+      "code": "persistence_interrupted",
+      "category": "internal",
+      "retryable": false,
+      "http_status": 500,
+      "owner": "agent-acp-service",
+      "description": "Persistence interrupted"
+    },
+    {
+      "code": "service_restarted_during_tool",
+      "category": "internal",
+      "retryable": false,
+      "http_status": 500,
+      "owner": "agent-acp-service",
+      "description": "Service restarted during tool"
+    },
+    {
+      "code": "tool_outcome_unknown",
+      "category": "internal",
+      "retryable": false,
+      "http_status": 500,
+      "owner": "agent-acp-service",
+      "description": "Tool outcome unknown"
+    },
+    {
+      "code": "run_deadline_exceeded",
+      "category": "unavailable",
+      "retryable": false,
+      "http_status": 504,
+      "owner": "agent-acp-service",
+      "description": "Run deadline exceeded"
+    },
+    {
+      "code": "service_restarted_during_run",
+      "category": "unavailable",
+      "retryable": false,
+      "http_status": 503,
+      "owner": "agent-acp-service",
+      "description": "Service restarted during run"
+    },
+    {
+      "code": "temporary_skill_cleanup_pending",
+      "category": "unavailable",
+      "retryable": false,
+      "http_status": 503,
+      "owner": "agent-acp-service",
+      "description": "Temporary skill cleanup pending"
     }
   ]
 }

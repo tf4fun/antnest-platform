@@ -7,6 +7,7 @@ import { recordBoundaryError, rpcContent } from "../telemetry/diagnostics.js";
 import { readRpcRequest, rpcJson, RpcRequestError } from "./rpc-request.js";
 import { httpFailure } from "./public-error.js";
 import { trustedAuditPrincipal } from "./trusted-identity.js";
+import { ERROR_CODES } from "../errors.gen.js";
 
 const routes = new Map<string, { method: keyof ExecutionAuditPort; name: string }>([
   ["/rpc/agent-acp/list-execution-audits", { method: "list", name: "list_execution_audits" }],
@@ -62,10 +63,10 @@ export async function serveExecutionAudit(
 
 function auditFailure(error: unknown) {
   if (error instanceof RpcRequestError) return httpFailure(error.code);
-  if (error instanceof ZodError) return httpFailure("invalid_request");
+  if (error instanceof ZodError) return httpFailure(ERROR_CODES.INVALID_REQUEST);
   if (error instanceof DomainError) {
     const known = ["access_denied", "audit_not_found", "invalid_cursor", "invalid_request"];
     if (known.includes(error.code)) return httpFailure(error.code);
   }
-  return httpFailure("execution_audit_unavailable");
+  return httpFailure(ERROR_CODES.EXECUTION_AUDIT_UNAVAILABLE);
 }

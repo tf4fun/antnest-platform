@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { test } from "node:test";
+import { withCommonErrorSchema } from "../../support/common-error-schema.mjs";
 
 const require = createRequire(
   new URL("../../../services/agent-acp-service/package.json", import.meta.url),
@@ -115,13 +116,15 @@ const objectCases = [
 function validators() {
   const schema = read(schemaPath);
   assert.equal(schema.$id, schemaID);
-  const ajv = new Ajv2020({
-    strict: true,
-    allErrors: true,
-    coerceTypes: false,
-    useDefaults: false,
-    removeAdditional: false,
-  });
+  const ajv = withCommonErrorSchema(
+    new Ajv2020({
+      strict: true,
+      allErrors: true,
+      coerceTypes: false,
+      useDefaults: false,
+      removeAdditional: false,
+    }),
+  );
   ajv.addSchema(schema);
   const definitions = [
     "member_id",

@@ -16,6 +16,7 @@ import { readRpcRequest, rpcJson, RpcRequestError } from "./rpc-request.js";
 import { httpFailure } from "./public-error.js";
 import { trustedIdentity } from "./trusted-identity.js";
 import type { ExecutionIdentity } from "../domain/execution-configuration.js";
+import { ERROR_CODES } from "../errors.gen.js";
 
 export const AGENT_EXECUTION_STATE_PATH = "/rpc/agent-acp/get-agent-execution-state";
 export const AGENT_EXECUTION_WATCH_PATH = "/rpc/agent-acp/watch-agent-execution-state";
@@ -187,5 +188,5 @@ function stateError(error: unknown) {
   if (error instanceof RpcRequestError) return httpFailure(error.code);
   if (error instanceof DomainError && error.code === "access_denied")
     return httpFailure(error.code);
-  return httpFailure("execution_state_unavailable");
+  return httpFailure(ERROR_CODES.EXECUTION_STATE_UNAVAILABLE);
 }

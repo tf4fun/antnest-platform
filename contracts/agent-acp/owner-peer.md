@@ -174,3 +174,8 @@ and a nonowner's held old-stream cleanup must prevent ACK. The final integration
 must run different Agents on both replicas, kill one replica, recover under the
 documented stop rules without replay, and verify resource cleanup. Schema or unit
 tests alone do not establish that business behavior.
+
+Error replies now carry the shared common envelope fields (`code`, `category`,
+`message`, `retryable`, `request_id`); the `error` schema accepts the legacy
+three-field body or the five-field common body, which requires `category`,
+`message` and `request_id` together.

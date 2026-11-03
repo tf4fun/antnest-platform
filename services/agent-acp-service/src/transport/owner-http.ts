@@ -28,7 +28,8 @@ import { PeerDeadlineError } from "../ports/agent-peers.js";
 import type { AcpHttpTransport, HttpOwnerAdmission } from "./acp/http-transport.js";
 import { isDisconnectedHttpPeer } from "./http-peer-disconnection.js";
 import { HttpRelayBodyCleanupError, OwnedRelayResponse } from "./owned-relay-response.js";
-import { httpFailure } from "./public-error.js";
+import { errorHeaders, httpFailure } from "./public-error.js";
+import { ERROR_CODES } from "../errors.gen.js";
 import type { RequestAuthentication } from "./request-authentication.js";
 import { trustedIdentity } from "./trusted-identity.js";
 
@@ -213,7 +214,7 @@ export class OwnerHttpTransport {
               response.setHeader("WWW-Authenticate", authentication.challenge);
             response.writeHead(failure.status, {
               "content-type": "application/json",
-              "cache-control": "no-store",
+              ...errorHeaders(failure.body),
             });
             response.end(JSON.stringify(failure.body));
             return;
@@ -546,12 +547,14 @@ export class OwnerHttpTransport {
       response.destroy();
       return;
     }
-    const failure = httpFailure(error instanceof DomainError ? error.code : "acp_http_unavailable");
-    if (error instanceof DomainError && error.code === "connection_quota_exceeded")
+    const failure = httpFailure(
+      error instanceof DomainError ? error.code : ERROR_CODES.ACP_HTTP_UNAVAILABLE,
+    );
+    if (error instanceof DomainError && error.code === ERROR_CODES.CONNECTION_QUOTA_EXCEEDED)
       response.setHeader("Retry-After", "1");
     response.writeHead(failure.status, {
       "content-type": "application/json",
-      "cache-control": "no-store",
+      ...errorHeaders(failure.body),
     });
     response.end(JSON.stringify(failure.body));
   }
