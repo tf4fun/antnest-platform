@@ -53,14 +53,8 @@ func (s *HTTPAgentSource) post(ctx context.Context, path string, in any, max int
 			return nil, nil, failure(apierror.NotFound, "Skill source not found")
 		}
 		if response.StatusCode == 409 {
-			body, _ := io.ReadAll(io.LimitReader(response.Body, 4096))
-			var payload struct {
-				Error struct {
-					Code    string `json:"code"`
-					Message string `json:"message"`
-				} `json:"error"`
-			}
-			if decodeOne(body, &payload) == nil && payload.Error.Code == "content_changed" {
+			body, err := io.ReadAll(io.LimitReader(response.Body, 4097))
+			if err == nil && len(body) <= 4096 && sourceContentChanged(body) {
 				return nil, nil, failure(apierror.ContentChanged, "Skill source content changed; choose again")
 			}
 		}
@@ -116,4 +110,66 @@ func (s *HTTPAgentSource) Artifact(ctx context.Context, in SourceArtifactInput) 
 		return nil, failure(apierror.SourceInvalid, "source artifact digest does not match bytes")
 	}
 	return data, nil
+}
+
+type sourceErrorTop struct {
+	Code      *string         `json:"code"`
+	Category  *string         `json:"category"`
+	Message   *string         `json:"message"`
+	Retryable *bool           `json:"retryable"`
+	RequestID *string         `json:"request_id"`
+	Details   json.RawMessage `json:"details"`
+	Error     *struct {
+		Code    string `json:"code"`
+		Message string `json:"message"`
+	} `json:"error"`
+}
+
+func sourceContentChanged(raw []byte) bool {
+	var top sourceErrorTop
+	if decodeOne(raw, &top) != nil {
+		return false
+	}
+	var fields map[string]json.RawMessage
+	if json.Unmarshal(raw, &fields) != nil {
+		return false
+	}
+	common := []string{"code", "category", "message", "retryable", "request_id", "details"}
+	newShape := false
+	for _, key := range common {
+		if _, present := fields[key]; present {
+			newShape = true
+			break
+		}
+	}
+	if !newShape {
+		return top.Error != nil && top.Error.Code == apierror.ContentChanged
+	}
+	if top.Code == nil || top.Category == nil || top.Message == nil ||
+		top.Retryable == nil || top.RequestID == nil {
+		return false
+	}
+	if *top.Code != apierror.ContentChanged || *top.Message == "" {
+		return false
+	}
+	expected := apierror.New(apierror.ContentChanged, *top.Message, *top.RequestID)
+	if *top.Category != expected.Category ||
+		*top.Retryable != expected.Retryable ||
+		*top.RequestID != expected.RequestID {
+		return false
+	}
+	if top.Details != nil {
+		var details map[string]json.RawMessage
+		if json.Unmarshal(top.Details, &details) != nil || details == nil {
+			return false
+		}
+	}
+	if _, hasAlias := fields["error"]; hasAlias && top.Error == nil {
+		return false
+	}
+	if top.Error != nil &&
+		(top.Error.Code != apierror.ContentChanged || top.Error.Message != *top.Message) {
+		return false
+	}
+	return true
 }

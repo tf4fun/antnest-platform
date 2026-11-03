@@ -228,3 +228,7 @@ HTTP failures use the [common error contract](../common/error.schema.json) five-
 envelope at the top level **and** inside the legacy `error` member (one-release alias for
 old consumers) with the [Skill Registry slice](../common/slices/skill-registry.json) of
 emitted codes.
+
+### Error consumer compatibility
+
+The HTTP Skill Source consumer accepts the legacy nested `{error:{code,message}}` conflict reply and the common five-field envelope (`code`, `category`, `message`, `retryable`, `request_id`) with optional object `details` and an exact two-field `error` alias. New metadata is all-or-none; aliases must agree. Unknown keys, partial or null common fields, mismatched aliases, non-object details, and oversized bodies fall back to conservative `source_unavailable`. Deploy this consumer before ACP producers emit common fields.
