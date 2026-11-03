@@ -1513,6 +1513,54 @@
       "http_status": 404,
       "owner": "antnest-runtime",
       "description": "Unknown action"
+    },
+    {
+      "code": "address_pool_exhausted",
+      "category": "conflict",
+      "retryable": false,
+      "http_status": 409,
+      "owner": "runtime-egress",
+      "description": "Address pool exhausted"
+    },
+    {
+      "code": "tunnel_key_unavailable",
+      "category": "conflict",
+      "retryable": false,
+      "http_status": 409,
+      "owner": "runtime-egress",
+      "description": "Tunnel key unavailable"
+    },
+    {
+      "code": "tunnel_key_conflict",
+      "category": "conflict",
+      "retryable": false,
+      "http_status": 409,
+      "owner": "runtime-egress",
+      "description": "Tunnel key conflict"
+    },
+    {
+      "code": "attachment_open",
+      "category": "conflict",
+      "retryable": false,
+      "http_status": 409,
+      "owner": "runtime-egress",
+      "description": "Attachment open"
+    },
+    {
+      "code": "control_plane_unavailable",
+      "category": "unavailable",
+      "retryable": true,
+      "http_status": 503,
+      "owner": "runtime-egress",
+      "description": "Control plane unavailable"
+    },
+    {
+      "code": "service_not_ready",
+      "category": "unavailable",
+      "retryable": true,
+      "http_status": 503,
+      "owner": "runtime-egress",
+      "description": "Service not ready"
     }
   ]
 }
