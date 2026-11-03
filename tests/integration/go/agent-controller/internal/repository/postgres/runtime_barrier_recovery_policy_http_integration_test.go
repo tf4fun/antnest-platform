@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"regexp"
 	"sync"
 	"testing"
 	"time"
@@ -20,6 +21,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/tf4fun/antnest-platform/modules/service-authentication/callercontext"
 	"github.com/tf4fun/antnest-platform/modules/service-authentication/serviceauth"
+	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/apierror"
 	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/application"
 	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/domain"
 	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/server"
@@ -309,22 +311,54 @@ func decodeRuntimeBarrierPolicyHTTPSuccess(t *testing.T, response runtimeBarrier
 	return policy
 }
 
+func TestRuntimeBarrierPolicyHTTPErrorCommonErrorAssertion(t *testing.T) {
+	for _, scenario := range []struct {
+		status int
+		code   string
+	}{
+		{http.StatusForbidden, apierror.CallerNotAllowed},
+		{http.StatusConflict, apierror.ResourceVersionConflict},
+		{http.StatusUnauthorized, apierror.CallerContextRequired},
+	} {
+		t.Run(scenario.code, func(t *testing.T) {
+			recorder := httptest.NewRecorder()
+			apierror.WriteError(recorder, scenario.status, scenario.code, "probe", false)
+			assertRuntimeBarrierPolicyHTTPError(t, runtimeBarrierPolicyHTTPResponse{
+				status: recorder.Code,
+				header: recorder.Header().Clone(),
+				body:   recorder.Body.Bytes(),
+			}, scenario.status, scenario.code)
+		})
+	}
+}
+
+var commonRequestIDPattern = regexp.MustCompile(`^[A-Za-z0-9._:-]{1,128}$`)
+
 func assertRuntimeBarrierPolicyHTTPError(t *testing.T, response runtimeBarrierPolicyHTTPResponse, status int, code string) {
 	t.Helper()
 	require.Equal(t, status, response.status)
 	var failure struct {
 		Code      string `json:"code"`
+		Category  string `json:"category"`
 		Message   string `json:"message"`
 		Retryable bool   `json:"retryable"`
+		RequestID string `json:"request_id"`
 	}
+	var body map[string]any
+	require.NoError(t, json.Unmarshal(response.body, &body))
+	require.Len(t, body, 5)
 	decoder := json.NewDecoder(bytes.NewReader(response.body))
 	decoder.DisallowUnknownFields()
 	require.NoError(t, decoder.Decode(&failure))
 	var trailing any
 	require.ErrorIs(t, decoder.Decode(&trailing), io.EOF)
 	require.Equal(t, code, failure.Code)
+	require.Equal(t, string(apierror.New(code, "", "probe").Category), failure.Category)
 	require.NotEmpty(t, failure.Message)
 	require.False(t, failure.Retryable)
+	require.Regexp(t, commonRequestIDPattern, failure.RequestID)
+	require.Equal(t, failure.RequestID, response.header.Get("X-Request-ID"))
+	require.Equal(t, "no-store", response.header.Get("Cache-Control"))
 }
 
 func runtimeBarrierPolicyHTTPPersistenceSnapshot(t *testing.T, ctx context.Context, store *Repository) string {
