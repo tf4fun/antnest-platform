@@ -9,7 +9,12 @@ import { AgentAccessRevokedError, SessionNotFoundError } from "../src/adapters/a
 const requireAcp = createRequire(new URL("../../../../agent-acp-service/package.json", import.meta.url));
 const { Ajv2020 } = requireAcp("ajv/dist/2020.js");
 const schema = JSON.parse(readFileSync(new URL("../../../../../contracts/agent-ui/workspace-api.schema.json", import.meta.url), "utf8"));
-const validate = (name: string) => new Ajv2020({ strict: true, validateFormats: false }).compile({ $schema: schema.$schema, $defs: schema.$defs, $ref: `#/$defs/${name}` });
+const commonSchema = JSON.parse(readFileSync(new URL("../../../../../contracts/common/error.schema.json", import.meta.url), "utf8"));
+const validate = (name: string) => {
+  const ajv = new Ajv2020({ strict: true, validateFormats: false });
+  ajv.addSchema(commonSchema);
+  return ajv.compile({ $schema: schema.$schema, $defs: schema.$defs, $ref: `#/$defs/${name}` });
+};
 const validView = validate("agentView"); const validResult = validate("controlCommandResult");
 const validStream = validate("streamEvent");
 const headers = { "x-antnest-organization-id": "org", "x-antnest-principal-id": "user", "x-antnest-agent-id": "agent", "content-type": "application/json" };
