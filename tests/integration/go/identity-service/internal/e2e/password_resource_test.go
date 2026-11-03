@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"os"
 	"reflect"
+	"regexp"
 	"sync"
 	"testing"
 	"time"
@@ -21,6 +22,7 @@ import (
 	"golang.org/x/crypto/argon2"
 
 	"github.com/tf4fun/antnest-platform/modules/service-authentication/serviceauth"
+	"github.com/tf4fun/antnest-platform/services/identity-service/internal/apierror"
 	"github.com/tf4fun/antnest-platform/services/identity-service/internal/browsersessions"
 	"github.com/tf4fun/antnest-platform/services/identity-service/internal/callercontext"
 	"github.com/tf4fun/antnest-platform/services/identity-service/internal/credentials"
@@ -175,15 +177,52 @@ func (f passwordResourceFixture) call(t *testing.T, method string, body any, wor
 	return response
 }
 
-func assertResourceBusy(t *testing.T, response *httptest.ResponseRecorder) {
+var commonRequestIDPattern = regexp.MustCompile(`^[A-Za-z0-9._:-]{1,128}$`)
+
+var credentialErrorCategories = map[string]string{
+	"credential_busy":         "unavailable",
+	"credential_rate_limited": "rate_limited",
+}
+
+func assertCredentialFailure(t *testing.T, response *httptest.ResponseRecorder, status int, code, message, retryAfter string) {
 	t.Helper()
 	var body map[string]any
 	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
 		t.Fatal(err)
 	}
-	want := map[string]any{"code": "credential_busy", "message": "Password verification is busy", "retryable": true}
-	if response.Code != 503 || !reflect.DeepEqual(body, want) || response.Header().Get("Retry-After") != "1" || response.Header().Get("Cache-Control") != "no-store" || len(response.Header().Values("Set-Cookie")) != 0 {
-		t.Fatal("password admission response lost its closed public contract")
+	want := map[string]any{
+		"code": code, "category": credentialErrorCategories[code], "message": message,
+		"retryable": true, "request_id": response.Header().Get("X-Request-ID"),
+	}
+	if response.Code != status || !reflect.DeepEqual(body, want) ||
+		!commonRequestIDPattern.MatchString(response.Header().Get("X-Request-ID")) ||
+		!reflect.DeepEqual(response.Header().Values("Retry-After"), []string{retryAfter}) ||
+		response.Header().Get("Cache-Control") != "no-store" || len(response.Header().Values("Set-Cookie")) != 0 {
+		t.Fatalf("password admission response lost its closed public contract: status=%d headers=%v body=%v", response.Code, response.Header(), body)
+	}
+}
+
+func assertResourceBusy(t *testing.T, response *httptest.ResponseRecorder) {
+	t.Helper()
+	assertCredentialFailure(t, response, http.StatusServiceUnavailable,
+		"credential_busy", "Password verification is busy", "1")
+}
+
+func TestCredentialAdmissionCommonErrorAssertion(t *testing.T) {
+	for _, scenario := range []struct {
+		status                    int
+		code, message, retryAfter string
+	}{
+		{http.StatusServiceUnavailable, "credential_busy", "Password verification is busy", "1"},
+		{http.StatusTooManyRequests, "credential_rate_limited", "Too many password attempts", "1"},
+	} {
+		t.Run(scenario.code, func(t *testing.T) {
+			response := httptest.NewRecorder()
+			response.Header().Set("Retry-After", scenario.retryAfter)
+			apierror.WriteError(response, scenario.status, scenario.code, scenario.message, true)
+			assertCredentialFailure(t, response, scenario.status, scenario.code,
+				scenario.message, scenario.retryAfter)
+		})
 	}
 }
 
