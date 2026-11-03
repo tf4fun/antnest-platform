@@ -349,10 +349,10 @@ fn common_error_literal_producer_codes_forbidden() {
                     continue;
                 }
                 let rest = &source[start + token.len()..];
-                if let Some(comma) = rest.find(',') {
-                    if rest[comma + 1..].trim_start().starts_with('"') {
-                        problems.push(start);
-                    }
+                if let Some(comma) = rest.find(',')
+                    && rest[comma + 1..].trim_start().starts_with('"')
+                {
+                    problems.push(start);
                 }
                 offset = start + token.len();
             }
