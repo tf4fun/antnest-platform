@@ -2,7 +2,6 @@ package e2e
 
 import (
 	"net/http"
-	"reflect"
 	"testing"
 )
 
@@ -17,13 +16,9 @@ func TestLocalPasswordRPCUsesPersistedAdmissionBeforeStoppedEngine(t *testing.T)
 	// verification would now produce credential_busy because it has stopped.
 	f.engine.Stop()
 	body["password"] = resourcePassword
-	var failure map[string]any
-	response := f.call(t, "local_login", body, "edge-gateway", "", http.StatusTooManyRequests, &failure)
-	want := map[string]any{"code": "credential_rate_limited", "message": "Too many password attempts", "retryable": true}
-	if !reflect.DeepEqual(failure, want) || !reflect.DeepEqual(response.Header().Values("Retry-After"), []string{"1"}) ||
-		response.Header().Get("Cache-Control") != "no-store" || len(response.Header().Values("Set-Cookie")) != 0 {
-		t.Fatal("persisted admission did not reach the canonical RPC 429 response")
-	}
+	response := f.call(t, "local_login", body, "edge-gateway", "", http.StatusTooManyRequests, nil)
+	assertCredentialFailure(t, response, http.StatusTooManyRequests,
+		"credential_rate_limited", "Too many password attempts", "1")
 	var rows, minimum, maximum int
 	if err := f.pool.QueryRow(t.Context(), `SELECT count(*),min(failures),max(failures) FROM credential_attempts`).Scan(&rows, &minimum, &maximum); err != nil {
 		t.Fatal(err)

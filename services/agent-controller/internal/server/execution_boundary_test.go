@@ -41,7 +41,8 @@ func TestWorkspaceListTimeoutIsDependencyFailure(t *testing.T) {
 		"/rpc/agent-controller/list-workspace-agents",
 		strings.NewReader(`{"request_id":"list","organization_id":"org","principal_id":"owner"}`)))
 	require.Equal(t, http.StatusServiceUnavailable, response.Code)
-	require.JSONEq(t, `{"code":"dependency_unavailable","message":"dependency is unavailable","retryable":true}`, response.Body.String())
+	body := assertCommonError(t, response, http.StatusServiceUnavailable, "dependency_unavailable", "unavailable", "dependency is unavailable", true)
+	require.Len(t, body, 5)
 }
 
 func TestManagementRPCRejectsMalformedAuthorization(t *testing.T) {
