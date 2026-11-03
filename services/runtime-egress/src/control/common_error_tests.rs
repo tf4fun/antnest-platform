@@ -21,12 +21,9 @@ fn assert_common_error(
     status: StatusCode,
     headers: &HeaderMap,
     body: &serde_json::Value,
-    want_status: StatusCode,
-    code: &str,
-    category: &str,
-    message: &str,
-    retryable: bool,
+    expected: (StatusCode, &str, &str, &str, bool),
 ) {
+    let (want_status, code, category, message, retryable) = expected;
     assert_eq!(status, want_status);
     let request_id = headers
         .get("x-request-id")
@@ -59,11 +56,13 @@ async fn common_error_from_invalid_request() {
         status,
         &headers,
         &body,
-        StatusCode::BAD_REQUEST,
-        "invalid_request",
-        "invalid_request",
-        "request validation failed",
-        false,
+        (
+            StatusCode::BAD_REQUEST,
+            "invalid_request",
+            "invalid_request",
+            "request validation failed",
+            false,
+        ),
     );
 }
 
@@ -75,11 +74,13 @@ async fn common_error_from_policy_revision_conflict() {
         status,
         &headers,
         &body,
-        StatusCode::CONFLICT,
-        "policy_revision_conflict",
-        "conflict",
-        "policy revision key has different content",
-        false,
+        (
+            StatusCode::CONFLICT,
+            "policy_revision_conflict",
+            "conflict",
+            "policy revision key has different content",
+            false,
+        ),
     );
 }
 
@@ -91,11 +92,13 @@ async fn common_error_from_address_pool_exhausted() {
         status,
         &headers,
         &body,
-        StatusCode::CONFLICT,
-        "address_pool_exhausted",
-        "conflict",
-        "address pool is exhausted",
-        false,
+        (
+            StatusCode::CONFLICT,
+            "address_pool_exhausted",
+            "conflict",
+            "address pool is exhausted",
+            false,
+        ),
     );
 }
 
@@ -107,11 +110,13 @@ async fn common_error_from_agent_network_not_found() {
         status,
         &headers,
         &body,
-        StatusCode::NOT_FOUND,
-        "agent_network_not_found",
-        "not_found",
-        "Agent network was not found",
-        false,
+        (
+            StatusCode::NOT_FOUND,
+            "agent_network_not_found",
+            "not_found",
+            "Agent network was not found",
+            false,
+        ),
     );
 }
 
@@ -131,11 +136,13 @@ async fn common_error_operation_failed_keeps_legacy_retry() {
         status,
         &headers,
         &body,
-        StatusCode::SERVICE_UNAVAILABLE,
-        "operation_failed",
-        "internal",
-        "control operation did not complete",
-        true,
+        (
+            StatusCode::SERVICE_UNAVAILABLE,
+            "operation_failed",
+            "internal",
+            "control operation did not complete",
+            true,
+        ),
     );
 }
 
@@ -157,11 +164,13 @@ async fn common_error_unauthenticated_keeps_challenge() {
         status,
         &headers,
         &body,
-        StatusCode::UNAUTHORIZED,
-        "service_unauthenticated",
-        "unauthenticated",
-        "service authentication failed",
-        false,
+        (
+            StatusCode::UNAUTHORIZED,
+            "service_unauthenticated",
+            "unauthenticated",
+            "service authentication failed",
+            false,
+        ),
     );
 }
 
@@ -181,11 +190,13 @@ async fn common_error_unknown_code_sanitizes() {
         status,
         &headers,
         &body,
-        StatusCode::INTERNAL_SERVER_ERROR,
-        "internal",
-        "internal",
-        "Internal service error",
-        false,
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "internal",
+            "internal",
+            "Internal service error",
+            false,
+        ),
     );
     assert_eq!(
         extension.extensions().get::<ControlErrorCode>(),
