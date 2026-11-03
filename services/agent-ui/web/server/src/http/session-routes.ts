@@ -1,4 +1,5 @@
 import type { ListSessionsResponse, NewSessionResponse } from "@agentclientprotocol/sdk";
+import { ERROR_CODES } from "../errors.gen.ts";
 import { z } from "zod";
 import { AgentAccessRevokedError } from "../adapters/acp-http.ts";
 import { BridgeCapacityError, type BridgeScope } from "../bridge/registry.ts";
@@ -20,20 +21,20 @@ export function createSessionHandler(dependencies: {
     try {
       agentId = decodeURIComponent(suffix[0]!);
     } catch {
-      return error(422, "invalid_request", "Agent ID is invalid", "none");
+      return error(422, ERROR_CODES.INVALID_REQUEST, "Agent ID is invalid", "none");
     }
     if (!validId(agentId) || (request.method !== "GET" && request.method !== "POST"))
-      return error(422, "invalid_request", "Session request is invalid", "none");
+      return error(422, ERROR_CODES.INVALID_REQUEST, "Session request is invalid", "none");
     const scope = trustedScope(request);
     if (scope === null)
-      return error(401, "unauthenticated", "Trusted identity is missing", "login");
+      return error(401, ERROR_CODES.UNAUTHENTICATED, "Trusted identity is missing", "login");
     if (scope.agentId !== agentId)
-      return error(403, "access_denied", "Agent access denied", "none");
+      return error(403, ERROR_CODES.ACCESS_DENIED, "Agent access denied", "none");
     const cursors = url.searchParams.getAll("cursor");
     if ([...url.searchParams.keys()].some((key) => key !== "cursor") ||
       cursors.length > 1 || (cursors.length === 1 && !validCursor(cursors[0]!)) ||
       (request.method === "POST" && cursors.length > 0))
-      return error(422, "invalid_request", "Session cursor is invalid", "none");
+      return error(422, ERROR_CODES.INVALID_REQUEST, "Session cursor is invalid", "none");
     try {
       if (request.method === "POST") {
         emptyBody.parse(await readBody(request));
@@ -52,14 +53,14 @@ export function createSessionHandler(dependencies: {
       });
     } catch (cause) {
       if (cause instanceof BodyTooLargeError)
-        return error(413, "request_too_large", "Request body exceeds the limit", "none");
+        return error(413, ERROR_CODES.REQUEST_TOO_LARGE, "Request body exceeds the limit", "none");
       if (cause instanceof z.ZodError || cause instanceof SyntaxError)
-        return error(422, "invalid_request", "Session request body is invalid", "none");
+        return error(422, ERROR_CODES.INVALID_REQUEST, "Session request body is invalid", "none");
       if (cause instanceof BridgeCapacityError)
-        return error(429, "bridge_capacity_exceeded", "Bridge owner capacity is exhausted", "retry_read");
+        return error(429, ERROR_CODES.BRIDGE_CAPACITY_EXCEEDED, "Bridge owner capacity is exhausted", "retry_read");
       if (cause instanceof AgentAccessRevokedError)
-        return error(403, "access_denied", "Agent access denied", "none");
-      return error(503, "upstream_unavailable", "Session request is unavailable", "retry_read");
+        return error(403, ERROR_CODES.ACCESS_DENIED, "Agent access denied", "none");
+      return error(503, ERROR_CODES.UPSTREAM_UNAVAILABLE, "Session request is unavailable", "retry_read");
     }
   };
 }
