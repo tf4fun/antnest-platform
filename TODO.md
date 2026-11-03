@@ -20,6 +20,10 @@ Issue 状态最后核对于 2026-10-28：141 个 issue，87 个已关闭，54 �
 
 ## 当前批次
 
+- **#67 CI 回修（用户反馈后，新候选完整远程结果待确认）**：核对 #503–#515 的精确旧候选，重点依据最终候选 `24764938` 的 Repository run `41581313464`／Integration run `41581313552`，以及 ACP #514 单元 job `125717283279`。确认并修正旧两／三字段错误断言、Agent UI Ajv 漏注册公共 schema、Egress 测试 helper 的 Clippy 参数数量、公共回归测试与最终 ACP HTTP 投影的格式问题；按所属服务回补原 PR，并向下游堆叠同步，未重写历史。32 个已审查源码指纹仅更新 SHA256，未改路由、caller、权限或网络成员；ACP #514 与最终集成各自绑定其真实 transport 版本。服务候选：#503 `aad49f19`、#504 `1ce4377c`、#505 `ebf09091`、#506 `987ee842`、#507 `5d012b86`、#508 `ccf4e049`、#509 `785db663`、#510 `9343f870`、#511 `fa4bec67`、#512 `360ece16`、#513 `fcac1692`、#514 `fa3948e7`；集成源码树 `18fac09d` 与定向验证树 `670dc3da` 完全相同，本记录另行提交。
+
+- **#67 本轮回修证据与边界**：自然 RED／GREEN 保留于 `artifacts/verification/issue-67-ci/`。Gateway 四项登录准入定向测试含 `-race` 通过；Agent UI 两个文件 68/68、ACP 两个传输单元文件 114/114、Egress common-error 11/11 及严格 all-targets Clippy 通过；Identity／Controller／RC 三个无数据库 helper 回归含 `-race` 共 3 个主测试／7 个子测试通过。鉴权契约 86/86、共享 API／路由工具回归 67/67、10 服务 342 条路由策略检查、公共生成一致性、定向 TypeScript／ESLint／Prettier 通过；逐分支共享测试源码的格式与语法均通过。测试保留完整五字段、request ID 安全及头／体一致性、固定消息、retryable、协议数字码、不可重放与业务 DTO 闭合断言。无本地 PostgreSQL，真实数据库／Temporal 组件未重跑，不以 helper 回归或编译代替其远程准入；旧失败和未执行检查均不计通过。推送原 PR 分支后停止查询，不等待／轮询新 CI；不修改门禁、不处理 Docker E2E、不合并 PR 或关闭 issue。
+
 - **#67 显式契约／组件集成（最终 PR #515 已创建，源码交付完成）**：实现提交 `013a7012`，含服务 CI 回补的源码候选 `b817c5e2`，基于 ACP PR #514（`2b0a2742`）。真实 ACP HTTP → Agent UI 双 SDK 链路验证 admission、终态、unresolved、未知码净化及 N/N-1，独立拒绝非法元数据；补齐 HTTP 连接拒绝信封／请求 ID，保留状态及清理语义。UI 切片合并完整 ACP 词汇，十服务切片／生成件／契约 ownership 与工作流路径逐项校验。修正 incarnation 兼容断言与 RC 五字段测试，保留旧 details 扩展语法及所有业务 DTO 的闭合校验。证据 `artifacts/verification/issue-67-integration/`：真实互操作 2/2、incarnation 契约 15/15、共享生成／目录 43/43、RC incarnation／history 定向 Go 通过；RED 与初轮 157/157 日志保留。测试清理等待原始请求及 socket，终态不重放、load 不创建 Run。公共基础、服务及最终集成 PR #503–#515 均已创建；下方旧批次记录描述各交付时点，不表示已合并或关闭。
 
 - **#67 已确认 CI 回补与准入状态**：Runtime clippy 四项已在 PR #510 回补（`625ef512`），离线 clippy 与定向错误用例 22/22 通过；Controller 旧三字段断言已在 PR #507 回补（`ec78f3ab`），定向用例通过，均未放宽规则。较早候选 #513 的 Repository／单元／组件失败不计为通过；Deployment contracts 留存证据仅给出 exit 2，未定因，PostgreSQL／Temporal 等必需组件仍由完整远程 CI 准入。最终 PR 创建后停止查询 CI，不自动合并 PR 或关闭 issue；源码交付不等于完整业务流程或发布证据。
