@@ -112,6 +112,12 @@
       }
     },
     "error_reply": {
+      "oneOf": [
+        {"$ref": "#/$defs/legacy_error_reply"},
+        {"$ref": "#/$defs/common_error_reply"}
+      ]
+    },
+    "legacy_error_reply": {
       "type": "object",
       "additionalProperties": false,
       "required": ["error"],
@@ -119,16 +125,9 @@
         "error": {
           "type": "object",
           "additionalProperties": false,
-          "required": [
-            "code",
-            "message",
-            "retryable",
-            "effect_state",
-            "runtime_call_stopped"
-          ],
+          "required": ["code", "message", "retryable", "effect_state", "runtime_call_stopped"],
           "properties": {
-            "code": {
-              "enum": [
+            "code": {"enum": [
                 "unknown_action",
                 "temporary_disabled",
                 "temporary_unauthorized",
@@ -143,8 +142,7 @@
                 "outcome_unknown",
                 "temporary_unavailable",
                 "clock_unavailable"
-              ]
-            },
+              ]},
             "message": { "const": "Temporary Skill request did not complete" },
             "retryable": { "type": "boolean" },
             "effect_state": { "enum": ["none", "settled", "unknown"] },
@@ -152,6 +150,81 @@
           }
         }
       }
+    },
+    "common_error_reply": {
+      "allOf": [
+        {"$ref": "https://antnest.local/contracts/common/error.schema.json"},
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["code", "category", "message", "retryable", "request_id"],
+          "properties": {
+            "code": {"type": "string", "minLength": 1},
+            "category": {"enum": [
+              "invalid_request", "unauthenticated", "forbidden", "not_found",
+              "conflict", "precondition_failed", "rate_limited", "unavailable", "internal"
+            ]},
+            "message": {"type": "string", "minLength": 1},
+            "retryable": {"type": "boolean"},
+            "request_id": {"type": "string", "pattern": "^[A-Za-z0-9._:-]{1,128}$"},
+            "details": {"type": "object"},
+            "error": {
+              "allOf": [
+                {"$ref": "https://antnest.local/contracts/common/error.schema.json"},
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "code", "category", "message", "retryable", "request_id",
+                    "effect_state", "runtime_call_stopped"
+                  ],
+                  "properties": {
+                    "code": {"enum": [
+                "unknown_action",
+                "temporary_disabled",
+                "temporary_unauthorized",
+                "invalid_request",
+                "request_conflict",
+                "limit_exceeded",
+                "body_too_large",
+                "body_timed_out",
+                "run_closed",
+                "temporary_scope_busy",
+                "runtime_busy",
+                "outcome_unknown",
+                "temporary_unavailable",
+                "clock_unavailable"
+              ]},
+                    "message": { "const": "Temporary Skill request did not complete" },
+                    "category": {"enum": [
+                      "invalid_request", "unauthenticated", "forbidden", "not_found",
+                      "conflict", "precondition_failed", "rate_limited", "unavailable", "internal"
+                    ]},
+                    "retryable": { "type": "boolean" },
+                    "request_id": {"type": "string", "pattern": "^[A-Za-z0-9._:-]{1,128}$"},
+                    "details": {"type": "object"},
+                    "effect_state": { "enum": ["none", "settled", "unknown"] },
+                    "runtime_call_stopped": { "type": "boolean" }
+                  }
+                }
+              ]
+            }
+          },
+          "allOf": [
+            {
+              "type": "object",
+              "if": {
+                "properties": {"code": {"not": {"const": "internal"}}},
+                "required": ["code"]
+              },
+              "then": {
+                "required": ["error"],
+                "properties": {"error": {"type": "object"}}
+              }
+            }
+          ]
+        }
+      ]
     }
   }
 }
