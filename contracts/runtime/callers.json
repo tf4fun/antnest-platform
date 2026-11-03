@@ -69,7 +69,7 @@
   },
   "guarded_sources": {
     "runtimes/antnest-runtime/src/mcp.rs": {
-      "sha256": "3a81543d38117a298bd39f5fddb92cc3c6fc3b5512b263c41681d60ca9f62b4e",
+      "sha256": "2a318df151b7319b9760240a1f2a869dad33a445bc7977655fadeeecbd9b82d7",
       "routes": [
         "GET /status",
         "* /mcp",
@@ -80,7 +80,7 @@
       ]
     },
     "runtimes/antnest-runtime/src/skill_temporary_http.rs": {
-      "sha256": "cf5df0292e65cec6d652fb12aaa5fd1a8d1e8c16386c78b8c52a6c06ea71093d",
+      "sha256": "7733d110e5b84aaf360743232b74691e4a3d635ffb64d026ab1d6905008bd1cd",
       "routes": ["POST /internal/skill-temporary/{action}"]
     }
   }
