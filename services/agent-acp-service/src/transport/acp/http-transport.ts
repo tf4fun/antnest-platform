@@ -553,17 +553,9 @@ function replyEnvelope(status: number) {
     case 404:
       return commonError(ERROR_CODES.NOT_FOUND, "ACP HTTP connection was not found", false);
     case 405:
-      return commonError(
-        ERROR_CODES.METHOD_NOT_ALLOWED,
-        "ACP HTTP method is not allowed",
-        false,
-      );
+      return commonError(ERROR_CODES.METHOD_NOT_ALLOWED, "ACP HTTP method is not allowed", false);
     case 503:
-      return commonError(
-        ERROR_CODES.AGENT_UNAVAILABLE,
-        "ACP HTTP service is unavailable",
-        true,
-      );
+      return commonError(ERROR_CODES.AGENT_UNAVAILABLE, "ACP HTTP service is unavailable", true);
     default:
       return commonError(ERROR_CODES.INTERNAL, "Internal service error", false);
   }
