@@ -20,7 +20,7 @@ Issue 状态最后核对于 2026-10-28：141 个 issue，87 个已关闭，54 �
 
 ## 当前批次
 
-- **#67 显式契约／组件集成（源码已审查，待最终 PR）**：基于 ACP PR #514（`2b0a2742`）。真实 ACP HTTP → Agent UI 双 SDK 链路验证 admission、终态、unresolved、未知码净化及 N/N-1，独立拒绝非法元数据；补齐 HTTP 连接拒绝信封／请求 ID，保留状态及清理语义。UI 切片合并完整 ACP 词汇，十服务切片／生成件／契约 ownership 与工作流路径逐项校验。修正 incarnation 兼容断言与 RC 五字段测试，保留旧 details 扩展语法及所有业务 DTO 的闭合校验。证据 `artifacts/verification/issue-67-integration/`：真实互操作 2/2、incarnation 契约 15/15、共享生成／目录 43/43、RC incarnation／history 定向 Go 通过；RED 与初轮 157/157 日志保留。测试清理等待原始请求及 socket，终态不重放、load 不创建 Run。
+- **#67 显式契约／组件集成（最终 PR #515 已创建，源码交付完成）**：实现提交 `013a7012`，含服务 CI 回补的源码候选 `b817c5e2`，基于 ACP PR #514（`2b0a2742`）。真实 ACP HTTP → Agent UI 双 SDK 链路验证 admission、终态、unresolved、未知码净化及 N/N-1，独立拒绝非法元数据；补齐 HTTP 连接拒绝信封／请求 ID，保留状态及清理语义。UI 切片合并完整 ACP 词汇，十服务切片／生成件／契约 ownership 与工作流路径逐项校验。修正 incarnation 兼容断言与 RC 五字段测试，保留旧 details 扩展语法及所有业务 DTO 的闭合校验。证据 `artifacts/verification/issue-67-integration/`：真实互操作 2/2、incarnation 契约 15/15、共享生成／目录 43/43、RC incarnation／history 定向 Go 通过；RED 与初轮 157/157 日志保留。测试清理等待原始请求及 socket，终态不重放、load 不创建 Run。公共基础、服务及最终集成 PR #503–#515 均已创建；下方旧批次记录描述各交付时点，不表示已合并或关闭。
 
 - **#67 已确认 CI 回补与准入状态**：Runtime clippy 四项已在 PR #510 回补（`625ef512`），离线 clippy 与定向错误用例 22/22 通过；Controller 旧三字段断言已在 PR #507 回补（`ec78f3ab`），定向用例通过，均未放宽规则。较早候选 #513 的 Repository／单元／组件失败不计为通过；Deployment contracts 留存证据仅给出 exit 2，未定因，PostgreSQL／Temporal 等必需组件仍由完整远程 CI 准入。最终 PR 创建后停止查询 CI，不自动合并 PR 或关闭 issue；源码交付不等于完整业务流程或发布证据。
 
