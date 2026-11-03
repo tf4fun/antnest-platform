@@ -20,7 +20,11 @@ Issue 状态最后核对于 2026-10-28：141 个 issue，87 个已关闭，54 �
 
 ## 当前批次
 
-- **#67 ACP 生产者迁移（源码已审查，待独立 PR）**：基于 Registry 消费兼容提交 `1baa8275`。注册表 +14 行（owner agent-acp-service），142 码切片与生成件；HTTP／JSON-RPC／WebSocket 升级／内部转发补齐公共元数据，保留数字码、终态不可重放及效果／预算证据；Skill Source 保留精确两字段 legacy alias，Runtime 准入与临时 Skill 消费兼容 N/N-1。自然 RED 位于 `artifacts/verification/issue-67-acp/red.log`（7 项）及 `red-upgrade.log`（4 项）；定向单元 329/329、组件 124/124、契约 186/186 GREEN，build／typecheck／定向 lint／生成一致性通过。两项先前迁移遗留的 owner-incarnation／RC alias 契约断言及 UI 终态码切片同步留给紧接的显式集成批次，不计为通过。完整准入交给远程 CI，最终 PR 创建后停止查询。
+- **#67 显式契约／组件集成（源码已审查，待最终 PR）**：基于 ACP PR #514（`2b0a2742`）。真实 ACP HTTP → Agent UI 双 SDK 链路验证 admission、终态、unresolved、未知码净化及 N/N-1，独立拒绝非法元数据；补齐 HTTP 连接拒绝信封／请求 ID，保留状态及清理语义。UI 切片合并完整 ACP 词汇，十服务切片／生成件／契约 ownership 与工作流路径逐项校验。修正 incarnation 兼容断言与 RC 五字段测试，保留旧 details 扩展语法及所有业务 DTO 的闭合校验。证据 `artifacts/verification/issue-67-integration/`：真实互操作 2/2、incarnation 契约 15/15、共享生成／目录 43/43、RC incarnation／history 定向 Go 通过；RED 与初轮 157/157 日志保留。测试清理等待原始请求及 socket，终态不重放、load 不创建 Run。
+
+- **#67 已确认 CI 回补与准入状态**：Runtime clippy 四项已在 PR #510 回补（`625ef512`），离线 clippy 与定向错误用例 22/22 通过；Controller 旧三字段断言已在 PR #507 回补（`ec78f3ab`），定向用例通过，均未放宽规则。较早候选 #513 的 Repository／单元／组件失败不计为通过；Deployment contracts 留存证据仅给出 exit 2，未定因，PostgreSQL／Temporal 等必需组件仍由完整远程 CI 准入。最终 PR 创建后停止查询 CI，不自动合并 PR 或关闭 issue；源码交付不等于完整业务流程或发布证据。
+
+- **#67 ACP 生产者迁移（PR #514 已创建）**：提交 `2b0a2742`，基于 Registry 消费兼容提交 `1baa8275`。注册表 +14 行（owner agent-acp-service），142 码切片与生成件；HTTP／JSON-RPC／WebSocket 升级／内部转发补齐公共元数据，保留数字码、终态不可重放及效果／预算证据；Skill Source 保留精确两字段 legacy alias，Runtime 准入与临时 Skill 消费兼容 N/N-1。自然 RED 位于 `artifacts/verification/issue-67-acp/red.log`（7 项）及 `red-upgrade.log`（4 项）；定向单元 329/329、组件 124/124、契约 186/186 GREEN，build／typecheck／定向 lint／生成一致性通过。两项先前迁移遗留的 owner-incarnation／RC alias 契约断言及 UI 终态码切片同步留给紧接的显式集成批次，不计为通过。完整准入交给远程 CI，最终 PR 创建后停止查询；源码交付不代表已合并。
 
 - **#67 Skill Registry 消费者兼容补充（PR #513 已创建）**：提交 `1baa8275`，基于 `af6dbd1a`（Agent UI PR #512）。真实 HTTP Source 消费者先出现三个新信封断言 RED，现兼容 legacy、common flat 和 common＋精确 legacy alias；严格拒绝部分／null 元数据、别名不一致、重复键、非对象 details 和超限正文，不反射诊断文本。定向 `TestCommonSourceError` GREEN，日志位于 `artifacts/verification/issue-67-registry-consumer/`。ACP 生产者迁移及最终独立契约／组件集成仍待交付。
 

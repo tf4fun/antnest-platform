@@ -33,7 +33,9 @@ const serviceRequire = createRequire(
     import.meta.url,
   ),
 );
-ajv.addMetaSchema(serviceRequire("ajv/dist/refs/json-schema-draft-07.json") as object);
+ajv.addMetaSchema(
+  serviceRequire("ajv/dist/refs/json-schema-draft-07.json") as object,
+);
 const commonSchema = JSON.parse(
   readFileSync(
     new URL("../../../../contracts/common/error.schema.json", import.meta.url),

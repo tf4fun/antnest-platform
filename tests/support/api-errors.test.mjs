@@ -14,6 +14,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { stripTypeScriptTypes } from "node:module";
 import test from "node:test";
+import { selectComponents } from "./ci-impact.mjs";
 import { fileURLToPath } from "node:url";
 
 import {
@@ -290,10 +291,19 @@ test("the generator CLI --check rejects unknown or missing slices", () => {
     }
     const missing = spawnSync(
       process.execPath,
-      [join(fixture, "scripts", "generate-api-errors.mjs"), "--check", "--service", "identity-service"],
+      [
+        join(fixture, "scripts", "generate-api-errors.mjs"),
+        "--check",
+        "--service",
+        "identity-service",
+      ],
       { cwd: fixture, encoding: "utf8" },
     );
-    assert.notEqual(missing.status, 0, "identity-service must be rejected without a slice");
+    assert.notEqual(
+      missing.status,
+      0,
+      "identity-service must be rejected without a slice",
+    );
     assert.match(
       missing.stderr,
       /contracts\/common\/slices\/identity-service\.json is not checked in/,
@@ -665,10 +675,96 @@ test("the generated Go request-id validator uses a positive allow branch", () =>
   const source = renderGo(validRegistry(), ["internal"]);
   const helper = source.match(/func validRequestID[\s\S]*?\n}/)?.[0];
   assert.ok(helper, "rendered Go includes validRequestID");
-  assert.doesNotMatch(helper, /!\(/, "negated compound conditions trip staticcheck QF1001");
-  assert.match(helper, /\bcontinue\b/, "allowed bytes take a positive continue branch");
+  assert.doesNotMatch(
+    helper,
+    /!\(/,
+    "negated compound conditions trip staticcheck QF1001",
+  );
+  assert.match(
+    helper,
+    /\bcontinue\b/,
+    "allowed bytes take a positive continue branch",
+  );
   assert.ok(
-    helper.includes("if c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '.' || c == '_' || c == ':' || c == '-' {"),
+    helper.includes(
+      "if c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '.' || c == '_' || c == ':' || c == '-' {",
+    ),
     "allowed byte ranges a-z A-Z 0-9 . _ : - are preserved",
   );
+});
+
+const API_ERROR_SERVICES = [
+  "admin-console",
+  "agent-acp-service",
+  "agent-controller",
+  "agent-ui",
+  "antnest-runtime",
+  "edge-gateway",
+  "identity-service",
+  "runtime-controller",
+  "runtime-egress",
+  "skill-registry",
+];
+
+test("the API error contract is sliced for all ten integrating services", () => {
+  const slicesDir = new URL("contracts/common/slices/", root);
+  const services = readdirSync(slicesDir)
+    .filter((file) => file.endsWith(".json"))
+    .map((file) => file.slice(0, -".json".length));
+  assert.deepEqual(services.sort(), [...API_ERROR_SERVICES].sort());
+});
+
+test("the Agent UI slice covers every ACP producer code", () => {
+  const ui = readJSON("contracts/common/slices/agent-ui.json");
+  const acp = readJSON("contracts/common/slices/agent-acp-service.json");
+  const missing = acp.codes.filter((code) => !ui.codes.includes(code));
+  assert.deepEqual(missing, [], "UI slice must carry the full ACP vocabulary");
+});
+
+test("common error contract changes select exactly the ten integrating services", () => {
+  for (const path of [
+    "contracts/common/error.schema.json",
+    "contracts/common/errors.json",
+    "contracts/common/slices/agent-ui.json",
+    "contracts/common/slices/agent-acp-service.json",
+  ])
+    assert.deepEqual(
+      selectComponents([path]).sort(),
+      [...API_ERROR_SERVICES].sort(),
+      `${path} must select all ten integrating services`,
+    );
+});
+
+function workflowEventPaths(text, event) {
+  const section = text.match(
+    new RegExp(`^  ${event}:[^\\n]*\\n((?: {4,}[^\\n]*\\n|\\n)*)`, "m"),
+  );
+  return (
+    (section?.[1] ?? "").match(
+      /^    paths:[ \t]*\n((?: {6}-[^\n]*(?:\n|$))+)/m,
+    )?.[1] ?? ""
+  );
+}
+
+test("every integrating service workflow watches contracts/common", () => {
+  const separateEvents =
+    "on:\n  push:\n    branches: [main]\n  pull_request:\n    paths:\n      - contracts/common/**\n";
+  assert.equal(workflowEventPaths(separateEvents, "push"), "");
+  assert.ok(
+    workflowEventPaths(separateEvents, "pull_request").includes(
+      "contracts/common/**",
+    ),
+  );
+  for (const service of API_ERROR_SERVICES) {
+    const workflow = service === "antnest-runtime" ? "runtime" : service;
+    const path = `.github/workflows/${workflow}.yml`;
+    const text = readFileSync(new URL(path, root), "utf8");
+    for (const event of ["push", "pull_request"]) {
+      const block = workflowEventPaths(text, event);
+      assert.ok(
+        block.includes("contracts/common/**"),
+        `${path}: ${event} paths must include contracts/common/**`,
+      );
+    }
+  }
 });
