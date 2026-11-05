@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/tf4fun/antnest-platform/services/identity-service/internal/apierror"
 	"github.com/tf4fun/antnest-platform/services/identity-service/internal/domain"
 	"github.com/tf4fun/antnest-platform/services/identity-service/internal/telemetry"
 	"go.opentelemetry.io/otel/attribute"
@@ -408,13 +409,40 @@ func setBearerChallenge(response http.ResponseWriter, err error, requiredScope s
 	}
 }
 
+func scimErrorCode(status int) string {
+	switch status {
+	case 400, 405, 413, 415:
+		return apierror.InvalidRequest
+	case 401:
+		return apierror.Unauthenticated
+	case 403:
+		return apierror.Forbidden
+	case 404:
+		return apierror.NotFound
+	case 409:
+		return apierror.Conflict
+	case 412:
+		return apierror.PreconditionFailed
+	case 429:
+		return apierror.RateLimited
+	case 503:
+		return apierror.Unavailable
+	default:
+		return apierror.Internal
+	}
+}
+
 func writeSCIMError(response http.ResponseWriter, status int, scimType, detail string) {
 	telemetry.ProtocolError(response, domain.NewError("scim_protocol_error", "SCIM rejected the protocol request", false))
+	extension := apierror.New(scimErrorCode(status), detail, response.Header().Get("X-Request-ID"))
 	value := map[string]any{
 		"schemas": []string{errorSchema}, "status": strconv.Itoa(status), "detail": detail,
+		"urn:antnest:error": extension,
 	}
 	if scimType != "" {
 		value["scimType"] = scimType
 	}
+	response.Header().Set("X-Request-ID", extension.RequestID)
+	response.Header().Set("Cache-Control", "no-store")
 	writeSCIM(response, status, value)
 }

@@ -713,6 +713,158 @@
       "http_status": 503,
       "owner": "admin-console",
       "description": "Configured source is unavailable"
+    },
+    {
+      "code": "inactive_principal",
+      "category": "forbidden",
+      "retryable": false,
+      "http_status": 403,
+      "owner": "identity-service",
+      "description": "The principal is inactive"
+    },
+    {
+      "code": "last_organization_admin",
+      "category": "conflict",
+      "retryable": false,
+      "http_status": 409,
+      "owner": "identity-service",
+      "description": "An organization must retain at least one active administrator"
+    },
+    {
+      "code": "invalid_reference",
+      "category": "invalid_request",
+      "retryable": false,
+      "http_status": 400,
+      "owner": "identity-service",
+      "description": "The referenced identity resource is invalid"
+    },
+    {
+      "code": "oidc_provider_issuer_immutable",
+      "category": "conflict",
+      "retryable": false,
+      "http_status": 409,
+      "owner": "identity-service",
+      "description": "OIDC provider issuer cannot be changed"
+    },
+    {
+      "code": "oidc_provider_client_id_immutable",
+      "category": "conflict",
+      "retryable": false,
+      "http_status": 409,
+      "owner": "identity-service",
+      "description": "OIDC provider client ID cannot be changed"
+    },
+    {
+      "code": "oidc_provider_changed",
+      "category": "conflict",
+      "retryable": false,
+      "http_status": 409,
+      "owner": "identity-service",
+      "description": "OIDC provider changed since login started"
+    },
+    {
+      "code": "oidc_membership_required",
+      "category": "forbidden",
+      "retryable": false,
+      "http_status": 403,
+      "owner": "identity-service",
+      "description": "OIDC login requires an organization membership"
+    },
+    {
+      "code": "oidc_exchange_in_progress",
+      "category": "conflict",
+      "retryable": false,
+      "http_status": 409,
+      "owner": "identity-service",
+      "description": "OIDC exchange is already in progress"
+    },
+    {
+      "code": "oidc_exchange_claim_invalid",
+      "category": "invalid_request",
+      "retryable": false,
+      "http_status": 400,
+      "owner": "identity-service",
+      "description": "OIDC exchange claims are invalid"
+    },
+    {
+      "code": "oidc_session_failed",
+      "category": "invalid_request",
+      "retryable": false,
+      "http_status": 400,
+      "owner": "identity-service",
+      "description": "OIDC session could not be completed"
+    },
+    {
+      "code": "oidc_session_expired",
+      "category": "not_found",
+      "retryable": false,
+      "http_status": 410,
+      "owner": "identity-service",
+      "description": "OIDC login session has expired"
+    },
+    {
+      "code": "oidc_completed_token_unavailable",
+      "category": "not_found",
+      "retryable": false,
+      "http_status": 410,
+      "owner": "identity-service",
+      "description": "OIDC completed token is no longer available"
+    },
+    {
+      "code": "oidc_authorization_failed",
+      "category": "invalid_request",
+      "retryable": false,
+      "http_status": 400,
+      "owner": "identity-service",
+      "description": "OIDC authorization failed"
+    },
+    {
+      "code": "oidc_provider_failed",
+      "category": "internal",
+      "retryable": false,
+      "http_status": 500,
+      "owner": "identity-service",
+      "description": "OIDC provider operation failed"
+    },
+    {
+      "code": "oidc_provider_secret_failed",
+      "category": "internal",
+      "retryable": false,
+      "http_status": 500,
+      "owner": "identity-service",
+      "description": "OIDC provider secret operation failed"
+    },
+    {
+      "code": "oidc_exchange_failed",
+      "category": "internal",
+      "retryable": false,
+      "http_status": 500,
+      "owner": "identity-service",
+      "description": "OIDC exchange failed"
+    },
+    {
+      "code": "oidc_identity_failed",
+      "category": "internal",
+      "retryable": false,
+      "http_status": 500,
+      "owner": "identity-service",
+      "description": "OIDC identity operation failed"
+    },
+    {
+      "code": "oidc_token_failed",
+      "category": "internal",
+      "retryable": false,
+      "http_status": 500,
+      "owner": "identity-service",
+      "description": "OIDC token operation failed"
+    },
+    {
+      "code": "oidc_persistence_failed",
+      "category": "internal",
+      "retryable": false,
+      "http_status": 500,
+      "owner": "identity-service",
+      "description": "OIDC persistence operation failed"
     }
   ]
 }

@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/tf4fun/antnest-platform/modules/service-authentication/serviceauth"
+	"github.com/tf4fun/antnest-platform/services/identity-service/internal/apierror"
 	"github.com/tf4fun/antnest-platform/services/identity-service/internal/browsersessions"
 	"github.com/tf4fun/antnest-platform/services/identity-service/internal/callercontext"
 	"github.com/tf4fun/antnest-platform/services/identity-service/internal/directory"
@@ -302,7 +303,7 @@ func (h *Handler) updateMembership(response http.ResponseWriter, request *http.R
 		return
 	}
 	if body.Active == nil {
-		writeError(response, domain.NewError("bad_request", "active is required", false))
+		writeError(response, domain.NewError(apierror.BadRequest, "active is required", false))
 		return
 	}
 	membership, err := h.dependencies.Directory.UpdateMembership(request.Context(), directory.UpdateMembershipInput{
@@ -327,7 +328,7 @@ func (h *Handler) setUserActive(response http.ResponseWriter, request *http.Requ
 		return
 	}
 	if body.Active == nil {
-		writeError(response, domain.NewError("bad_request", "active is required", false))
+		writeError(response, domain.NewError(apierror.BadRequest, "active is required", false))
 		return
 	}
 	err := h.dependencies.Directory.SetUserActive(request.Context(), directory.SetUserActiveInput{
@@ -548,7 +549,7 @@ func (h *Handler) upsertOIDCProvider(response http.ResponseWriter, request *http
 		return
 	}
 	if body.Enabled == nil {
-		writeError(response, domain.NewError("bad_request", "enabled is required", false))
+		writeError(response, domain.NewError(apierror.BadRequest, "enabled is required", false))
 		return
 	}
 	input := oidcflow.UpsertProviderInput{
@@ -580,7 +581,7 @@ func (h *Handler) setOIDCProviderEnabled(response http.ResponseWriter, request *
 		return
 	}
 	if body.Enabled == nil {
-		writeError(response, domain.NewError("bad_request", "enabled is required", false))
+		writeError(response, domain.NewError(apierror.BadRequest, "enabled is required", false))
 		return
 	}
 	provider, err := h.dependencies.OIDC.SetProviderEnabled(request.Context(), oidcflow.SetProviderEnabledInput{
@@ -648,11 +649,11 @@ func (h *Handler) oidcCallback(response http.ResponseWriter, request *http.Reque
 	code := strings.TrimSpace(request.URL.Query().Get("code"))
 	authorizationError := strings.TrimSpace(request.URL.Query().Get("error"))
 	if state == "" {
-		writeError(response, domain.NewError("bad_request", "state is required", false))
+		writeError(response, domain.NewError(apierror.BadRequest, "state is required", false))
 		return
 	}
 	if len(authorizationError) > 256 {
-		writeError(response, domain.NewError("bad_request", "OIDC authorization error is invalid", false))
+		writeError(response, domain.NewError(apierror.BadRequest, "OIDC authorization error is invalid", false))
 		return
 	}
 	result, err := h.dependencies.OIDC.CompleteLogin(request.Context(), oidcflow.CompleteLoginInput{
@@ -665,12 +666,12 @@ func decodeRequest(response http.ResponseWriter, request *http.Request, target a
 	values := request.Header.Values("Content-Type")
 	media, params, mediaErr := mime.ParseMediaType(request.Header.Get("Content-Type"))
 	if len(values) != 1 || mediaErr != nil || media != "application/json" || len(params) > 1 || len(params) == 1 && !strings.EqualFold(params["charset"], "utf-8") {
-		writeError(response, domain.NewError("unsupported_media_type", "RPC requires application/json with optional UTF-8 charset", false))
+		writeError(response, domain.NewError(apierror.UnsupportedMediaType, "RPC requires application/json with optional UTF-8 charset", false))
 		return false
 	}
 	raw, readErr := io.ReadAll(io.LimitReader(request.Body, maxRequestBytes+1))
 	if readErr != nil || len(raw) > maxRequestBytes || serviceauth.DecodeObject(raw, target) != nil {
-		writeError(response, domain.NewError("bad_request", "Request body is invalid", false))
+		writeError(response, domain.NewError(apierror.BadRequest, "Request body is invalid", false))
 		return false
 	}
 	var fields map[string]json.RawMessage
@@ -678,7 +679,7 @@ func decodeRequest(response http.ResponseWriter, request *http.Request, target a
 	if value, present := fields["agent_id"]; present {
 		var id string
 		if json.Unmarshal(value, &id) != nil || !domain.ValidID(id) {
-			writeError(response, domain.NewError("bad_request", "Agent scope is invalid", false))
+			writeError(response, domain.NewError(apierror.BadRequest, "Agent scope is invalid", false))
 			return false
 		}
 	}
@@ -686,18 +687,18 @@ func decodeRequest(response http.ResponseWriter, request *http.Request, target a
 		if actor, present := fields["actor_principal_id"]; present {
 			var id string
 			if json.Unmarshal(actor, &id) != nil || !domain.ValidID(id) {
-				writeError(response, domain.NewError("bad_request", "Identity field is invalid", false))
+				writeError(response, domain.NewError(apierror.BadRequest, "Identity field is invalid", false))
 				return false
 			}
 			if id != claims.Subject {
-				writeError(response, domain.NewError("actor_mismatch", "Body actor does not match authenticated caller", false))
+				writeError(response, domain.NewError(apierror.ActorMismatch, "Body actor does not match authenticated caller", false))
 				return false
 			}
 		}
 		if org, present := fields["organization_id"]; present {
 			var id string
 			if json.Unmarshal(org, &id) != nil || !domain.ValidID(id) {
-				writeError(response, domain.NewError("bad_request", "Identity field is invalid", false))
+				writeError(response, domain.NewError(apierror.BadRequest, "Identity field is invalid", false))
 				return false
 			}
 			if id != claims.Organization {
@@ -713,7 +714,7 @@ func decodeRequest(response http.ResponseWriter, request *http.Request, target a
 func require(response http.ResponseWriter, values ...string) bool {
 	for _, value := range values {
 		if strings.TrimSpace(value) == "" {
-			writeError(response, domain.NewError("bad_request", "Required request field is empty", false))
+			writeError(response, domain.NewError(apierror.BadRequest, "Required request field is empty", false))
 			return false
 		}
 	}
@@ -723,7 +724,7 @@ func require(response http.ResponseWriter, values ...string) bool {
 func requireIDs(response http.ResponseWriter, values ...string) bool {
 	for _, value := range values {
 		if !domain.ValidID(value) {
-			writeError(response, domain.NewError("bad_request", "Identity field is invalid", false))
+			writeError(response, domain.NewError(apierror.BadRequest, "Identity field is invalid", false))
 			return false
 		}
 	}
@@ -750,10 +751,10 @@ func writeError(response http.ResponseWriter, err error) {
 		}
 	}
 	if errors.Is(err, callercontext.ErrInvalid) {
-		status, code, message, retryable = 401, "caller_context_invalid", "Caller context verification failed", false
+		status, code, message, retryable = 401, apierror.CallerContextInvalid, "Caller context verification failed", false
 	}
 	if errors.Is(err, callercontext.ErrDependency) {
-		status, code, message, retryable = 503, "identity_dependency_unavailable", "Identity authorization dependency is unavailable", true
+		status, code, message, retryable = 503, apierror.IdentityDependencyUnavailable, "Identity authorization dependency is unavailable", true
 	}
 	switch {
 	case errors.Is(err, domain.ErrCredentialBusy):
@@ -789,23 +790,29 @@ func writeError(response http.ResponseWriter, err error) {
 		status = http.StatusBadRequest
 	}
 	switch code {
-	case "caller_context_required", "caller_context_invalid":
+	case apierror.CallerContextRequired, apierror.CallerContextInvalid:
 		status = http.StatusUnauthorized
 		response.Header().Set("WWW-Authenticate", `Bearer realm="antnest-caller-context"`)
-	case "actor_mismatch":
+	case apierror.ActorMismatch:
 		status = http.StatusForbidden
-	case "unsupported_media_type":
+	case apierror.UnsupportedMediaType:
 		status = http.StatusUnsupportedMediaType
-	case "bad_request", "oidc_authorization_failed", "oidc_exchange_claim_invalid", "oidc_session_failed":
+	case apierror.BadRequest, apierror.OidcAuthorizationFailed, apierror.OidcExchangeClaimInvalid, apierror.OidcSessionFailed:
 		status = http.StatusBadRequest
-	case "inactive_principal", "oidc_membership_required":
+	case apierror.InactivePrincipal, apierror.OidcMembershipRequired:
 		status = http.StatusForbidden
-	case "oidc_provider_changed", "oidc_provider_issuer_immutable", "oidc_provider_client_id_immutable", "oidc_exchange_in_progress", "external_identity_conflict", "external_identity_restore_required", "external_identity_last_method":
+	case apierror.OidcProviderChanged, apierror.OidcProviderIssuerImmutable, apierror.OidcProviderClientIdImmutable, apierror.OidcExchangeInProgress, apierror.ExternalIdentityConflict, apierror.ExternalIdentityRestoreRequired, apierror.ExternalIdentityLastMethod:
 		status = http.StatusConflict
-	case "oidc_session_expired", "oidc_completed_token_unavailable":
+	case apierror.OidcSessionExpired, apierror.OidcCompletedTokenUnavailable:
 		status = http.StatusGone
 	}
-	writeJSON(response, status, map[string]any{"code": code, "message": message, "retryable": retryable})
+	envelope := apierror.New(code, message, response.Header().Get("X-Request-ID"))
+	if envelope.Code == code {
+		envelope.Retryable = retryable
+	}
+	response.Header().Set("X-Request-ID", envelope.RequestID)
+	response.Header().Set("Cache-Control", "no-store")
+	writeJSON(response, status, envelope)
 }
 
 func writeJSON(response http.ResponseWriter, status int, value any) {
