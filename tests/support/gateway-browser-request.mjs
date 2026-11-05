@@ -1,9 +1,11 @@
 import { isIP } from "node:net";
 import { gatewaySessionCookies } from "./gateway-session-cookies.mjs";
 
-// Chromium accepts Secure cookies on literal loopback HTTP. Playwright's
-// APIRequestContext and cookies(httpURL) do not, so API probes must explicitly
-// bridge the browser session without changing the cookies' Secure attributes.
+// Chromium accepts Secure cookies on literal loopback HTTP. Since 1.64
+// (upstream fix for issue 43115) Playwright's APIRequestContext and
+// cookies(httpURL) do too; older releases did not. Probes still bridge
+// explicitly to pin the session cookies, derive the CSRF header and keep
+// maxRedirects at zero without changing the cookies' Secure attributes.
 export async function gatewayBrowserRequest(context, url, options = {}) {
   const selection = new URL(url);
   const loopback =

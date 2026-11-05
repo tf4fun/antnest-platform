@@ -121,8 +121,8 @@ for (const secure of [true, false])
       );
       assert.equal(
         (await context.request.get(`${origin}/probe`)).status(),
-        secure ? 401 : 200,
-        "only Secure loopback cookies need the browser-to-API bridge",
+        200,
+        "Playwright 1.64 sends Secure cookies on loopback like Chromium; the bridge still pins the CSRF header",
       );
       await context.addCookies([
         {
