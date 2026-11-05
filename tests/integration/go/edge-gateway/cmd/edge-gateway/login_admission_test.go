@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -17,6 +18,8 @@ import (
 	"github.com/tf4fun/antnest-platform/services/edge-gateway/internal/session"
 	"go.opentelemetry.io/otel"
 )
+
+var requestIDPattern = regexp.MustCompile(`^[A-Za-z0-9._:-]{1,128}$`)
 
 func TestRunAppliesConfiguredLoginTableAndOIDCSourceLimits(t *testing.T) {
 	t.Setenv("OTEL_SDK_DISABLED", "true")
@@ -165,9 +168,19 @@ func TestRunAppliesConfiguredLoginTableAndOIDCSourceLimits(t *testing.T) {
 		}
 		if status == http.StatusTooManyRequests {
 			retry := response.Header.Values("Retry-After")
-			if len(retry) != 1 || retry[0] != "17" ||
-				strings.TrimSpace(string(payload)) != `{"code":"login_rate_limited","message":"Too many login attempts"}` {
-				t.Fatal("configured window did not produce the canonical edge refusal")
+			var refusal map[string]any
+			if err := json.Unmarshal(payload, &refusal); err != nil {
+				t.Fatalf("admission refusal is not JSON: %v", err)
+			}
+			requestID, _ := refusal["request_id"].(string)
+			if len(retry) != 1 || retry[0] != "17" || len(refusal) != 5 ||
+				refusal["code"] != "login_rate_limited" ||
+				refusal["category"] != "rate_limited" ||
+				refusal["message"] != "Too many login attempts" ||
+				refusal["retryable"] != true ||
+				!requestIDPattern.MatchString(requestID) ||
+				response.Header.Get("X-Request-ID") != requestID {
+				t.Fatalf("configured window did not produce the canonical edge refusal: %v", refusal)
 			}
 		}
 	}
