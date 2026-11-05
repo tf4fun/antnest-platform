@@ -58,6 +58,14 @@ const registry = new Map(
 const SAFE_REQUEST_ID = /^[A-Za-z0-9._:-]{1,128}$/;
 const COMMON_METADATA_KEYS = ["category", "message", "request_id"];
 
+export function commonErrorEntry(code) {
+  const entry = registry.get(code);
+  assert(entry !== undefined, `Common error code is not registered: ${code}`);
+  return entry;
+}
+
+export { SAFE_REQUEST_ID };
+
 export function assertErrorCapability(initializeResult) {
   assert(isRecord(initializeResult), "ACP initialize result is required");
   const meta = initializeResult._meta;

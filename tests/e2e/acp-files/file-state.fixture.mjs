@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { commonErrorEntry } from "../../support/acp-errors.mjs";
 import { cases } from "./model.mjs";
 
 // Synthetic protocol fixtures; actual checkpoints are built from model receipts.
@@ -32,7 +33,22 @@ export function fileStateFixture() {
                 tool_result: {
                   tool_call_id: toolCallId,
                   tool: item.tool,
-                  result: structuredClone(item.result),
+                  result:
+                    item.error === true
+                      ? {
+                          ...structuredClone(item.result),
+                          code: item.result.error_code,
+                          category: commonErrorEntry(item.result.error_code)
+                            .category,
+                          retryable: commonErrorEntry(item.result.error_code)
+                            .retryable,
+                          request_id: `fixture-request-${phase}`,
+                          details: {
+                            effect_state: item.result.effect_state,
+                            effect_source: item.result.effect_source,
+                          },
+                        }
+                      : structuredClone(item.result),
                 },
               }
             : {}),
