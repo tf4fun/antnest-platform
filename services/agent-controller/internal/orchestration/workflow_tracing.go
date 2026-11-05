@@ -10,8 +10,10 @@ import (
 )
 
 // workflowSpans owns only the lifetime of real SDK Workflow spans. The SDK can
-// discard an unfinished workflow on worker shutdown without returning through
-// its deferred Finish. Close those spans before the provider shuts down.
+// discard an unfinished workflow without returning through its deferred Finish;
+// SDK >= 1.50 unwinds it during graceful worker Stop. The once guard keeps this
+// tracker a no-op whenever the SDK already ended the span, so it only covers
+// the abandon paths that still exist.
 type workflowSpans struct {
 	mu     sync.Mutex
 	active map[*workflowSpan]struct{}
