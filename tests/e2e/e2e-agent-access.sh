@@ -80,6 +80,7 @@ docker create --name "$client" $service_hosts --user "$ANTNEST_SERVICE_AUTH_UID:
   -v "$root/contracts/agent-ui/workspace-api.schema.json:/app/contracts/agent-ui/workspace-api.schema.json:ro" \
   -v "$root/services/agent-ui/web/src/lib:/app/services/agent-ui/web/src/lib:ro" \
   -v "$root/services/agent-ui/web/server/src/protocol:/app/services/agent-ui/web/server/src/protocol:ro" \
+  -v "$root/services/agent-ui/web/server/src/errors.gen.ts:/app/services/agent-ui/web/server/src/errors.gen.ts:ro" \
   "$acp_image" node /app/tests/e2e/identity-closeout/agent-access-client.mjs >/dev/null
 docker network connect "${COMPOSE_PROJECT_NAME}_agent-acp-database" "$client"
 docker network connect "$ANTNEST_RUNTIME_MANAGEMENT_NETWORK" "$client"
