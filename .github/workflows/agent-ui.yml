@@ -16,6 +16,7 @@ on:
       - contracts/edge-gateway/**
       - contracts/identity/**
       - contracts/platform/**
+      - contracts/common/**
       - contracts/skill-learning/**
       - tests/support/ci-ownership.json
       - .nvmrc
@@ -34,6 +35,7 @@ on:
       - contracts/edge-gateway/**
       - contracts/identity/**
       - contracts/platform/**
+      - contracts/common/**
       - contracts/skill-learning/**
       - tests/support/ci-ownership.json
       - .nvmrc
