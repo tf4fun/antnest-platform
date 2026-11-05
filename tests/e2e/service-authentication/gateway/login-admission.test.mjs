@@ -19,12 +19,19 @@ const counters = (password = 0, oidc = 0) => ({
 const refused = () =>
   new Response(
     JSON.stringify({
+      category: "rate_limited",
       code: "login_rate_limited",
       message: "Too many login attempts",
+      request_id: "fixture-login-refused",
+      retryable: true,
     }),
     {
       status: 429,
-      headers: { "Cache-Control": "no-store", "Retry-After": "300" },
+      headers: {
+        "Cache-Control": "no-store",
+        "Retry-After": "300",
+        "X-Request-ID": "fixture-login-refused",
+      },
     },
   );
 

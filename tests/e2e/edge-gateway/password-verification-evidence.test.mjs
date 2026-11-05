@@ -259,14 +259,20 @@ function rejected(code = "credential_busy") {
   return {
     status: code === "credential_busy" ? 503 : 429,
     body: {
+      category: code === "credential_busy" ? "unavailable" : "rate_limited",
       code,
       message:
         code === "credential_busy"
           ? "Password verification is busy"
           : "Too many password attempts",
+      request_id: "fixture-password-request",
       retryable: true,
     },
-    headers: new Headers({ "cache-control": "no-store", "retry-after": "1" }),
+    headers: new Headers({
+      "cache-control": "no-store",
+      "retry-after": "1",
+      "x-request-id": "fixture-password-request",
+    }),
   };
 }
 

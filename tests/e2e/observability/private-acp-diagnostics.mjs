@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { admissionErrorReceipt } from "../../support/acp-errors.mjs";
 import { tag } from "./trace-tree.mjs";
 
 export function privateACPProcessIdentity(trace, span) {
@@ -209,9 +210,9 @@ export function privateACPRejection(
   assert.deepEqual(
     expected.rejectionReceipt,
     {
-      rpcCode: -32020,
+      rpcCode: admissionErrorReceipt(expected.rejection).code,
       code: expected.rejection,
-      retryable: false,
+      retryable: admissionErrorReceipt(expected.rejection).data.retryable,
     },
     "actual command rejection receipt required",
   );
@@ -299,13 +300,14 @@ export function privateACPRejection(
     "antnest.error.cause_types": types,
     "antnest.error.causes": causes,
   });
+  const rpcCode = admissionErrorReceipt(expected.rejection).code;
   const rpcTags = withoutCommandFields(request.tags, {
     "error.type": "RequestError",
     "antnest.outcome": "rejected",
     "antnest.operation.phase": "acp.dispatch",
-    "error.code": "-32020",
-    "antnest.error.code": "-32020",
-    "rpc.response.status_code": -32020,
+    "error.code": String(rpcCode),
+    "antnest.error.code": String(rpcCode),
+    "rpc.response.status_code": rpcCode,
     "antnest.error.origin_trace_id": trace.traceID,
     "antnest.error.origin_span_id": application.spanID,
   });

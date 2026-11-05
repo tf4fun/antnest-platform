@@ -265,7 +265,7 @@ export function inspectClosedPrompt(trace, expected, secrets = []) {
     expected,
     secrets,
   );
-  assert.equal(tag(request, "rpc.response.status_code"), -32020);
+  assert.equal(tag(request, "rpc.response.status_code"), -32035);
   assert.equal(tag(request, "antnest.outcome"), "rejected");
   for (const s of trace.spans) {
     assert(!/^(agent\.run|model\.|mcp\.)/.test(s.operationName));
@@ -276,7 +276,7 @@ export function inspectClosedPrompt(trace, expected, secrets = []) {
     assert.equal(tag(s, "antnest.outcome"), "rejected");
     assert.equal(
       tag(s, "antnest.error.code"),
-      s === request ? "-32020" : "agent_unavailable",
+      s === request ? "-32035" : "agent_unavailable",
     );
     if (s !== request) assert.equal(s.operationName, "acp.session.prompt");
   }

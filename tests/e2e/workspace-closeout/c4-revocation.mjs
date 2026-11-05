@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
+import { isDeepStrictEqual } from "node:util";
 import { gatewayBrowserRequest } from "../../support/gateway-browser-request.mjs";
 import { gatewaySessionCookies } from "../../support/gateway-session-cookies.mjs";
 import { gatewayOrigin } from "../../support/gateway-origin.mjs";
@@ -225,18 +226,29 @@ export function assertC4DenialBody(body, status) {
       "C4 denied Agent request ID required",
     );
     assert(
-      Object.keys(body).length === 5 &&
+      Object.keys(body).length === 8 &&
+        body.category === "forbidden" &&
         body.code === "access_denied" &&
         body.message === "Agent access denied" &&
         body.retryable === false &&
-        body.recovery === "none",
+        body.recovery === "none" &&
+        body.request_id === body.requestId &&
+        isDeepStrictEqual(body.details, { recovery: "none" }),
       "C4 Agent denial differs from its contract",
+    );
+    assert.match(
+      body.requestId,
+      /^[A-Za-z0-9._:-]{1,128}$/u,
+      "unsafe C4 Agent denial requestId",
     );
   } else {
     assert(
-      Object.keys(body).length === 2 &&
+      Object.keys(body).length === 5 &&
+        body.category === "unauthenticated" &&
         body.code === "unauthenticated" &&
-        body.message === "Session is invalid or expired",
+        body.message === "Session is invalid or expired" &&
+        body.retryable === false &&
+        /^[A-Za-z0-9._:-]{1,128}$/u.test(body.request_id ?? ""),
       "C4 identity denial differs from its contract",
     );
   }

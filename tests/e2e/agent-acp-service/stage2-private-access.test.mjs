@@ -106,8 +106,10 @@ test(
     f.setCold(true);
     const value = await f.access.state("agent", f.browser, principal);
     assert.deepEqual(value, {
+      category: "unavailable",
       code: "execution_state_unavailable",
       message: "Agent execution state is unavailable",
+      request_id: "stage2-fixture-state",
       retryable: true,
     });
     await f.access.closeAndWait();

@@ -3,20 +3,31 @@ import test from "node:test";
 import { assertRejection } from "./retirement.mjs";
 
 const publicBody = JSON.stringify({
+  category: "not_found",
   code: "not_found",
   message: "Resource was not found",
+  request_id: "fixture-retirement-not-found",
+  retryable: false,
 });
 const secret = "private-retirement-fixture-canary";
 
 test("retirement evidence accepts only the complete public rejection", () => {
-  assertRejection(404, {}, publicBody, "GET");
+  assertRejection(
+    404,
+    { "x-request-id": "fixture-retirement-not-found" },
+    publicBody,
+    "GET",
+  );
   assertRejection(404, {}, "", "HEAD");
   assertRejection(
     403,
-    {},
+    { "x-request-id": "fixture-retirement-forbidden" },
     JSON.stringify({
+      category: "forbidden",
       code: "forbidden",
       message: "Request origin is not allowed",
+      request_id: "fixture-retirement-forbidden",
+      retryable: false,
     }),
     "POST",
     403,

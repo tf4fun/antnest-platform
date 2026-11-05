@@ -27,8 +27,10 @@ const state = {
   unavailable_reason: null,
 };
 const terminal = {
+  category: "unavailable",
   code: "execution_state_unavailable",
   message: "Agent execution state is unavailable",
+  request_id: "test-request",
   retryable: true,
 };
 const frame = (event, value) =>

@@ -375,8 +375,8 @@ test("private denied session/new permits no Session only with the exact access d
     withoutSession(f);
     Object.assign(f.expected, { [field]: "access_denied", kind: "request" });
     f.field(f.request, "antnest.outcome", "rejected");
-    f.field(f.request, "rpc.response.status_code", -32020);
-    f.field(f.request, "antnest.error.code", "-32020");
+    f.field(f.request, "rpc.response.status_code", -32010);
+    f.field(f.request, "antnest.error.code", "-32010");
     const inspect =
       field === "denial" ? inspectPlanRequestTrace : inspectCommandTrace;
     assert.equal(inspect(f.trace, f.expected)[field], "access_denied");

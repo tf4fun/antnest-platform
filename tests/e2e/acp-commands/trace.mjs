@@ -1,5 +1,6 @@
 import { inspectRunInformationReads } from "../observability/runtime-information-run.mjs";
 import assert from "node:assert/strict";
+import { admissionErrorReceipt } from "../../support/acp-errors.mjs";
 import { searchJaegerTraces } from "../../support/jaeger-search.mjs";
 import { setTimeout as delay } from "node:timers/promises";
 import { collectTrace } from "../managed-mcp/trace.mjs";
@@ -312,9 +313,10 @@ function rejected(
       ].includes(rejection),
   );
   if (rejection) {
-    assert.equal(tag(request, "rpc.response.status_code"), -32020);
+    const receiptCode = admissionErrorReceipt(rejection).code;
+    assert.equal(tag(request, "rpc.response.status_code"), receiptCode);
     assert.equal(tag(request, "antnest.outcome"), "rejected");
-    assert.equal(tag(request, "antnest.error.code"), "-32020");
+    assert.equal(tag(request, "antnest.error.code"), String(receiptCode));
   }
   const strictPrivateBoundary =
     requestBoundaryKind(expected) === "private-acp" &&

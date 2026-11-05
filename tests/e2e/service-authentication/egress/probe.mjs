@@ -73,10 +73,22 @@ async function request({
     assert.equal(document.code, code);
     assert.equal(document.retryable, false);
     assert.deepEqual(Object.keys(document).sort(), [
+      "category",
       "code",
       "message",
+      "request_id",
       "retryable",
     ]);
+    assert.match(
+      document.request_id,
+      /^[A-Za-z0-9._:-]{1,128}$/u,
+      "unsafe Egress request_id",
+    );
+    assert.equal(
+      document.request_id,
+      response.headers["x-request-id"],
+      "Egress request_id differs from X-Request-ID",
+    );
   }
   const challenges = response.rawHeaders.filter(
     (_, index, values) =>

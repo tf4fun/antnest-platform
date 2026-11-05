@@ -53,9 +53,9 @@ export function inspectPrivateClosedPrompt(
   );
   assert.equal(expected.inputSessionID, expected.sessionId);
   assert.deepEqual(expected.rejectionReceipt, {
-    rpcCode: -32020,
+    rpcCode: -32035,
     code: "agent_unavailable",
-    retryable: false,
+    retryable: true,
   });
   assert.deepEqual(requests, [], "closed admission reached Provider");
   const { tree, request } = requestBoundary(trace, expected, secrets);
@@ -230,11 +230,11 @@ export function inspectPrivateClosedPrompt(
   });
   const rpcTags = removeFields(request.tags, {
     "error.type": "RequestError",
-    "error.code": "-32020",
-    "antnest.error.code": "-32020",
+    "error.code": "-32035",
+    "antnest.error.code": "-32035",
     "antnest.outcome": "rejected",
     "antnest.operation.phase": "acp.dispatch",
-    "rpc.response.status_code": -32020,
+    "rpc.response.status_code": -32035,
     "antnest.error.origin_trace_id": trace.traceID,
     "antnest.error.origin_span_id": app.spanID,
   });

@@ -268,9 +268,12 @@ function fixture() {
   );
   const restored = owner(
     request("restored-denial", 8100, freshLogin, `${base}/view`, "GET", 403, {
+      category: "forbidden",
       code: "access_denied",
+      details: { recovery: "none" },
       message: "Agent access denied",
       requestId: "00000000-0000-4000-8000-000000000001",
+      request_id: "00000000-0000-4000-8000-000000000001",
       retryable: false,
       recovery: "none",
     }),

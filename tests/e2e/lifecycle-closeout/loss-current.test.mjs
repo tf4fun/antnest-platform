@@ -86,9 +86,9 @@ function denied() {
   const request = f.trace.spans.find((s) => s.spanID === "request");
   request.tags.push(
     ...Object.entries({
-      "rpc.response.status_code": -32020,
+      "rpc.response.status_code": -32035,
       "antnest.outcome": "rejected",
-      "antnest.error.code": "-32020",
+      "antnest.error.code": "-32035",
       error: true,
     }).map(([key, value]) => ({ key, value })),
   );

@@ -117,7 +117,7 @@ const changes = [
     "borrowed rejection",
     (f) => {
       f.expected.rejectionReceipt = {
-        rpcCode: -32020,
+        rpcCode: -32010,
         code: "access_denied",
         retryable: false,
       };

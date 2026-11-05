@@ -387,9 +387,12 @@ export function inspectRecoveryWindow(evidence, { requireTrace = true } = {}) {
         /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/u,
       );
       assert.deepEqual(c.restored_state.body, {
+        category: "forbidden",
         code: "access_denied",
+        details: { recovery: "none" },
         message: "Agent access denied",
         requestId: c.restored_state.body.requestId,
+        request_id: c.restored_state.body.requestId,
         retryable: false,
         recovery: "none",
       });

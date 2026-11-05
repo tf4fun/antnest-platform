@@ -48,7 +48,14 @@ function fixture() {
     error: {
       code: -32030,
       message: definition.message,
-      data: { code: "agent_busy", retryable: true, retry_after_ms: 1000 },
+      data: {
+        category: "conflict",
+        code: "agent_busy",
+        message: definition.message,
+        request_id: "fixture-busy-request",
+        retryable: true,
+        retry_after_ms: 1000,
+      },
     },
   };
   const unknown = {

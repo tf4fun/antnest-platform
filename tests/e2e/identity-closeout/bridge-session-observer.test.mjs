@@ -187,11 +187,14 @@ async function fixture(t, override = {}) {
 }
 
 const accessDenied = {
+  category: "forbidden",
   code: "access_denied",
+  details: { recovery: "none" },
   message: "Agent access denied",
   retryable: false,
   recovery: "none",
   requestId: "request-1",
+  request_id: "request-1",
 };
 test("Membership-only observation accepts the exact downstream 403 with original credentials", async (t) => {
   const f = await fixture(t, { status: 403, body: accessDenied });

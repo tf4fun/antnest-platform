@@ -13,6 +13,7 @@ const { createParser } = require("eventsource-parser");
 const validateState = new Ajv2020({ strict: false }).compile(schema);
 const path = "/rpc/agent-acp/watch-agent-execution-state";
 const terminal = {
+  category: "unavailable",
   code: "execution_state_unavailable",
   message: "Agent execution state is unavailable",
   retryable: true,
@@ -186,8 +187,13 @@ export async function openShutdownPrivateWatch(agentId, browser, options) {
         );
         assert.deepEqual(
           value,
-          terminal,
+          { ...terminal, request_id: value.request_id },
           "invalid private state terminal event",
+        );
+        assert.match(
+          value.request_id ?? "",
+          /^[A-Za-z0-9._:-]{1,128}$/u,
+          "invalid private state terminal request_id",
         );
         terminalEvents.push(value);
       }

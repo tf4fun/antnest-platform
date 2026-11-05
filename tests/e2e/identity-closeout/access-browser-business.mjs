@@ -103,12 +103,20 @@ export function inspectDirectoryBrowserBusiness(expected) {
   );
   if (denial.status === 403) {
     assert(typeof denial.body?.requestId === "string" && denial.body.requestId);
+    assert.match(
+      denial.body.requestId,
+      /^[A-Za-z0-9._:-]{1,128}$/u,
+      "unsafe Agent UI denial requestId",
+    );
     assert.deepEqual(denial.body, {
+      category: "forbidden",
       code: "access_denied",
+      details: { recovery: "none" },
       message: "Agent access denied",
       retryable: false,
       recovery: "none",
       requestId: denial.body.requestId,
+      request_id: denial.body.requestId,
     });
   }
   assert.equal(offboarding.business, "passed");

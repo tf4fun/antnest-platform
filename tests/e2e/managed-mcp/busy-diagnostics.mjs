@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { admissionErrorReceipt } from "../../support/acp-errors.mjs";
 import { tag } from "../observability/trace-tree.mjs";
 import { assertPrivateACPApplicationJoined } from "../observability/private-acp-diagnostics.mjs";
 
@@ -26,12 +27,13 @@ export function managedBusyRejection(
 ) {
   assert.equal(expected.rejection, "agent_busy");
   assert.equal(expected.method, "session/prompt");
+  const receipt = admissionErrorReceipt(expected.rejection);
   assert.deepEqual(
     expected.rejectionReceipt,
     {
-      rpcCode: -32020,
+      rpcCode: receipt.code,
       code: expected.rejection,
-      retryable: false,
+      retryable: receipt.data.retryable,
     },
     "actual command rejection receipt required",
   );
@@ -96,6 +98,7 @@ export function managedBusyRejection(
   const causes = fields["antnest.error.causes"];
   assert.equal(typeof causes, "string");
   const code = "agent_busy";
+  const rpcCode = admissionErrorReceipt(code).code;
   const message = "Operation reported agent_busy";
   assert.deepEqual(JSON.parse(causes), [
     { type: "DomainError", ...(code ? { code } : {}), message },
@@ -120,9 +123,9 @@ export function managedBusyRejection(
     "error.type": "RequestError",
     "antnest.outcome": "rejected",
     "antnest.operation.phase": "acp.dispatch",
-    "error.code": "-32020",
-    "antnest.error.code": "-32020",
-    "rpc.response.status_code": -32020,
+    "error.code": String(rpcCode),
+    "antnest.error.code": String(rpcCode),
+    "rpc.response.status_code": rpcCode,
     "antnest.error.origin_trace_id": trace.traceID,
     "antnest.error.origin_span_id": application.spanID,
   });

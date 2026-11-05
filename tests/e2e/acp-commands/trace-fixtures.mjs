@@ -1,3 +1,4 @@
+import { admissionErrorReceipt } from "../../support/acp-errors.mjs";
 import { addRunInformationRead } from "../observability/runtime-information-run-fixtures.mjs";
 import { requestFixture } from "../acp-plan/trace-fixture.mjs";
 
@@ -11,11 +12,12 @@ export function privateHTTPRejectionFixture(
     ? "Agent access was denied"
     : "DomainError: unregistered message omitted";
   const operation = `acp.session.${method === "session/load" ? "resume" : method.split("/")[1]}`;
+  const receipt = admissionErrorReceipt(rejection);
   f.expected.rejection = rejection;
   f.expected.rejectionReceipt = {
-    rpcCode: -32020,
+    rpcCode: receipt.code,
     code: rejection,
-    retryable: false,
+    retryable: receipt.data.retryable,
   };
   if (method === "session/new") {
     delete f.expected.sessionId;
@@ -67,9 +69,9 @@ export function privateHTTPRejectionFixture(
     "error.type": "RequestError",
     "antnest.outcome": "rejected",
     "antnest.operation.phase": "acp.dispatch",
-    "error.code": "-32020",
-    "antnest.error.code": "-32020",
-    "rpc.response.status_code": -32020,
+    "error.code": String(receipt.code),
+    "antnest.error.code": String(receipt.code),
+    "rpc.response.status_code": receipt.code,
     "antnest.error.origin_trace_id": f.trace.traceID,
     "antnest.error.origin_span_id": application.spanID,
   }))

@@ -137,6 +137,10 @@ export async function admissionResponse(response, flow) {
   const keys = Object.keys(value ?? {})
     .sort()
     .join(",");
+  const canonicalError =
+    keys === "category,code,message,request_id,retryable" &&
+    typeof value.request_id === "string" &&
+    /^[A-Za-z0-9._:-]{1,128}$/u.test(value.request_id);
   let canonicalBody = false;
   if (response.status === 200 && flow === "oidc_start") {
     canonicalBody =
@@ -148,13 +152,17 @@ export async function admissionResponse(response, flow) {
       Date.parse(value.expires_at) > Date.now();
   } else if (response.status === 401) {
     canonicalBody =
-      keys === "code,message" &&
+      canonicalError &&
       value.code === "unauthenticated" &&
+      value.category === "unauthenticated" &&
+      value.retryable === false &&
       value.message === "Email or password is incorrect";
   } else if (response.status === 429) {
     canonicalBody =
-      keys === "code,message" &&
+      canonicalError &&
       value.code === "login_rate_limited" &&
+      value.category === "rate_limited" &&
+      value.retryable === true &&
       value.message === "Too many login attempts";
   }
   const cookies = response.headers.getSetCookie().map((raw) => {

@@ -108,11 +108,14 @@ export function with403(f) {
     status: 403,
     code: "access_denied",
     body: {
+      category: "forbidden",
       code: "access_denied",
+      details: { recovery: "none" },
       message: "Agent access denied",
       retryable: false,
       recovery: "none",
       requestId: "00000000-0000-4000-8000-000000000021",
+      request_id: "00000000-0000-4000-8000-000000000021",
     },
   });
   f.collection.traces.set(trace.traceID, trace);

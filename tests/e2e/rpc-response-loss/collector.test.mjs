@@ -38,10 +38,13 @@ function recorded(f) {
   if (expected.rejection) {
     expected.outcome = "failed";
     expected.failure = "original Runtime barrier refusal";
-    expected.failureCode = -32020;
+    expected.failureCode = -32035;
     expected.failureData = {
+      category: "unavailable",
       code: "agent_unavailable",
-      retryable: false,
+      message: "Agent execution is unavailable",
+      request_id: "fixture-agent-unavailable",
+      retryable: true,
     };
     expected.requestParams = {
       sessionId: expected.sessionId,

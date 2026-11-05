@@ -1,4 +1,8 @@
 import assert from "node:assert/strict";
+import {
+  admissionErrorReceipt,
+  assertAdmissionErrorData,
+} from "../../support/acp-errors.mjs";
 import { collectPrivateACPConsumerTrace } from "../acp-commands/collector.mjs";
 import { inspectPrivateCostControlTrace } from "../acp-cost/control-trace.mjs";
 import { inspectPrivateCostSessionTrace } from "../acp-cost/session-trace.mjs";
@@ -24,17 +28,24 @@ export async function collectPrivateAccessTrace(base, original, options = {}) {
   assert.equal(expected.version, expected.protocolVersion);
   assert(["request", "native"].includes(expected.kind));
   if (expected.rejection !== undefined) {
+    const rejection = admissionErrorReceipt(expected.rejection);
     assert.equal(expected.kind, "request");
     assert.equal(expected.outcome, "failed");
-    assert.equal(expected.failureCode, -32020);
-    assert.deepEqual(expected.failureData, {
-      code: expected.rejection,
-      retryable: false,
-    });
+    assert.equal(expected.failureCode, rejection.code);
+    try {
+      assertAdmissionErrorData(expected.failureData, expected.rejection);
+    } catch {
+      throw new Error("invalid original access failure data");
+    }
+    assert(
+      !Object.hasOwn(expected.failureData, "details") &&
+        !Object.hasOwn(expected.failureData, "retry_after_ms"),
+      "invalid original access failure data",
+    );
     assert.deepEqual(expected.rejectionReceipt, {
-      rpcCode: -32020,
+      rpcCode: rejection.code,
       code: expected.rejection,
-      retryable: false,
+      retryable: rejection.data.retryable,
     });
     assert.equal(
       expected.requestParams?.sessionId ?? null,

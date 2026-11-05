@@ -1,3 +1,4 @@
+import "../identity-closeout/acp-client-dependencies.fixture.mjs";
 import assert from "node:assert/strict";
 import { AssertionError } from "node:assert";
 import { mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
@@ -6,9 +7,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setImmediate as immediate } from "node:timers/promises";
 import test from "node:test";
-import { withPrivateCommandResources } from "../acp-commands/connection.mjs";
 import { createTraceDiagnostics } from "../../support/trace-diagnostics.mjs";
 
+const { withPrivateCommandResources } =
+  await import("../acp-commands/connection.mjs");
 const url = new URL("./diagnostics.mjs", import.meta.url);
 const { collectPlanTraceDiagnostics: collect } = await import(url).catch(
   (error) => {

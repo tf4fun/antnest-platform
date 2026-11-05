@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { admissionErrorReceipt } from "../../support/acp-errors.mjs";
 import { tag } from "../observability/trace-tree.mjs";
 import { assertPrivateACPApplicationJoined } from "../observability/private-acp-diagnostics.mjs";
 
@@ -26,12 +27,13 @@ export function lossUnavailableRejection(
 ) {
   assert.equal(expected.rejection, "agent_unavailable");
   assert.equal(expected.method, "session/prompt");
+  const receipt = admissionErrorReceipt(expected.rejection);
   assert.deepEqual(
     expected.rejectionReceipt,
     {
-      rpcCode: -32020,
+      rpcCode: receipt.code,
       code: expected.rejection,
-      retryable: false,
+      retryable: receipt.data.retryable,
     },
     "actual command rejection receipt required",
   );
@@ -120,9 +122,9 @@ export function lossUnavailableRejection(
     "error.type": "RequestError",
     "antnest.outcome": "rejected",
     "antnest.operation.phase": "acp.dispatch",
-    "error.code": "-32020",
-    "antnest.error.code": "-32020",
-    "rpc.response.status_code": -32020,
+    "error.code": String(receipt.code),
+    "antnest.error.code": String(receipt.code),
+    "rpc.response.status_code": receipt.code,
     "antnest.error.origin_trace_id": trace.traceID,
     "antnest.error.origin_span_id": application.spanID,
   });

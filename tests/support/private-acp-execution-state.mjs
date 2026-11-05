@@ -7,10 +7,12 @@ import { PrivateACPExecutionStateUnavailableError } from "./private-acp-executio
 const path = "/rpc/agent-acp/get-agent-execution-state";
 const validateState = new Ajv2020({ strict: false }).compile(schema);
 const startupUnavailable = {
+  category: "unavailable",
   code: "execution_state_unavailable",
   message: "Agent execution state is unavailable",
   retryable: true,
 };
+const SAFE_REQUEST_ID = /^[A-Za-z0-9._:-]{1,128}$/u;
 
 export async function readPrivateExecutionState(
   agentId,
@@ -109,10 +111,13 @@ export async function readPrivateExecutionState(
       state !== null &&
       typeof state === "object" &&
       !Array.isArray(state) &&
-      Object.keys(state).length === Object.keys(startupUnavailable).length &&
+      Object.keys(state).length ===
+        Object.keys(startupUnavailable).length + 1 &&
       Object.entries(startupUnavailable).every(
         ([key, value]) => state[key] === value,
-      );
+      ) &&
+      typeof state.request_id === "string" &&
+      SAFE_REQUEST_ID.test(state.request_id);
     if (exactUnavailable) throw new PrivateACPExecutionStateUnavailableError();
     throw new Error("ACP private execution state HTTP " + response.status);
   }

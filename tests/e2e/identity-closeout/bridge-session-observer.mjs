@@ -159,12 +159,20 @@ export async function observeBrowserSession(
             typeof response.body?.requestId === "string" &&
               response.body.requestId,
           );
+          assert.match(
+            response.body.requestId,
+            /^[A-Za-z0-9._:-]{1,128}$/u,
+            "unsafe Agent UI denial requestId",
+          );
           assert.deepEqual(response.body, {
+            category: "forbidden",
             code: "access_denied",
+            details: { recovery: "none" },
             message: "Agent access denied",
             retryable: false,
             recovery: "none",
             requestId: response.body.requestId,
+            request_id: response.body.requestId,
           });
         } else assert.equal(response.body?.code, expectedCode);
         assertNoStore(response.headers);

@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { isDeepStrictEqual } from "node:util";
+import { assertAdmissionErrorData } from "../../support/acp-errors.mjs";
 import { collectPrivateACPConsumerTrace } from "../acp-commands/collector.mjs";
 import { inspectPrivateCommandTrace } from "../acp-commands/trace.mjs";
 import { inspectPrivateCostControlTrace } from "../acp-cost/control-trace.mjs";
@@ -25,21 +26,24 @@ export async function collectPrivateRestartTrace(base, original, options = {}) {
     assert.equal(expected.outcome, "failed");
     assert.equal(expected.rejection, "runtime_barrier_required");
     assert(
-      expected.failureCode === -32020,
+      expected.failureCode === -32036,
       "invalid original barrier RPC code",
     );
+    try {
+      assertAdmissionErrorData(expected.failureData, expected.rejection);
+    } catch {
+      throw new Error("invalid original barrier failure data");
+    }
     assert(
-      isDeepStrictEqual(expected.failureData, {
-        code: expected.rejection,
-        retryable: false,
-      }),
+      !Object.hasOwn(expected.failureData, "details") &&
+        !Object.hasOwn(expected.failureData, "retry_after_ms"),
       "invalid original barrier failure data",
     );
     assert(
       isDeepStrictEqual(expected.rejectionReceipt, {
-        rpcCode: -32020,
+        rpcCode: -32036,
         code: expected.rejection,
-        retryable: false,
+        retryable: true,
       }),
       "invalid original barrier rejection receipt",
     );

@@ -21,11 +21,13 @@ const policy = JSON.parse(
 const admission = policy.admission.docker;
 const requestPath = "/rpc/identity/local-login";
 const busyBody = {
+  category: "unavailable",
   code: "credential_busy",
   message: "Password verification is busy",
   retryable: true,
 };
 const deniedBody = {
+  category: "unauthenticated",
   code: "unauthenticated",
   message: "Authentication failed",
   retryable: false,
@@ -168,8 +170,16 @@ export function verifyPasswordResourceEvidence(evidence) {
     // AssertionError.actual/expected are printed by the runner on failure.
     // Keep unexpected response bodies and headers only in private evidence.
     assert(
-      isDeepStrictEqual(row.body, expectedBody),
+      isDeepStrictEqual(row.body, {
+        ...expectedBody,
+        request_id: row.body?.request_id,
+      }),
       "password response body is not canonical",
+    );
+    assert.match(
+      row.body?.request_id ?? "",
+      /^[A-Za-z0-9._:-]{1,128}$/u,
+      "password response request_id is unsafe",
     );
     assert(row.cache_control === "no-store", "password response is cacheable");
     assert(

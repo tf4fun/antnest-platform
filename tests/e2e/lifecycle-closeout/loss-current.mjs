@@ -47,7 +47,7 @@ export function inspectLossDenial(trace, expected, secrets = []) {
     expected,
     secrets,
   );
-  assert.equal(tag(request, "rpc.response.status_code"), -32020);
+  assert.equal(tag(request, "rpc.response.status_code"), -32035);
   assert.equal(tag(request, "antnest.outcome"), "rejected");
   assert(hasError(request));
   for (const span of trace.spans) {
@@ -59,7 +59,7 @@ export function inspectLossDenial(trace, expected, secrets = []) {
     assert.equal(tag(span, "antnest.outcome"), "rejected");
     assert.equal(
       tag(span, "antnest.error.code"),
-      span === request ? "-32020" : "agent_unavailable",
+      span === request ? "-32035" : "agent_unavailable",
     );
     if (span !== request)
       assert.equal(span.operationName, "acp.session.prompt");

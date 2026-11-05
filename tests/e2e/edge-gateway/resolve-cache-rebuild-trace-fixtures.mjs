@@ -152,8 +152,11 @@ export function rebuildTraceFixture({ status = 503, early = true } = {}) {
     status === 202
       ? { ...identity, state: "running" }
       : {
+          category: "unavailable",
           code: "console_unavailable",
           message: "Admin Console is unavailable",
+          request_id: "fixture-rebuild-command-unavailable",
+          retryable: true,
         },
     { method: "POST", code: status },
   );
@@ -167,8 +170,10 @@ export function rebuildTraceFixture({ status = 503, early = true } = {}) {
         "recovery-rebuild-operation",
         `/api/admin/operations/${requestID}`,
         {
+          category: "not_found",
           code: "operation_not_found",
           message: "lifecycle operation was not found",
+          request_id: "fixture-rebuild-operation-absent",
           retryable: false,
         },
         { code: 404 },

@@ -14,8 +14,10 @@ export function shutdownPrivateTraceFixture(traceID = "a".repeat(32)) {
     unavailable_reason: null,
   };
   const terminal = {
+    category: "unavailable",
     code: "execution_state_unavailable",
     message: "Agent execution state is unavailable",
+    request_id: "fixture-request",
     retryable: true,
   };
   const raw = Buffer.from(

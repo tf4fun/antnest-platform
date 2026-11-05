@@ -23,6 +23,7 @@ RUN npm ci --omit=dev --ignore-scripts --no-audit && npm cache clean --force
 
 COPY --from=build --chown=node:node /workspace/services/agent-acp-service/dist ./dist
 COPY --chown=node:node contracts/agent-acp/errors.json ./dist/contracts/agent-acp/errors.json
+COPY --chown=node:node contracts/common/errors.json ./dist/contracts/common/errors.json
 COPY --chown=node:node services/agent-acp-service/migrations ./migrations
 
 USER node

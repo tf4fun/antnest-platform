@@ -31,8 +31,10 @@ const ready = () => ({
   unavailable_reason: null,
 });
 const unavailable = {
+  category: "unavailable",
   code: "execution_state_unavailable",
   message: "Agent execution state is unavailable",
+  request_id: "fixture-state-reader-unavailable",
   retryable: true,
 };
 function fixture({

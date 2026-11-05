@@ -68,12 +68,20 @@ export function inspectMembershipAccessDenial(
     typeof expected.body?.requestId === "string" && expected.body.requestId,
   );
   assert.deepEqual(expected.body, {
+    category: "forbidden",
     code: "access_denied",
+    details: { recovery: "none" },
     message: "Agent access denied",
     requestId: expected.body.requestId,
+    request_id: expected.body.requestId,
     retryable: false,
     recovery: "none",
   });
+  assert.match(
+    expected.body.requestId,
+    /^[A-Za-z0-9._:-]{1,128}$/u,
+    "unsafe Agent UI denial requestId",
+  );
   assert.equal(trace.traceID, expected.traceID);
   assert(collection.archivedTraceIDs.has(trace.traceID));
   const sources = resolveTraceSources(trace, secrets, collection),

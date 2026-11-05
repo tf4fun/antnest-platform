@@ -163,7 +163,8 @@ export function assertDeniedSessionError(error, boundary = "organization") {
   assert(
     error.data?.code === "session_access_denied" &&
       error.data.retryable === false &&
-      Object.keys(error.data).sort().join(",") === "code,retryable",
+      Object.keys(error.data).sort().join(",") ===
+        "category,code,message,request_id,retryable",
     "Session denial must not carry additional data",
   );
 }

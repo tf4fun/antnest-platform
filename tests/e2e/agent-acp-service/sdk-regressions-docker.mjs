@@ -489,10 +489,24 @@ try {
       value?.code === "caller_not_allowed" && value.retryable === false,
       "retired Gateway error changed",
     );
-    const fields = "code,message,retryable";
+    assert(
+      value?.category === "forbidden",
+      "retired Gateway error category changed",
+    );
+    const fields = "category,code,message,request_id,retryable";
     assert(
       Object.keys(value).sort().join(",") === fields,
       "retired Gateway error fields changed",
+    );
+    assert.match(
+      value.request_id ?? "",
+      /^[A-Za-z0-9._:-]{1,128}$/u,
+      "retired Gateway request_id is unsafe",
+    );
+    assert.equal(
+      value.request_id,
+      response.headers["x-request-id"],
+      "retired Gateway request_id differs from X-Request-ID",
     );
     assert(
       value.message === "Service caller is not allowed",

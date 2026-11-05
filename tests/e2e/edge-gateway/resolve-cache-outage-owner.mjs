@@ -252,9 +252,12 @@ export function inspectOutageOwnerInventory(evidence, collection) {
         "403 owner belongs to another Principal",
       );
       assert.deepEqual(row.body, {
+        category: "forbidden",
         code: "access_denied",
+        details: { recovery: "none" },
         message: "Agent access denied",
         requestId: row.body?.requestId,
+        request_id: row.body?.requestId,
         retryable: false,
         recovery: "none",
       });

@@ -58,7 +58,7 @@ export function inspectManagedTrace(
     assert.equal(expected.rejection, "agent_busy");
     assert.equal(expected.kind, "request");
     assert.equal(requests.length, 0);
-    assert.equal(tag(request, "rpc.response.status_code"), -32020);
+    assert.equal(tag(request, "rpc.response.status_code"), -32030);
     assert.equal(tag(request, "antnest.outcome"), "rejected");
     for (const s of trace.spans) {
       assert(!/^(agent\.run|model\.|mcp\.)/.test(s.operationName));
@@ -70,7 +70,7 @@ export function inspectManagedTrace(
       assert.equal(tag(s, "antnest.outcome"), "rejected");
       assert.equal(
         tag(s, "antnest.error.code"),
-        s === request ? "-32020" : "agent_busy",
+        s === request ? "-32030" : "agent_busy",
       );
       if (s !== request) assert.equal(s.operationName, "acp.session.prompt");
     }

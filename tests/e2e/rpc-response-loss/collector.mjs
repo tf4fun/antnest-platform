@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { isDeepStrictEqual } from "node:util";
+import { assertAdmissionErrorData } from "../../support/acp-errors.mjs";
 import { collectPrivateRestartTrace } from "../acp-restart/collector.mjs";
 import { collectPrivateACPConsumerTrace } from "../acp-commands/collector.mjs";
 import { privateACPStrictOutcome } from "../observability/private-acp-inventory.mjs";
@@ -47,21 +48,24 @@ export async function collectPrivateRpcLossTrace(base, original, options = {}) {
     assert.equal(expected[key], value);
   assert.equal(expected.version, expected.protocolVersion);
   assert(
-    expected.failureCode === -32020,
+    expected.failureCode === -32035,
     "invalid original closed-admission RPC code",
   );
+  try {
+    assertAdmissionErrorData(expected.failureData, "agent_unavailable");
+  } catch {
+    throw new Error("invalid original closed-admission data");
+  }
   assert(
-    isDeepStrictEqual(expected.failureData, {
-      code: "agent_unavailable",
-      retryable: false,
-    }),
+    !Object.hasOwn(expected.failureData, "details") &&
+      !Object.hasOwn(expected.failureData, "retry_after_ms"),
     "invalid original closed-admission data",
   );
   assert(
     isDeepStrictEqual(expected.rejectionReceipt, {
-      rpcCode: -32020,
+      rpcCode: -32035,
       code: "agent_unavailable",
-      retryable: false,
+      retryable: true,
     }),
     "invalid original closed-admission receipt",
   );

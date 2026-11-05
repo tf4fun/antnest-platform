@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { admissionErrorReceipt } from "../../support/acp-errors.mjs";
 import { costCollectorFixture } from "../acp-cost/collector.fixture.mjs";
 import { costControlTraceFixture } from "../acp-cost/control-trace.fixture.mjs";
 import { costSessionTraceFixture } from "../acp-cost/session-trace.fixture.mjs";
@@ -44,9 +45,13 @@ function recorded(f) {
     delete row.requestReceipt;
     delete row.listReceipt;
   } else if (row.rejection) {
+    const receipt = admissionErrorReceipt(row.rejection);
     row.failure = "original access refusal";
-    row.failureCode = -32020;
-    row.failureData = { code: row.rejection, retryable: false };
+    row.failureCode = receipt.code;
+    row.failureData = {
+      code: row.rejection,
+      retryable: receipt.data.retryable,
+    };
     row.requestParams = {
       ...(row.inputSessionID ? { sessionId: row.inputSessionID } : {}),
       cwd: "/workspace",
