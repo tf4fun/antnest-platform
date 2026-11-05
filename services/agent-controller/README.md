@@ -106,6 +106,10 @@ The public health exceptions remain available. See the
 
 The Identity consumer is reviewed against revision 17 of the
 [Identity contract](../../contracts/identity/identity-contract.json).
+Error envelopes follow the [common error contract](../../contracts/common/error.schema.json)
+with the [Controller slice](../../contracts/common/slices/agent-controller.json); legacy
+`agent_not_ready`, `internal_error` and `lifecycle_timeout` wire retryable values are
+preserved rather than inferred from status.
 `resolve_principal`, `resolve_owner_authorization` and
 `list_principal_revocations` retain their request, response and authorization
 semantics from the external-identity linking revision. Revision 17 adds a

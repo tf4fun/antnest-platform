@@ -20,6 +20,7 @@ import (
 
 	"github.com/tf4fun/antnest-platform/modules/service-authentication/serviceauth"
 	"github.com/tf4fun/antnest-platform/services/runtime-controller/internal/acpincarnation"
+	"github.com/tf4fun/antnest-platform/services/runtime-controller/internal/apierror"
 	"github.com/tf4fun/antnest-platform/services/runtime-controller/internal/observation"
 	"github.com/tf4fun/antnest-platform/services/runtime-controller/internal/telemetry"
 )
@@ -162,8 +163,21 @@ func incarnationRPCError(t *testing.T, response *httptest.ResponseRecorder, stat
 	}
 	value := incarnationRPCObject(t, response)
 	message, ok := value["message"].(string)
-	if len(value) != 3 || value["code"] != code || value["retryable"] != retryable || !ok || len([]rune(message)) < 1 || len([]rune(message)) > 512 {
+	if len(value) != 5 || value["code"] != code || value["retryable"] != retryable || !ok || len([]rune(message)) < 1 || len([]rune(message)) > 512 {
 		t.Fatal("incarnation RPC lost its strict fixed error shape")
+	}
+	requestID, ok := value["request_id"].(string)
+	if !ok || !commonErrorSafeID.MatchString(requestID) {
+		t.Fatalf("incarnation RPC request_id is unsafe: %v", value["request_id"])
+	}
+	if got := apierror.New(code, message, requestID); value["category"] != string(got.Category) {
+		t.Fatalf("incarnation RPC category=%v, want %v", value["category"], got.Category)
+	}
+	if response.Header().Get("X-Request-ID") != requestID {
+		t.Fatalf("incarnation RPC X-Request-ID does not match body: %v", response.Header())
+	}
+	if response.Header().Get("Cache-Control") != "no-store" {
+		t.Fatalf("incarnation RPC is missing no-store: %v", response.Header())
 	}
 	if response.Body.Len() > 8192 {
 		t.Fatal("incarnation RPC error exceeded its response byte limit")
@@ -537,13 +551,22 @@ func TestAcpIncarnationRPCUsesFixedFailureMappingWithoutPrivateCauses(t *testing
 				handler, _, _ := incarnationRPCHandler(t, port)
 				response := incarnationRPCServe(t, handler, incarnationRPCRequest(http.MethodPost, incarnationRPCRegisterPath, incarnationRPCJSON(t, incarnationRPCInput()), "agent-acp-service"))
 				incarnationRPCError(t, response, test.status, test.code, test.retryable)
-				if port.registerCalls != 1 || strings.Contains(response.Body.String(), marker) {
+				body := response.Body.String()
+				if port.registerCalls != 1 || strings.Contains(body, marker) {
 					t.Fatal("typed failure lost its port call or reflected its private cause")
 				}
-				if original != "" && response.Body.String() != original {
-					t.Fatal("public failure changed with its private cause")
+				if original != "" {
+					var first, second map[string]any
+					if json.Unmarshal([]byte(original), &first) != nil || json.Unmarshal([]byte(body), &second) != nil {
+						t.Fatal("incarnation RPC error body is not JSON")
+					}
+					delete(first, "request_id")
+					delete(second, "request_id")
+					if !reflect.DeepEqual(first, second) {
+						t.Fatal("public failure changed with its private cause")
+					}
 				}
-				original = response.Body.String()
+				original = body
 			}
 		})
 	}

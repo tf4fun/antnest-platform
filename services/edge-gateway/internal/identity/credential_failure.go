@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"regexp"
 	"strconv"
 	"strings"
 
@@ -51,29 +52,65 @@ func validPasswordSuccess(payload []byte) bool {
 	// A 2xx response cannot both grant credentials and report a failure. Check
 	// reserved failure fields before the success decoder can ignore them.
 	for name := range fields {
-		if strings.EqualFold(name, "code") || strings.EqualFold(name, "message") || strings.EqualFold(name, "retryable") {
+		if strings.EqualFold(name, "code") || strings.EqualFold(name, "message") || strings.EqualFold(name, "retryable") || strings.EqualFold(name, "category") || strings.EqualFold(name, "request_id") {
 			return false
 		}
 	}
 	return true
 }
 
+var passwordFailureRequestID = regexp.MustCompile(`^[A-Za-z0-9._:-]{1,128}$`)
+
+var passwordFailureCategories = map[string]string{
+	"credential_busy":          "unavailable",
+	"credential_rate_limited":  "rate_limited",
+	"invalid_current_password": "invalid_request",
+	"invalid_argument":         "invalid_request",
+	"bad_request":              "invalid_request",
+	"unauthenticated":          "unauthenticated",
+	"caller_context_invalid":   "unauthenticated",
+	"caller_context_required":  "unauthenticated",
+	"inactive_principal":       "forbidden",
+	"forbidden":                "forbidden",
+}
+
 func decodePasswordFailure(status int, header http.Header, payload []byte) error {
 	var wire struct {
-		Code      string `json:"code"`
-		Message   string `json:"message"`
-		Retryable *bool  `json:"retryable"`
+		Code      string          `json:"code"`
+		Message   string          `json:"message"`
+		Retryable *bool           `json:"retryable"`
+		Category  json.RawMessage `json:"category"`
+		RequestID json.RawMessage `json:"request_id"`
+		Details   json.RawMessage `json:"details"`
 	}
 	if serviceauth.DecodeObject(payload, &wire) != nil {
 		return invalidPasswordFailure()
 	}
+	var category string
+	hasMetadata := len(wire.Category) != 0 || len(wire.RequestID) != 0 || len(wire.Details) != 0
+	if hasMetadata {
+		var requestID string
+		if len(wire.Category) == 0 || len(wire.RequestID) == 0 ||
+			json.Unmarshal(wire.Category, &category) != nil ||
+			json.Unmarshal(wire.RequestID, &requestID) != nil ||
+			category == "" || !passwordFailureRequestID.MatchString(requestID) {
+			return invalidPasswordFailure()
+		}
+		if len(wire.Details) != 0 {
+			var details map[string]any
+			if json.Unmarshal(wire.Details, &details) != nil || details == nil {
+				return invalidPasswordFailure()
+			}
+		}
+	}
 	var expectedStatus int
 	var expectedMessage string
+	var expectedCategory string
 	switch wire.Code {
 	case "credential_busy":
-		expectedStatus, expectedMessage = http.StatusServiceUnavailable, "Password verification is busy"
+		expectedStatus, expectedMessage, expectedCategory = http.StatusServiceUnavailable, "Password verification is busy", "unavailable"
 	case "credential_rate_limited":
-		expectedStatus, expectedMessage = http.StatusTooManyRequests, "Too many password attempts"
+		expectedStatus, expectedMessage, expectedCategory = http.StatusTooManyRequests, "Too many password attempts", "rate_limited"
 	default:
 		// Invalid admission envelopes must never fall back to an old auth error.
 		if status == http.StatusTooManyRequests || status == http.StatusServiceUnavailable {
@@ -81,12 +118,18 @@ func decodePasswordFailure(status int, header http.Header, payload []byte) error
 		}
 		switch wire.Code {
 		case "invalid_current_password", "invalid_argument", "bad_request", "unauthenticated", "inactive_principal", "forbidden", "caller_context_invalid", "caller_context_required":
+			if hasMetadata && category != passwordFailureCategories[wire.Code] {
+				return invalidPasswordFailure()
+			}
 			return &RemoteError{StatusCode: status, Code: wire.Code}
 		default:
 			return invalidPasswordFailure()
 		}
 	}
 	if status != expectedStatus || wire.Message != expectedMessage || wire.Retryable == nil || !*wire.Retryable {
+		return invalidPasswordFailure()
+	}
+	if hasMetadata && category != expectedCategory {
 		return invalidPasswordFailure()
 	}
 	var values []string

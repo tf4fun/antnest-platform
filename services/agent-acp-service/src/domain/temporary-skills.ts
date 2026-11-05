@@ -1,3 +1,4 @@
+import { ERROR_METADATA } from "../errors.gen.js";
 import { z } from "zod";
 import type { ToolEffectState } from "./types.js";
 const id = z
@@ -29,7 +30,7 @@ export const temporaryReleasedSchema = z.strictObject({
   action: z.literal("temporary_release"),
   outcome: z.literal("released"),
 });
-export const temporaryErrorSchema = z.strictObject({
+const temporaryLegacyError = z.strictObject({
   error: z.strictObject({
     code: z.enum([
       "unknown_action",
@@ -53,6 +54,81 @@ export const temporaryErrorSchema = z.strictObject({
     runtime_call_stopped: z.boolean(),
   }),
 });
+const temporaryCommonEnvelope = z.strictObject({
+  code: temporaryLegacyError.shape.error.shape.code,
+  category: z.enum([
+    "invalid_request",
+    "unauthenticated",
+    "forbidden",
+    "not_found",
+    "conflict",
+    "precondition_failed",
+    "rate_limited",
+    "unavailable",
+    "internal",
+  ]),
+  message: z.literal("Temporary Skill request did not complete"),
+  retryable: z.boolean(),
+  request_id: z.string().regex(/^[A-Za-z0-9._:-]{1,128}$/),
+});
+const temporaryCommonError = z
+  .strictObject({
+    code: temporaryCommonEnvelope.shape.code,
+    category: temporaryCommonEnvelope.shape.category,
+    message: temporaryCommonEnvelope.shape.message,
+    retryable: temporaryCommonEnvelope.shape.retryable,
+    request_id: temporaryCommonEnvelope.shape.request_id,
+    details: z
+      .strictObject({
+        effect_state: z.enum(["none", "settled", "unknown"]),
+        runtime_call_stopped: z.boolean(),
+      })
+      .optional(),
+    error: temporaryCommonEnvelope.extend({
+      effect_state: z.enum(["none", "settled", "unknown"]),
+      runtime_call_stopped: z.boolean(),
+    }),
+  })
+  .superRefine((value, issue) => {
+    const meta = Object.hasOwn(ERROR_METADATA, value.code)
+      ? ERROR_METADATA[value.code as keyof typeof ERROR_METADATA]
+      : undefined;
+    if (meta === undefined || meta.category !== value.category) {
+      issue.addIssue({
+        code: "custom",
+        message: "category does not match the registered code",
+        path: ["category"],
+      });
+      return;
+    }
+    const nested = value.error;
+    if (
+      nested.code !== value.code ||
+      nested.retryable !== value.retryable ||
+      nested.request_id !== value.request_id ||
+      nested.category !== value.category
+    ) {
+      issue.addIssue({
+        code: "custom",
+        message: "nested alias must equal the top envelope",
+        path: ["error"],
+      });
+      return;
+    }
+    if (
+      value.details !== undefined &&
+      (value.details.effect_state !== nested.effect_state ||
+        value.details.runtime_call_stopped !== nested.runtime_call_stopped)
+    ) {
+      issue.addIssue({
+        code: "custom",
+        message: "details must duplicate the nested effect fields",
+        path: ["details"],
+      });
+    }
+  });
+export const temporaryErrorSchema = z.union([temporaryLegacyError, temporaryCommonError]);
+
 export class TemporarySkillFailure extends Error {
   public readonly code: "temporary_unavailable" | "temporary_limit_exceeded" | "content_changed";
   public constructor(

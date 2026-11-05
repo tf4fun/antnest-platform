@@ -203,7 +203,20 @@ impl HttpResponse {
         let value: serde_json::Value = serde_json::from_slice(&self.body).unwrap();
         assert_eq!(value["code"], code);
         assert_eq!(value["retryable"], false);
-        assert_eq!(value.as_object().unwrap().len(), 3);
+        let object = value.as_object().unwrap();
+        assert_eq!(object.len(), 5);
+        for key in ["code", "category", "message", "retryable", "request_id"] {
+            assert!(object.contains_key(key), "missing error field {key}");
+        }
+        assert!(object["category"].as_str().is_some_and(|v| !v.is_empty()));
+        assert!(object["message"].as_str().is_some_and(|v| !v.is_empty()));
+        let request_id = object["request_id"].as_str().unwrap();
+        assert!(!request_id.is_empty() && request_id.len() <= 128);
+        assert!(
+            request_id
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | ':' | '-'))
+        );
         assert!(!String::from_utf8_lossy(&self.body).contains(support::workload_token()));
     }
 }

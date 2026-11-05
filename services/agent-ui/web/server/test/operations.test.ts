@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { ERROR_CODES, ERROR_METADATA } from "../src/errors.gen.ts";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import { RequestError } from "@agentclientprotocol/sdk/unstable";
@@ -436,11 +437,14 @@ const promptErrorCatalog = JSON.parse(readFileSync(
 const privatePromptCause = "PRIVATE-PROMPT-OPERATION-CAUSE";
 type PromptPublicError = {
   code: string;
+  category: string;
   message: string;
   requestId: string;
+  request_id: string;
   operationId: string;
   retryable: false;
   recovery: "query_operation";
+  details: { recovery: string; operationId: string };
 };
 
 // Explicit-only recovery uses a refusal outside the two automatic admission
@@ -461,6 +465,8 @@ function promptPublicError(value: unknown): PromptPublicError {
   assert.equal(typeof error.requestId, "string");
   assert(error.requestId.length > 0 && error.requestId.length <= 200);
   assert.notEqual(error.requestId, intent.intentId, "Bridge error correlation reused the intent identity");
+  assert.match(error.request_id, /^[A-Za-z0-9._:-]{1,128}$/, "common request_id must be safe");
+  assert.equal(error.request_id, error.requestId, "common request_id must equal the wire requestId");
   return error;
 }
 
@@ -514,10 +520,18 @@ for (const { name, failure, code, message } of promptFailureCases)
     const expected = {
       operationId: intent.intentId, sessionId: intent.sessionId,
       acceptance: "unknown", phase: "uncertain",
-      error: {
-        code, message, requestId: error.requestId, operationId: intent.intentId,
-        retryable: false, recovery: "query_operation",
-      },
+      error: Object.hasOwn(ERROR_METADATA, code)
+        ? {
+            code, category: ERROR_METADATA[code].category, message, requestId: error.requestId,
+            request_id: error.requestId, operationId: intent.intentId,
+            retryable: false, recovery: "query_operation",
+            details: { recovery: "query_operation", operationId: intent.intentId },
+          }
+        : {
+            code: ERROR_CODES.INTERNAL, category: "internal",
+            message: "Internal service error", requestId: error.requestId,
+            request_id: error.requestId, retryable: false, recovery: "none",
+          },
     };
     assert.deepEqual(snapshot, expected);
     for (let read = 0; read < 3; read++) {

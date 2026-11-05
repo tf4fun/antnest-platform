@@ -16,6 +16,8 @@ import (
 
 	"github.com/tf4fun/antnest-platform/modules/service-authentication/callercontext"
 	"github.com/tf4fun/antnest-platform/modules/service-authentication/serviceauth"
+	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/apierror"
+	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/ports"
 )
 
 type authenticationFailureEvidence struct {
@@ -86,6 +88,20 @@ func authenticationErrorEvidence(t *testing.T) map[string]authenticationFailureE
 		}
 		results[code] = authenticationFailureEvidence{status: w.Code, retryable: payload.Retryable, body: w.Body.Bytes()}
 	}
+
+	internal := httptest.NewRecorder()
+	writeError(internal, http.StatusInternalServerError, "ghost_code", "private-canary", false)
+	results["internal"] = authenticationFailureEvidence{status: http.StatusInternalServerError, retryable: false, body: internal.Body.Bytes()}
+	networkStatus, networkFailure := publicNetworkPolicyError(&ports.DependencyError{Service: "runtime-egress", Code: "policy_revision_conflict"})
+	network := httptest.NewRecorder()
+	writeJSON(network, networkStatus, networkFailure)
+	results["policy_revision_conflict"] = authenticationFailureEvidence{status: networkStatus, retryable: false, body: network.Body.Bytes()}
+	notFound := httptest.NewRecorder()
+	writeError(notFound, http.StatusNotFound, apierror.NotFound, "referenced resource was not found", false)
+	results["not_found"] = authenticationFailureEvidence{status: http.StatusNotFound, retryable: false, body: notFound.Body.Bytes()}
+	preparation := httptest.NewRecorder()
+	writeError(preparation, http.StatusNotFound, apierror.PreparationNotFound, "Skill preparation was not found", false)
+	results["preparation_not_found"] = authenticationFailureEvidence{status: http.StatusNotFound, retryable: false, body: preparation.Body.Bytes()}
 	return results
 }
 

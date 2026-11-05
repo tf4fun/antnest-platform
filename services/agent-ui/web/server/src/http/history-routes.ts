@@ -1,4 +1,5 @@
 import type { BridgeScope } from "../bridge/registry.ts";
+import { ERROR_CODES } from "../errors.gen.ts";
 import { ReplayCapacityError } from "../bridge/replay-load-gate.ts";
 import { OperationReconciliationTimeoutError } from "../bridge/operations.ts";
 import { ViewCursorError, type ViewPager } from "../bridge/view-pager.ts";
@@ -35,12 +36,12 @@ export function createHistoryHandler(dependencies: {
     if (scope === null)
       return error(
         401,
-        "unauthenticated",
+        ERROR_CODES.UNAUTHENTICATED,
         "Trusted identity is missing",
         "login",
       );
     if (scope.agentId !== agentId)
-      return error(403, "access_denied", "Agent access denied", "none");
+      return error(403, ERROR_CODES.ACCESS_DENIED, "Agent access denied", "none");
     let authorized: AuthorizedHistory;
     try {
       authorized = await dependencies.authorize(scope, sessionId);
@@ -50,17 +51,17 @@ export function createHistoryHandler(dependencies: {
       const missing = missingSessionResponse(cause);
       if (missing !== null) return missing;
       if (cause instanceof OperationReconciliationTimeoutError)
-        return error(504, "workspace_deadline_exceeded", "Operation reconciliation timed out", "retry_read");
+        return error(504, ERROR_CODES.WORKSPACE_DEADLINE_EXCEEDED, "Operation reconciliation timed out", "retry_read");
       if (cause instanceof ReplayCapacityError)
         return error(
           429,
-          "replay_capacity_exceeded",
+          ERROR_CODES.REPLAY_CAPACITY_EXCEEDED,
           "Concurrent replay queue is full",
           "retry_read",
         );
       return error(
         503,
-        "upstream_unavailable",
+        ERROR_CODES.UPSTREAM_UNAVAILABLE,
         "Session history is unavailable",
         "retry_read",
       );
@@ -73,7 +74,7 @@ export function createHistoryHandler(dependencies: {
       )
         return error(
           422,
-          "invalid_cursor",
+          ERROR_CODES.INVALID_CURSOR,
           "One content cursor is required",
           "refresh",
         );
@@ -94,10 +95,10 @@ export function createHistoryHandler(dependencies: {
       );
     } catch (cause) {
       if (cause instanceof ViewCursorError)
-        return error(409, "stale_cursor", "History cursor is stale", "refresh");
+        return error(409, ERROR_CODES.STALE_CURSOR, "History cursor is stale", "refresh");
       return error(
         503,
-        "history_unavailable",
+        ERROR_CODES.HISTORY_UNAVAILABLE,
         "Session history is unavailable",
         "retry_read",
       );

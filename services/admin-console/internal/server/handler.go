@@ -16,6 +16,7 @@ import (
 	"net/http"
 	"net/url"
 	"path"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -23,6 +24,7 @@ import (
 
 	"github.com/tf4fun/antnest-platform/modules/service-authentication/callercontext"
 	"github.com/tf4fun/antnest-platform/modules/service-authentication/serviceauth"
+	"github.com/tf4fun/antnest-platform/services/admin-console/internal/apierror"
 	"github.com/tf4fun/antnest-platform/services/admin-console/internal/principal"
 	"github.com/tf4fun/antnest-platform/services/admin-console/internal/telemetry"
 	"github.com/tf4fun/antnest-platform/services/admin-console/internal/upstream"
@@ -160,7 +162,7 @@ func (h *handler) routes() {
 	h.mux.HandleFunc("GET /api/admin/agents/{agent_id}/events", h.withPrincipal(h.listAgentEvents))
 	h.mux.HandleFunc("GET /api/admin/agents/{agent_id}/events/watch", h.withPrincipal(h.watchAgentEvents))
 	h.mux.HandleFunc("/api/{path...}", func(response http.ResponseWriter, _ *http.Request) {
-		writeError(response, http.StatusNotFound, "not_found", "Resource was not found")
+		writeError(response, http.StatusNotFound, apierror.NotFound, "Resource was not found")
 	})
 	h.mux.HandleFunc("/{path...}", h.application)
 }
@@ -197,11 +199,11 @@ func (h *handler) withPrincipal(next adminHandler) http.HandlerFunc {
 	return func(response http.ResponseWriter, request *http.Request) {
 		values := request.Header.Values(callercontext.Header)
 		if len(values) == 0 {
-			writeError(response, http.StatusUnauthorized, "caller_context_required", "Caller context is required")
+			writeError(response, http.StatusUnauthorized, apierror.CallerContextRequired, "Caller context is required")
 			return
 		}
 		if len(values) != 1 {
-			writeError(response, http.StatusUnauthorized, "caller_context_invalid", "Caller context verification failed")
+			writeError(response, http.StatusUnauthorized, apierror.CallerContextInvalid, "Caller context verification failed")
 			return
 		}
 		var agent *string
@@ -211,15 +213,15 @@ func (h *handler) withPrincipal(next adminHandler) http.HandlerFunc {
 		claims, err := h.callerContext.Verify(request.Context(), values[0], callercontext.Expected{Consumer: "admin-console", Agent: agent, Tolerance: 30})
 		if err != nil {
 			if errors.Is(err, callercontext.ErrDependency) {
-				writeError(response, http.StatusServiceUnavailable, "identity_dependency_unavailable", "Identity authorization dependency is unavailable")
+				writeError(response, http.StatusServiceUnavailable, apierror.IdentityDependencyUnavailable, "Identity authorization dependency is unavailable")
 			} else {
-				writeError(response, http.StatusUnauthorized, "caller_context_invalid", "Caller context verification failed")
+				writeError(response, http.StatusUnauthorized, apierror.CallerContextInvalid, "Caller context verification failed")
 			}
 			return
 		}
 		actor := principal.Principal{UserID: claims.Subject, OrganizationID: claims.Organization, MembershipID: claims.Membership, SystemRole: claims.SystemRole, OrganizationRole: claims.OrganizationRole}
 		if !actor.Administrator() {
-			writeError(response, http.StatusForbidden, "forbidden", "Administrator access is required")
+			writeError(response, http.StatusForbidden, apierror.Forbidden, "Administrator access is required")
 			return
 		}
 		ctx := callercontext.WithToken(principal.WithContext(request.Context(), actor), values[0])
@@ -278,7 +280,7 @@ func (h *handler) createLocalUser(response http.ResponseWriter, request *http.Re
 		return
 	}
 	if !required(input.Email, input.DisplayName, input.Password) || !organizationRole(input.Role) {
-		writeError(response, http.StatusBadRequest, "invalid_request", "Required local user field is invalid")
+		writeError(response, http.StatusBadRequest, apierror.InvalidRequest, "Required local user field is invalid")
 		return
 	}
 	requestID, ok := commandRequestID(response, request, actor.OrganizationID, "directory")
@@ -306,7 +308,7 @@ func (h *handler) updateMembership(response http.ResponseWriter, request *http.R
 		return
 	}
 	if !required(input.Email, input.DisplayName) || !organizationRole(input.Role) {
-		writeError(response, http.StatusBadRequest, "invalid_request", "Required membership field is invalid")
+		writeError(response, http.StatusBadRequest, apierror.InvalidRequest, "Required membership field is invalid")
 		return
 	}
 	requestID, ok := commandRequestID(response, request, actor.OrganizationID, "directory")
@@ -330,7 +332,7 @@ type setUserActiveInput struct {
 
 func (h *handler) setUserActive(response http.ResponseWriter, request *http.Request, actor principal.Principal) {
 	if !actor.SystemAdministrator() {
-		writeError(response, http.StatusForbidden, "forbidden", "System administrator access is required")
+		writeError(response, http.StatusForbidden, apierror.Forbidden, "System administrator access is required")
 		return
 	}
 	var input setUserActiveInput
@@ -379,12 +381,12 @@ func (h *handler) upsertOIDCProvider(response http.ResponseWriter, request *http
 		return
 	}
 	if !required(input.Name, input.Issuer, input.ClientID) || input.Enabled == nil {
-		writeError(response, http.StatusBadRequest, "invalid_request", "Required OIDC Provider field is invalid")
+		writeError(response, http.StatusBadRequest, apierror.InvalidRequest, "Required OIDC Provider field is invalid")
 		return
 	}
 	policy, err := input.policyFields()
 	if err != nil {
-		writeError(response, http.StatusBadRequest, "invalid_request", "OIDC linking policy is invalid")
+		writeError(response, http.StatusBadRequest, apierror.InvalidRequest, "OIDC linking policy is invalid")
 		return
 	}
 	requestID, ok := commandRequestID(response, request, actor.OrganizationID, "provisioning")
@@ -421,7 +423,7 @@ func (h *handler) setOIDCProviderEnabled(
 		return
 	}
 	if input.Enabled == nil {
-		writeError(response, http.StatusBadRequest, "invalid_request", "enabled is required")
+		writeError(response, http.StatusBadRequest, apierror.InvalidRequest, "enabled is required")
 		return
 	}
 	requestID, ok := commandRequestID(response, request, actor.OrganizationID, "provisioning")
@@ -458,17 +460,17 @@ func (h *handler) issueSCIMToken(response http.ResponseWriter, request *http.Req
 		return
 	}
 	if !required(input.Name) || !validSCIMScopes(input.Scopes) {
-		writeError(response, http.StatusBadRequest, "invalid_request", "Required SCIM token field is invalid")
+		writeError(response, http.StatusBadRequest, apierror.InvalidRequest, "Required SCIM token field is invalid")
 		return
 	}
 	var providerID string
 	if len(input.OIDCProviderID) != 0 && (json.Unmarshal(input.OIDCProviderID, &providerID) != nil || !browserSessionPublicID.MatchString(providerID)) {
-		writeError(response, http.StatusBadRequest, "invalid_request", "OIDC Provider reference is invalid")
+		writeError(response, http.StatusBadRequest, apierror.InvalidRequest, "OIDC Provider reference is invalid")
 		return
 	}
 	var expiresInDays *int
 	if len(input.ExpiresInDays) != 0 && (json.Unmarshal(input.ExpiresInDays, &expiresInDays) != nil || expiresInDays == nil || *expiresInDays < 1 || *expiresInDays > 365) {
-		writeError(response, http.StatusBadRequest, "invalid_request", "SCIM token lifetime must be an integer from 1 to 365 days")
+		writeError(response, http.StatusBadRequest, apierror.InvalidRequest, "SCIM token lifetime must be an integer from 1 to 365 days")
 		return
 	}
 	requestID, ok := commandRequestID(response, request, actor.OrganizationID, "provisioning")
@@ -501,7 +503,7 @@ func requireSystemAdministrator(response http.ResponseWriter, actor principal.Pr
 	if actor.SystemAdministrator() {
 		return true
 	}
-	writeError(response, http.StatusForbidden, "forbidden", "System administrator access is required")
+	writeError(response, http.StatusForbidden, apierror.Forbidden, "System administrator access is required")
 	return false
 }
 
@@ -538,11 +540,11 @@ func (h *handler) createModelProfile(response http.ResponseWriter, request *http
 		return
 	}
 	if !required(input.DisplayName, input.ProviderConnectionID) || len(input.Model) == 0 {
-		writeError(response, http.StatusBadRequest, "invalid_request", "Required Model Profile field is empty")
+		writeError(response, http.StatusBadRequest, apierror.InvalidRequest, "Required Model Profile field is empty")
 		return
 	}
 	if err := validateModelContextMetadata(input.Model); err != nil {
-		writeError(response, http.StatusBadRequest, "invalid_request", "Invalid Model context metadata")
+		writeError(response, http.StatusBadRequest, apierror.InvalidRequest, "Invalid Model context metadata")
 		return
 	}
 	requestID, ok := commandRequestID(response, request, actor.OrganizationID, "catalog")
@@ -568,7 +570,7 @@ func (h *handler) getModelProfile(response http.ResponseWriter, request *http.Re
 func (h *handler) getModelProfileUsage(response http.ResponseWriter, request *http.Request, actor principal.Principal) {
 	response.Header().Set("Cache-Control", "no-store")
 	if request.URL.RawQuery != "" || request.ContentLength != 0 || len(request.TransferEncoding) != 0 {
-		writeError(response, http.StatusBadRequest, "invalid_request", "Request is invalid")
+		writeError(response, http.StatusBadRequest, apierror.InvalidRequest, "Request is invalid")
 		return
 	}
 	h.forwardProjected(response, request, upstream.AgentController, http.MethodGet,
@@ -588,11 +590,11 @@ func (h *handler) reviseModelProfile(response http.ResponseWriter, request *http
 		return
 	}
 	if !required(input.DisplayName) || len(input.Model) == 0 || input.ExpectedVersion < 1 {
-		writeError(response, http.StatusBadRequest, "invalid_request", "Required Model Profile field is empty")
+		writeError(response, http.StatusBadRequest, apierror.InvalidRequest, "Required Model Profile field is empty")
 		return
 	}
 	if err := validateModelContextMetadata(input.Model); err != nil {
-		writeError(response, http.StatusBadRequest, "invalid_request", "Invalid Model context metadata")
+		writeError(response, http.StatusBadRequest, apierror.InvalidRequest, "Invalid Model context metadata")
 		return
 	}
 	requestID, ok := commandRequestID(response, request, actor.OrganizationID, "catalog")
@@ -707,11 +709,11 @@ func (h *handler) createTemplate(response http.ResponseWriter, request *http.Req
 		return
 	}
 	if !required(input.Name, input.ModelProfileID) {
-		writeError(response, http.StatusBadRequest, "invalid_request", "Required Template field is empty")
+		writeError(response, http.StatusBadRequest, apierror.InvalidRequest, "Required Template field is empty")
 		return
 	}
 	if !validTemplateSkillReferences(input.SkillRefs) {
-		writeError(response, http.StatusBadRequest, "invalid_request", "Template Skill references are invalid")
+		writeError(response, http.StatusBadRequest, apierror.InvalidRequest, "Template Skill references are invalid")
 		return
 	}
 	if input.MaxModelRequests == 0 {
@@ -721,7 +723,7 @@ func (h *handler) createTemplate(response http.ResponseWriter, request *http.Req
 		input.Runtime.ImageRef = h.defaultRuntimeImageRef
 	}
 	if input.Runtime.ImageRef == "" {
-		writeError(response, http.StatusBadRequest, "runtime_image_required", "Select a Runtime image tag")
+		writeError(response, http.StatusBadRequest, apierror.RuntimeImageRequired, "Select a Runtime image tag")
 		return
 	}
 	applyResourceDefaults(&input.Runtime.Resources)
@@ -789,18 +791,18 @@ func (h *handler) reviseTemplate(response http.ResponseWriter, request *http.Req
 		return
 	}
 	if !required(input.Name, input.ModelProfileID) || input.MaxModelRequests < 1 {
-		writeError(response, http.StatusBadRequest, "invalid_request", "Required Template field is invalid")
+		writeError(response, http.StatusBadRequest, apierror.InvalidRequest, "Required Template field is invalid")
 		return
 	}
 	if !validTemplateSkillReferences(input.SkillRefs) {
-		writeError(response, http.StatusBadRequest, "invalid_request", "Template Skill references are invalid")
+		writeError(response, http.StatusBadRequest, apierror.InvalidRequest, "Template Skill references are invalid")
 		return
 	}
 	if input.Runtime.ImageRef == "" {
 		input.Runtime.ImageRef = h.defaultRuntimeImageRef
 	}
 	if input.Runtime.ImageRef == "" {
-		writeError(response, http.StatusBadRequest, "runtime_image_required", "Select a Runtime image tag")
+		writeError(response, http.StatusBadRequest, apierror.RuntimeImageRequired, "Select a Runtime image tag")
 		return
 	}
 	applyResourceDefaults(&input.Runtime.Resources)
@@ -844,7 +846,7 @@ func (h *handler) createAgent(response http.ResponseWriter, request *http.Reques
 		return
 	}
 	if !required(input.OwnerUserID, input.Name, input.TemplateID) || input.TemplateRevision < 1 {
-		writeError(response, http.StatusBadRequest, "invalid_request", "Required Agent field is invalid")
+		writeError(response, http.StatusBadRequest, apierror.InvalidRequest, "Required Agent field is invalid")
 		return
 	}
 	requestID, ok := lifecycleRequestID(response, request, actor.OrganizationID)
@@ -884,7 +886,7 @@ func (h *handler) lifecycle(action string) adminHandler {
 				return
 			}
 			if !required(input.TemplateID) || input.TemplateRevision < 1 {
-				writeError(response, http.StatusBadRequest, "invalid_request", "Template revision is required")
+				writeError(response, http.StatusBadRequest, apierror.InvalidRequest, "Template revision is required")
 				return
 			}
 			payload["template_id"] = input.TemplateID
@@ -895,7 +897,7 @@ func (h *handler) lifecycle(action string) adminHandler {
 					return
 				}
 				if !runtimeRecoveryIdentifier.MatchString(input.TemplateID) {
-					writeError(response, http.StatusBadRequest, "invalid_request", "Template identifier is invalid")
+					writeError(response, http.StatusBadRequest, apierror.InvalidRequest, "Template identifier is invalid")
 					return
 				}
 				payload["recovery"] = recovery
@@ -1119,7 +1121,7 @@ func (h *handler) forwardProjectedJSON(
 ) {
 	body, err := json.Marshal(payload)
 	if err != nil {
-		writeError(response, http.StatusInternalServerError, "encoding_failed", "Request could not be encoded")
+		writeError(response, http.StatusInternalServerError, apierror.EncodingFailed, "Request could not be encoded")
 		return
 	}
 	h.forwardProjected(response, request, target, method, path, query, body, projector)
@@ -1169,7 +1171,7 @@ func (h *handler) writeProjected(
 	if successful(result.status) {
 		projected, err := projector(result.body)
 		if err != nil {
-			writeFailure(response, http.StatusBadGateway, "invalid_upstream_response", "Platform response is invalid", err)
+			writeFailure(response, http.StatusBadGateway, apierror.InvalidUpstreamResponse, "Platform response is invalid", err)
 			return
 		}
 		result.body = projected
@@ -1197,7 +1199,7 @@ func (h *handler) read(
 		if errors.As(err, &failure) {
 			writeFailure(response, failure.status, failure.code, failure.message, err)
 		} else {
-			writeFailure(response, http.StatusServiceUnavailable, "dependency_unavailable", "A platform service is unavailable", err)
+			writeFailure(response, http.StatusServiceUnavailable, apierror.DependencyUnavailable, "A platform service is unavailable", err)
 		}
 		return bufferedResponse{}, false
 	}
@@ -1261,7 +1263,7 @@ func (h *handler) streamProjected(
 ) {
 	flusher, ok := response.(http.Flusher)
 	if !ok {
-		writeError(response, http.StatusInternalServerError, "streaming_unavailable", "Streaming is unavailable")
+		writeError(response, http.StatusInternalServerError, apierror.StreamingUnavailable, "Streaming is unavailable")
 		return
 	}
 	ctx, cancel := context.WithCancel(request.Context())
@@ -1269,7 +1271,7 @@ func (h *handler) streamProjected(
 	stop := context.AfterFunc(h.streamContext, cancel)
 	defer stop()
 	if h.streamContext.Err() != nil {
-		writeError(response, http.StatusServiceUnavailable, "service_stopping", "Console is stopping")
+		writeError(response, http.StatusServiceUnavailable, apierror.ServiceStopping, "Console is stopping")
 		return
 	}
 	request = request.WithContext(ctx)
@@ -1277,18 +1279,18 @@ func (h *handler) streamProjected(
 	defer stopWrites()
 	upstreamResponse, err := h.backend.Do(request.Context(), target, method, path, query, body)
 	if err != nil {
-		writeFailure(response, http.StatusServiceUnavailable, "dependency_unavailable", "A platform service is unavailable", err)
+		writeFailure(response, http.StatusServiceUnavailable, apierror.DependencyUnavailable, "A platform service is unavailable", err)
 		return
 	}
 	if upstreamResponse == nil || upstreamResponse.Body == nil {
-		writeError(response, http.StatusBadGateway, "invalid_upstream_response", "Platform response is invalid")
+		writeError(response, http.StatusBadGateway, apierror.InvalidUpstreamResponse, "Platform response is invalid")
 		return
 	}
 	defer func() { _ = upstreamResponse.Body.Close() }()
 	if !successful(upstreamResponse.StatusCode) {
 		payload, readErr := io.ReadAll(io.LimitReader(upstreamResponse.Body, maximumResponseBytes+1))
 		if readErr != nil || len(payload) > maximumResponseBytes {
-			writeError(response, http.StatusBadGateway, "invalid_upstream_response", "Platform response is invalid")
+			writeError(response, http.StatusBadGateway, apierror.InvalidUpstreamResponse, "Platform response is invalid")
 			return
 		}
 		writeRaw(response, upstreamResponse.StatusCode, upstreamResponse.Header, payload)
@@ -1323,7 +1325,7 @@ func (h *handler) streamProjected(
 
 func (h *handler) application(response http.ResponseWriter, request *http.Request) {
 	if request.Method != http.MethodGet && request.Method != http.MethodHead {
-		writeError(response, http.StatusMethodNotAllowed, "method_not_allowed", "Method is not allowed")
+		writeError(response, http.StatusMethodNotAllowed, apierror.MethodNotAllowed, "Method is not allowed")
 		return
 	}
 	clean := strings.TrimPrefix(path.Clean("/"+request.URL.Path), "/")
@@ -1335,7 +1337,7 @@ func (h *handler) application(response http.ResponseWriter, request *http.Reques
 	}
 	index, err := fs.ReadFile(h.assets, "index.html")
 	if err != nil {
-		writeError(response, http.StatusServiceUnavailable, "application_unavailable", "Console application is unavailable")
+		writeError(response, http.StatusServiceUnavailable, apierror.ApplicationUnavailable, "Console application is unavailable")
 		return
 	}
 	response.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -1356,16 +1358,16 @@ func decodeJSON(response http.ResponseWriter, request *http.Request, target any)
 		}
 	}
 	if !valid {
-		writeError(response, http.StatusUnsupportedMediaType, "invalid_request", "Content-Type must be application/json")
+		writeError(response, http.StatusUnsupportedMediaType, apierror.InvalidRequest, "Content-Type must be application/json")
 		return false
 	}
 	raw, err := io.ReadAll(io.LimitReader(request.Body, maximumRequestBytes+1))
 	if err != nil || len(raw) > maximumRequestBytes {
-		writeError(response, http.StatusBadRequest, "invalid_request", "Request body is invalid")
+		writeError(response, http.StatusBadRequest, apierror.InvalidRequest, "Request body is invalid")
 		return false
 	}
 	if err := serviceauth.DecodeObject(raw, target); err != nil {
-		writeFailure(response, http.StatusBadRequest, "invalid_request", "Request body is invalid", err)
+		writeFailure(response, http.StatusBadRequest, apierror.InvalidRequest, "Request body is invalid", err)
 		return false
 	}
 	return true
@@ -1377,7 +1379,7 @@ func decodeEmptyObject(response http.ResponseWriter, request *http.Request) bool
 		return false
 	}
 	if len(payload) != 0 {
-		writeError(response, http.StatusBadRequest, "invalid_request", "Request body must be empty")
+		writeError(response, http.StatusBadRequest, apierror.InvalidRequest, "Request body must be empty")
 		return false
 	}
 	return true
@@ -1488,7 +1490,7 @@ func copyBoundedListValue(response http.ResponseWriter, output, input url.Values
 }
 
 func writeInvalidListQuery(response http.ResponseWriter) {
-	writeError(response, http.StatusBadRequest, "invalid_request", "List query is invalid")
+	writeError(response, http.StatusBadRequest, apierror.InvalidRequest, "List query is invalid")
 }
 
 func eventQueryValues(input url.Values) url.Values {
@@ -1538,9 +1540,113 @@ func organizationRole(value string) bool {
 }
 
 func writeRaw(response http.ResponseWriter, status int, header http.Header, payload []byte) {
+	if status >= http.StatusBadRequest {
+		projectUpstreamFailure(response, status, payload)
+		return
+	}
 	copyResponseHeaders(response.Header(), header)
 	response.WriteHeader(status)
 	_, _ = response.Write(payload)
+}
+
+type upstreamFailureWire struct {
+	Code                string               `json:"code"`
+	Message             string               `json:"message"`
+	Retryable           *bool                `json:"retryable"`
+	Category            json.RawMessage      `json:"category"`
+	RequestID           json.RawMessage      `json:"request_id"`
+	Details             json.RawMessage      `json:"details"`
+	References          json.RawMessage      `json:"references"`
+	ReferencesTruncated json.RawMessage      `json:"references_truncated"`
+	Error               *upstreamFailureWire `json:"error"`
+}
+
+var upstreamRequestID = regexp.MustCompile(`^[A-Za-z0-9._:-]{1,128}$`)
+
+func projectUpstreamFailure(response http.ResponseWriter, status int, payload []byte) {
+	invalid := func() {
+		writeError(response, http.StatusBadGateway, apierror.InvalidUpstreamResponse, "Upstream returned an invalid failure")
+	}
+	var wire upstreamFailureWire
+	if serviceauth.DecodeObject(payload, &wire) != nil || (wire.Error != nil && wire.Error.Error != nil) {
+		invalid()
+		return
+	}
+	selected := &wire
+	if wire.Error != nil {
+		if wire.Code != "" && (wire.Error.Code != wire.Code || wire.Error.Message != wire.Message) {
+			invalid()
+			return
+		}
+		if wire.Code == "" {
+			selected = wire.Error
+		}
+	}
+	envelope := apierror.New(selected.Code, selected.Message, response.Header().Get("X-Request-ID"))
+	if envelope.Code != selected.Code || selected.Message == "" {
+		invalid()
+		return
+	}
+	if len(selected.Category) != 0 || len(selected.RequestID) != 0 || len(selected.Details) != 0 {
+		var category, requestID string
+		if len(selected.Category) == 0 || len(selected.RequestID) == 0 ||
+			json.Unmarshal(selected.Category, &category) != nil ||
+			json.Unmarshal(selected.RequestID, &requestID) != nil ||
+			category != envelope.Category || !upstreamRequestID.MatchString(requestID) {
+			invalid()
+			return
+		}
+	}
+	var detailFields map[string]json.RawMessage
+	if len(selected.Details) != 0 {
+		if json.Unmarshal(selected.Details, &detailFields) != nil || detailFields == nil {
+			invalid()
+			return
+		}
+	}
+	rawReferences := selected.References
+	if len(rawReferences) == 0 {
+		rawReferences = detailFields["references"]
+	}
+	rawTruncated := selected.ReferencesTruncated
+	if len(rawTruncated) == 0 {
+		rawTruncated = detailFields["references_truncated"]
+	}
+	body := map[string]any{
+		"code":       envelope.Code,
+		"category":   envelope.Category,
+		"message":    envelope.Message,
+		"retryable":  envelope.Retryable,
+		"request_id": envelope.RequestID,
+	}
+	var details map[string]any
+	if len(rawReferences) != 0 {
+		var references []any
+		if json.Unmarshal(rawReferences, &references) != nil || references == nil {
+			invalid()
+			return
+		}
+		body["references"] = references
+		details = map[string]any{"references": references}
+	}
+	if len(rawTruncated) != 0 {
+		var truncated *bool
+		if json.Unmarshal(rawTruncated, &truncated) != nil || truncated == nil {
+			invalid()
+			return
+		}
+		body["references_truncated"] = *truncated
+		if details == nil {
+			details = map[string]any{}
+		}
+		details["references_truncated"] = *truncated
+	}
+	if details != nil {
+		body["details"] = details
+	}
+	response.Header().Set("X-Request-ID", envelope.RequestID)
+	response.Header().Set("Cache-Control", "no-store")
+	writeJSON(response, status, body)
 }
 
 func copyResponseHeaders(target, source http.Header) {
@@ -1567,7 +1673,7 @@ func commandRequestID(
 	key := strings.TrimSpace(request.Header.Get("Idempotency-Key"))
 	if len(key) < minimumIdempotencyKeyBytes || len(key) > maximumIdempotencyKeyBytes ||
 		strings.IndexFunc(key, func(value rune) bool { return value < 0x21 || value > 0x7e }) >= 0 {
-		writeError(response, http.StatusBadRequest, "invalid_idempotency_key", "A valid Idempotency-Key is required")
+		writeError(response, http.StatusBadRequest, apierror.InvalidIdempotencyKey, "A valid Idempotency-Key is required")
 		return "", false
 	}
 	digest := sha256.Sum256([]byte(organizationID + "\x00" + key))

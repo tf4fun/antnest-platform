@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/tf4fun/antnest-platform/services/edge-gateway/internal/apierror"
 	"github.com/tf4fun/antnest-platform/services/edge-gateway/internal/identity"
 )
 
@@ -19,13 +20,13 @@ const (
 
 func (h *handler) workspaceBridgeAPI(response http.ResponseWriter, request *http.Request) error {
 	if request.Method != http.MethodGet && request.Method != http.MethodPost {
-		writeError(response, http.StatusMethodNotAllowed, "method_not_allowed", "Method is not allowed")
+		writeError(response, http.StatusMethodNotAllowed, apierror.MethodNotAllowed, "Method is not allowed")
 		return nil
 	}
 	path := request.PathValue("path")
 	agentID, valid := workspaceBridgeAgentID(path)
 	if !valid {
-		writeError(response, http.StatusNotFound, "not_found", "Workspace route was not found")
+		writeError(response, http.StatusNotFound, apierror.NotFound, "Workspace route was not found")
 		return nil
 	}
 	values, principal, err := h.authenticate(response, request)
@@ -34,17 +35,17 @@ func (h *handler) workspaceBridgeAPI(response http.ResponseWriter, request *http
 	}
 	if strings.HasSuffix(path, "/events") {
 		if request.Method != http.MethodGet || path != "agents/"+agentID+"/events" {
-			writeError(response, http.StatusMethodNotAllowed, "method_not_allowed", "Method is not allowed")
+			writeError(response, http.StatusMethodNotAllowed, apierror.MethodNotAllowed, "Method is not allowed")
 			return nil
 		}
 		return h.workspaceBridgeEvents(response, request, values.AccessToken, principal)
 	}
 	if request.Method == http.MethodPost && !h.validCSRF(request, principal.SessionID) {
-		writeError(response, http.StatusForbidden, "csrf_failed", "Request could not be verified")
+		writeError(response, http.StatusForbidden, apierror.CsrfFailed, "Request could not be verified")
 		return nil
 	}
 	if request.ContentLength > maximumWorkspaceBodyBytes {
-		writeError(response, http.StatusRequestEntityTooLarge, "request_too_large", "Workspace request exceeds the payload limit")
+		writeError(response, http.StatusRequestEntityTooLarge, apierror.RequestTooLarge, "Workspace request exceeds the payload limit")
 		return nil
 	}
 	request.Body = http.MaxBytesReader(response, request.Body, maximumWorkspaceBodyBytes)
@@ -58,14 +59,14 @@ func (h *handler) workspaceBridgeEvents(response http.ResponseWriter, request *h
 	lastIDs := request.Header.Values("Last-Event-ID")
 	if len(lastIDs) > 1 || (len(lastIDs) == 1 && (len(lastIDs[0]) > 4096 ||
 		strings.ContainsAny(lastIDs[0], "\r\n\x00"))) {
-		writeError(response, http.StatusUnprocessableEntity, "invalid_request", "Event cursor is invalid")
+		writeError(response, http.StatusUnprocessableEntity, apierror.InvalidRequest, "Event cursor is invalid")
 		return nil
 	}
 	select {
 	case h.bridgeStreams <- struct{}{}:
 		defer func() { <-h.bridgeStreams }()
 	default:
-		writeError(response, http.StatusServiceUnavailable, "workspace_unavailable", "Workspace stream capacity is unavailable")
+		writeError(response, http.StatusServiceUnavailable, apierror.WorkspaceUnavailable, "Workspace stream capacity is unavailable")
 		return nil
 	}
 	response, request, finish, err := h.guardBrowserStream(response, request, token, principal)
@@ -135,11 +136,11 @@ func (h *handler) newWorkspaceBridgeProxy(target *url.URL) *httputil.ReverseProx
 		ErrorHandler: func(w http.ResponseWriter, r *http.Request, err error) {
 			var tooLarge *http.MaxBytesError
 			if errors.As(err, &tooLarge) {
-				writeError(w, http.StatusRequestEntityTooLarge, "request_too_large", "Workspace request exceeds the payload limit")
+				writeError(w, http.StatusRequestEntityTooLarge, apierror.RequestTooLarge, "Workspace request exceeds the payload limit")
 				return
 			}
 			h.logger.ErrorContext(r.Context(), "Workspace Bridge proxy failed", "error_class", "upstream_unavailable")
-			writeError(w, http.StatusServiceUnavailable, "workspace_unavailable", "Agent workspace is unavailable")
+			writeError(w, http.StatusServiceUnavailable, apierror.WorkspaceUnavailable, "Agent workspace is unavailable")
 		},
 	}
 	if proxy.Transport == nil {

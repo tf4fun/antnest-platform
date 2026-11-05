@@ -157,12 +157,41 @@ safe messages. Their `data.code` vocabulary remains open to the owning Run
 outcome classification. Those classifications are not admission codes or
 instructions to replay an accepted Run.
 
-## Pending owning batches
+## Common error metadata
 
-ACP must consume the catalog in DomainError defaults, both protocol mappers,
-applicable HTTP/RPC and Skill-source mappings, and the capability declaration.
-Its protocol documentation must link this contract and announce the numeric
-mapping change. Agent UI must consume the declared retry and recovery policy;
-Gateway must preserve the applicable public status and error fields. Separate
-integration must prove that a busy second Prompt can retry after the first Run
-finishes, while denied requests stop and accepted effects are not replayed.
+Version 1 keeps the outer JSON-RPC envelope numeric (`code`, `message`, `id`)
+unchanged; the common error contract lives inside `error.data`. Producers now
+attach the five common fields — `code`, `category`, `message`, `retryable` and
+a request-id-safe `request_id` — to every public error data payload, alongside
+the existing bounded `retry_after_ms` and trusted `details.budget` members.
+`category` and default `retryable` come from the shared registry
+(`contracts/common/errors.json`); explicit legacy retry overrides remain valid
+where a producer preserves a pre-existing retry policy (for example peer
+`internal_error`/`deadline_exceeded` staying `retryable: true`, or a Runtime
+temporary `outcome_unknown` HTTP body carrying `retryable: true` despite its
+`internal` registry default). Receivers must treat the metadata as advisory
+evidence, not a new retry instruction.
+
+For N/N-1 compatibility, the Skill-source artifact failure keeps its exact
+two-field nested `error: { code, message }` alias next to the new five-field
+top-level common body; either form alone remains valid for an N-1 consumer.
+Consumers that shipped before this producer — Agent UI (PR #512) and Skill
+Registry (PR #513) — validate the common metadata conservatively and must not
+require it. The explicit integration batch completed the consumer-side wire
+coverage: the Agent UI slice now carries the full ACP vocabulary, including
+the ACP-owned terminal rows and the Runtime endpoint codes, and the cross-SDK
+interop harness drives admission, terminal, unresolved, and legacy N-1
+receipts over real HTTP frames against the production transport.
+
+## Contract and component coverage
+
+The explicit integration batch covers the shared contract harnesses, the
+owner-peer and owner-incarnation N/N-1 schemas, the Runtime Controller
+incarnation and history error assertions, the cross-SDK Agent UI
+interoperability tests, and the slice/CI-component parity gates. Remote CI
+remains the complete admission gate for these changes; local evidence is
+targeted reproduction only. The interop component coverage verifies that a
+retryable busy admission carries its backoff classification and that
+accepted Runs delivering terminal receipts are never replayed, while denied
+requests stop before dispatch; complete business workflow acceptance remains
+under remote CI and the dedicated system workflow.

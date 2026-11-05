@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 
+	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/apierror"
 	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/application"
 	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/ports"
 )
@@ -21,20 +22,20 @@ func (h *handler) resolveExecutionCredential(response http.ResponseWriter, reque
 	}
 	resolver, ok := h.catalog.(executionCredentialResolver)
 	if !ok {
-		writeError(response, http.StatusServiceUnavailable, "dependency_unavailable", "Execution credential resolution unavailable", true)
+		writeError(response, http.StatusServiceUnavailable, apierror.DependencyUnavailable, "Execution credential resolution unavailable", true)
 		return
 	}
 	resolved, err := resolver.ResolveExecutionCredential(request.Context(), input)
 	if err != nil {
 		switch {
 		case errors.Is(err, application.ErrInvalidInput):
-			writeError(response, http.StatusBadRequest, "invalid_request", "request is invalid", false)
+			writeError(response, http.StatusBadRequest, apierror.InvalidRequest, "request is invalid", false)
 		case errors.Is(err, ports.ErrNotFound):
-			writeError(response, http.StatusNotFound, "not_found", "referenced resource was not found", false)
+			writeError(response, http.StatusNotFound, apierror.NotFound, "referenced resource was not found", false)
 		case errors.Is(err, ports.ErrConcurrentChange):
-			writeError(response, http.StatusConflict, "configuration_conflict", "configuration changed concurrently", false)
+			writeError(response, http.StatusConflict, apierror.ConfigurationConflict, "configuration changed concurrently", false)
 		default:
-			writeError(response, http.StatusServiceUnavailable, "dependency_unavailable", "dependency is unavailable", true)
+			writeError(response, http.StatusServiceUnavailable, apierror.DependencyUnavailable, "dependency is unavailable", true)
 		}
 		return
 	}

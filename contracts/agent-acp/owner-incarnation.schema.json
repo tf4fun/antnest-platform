@@ -216,7 +216,29 @@
           "type": "object",
           "additionalProperties": false,
           "required": ["code", "message", "retryable"],
+          "dependentRequired": {
+            "category": ["request_id"],
+            "request_id": ["category"]
+          },
           "properties": {
+            "category": {
+              "enum": [
+                "invalid_request",
+                "unauthenticated",
+                "forbidden",
+                "not_found",
+                "conflict",
+                "precondition_failed",
+                "rate_limited",
+                "unavailable",
+                "internal"
+              ]
+            },
+            "request_id": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9._:-]{1,128}$"
+            },
+            "details": { "type": "object" },
             "code": {
               "enum": [
                 "service_unauthenticated",
@@ -240,13 +262,72 @@
             "retryable": {
               "const": false
             }
-          }
+          },
+          "allOf": [
+            {
+              "if": {
+                "anyOf": [
+                  {
+                    "required": ["category"],
+                    "properties": { "category": {} }
+                  },
+                  {
+                    "required": ["request_id"],
+                    "properties": { "request_id": {} }
+                  }
+                ]
+              },
+              "then": {
+                "required": [
+                  "code",
+                  "category",
+                  "message",
+                  "request_id",
+                  "retryable"
+                ],
+                "properties": {
+                  "code": {},
+                  "category": {},
+                  "message": {},
+                  "request_id": {},
+                  "retryable": {}
+                },
+                "allOf": [
+                  {
+                    "$ref": "https://antnest.local/contracts/common/error.schema.json"
+                  }
+                ]
+              }
+            }
+          ]
         },
         {
           "type": "object",
           "additionalProperties": false,
           "required": ["code", "message", "retryable"],
+          "dependentRequired": {
+            "category": ["request_id"],
+            "request_id": ["category"]
+          },
           "properties": {
+            "category": {
+              "enum": [
+                "invalid_request",
+                "unauthenticated",
+                "forbidden",
+                "not_found",
+                "conflict",
+                "precondition_failed",
+                "rate_limited",
+                "unavailable",
+                "internal"
+              ]
+            },
+            "request_id": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9._:-]{1,128}$"
+            },
+            "details": { "type": "object" },
             "code": {
               "enum": [
                 "acp_registration_unavailable",
@@ -263,7 +344,44 @@
             "retryable": {
               "const": true
             }
-          }
+          },
+          "allOf": [
+            {
+              "if": {
+                "anyOf": [
+                  {
+                    "required": ["category"],
+                    "properties": { "category": {} }
+                  },
+                  {
+                    "required": ["request_id"],
+                    "properties": { "request_id": {} }
+                  }
+                ]
+              },
+              "then": {
+                "required": [
+                  "code",
+                  "category",
+                  "message",
+                  "request_id",
+                  "retryable"
+                ],
+                "properties": {
+                  "code": {},
+                  "category": {},
+                  "message": {},
+                  "request_id": {},
+                  "retryable": {}
+                },
+                "allOf": [
+                  {
+                    "$ref": "https://antnest.local/contracts/common/error.schema.json"
+                  }
+                ]
+              }
+            }
+          ]
         }
       ]
     }

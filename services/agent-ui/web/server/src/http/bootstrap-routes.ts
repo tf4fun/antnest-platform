@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { ERROR_CODES } from "../errors.gen.ts";
 import { error, json } from "./command-routes.ts";
 import { readWorkspacePrincipal } from "./workspace-principal.ts";
 import { bindScopeContext, verifiedRequestContext } from "./trusted-identity.ts";
@@ -22,10 +23,10 @@ export function createBootstrapHandler(dependencies: {
     if (new URL(request.url).pathname !== "/api/app/workspace/v1/bootstrap")
       return null;
     if (request.method !== "GET")
-      return error(405, "method_not_allowed", "Method is not allowed", "none");
+      return error(405, ERROR_CODES.METHOD_NOT_ALLOWED, "Method is not allowed", "none");
     const principal = readWorkspacePrincipal(request.headers);
     if (principal === null)
-      return error(401, "unauthenticated", "Trusted identity is missing", "login");
+      return error(401, ERROR_CODES.UNAUTHENTICATED, "Trusted identity is missing", "login");
     try {
       const scope = { organizationId: principal.organizationId, principalId: principal.userId };
       bindScopeContext(scope, verifiedRequestContext(request.headers)!);
@@ -52,7 +53,7 @@ export function createBootstrapHandler(dependencies: {
         bridgeEpoch: dependencies.epoch,
       });
     } catch {
-      return error(503, "workspace_unavailable", "Agent workspace is unavailable", "retry_read");
+      return error(503, ERROR_CODES.WORKSPACE_UNAVAILABLE, "Agent workspace is unavailable", "retry_read");
     }
   };
 }

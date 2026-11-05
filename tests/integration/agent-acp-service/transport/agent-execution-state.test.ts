@@ -467,8 +467,12 @@ describe("workspace state HTTP and SSE", () => {
         expect(stream.frames.at(-1)?.event).toBe("workspace_error");
         expect(JSON.parse(stream.frames.at(-1)!.data)).toEqual({
           code: "execution_state_unavailable",
+          category: "unavailable",
           message: "Agent execution state is unavailable",
           retryable: true,
+          request_id: expect.stringMatching(
+            /^[A-Za-z0-9._:-]{1,128}$/,
+          ) as unknown,
         });
       } finally {
         parent.end();

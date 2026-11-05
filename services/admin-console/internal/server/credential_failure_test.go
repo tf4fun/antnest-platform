@@ -130,15 +130,17 @@ func TestCreateLocalUserPasswordAdmission(t *testing.T) {
 			if response.Code != 503 || response.Header().Get("Cache-Control") != "no-store" || len(response.Result().Cookies()) != 0 {
 				t.Fatalf("unsafe response: status=%d headers=%v", response.Code, response.Header())
 			}
-			want := map[string]any{"code": "identity_unavailable", "message": "Identity Service is unavailable"}
+			want := map[string]any{"code": "identity_unavailable", "category": "unavailable", "message": "Identity Service is unavailable", "retryable": true}
 			var wantRetry []string
 			if tc.valid {
-				want = map[string]any{"code": "credential_busy", "message": "Password verification is busy", "retryable": true}
+				want = map[string]any{"code": "credential_busy", "category": "unavailable", "message": "Password verification is busy", "retryable": true}
 				wantRetry = []string{"1"}
 			}
 			var got map[string]any
 			decodeBytes(t, response.Body.Bytes(), &got)
-			if !reflect.DeepEqual(got, want) || !reflect.DeepEqual(response.Header().Values("Retry-After"), wantRetry) {
+			requestID, _ := got["request_id"].(string)
+			delete(got, "request_id")
+			if requestID == "" || requestID != response.Header().Get("X-Request-ID") || !reflect.DeepEqual(got, want) || !reflect.DeepEqual(response.Header().Values("Retry-After"), wantRetry) {
 				t.Fatalf("failure projection=%v retry=%v", got, response.Header().Values("Retry-After"))
 			}
 			call := backend.singleCall(t)
@@ -199,8 +201,10 @@ func TestCreateLocalUserLegacyFailuresStayBounded(t *testing.T) {
 			response := requestAdmin(t, newTestHandler(t, backend), http.MethodPost, "/api/admin/directory/users", createUserRequest)
 			var got map[string]any
 			decodeBytes(t, response.Body.Bytes(), &got)
-			want := map[string]any{"code": tc.code, "message": tc.message, "retryable": tc.retryable}
-			if response.Code != tc.status || !reflect.DeepEqual(got, want) || response.Header().Get("Retry-After") != "" || response.Header().Get("Cache-Control") != "no-store" {
+			requestID, _ := got["request_id"].(string)
+			delete(got, "request_id")
+			want := map[string]any{"code": tc.code, "category": registryEntries(t)[tc.code].category, "message": tc.message, "retryable": tc.retryable}
+			if response.Code != tc.status || requestID == "" || requestID != response.Header().Get("X-Request-ID") || !reflect.DeepEqual(got, want) || response.Header().Get("Retry-After") != "" || response.Header().Get("Cache-Control") != "no-store" {
 				t.Fatalf("legacy failure status=%d body=%v", response.Code, got)
 			}
 			backend.singleCall(t)
@@ -275,6 +279,89 @@ func TestCreateLocalUserFetchFailuresKeepSafeDiagnostics(t *testing.T) {
 			}
 			if fault == "deadline" && !strings.Contains(observed, "Request deadline exceeded") {
 				t.Fatal("safe timeout cause was lost")
+			}
+		})
+	}
+}
+
+func TestCredentialDecoderAcceptsNewMetadata(t *testing.T) {
+	for _, row := range []struct {
+		name string
+		body string
+	}{
+		{"n-1", `{"code":"credential_busy","message":"Password verification is busy","retryable":true}`},
+		{"n", `{"code":"credential_busy","message":"Password verification is busy","retryable":true,"category":"unavailable","request_id":"identity-req-1"}`},
+		{"n-details", `{"code":"credential_busy","message":"Password verification is busy","retryable":true,"category":"unavailable","request_id":"identity-req-1","details":{"attempt":1}}`},
+		{"n-legacy", `{"code":"forbidden","message":"denied","category":"forbidden","request_id":"identity-req-2"}`},
+	} {
+		t.Run(row.name, func(t *testing.T) {
+			if _, ok := decodeCreateUserFailure([]byte(row.body)); !ok {
+				t.Fatal("compatible password failure was rejected")
+			}
+		})
+	}
+}
+
+func TestCredentialDecoderRejectsPartialMetadata(t *testing.T) {
+	base := `{"code":"credential_busy","message":"Password verification is busy","retryable":true`
+	for _, row := range []struct {
+		name string
+		body string
+	}{
+		{"category-only", base + `,"category":"unavailable"}`},
+		{"id-only", base + `,"request_id":"identity-req-1"}`},
+		{"details-only", base + `,"details":{"a":1}}`},
+		{"null-category", base + `,"category":null}`},
+		{"null-id", base + `,"request_id":null}`},
+		{"null-both", base + `,"category":null,"request_id":null}`},
+		{"wrong-category", base + `,"category":"forbidden","request_id":"identity-req-1"}`},
+		{"unsafe-id", base + `,"category":"unavailable","request_id":"bad id!!"}`},
+		{"details-scalar", base + `,"category":"unavailable","request_id":"r","details":1}`},
+		{"canary-member", base + `,"private-token-canary":true}`},
+	} {
+		t.Run(row.name, func(t *testing.T) {
+			if _, ok := decodeCreateUserFailure([]byte(row.body)); ok {
+				t.Fatal("malformed password failure metadata was accepted")
+			}
+		})
+	}
+}
+
+func TestCredentialSuccessRejectsReservedMetadata(t *testing.T) {
+	for _, field := range []string{
+		`"category":"unavailable"`, `"request_id":"identity-req-1"`,
+		`"Category":"unavailable"`, `"Request_ID":"identity-req-1"`,
+	} {
+		if validCreateUserSuccess([]byte(`{"membership":"member-1",` + field + `}`)) {
+			t.Fatalf("success body with reserved %s was accepted", field)
+		}
+	}
+	if !validCreateUserSuccess([]byte(`{"membership":"member-1","details":{"a":1}}`)) {
+		t.Fatal("clean success body was rejected")
+	}
+}
+
+func TestCredentialRetryableFallsBackToLegacyClassification(t *testing.T) {
+	for _, row := range []struct {
+		name      string
+		status    int
+		body      string
+		retryable bool
+	}{
+		{"internal-absent", 500, `{"code":"internal_error","message":"x"}`, true},
+		{"internal-true", 500, `{"code":"internal_error","message":"x","retryable":true}`, true},
+		{"internal-n", 500, `{"code":"internal_error","message":"x","category":"internal","request_id":"identity-req-1"}`, true},
+		{"forbidden-absent", 403, `{"code":"forbidden","message":"x"}`, false},
+		{"forbidden-false", 403, `{"code":"forbidden","message":"x","retryable":false}`, false},
+	} {
+		t.Run(row.name, func(t *testing.T) {
+			backend := &createUserBackend{backendStub: newBackendStub(), header: http.Header{}}
+			backend.enqueue(row.status, row.body)
+			response := requestAdmin(t, newTestHandler(t, backend), http.MethodPost, "/api/admin/directory/users", createUserRequest)
+			var got map[string]any
+			decodeBytes(t, response.Body.Bytes(), &got)
+			if got["retryable"] != row.retryable {
+				t.Fatalf("retryable = %v body %v", got["retryable"], got)
 			}
 		})
 	}

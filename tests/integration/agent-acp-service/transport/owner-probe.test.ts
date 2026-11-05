@@ -285,9 +285,18 @@ function failure(
 ) {
   expect(response.status).toBe(status);
   const body = json(response) as Record<string, unknown>;
-  expect(Object.keys(body).sort()).toEqual(["code", "message", "retryable"]);
+  expect(Object.keys(body).sort()).toEqual([
+    "category",
+    "code",
+    "message",
+    "request_id",
+    "retryable",
+  ]);
   expect(body.code).toBe(code);
   expect(body.retryable).toBe(status >= 500);
+  expect(typeof body.category).toBe("string");
+  expect(body.category).not.toBe("");
+  expect(body.request_id).toMatch(/^[A-Za-z0-9._:-]{1,128}$/u);
   expect(typeof body.message).toBe("string");
   expect((body.message as string).length).toBeGreaterThan(0);
   expect((body.message as string).length).toBeLessThanOrEqual(512);

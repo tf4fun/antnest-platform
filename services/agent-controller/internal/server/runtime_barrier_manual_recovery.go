@@ -5,6 +5,7 @@ import (
 	"net/http"
 
 	"github.com/tf4fun/antnest-platform/modules/service-authentication/serviceauth"
+	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/apierror"
 	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/application"
 )
 
@@ -20,7 +21,7 @@ func (h *handler) recoverRuntimeBarrier(response http.ResponseWriter, request *h
 		ExpectedRuntimeRevision string `json:"expected_runtime_revision"`
 	}
 	if err := serviceauth.DecodeObject(payload.Recovery, &recovery); err != nil {
-		writeError(response, http.StatusBadRequest, "invalid_request", "recovery request is invalid", false)
+		writeError(response, http.StatusBadRequest, apierror.InvalidRequest, "recovery request is invalid", false)
 		return
 	}
 	input := application.RuntimeBarrierManualRecoveryInput{

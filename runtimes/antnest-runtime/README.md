@@ -342,3 +342,8 @@ Runtime/Egress restarts create fresh ephemeral sessions with the retained
 generation's static material. Egress registration, Controller key-aware open and
 final deployment integration are pending subsequent #111 owning batches.
 See [the shared design](../../docs/authenticated-runtime-tunnel.md).
+
+Error envelopes follow the [common error contract](../../contracts/common/error.schema.json)
+with the [Runtime slice](../../contracts/common/slices/antnest-runtime.json); MCP tool results
+add common fields beside the legacy `error_code`/effect members and JSON-RPC `ErrorData.data`
+adapts the envelope without changing outer protocol codes.

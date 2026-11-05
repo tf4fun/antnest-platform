@@ -12,6 +12,7 @@ on:
       - tests/integration/skill-registry/package-rules-v1.json
       - contracts/runtime/**
       - contracts/platform/**
+      - contracts/common/**
       - contracts/skill-learning/**
       - contracts/skill-registry/**
       - tests/support/ci-ownership.json
@@ -29,6 +30,7 @@ on:
       - tests/integration/skill-registry/package-rules-v1.json
       - contracts/runtime/**
       - contracts/platform/**
+      - contracts/common/**
       - contracts/skill-learning/**
       - contracts/skill-registry/**
       - tests/support/ci-ownership.json
