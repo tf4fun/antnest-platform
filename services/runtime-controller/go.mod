@@ -6,7 +6,7 @@ toolchain go1.27.1
 
 require (
 	github.com/distribution/reference v0.6.0
-	github.com/exaring/otelpgx v0.12.0
+	github.com/exaring/otelpgx v0.13.0
 	github.com/jackc/pgx/v5 v5.11.0
 	github.com/opencontainers/go-digest v1.0.0
 	github.com/tf4fun/antnest-platform/modules/service-authentication v0.0.0
