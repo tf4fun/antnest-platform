@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { cp, mkdir, mkdtemp, rm, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import test from "node:test";
 
@@ -21,6 +21,12 @@ test("protocol and lifecycle inspectors load in an ACP-only harness", async (t) 
     join(app, "node_modules"),
     "dir",
   );
+  // The ACP image bakes the error catalogs under /app/dist/contracts/.
+  for (const catalog of ["agent-acp/errors.json", "common/errors.json"]) {
+    const target = join(app, "dist/contracts", catalog);
+    await mkdir(dirname(target), { recursive: true });
+    await cp(join(root, "contracts", catalog), target);
+  }
   for (const entry of [
     "stage3-base/contracts.mjs",
     "stage3-base/trace.mjs",
