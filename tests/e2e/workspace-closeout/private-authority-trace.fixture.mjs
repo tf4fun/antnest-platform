@@ -16,8 +16,10 @@ export function workspaceAuthorityTraceFixture(status = 200) {
           principal: structuredClone(receipt.principal),
         }
       : {
+          category: "unauthenticated",
           code: "unauthenticated",
           message: "Authentication failed",
+          request_id: "workspace-trace-fixture-denied",
           retryable: false,
         };
   const raw = Buffer.from(JSON.stringify(body) + "\n");

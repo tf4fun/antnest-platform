@@ -768,8 +768,10 @@ export function workspaceBusinessFixture() {
       const receipt = {
         status: 401,
         body: {
+          category: "unauthenticated",
           code: "unauthenticated",
           message: "Authentication failed",
+          request_id: "workspace-fixture-denied",
           retryable: false,
         },
         traceID: "8".repeat(32),
