@@ -92,8 +92,10 @@ const samples = {
   stopped,
   error: () => ({
     code: "invalid_request",
+    category: "invalid_request",
     message: "Invalid incarnation request",
     retryable: false,
+    request_id: "req-1",
   }),
 };
 const definitionFor = (name) =>
@@ -145,14 +147,16 @@ function validators() {
 
 function controlValidators() {
   const schema = read(controlSchemaPath);
-  const ajv = new Ajv2020({
-    strict: false,
-    allErrors: true,
-    coerceTypes: false,
-    useDefaults: false,
-    removeAdditional: false,
-    validateFormats: false,
-  });
+  const ajv = withCommonErrorSchema(
+    new Ajv2020({
+      strict: false,
+      allErrors: true,
+      coerceTypes: false,
+      useDefaults: false,
+      removeAdditional: false,
+      validateFormats: false,
+    }),
+  );
   for (const path of [
     schemaPath,
     "contracts/runtime/tunnel-bootstrap.schema.json",
@@ -202,13 +206,38 @@ test("every object has an exact required field set without nullable or defaults"
     }
     assert.equal(Object.hasOwn(value, "default"), false, `${path}: default`);
     assert.equal(Object.hasOwn(value, "nullable"), false, `${path}: nullable`);
+    if (
+      path === "schema/$defs/error/oneOf/0/properties/details" ||
+      path === "schema/$defs/error/oneOf/1/properties/details"
+    ) {
+      assert.deepEqual(value, { type: "object" }, `${path}: opaque details`);
+      return;
+    }
     if (value.type === "object") {
       assert.equal(value.additionalProperties, false, path);
-      assert.deepEqual(
-        [...value.required].sort(),
-        Object.keys(value.properties).sort(),
-        `${path}: every property must be required`,
-      );
+      if (
+        path === "schema/$defs/error/oneOf/0" ||
+        path === "schema/$defs/error/oneOf/1"
+      ) {
+        assert.deepEqual(
+          [...value.required].sort(),
+          ["code", "message", "retryable"],
+          `${path}: base required fields`,
+        );
+        assert.deepEqual(
+          Object.keys(value.properties)
+            .filter((key) => !value.required.includes(key))
+            .sort(),
+          ["category", "details", "request_id"],
+          `${path}: optional common metadata only`,
+        );
+      } else {
+        assert.deepEqual(
+          [...value.required].sort(),
+          Object.keys(value.properties).sort(),
+          `${path}: every property must be required`,
+        );
+      }
     }
     for (const [key, item] of Object.entries(value))
       visit(item, `${path}/${key}`);
@@ -479,6 +508,44 @@ test("errors bind the exact code to retryability and bound the public message", 
       true,
       "message boundary",
     );
+  check(
+    v,
+    "error",
+    {
+      code: "invalid_request",
+      message: "Invalid incarnation request",
+      retryable: false,
+    },
+    true,
+    "legacy three-field error remains valid",
+  );
+  check(
+    v,
+    "error",
+    {
+      code: "invalid_request",
+      message: "Invalid incarnation request",
+      retryable: false,
+      details: { legacy: "retained" },
+    },
+    true,
+    "legacy error with opaque details remains valid",
+  );
+  check(
+    v,
+    "error",
+    { ...samples.error(), details: { legacy: "retained" } },
+    true,
+    "common error with opaque details remains valid",
+  );
+  for (const invalid of [null, [], "opaque", 1])
+    check(
+      v,
+      "error",
+      { ...samples.error(), details: invalid },
+      false,
+      `invalid details ${JSON.stringify(invalid)}`,
+    );
   for (const message of ["", "m".repeat(513)])
     check(
       v,
@@ -650,9 +717,19 @@ test("RC revision 22 binds registration and inspection to the frozen shared wire
 test("RC local aliases execute the shared closed DTO grammar without coercion or defaults", () => {
   const schema = read(controlSchemaPath);
   for (const [alias, definition] of Object.entries(controlAliases))
-    assert.deepEqual(schema.$defs[alias], {
-      $ref: `${schemaID}#/$defs/${definition}`,
-    });
+    assert.deepEqual(
+      schema.$defs[alias],
+      alias === "acp_incarnation_error"
+        ? {
+            $ref: `${schemaID}#/$defs/${definition}`,
+            allOf: [
+              {
+                $ref: "https://antnest.local/contracts/common/error.schema.json",
+              },
+            ],
+          }
+        : { $ref: `${schemaID}#/$defs/${definition}` },
+    );
   const v = controlValidators();
   for (const { name, definition, make, wrap } of objectCases) {
     const alias = Object.keys(controlAliases).find(
@@ -742,8 +819,10 @@ test("RC local aliases execute the shared closed DTO grammar without coercion or
     "acp_incarnation_error",
     {
       code: "acp_registry_unavailable",
+      category: "unavailable",
       message: "Registry unavailable",
       retryable: true,
+      request_id: "req-1",
     },
     true,
     "retryable registry failure",

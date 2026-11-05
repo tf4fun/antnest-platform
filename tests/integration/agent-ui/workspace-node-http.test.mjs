@@ -42,42 +42,52 @@ const viewSchema = JSON.parse(
     "utf8",
   ),
 );
-const validateView = withCommonErrorSchema(new Ajv2020({
-  strict: true,
-  validateFormats: false,
-})).compile({
+const validateView = withCommonErrorSchema(
+  new Ajv2020({
+    strict: true,
+    validateFormats: false,
+  }),
+).compile({
   $schema: "https://json-schema.org/draft/2020-12/schema",
   $defs: viewSchema.$defs,
   $ref: "#/$defs/sessionView",
 });
-const validateAgentView = withCommonErrorSchema(new Ajv2020({
-  strict: true,
-  validateFormats: false,
-})).compile({
+const validateAgentView = withCommonErrorSchema(
+  new Ajv2020({
+    strict: true,
+    validateFormats: false,
+  }),
+).compile({
   $schema: "https://json-schema.org/draft/2020-12/schema",
   $defs: viewSchema.$defs,
   $ref: "#/$defs/agentView",
 });
-const validateStreamEvent = withCommonErrorSchema(new Ajv2020({
-  strict: true,
-  validateFormats: false,
-})).compile({
+const validateStreamEvent = withCommonErrorSchema(
+  new Ajv2020({
+    strict: true,
+    validateFormats: false,
+  }),
+).compile({
   $schema: "https://json-schema.org/draft/2020-12/schema",
   $defs: viewSchema.$defs,
   $ref: "#/$defs/streamEvent",
 });
-const validateProcess = withCommonErrorSchema(new Ajv2020({
-  strict: true,
-  validateFormats: false,
-})).compile({
+const validateProcess = withCommonErrorSchema(
+  new Ajv2020({
+    strict: true,
+    validateFormats: false,
+  }),
+).compile({
   $schema: "https://json-schema.org/draft/2020-12/schema",
   $defs: viewSchema.$defs,
   $ref: "#/$defs/processPage",
 });
-const validateProcessContent = withCommonErrorSchema(new Ajv2020({
-  strict: true,
-  validateFormats: false,
-})).compile({
+const validateProcessContent = withCommonErrorSchema(
+  new Ajv2020({
+    strict: true,
+    validateFormats: false,
+  }),
+).compile({
   $schema: "https://json-schema.org/draft/2020-12/schema",
   $defs: viewSchema.$defs,
   $ref: "#/$defs/processContentPage",
@@ -2529,14 +2539,19 @@ test(
 
 test("common_error actual 404 envelope matches common and workspace contracts", async (t) => {
   let handled = 0;
-  const runtime = { handle: () => { handled += 1; return null; } };
+  const runtime = {
+    handle: () => {
+      handled += 1;
+      return null;
+    },
+  };
   const server = createWorkspaceHttpServer(runtime);
   server.listen(0, "127.0.0.1");
   await once(server, "listening");
   t.after(async () => {
     server.closeAllConnections();
     server.close();
-    await once(server, 'close');
+    await once(server, "close");
   });
   const address = server.address();
   assert.ok(address && typeof address !== "string");
@@ -2547,11 +2562,18 @@ test("common_error actual 404 envelope matches common and workspace contracts", 
     "x-antnest-agent-id": "agent-1",
   };
   const bodyByPath = new Map();
-  for (const [path, expectHandled] of [["missing", 0], ["view", 1]]) {
+  for (const [path, expectHandled] of [
+    ["missing", 0],
+    ["view", 1],
+  ]) {
     const before = handled;
     const response = await fetch(`${base}/${path}`, { headers });
     assert.equal(response.status, 404);
-    assert.equal(handled - before, expectHandled, `${path} must ${expectHandled ? "" : "not "}reach runtime.handle`);
+    assert.equal(
+      handled - before,
+      expectHandled,
+      `${path} must ${expectHandled ? "" : "not "}reach runtime.handle`,
+    );
     bodyByPath.set(path, { response, body: await response.json() });
   }
   const common = JSON.parse(
@@ -2560,17 +2582,31 @@ test("common_error actual 404 envelope matches common and workspace contracts", 
       "utf8",
     ),
   );
-  const validateCommon = withCommonErrorSchema(new Ajv2020({ strict: true, validateFormats: false }))
-    .getSchema(common.$id);
+  const validateCommon = withCommonErrorSchema(
+    new Ajv2020({ strict: true, validateFormats: false }),
+  ).getSchema(common.$id);
   assert.equal(typeof validateCommon, "function");
-  const validateWorkspaceError = withCommonErrorSchema(new Ajv2020({ strict: true, validateFormats: false }))
-    .compile({ $schema: "https://json-schema.org/draft/2020-12/schema", $defs: viewSchema.$defs, $ref: "#/$defs/error" });
+  const validateWorkspaceError = withCommonErrorSchema(
+    new Ajv2020({ strict: true, validateFormats: false }),
+  ).compile({
+    $schema: "https://json-schema.org/draft/2020-12/schema",
+    $defs: viewSchema.$defs,
+    $ref: "#/$defs/error",
+  });
   for (const { response, body } of bodyByPath.values()) {
     assert.equal(response.headers.get("cache-control"), "no-store");
     const requestId = response.headers.get("x-request-id");
     assert.ok(requestId && /^[A-Za-z0-9._:-]{1,128}$/.test(requestId));
-    assert.equal(validateCommon(body), true, "actual body must satisfy common error schema");
-    assert.equal(validateWorkspaceError(body), true, "actual body must satisfy workspace error def");
+    assert.equal(
+      validateCommon(body),
+      true,
+      "actual body must satisfy common error schema",
+    );
+    assert.equal(
+      validateWorkspaceError(body),
+      true,
+      "actual body must satisfy workspace error def",
+    );
     assert.equal(body.request_id, requestId);
     assert.equal(body.requestId, requestId);
     assert.equal(body.code, "route_not_found");
@@ -2583,7 +2619,11 @@ test("common_error actual 404 envelope matches common and workspace contracts", 
     (({ request_id, ...rest }) => rest)(body),
     { ...body, request_id: "bad id with spaces" },
   ]) {
-    assert.equal(validateWorkspaceError(mutation), false, "mutation must reject");
+    assert.equal(
+      validateWorkspaceError(mutation),
+      false,
+      "mutation must reject",
+    );
   }
   const legacy = {
     code: "route_not_found",
@@ -2592,5 +2632,9 @@ test("common_error actual 404 envelope matches common and workspace contracts", 
     retryable: false,
     recovery: "none",
   };
-  assert.equal(validateWorkspaceError(legacy), true, "legacy N-1 body still valid");
+  assert.equal(
+    validateWorkspaceError(legacy),
+    true,
+    "legacy N-1 body still valid",
+  );
 });
