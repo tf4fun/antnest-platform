@@ -1,3 +1,5 @@
+import { ERROR_CODES } from "../../errors.gen.js";
+import { commonError } from "../public-error.js";
 import type * as acpV1 from "@agentclientprotocol/sdk/unstable";
 import type { v2 as acpV2 } from "./sdk.js";
 import type { RawData } from "ws";
@@ -110,7 +112,11 @@ function sendParseError(socket: JsonSocket): void {
     JSON.stringify({
       jsonrpc: "2.0",
       id: null,
-      error: { code: -32700, message: "Parse error" },
+      error: {
+        code: -32700,
+        message: "Parse error",
+        data: commonError(ERROR_CODES.INVALID_REQUEST, "Parse error", false),
+      },
     }),
     (error) => {
       if (error != null) {

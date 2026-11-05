@@ -37,6 +37,27 @@ function isCatalog(value) {
 const catalog = JSON.parse(readCatalog());
 if (!isCatalog(catalog)) throw new Error("Unsupported ACP error catalog");
 
+function readRegistry() {
+  try {
+    return readFileSync(
+      new URL("../../dist/contracts/common/errors.json", import.meta.url),
+      "utf8",
+    );
+  } catch (error) {
+    if (!(error instanceof Error) || error.code !== "ENOENT") throw error;
+  }
+  return readFileSync(
+    new URL("../../contracts/common/errors.json", import.meta.url),
+    "utf8",
+  );
+}
+
+const registry = new Map(
+  JSON.parse(readRegistry()).errors.map((entry) => [entry.code, entry]),
+);
+const SAFE_REQUEST_ID = /^[A-Za-z0-9._:-]{1,128}$/;
+const COMMON_METADATA_KEYS = ["category", "message", "request_id"];
+
 export function assertErrorCapability(initializeResult) {
   assert(isRecord(initializeResult), "ACP initialize result is required");
   const meta = initializeResult._meta;
@@ -110,28 +131,61 @@ export function assertAdmissionError(actual, expectedCode) {
     "Unexpected ACP public error message",
   );
   assert(isRecord(actual.data), "ACP admission error data is required");
+  const data = actual.data;
   const expectedData = { ...expected.data };
-  if (Object.hasOwn(actual.data, "details")) {
-    assert(
-      isRecord(actual.data.details),
-      "ACP error details must be an empty object",
+  const allowed = new Set([
+    ...Object.keys(expectedData),
+    ...COMMON_METADATA_KEYS,
+    "details",
+  ]);
+  assert(
+    Reflect.ownKeys(data).every(
+      (key) => typeof key === "string" && allowed.has(key),
+    ),
+    "ACP error data contains an unapproved field",
+  );
+  const hasMetadata = COMMON_METADATA_KEYS.some((key) =>
+    Object.hasOwn(data, key),
+  );
+  if (hasMetadata) {
+    for (const key of COMMON_METADATA_KEYS)
+      assert(
+        Object.hasOwn(data, key),
+        `ACP common error metadata requires ${key}`,
+      );
+    const entry = registry.get(expectedCode);
+    assert(entry !== undefined, "Expected ACP error code is not registered");
+    assert.equal(
+      data.category,
+      entry.category,
+      "ACP common error category does not match registry metadata",
     );
     assert.equal(
-      Reflect.ownKeys(actual.data.details).length,
+      data.message,
+      actual.message,
+      "ACP common error data message must equal the public message",
+    );
+    assert(
+      typeof data.request_id === "string" &&
+        SAFE_REQUEST_ID.test(data.request_id),
+      "ACP common error request_id is unsafe",
+    );
+  }
+  if (Object.hasOwn(data, "details")) {
+    assert(isRecord(data.details), "ACP error details must be an empty object");
+    assert.equal(
+      Reflect.ownKeys(data.details).length,
       0,
       "ACP error details must be an empty object",
     );
     expectedData.details = {};
   }
-  assert(
-    Reflect.ownKeys(actual.data).every(
-      (key) => typeof key === "string" && Object.hasOwn(expectedData, key),
-    ),
-    "ACP error data contains an unapproved field",
-  );
-  assert.deepEqual(
-    actual.data,
-    expectedData,
-    "Unexpected ACP admission error data",
-  );
+  for (const key of ["code", "retryable", "retry_after_ms"]) {
+    if (Object.hasOwn(expectedData, key) || Object.hasOwn(data, key))
+      assert.deepEqual(
+        data[key],
+        expectedData[key],
+        `Unexpected ACP admission error data ${key}`,
+      );
+  }
 }

@@ -64,6 +64,23 @@ const installed = {
 describe("ACP consumer of shared Runtime temporary wire contract", () => {
   it("agrees with shared receipt schemas for bounds, unknown fields and effects", () => {
     const error = {
+      code: "outcome_unknown",
+      category: "internal",
+      message: "Temporary Skill request did not complete",
+      retryable: true,
+      request_id: "request_1",
+      error: {
+        code: "outcome_unknown",
+        category: "internal",
+        message: "Temporary Skill request did not complete",
+        retryable: true,
+        request_id: "request_1",
+        effect_state: "unknown",
+        runtime_call_stopped: false,
+      },
+      details: { effect_state: "unknown", runtime_call_stopped: false },
+    };
+    const legacyError = {
       error: {
         code: "body_timed_out",
         message: "Temporary Skill request did not complete",
@@ -72,6 +89,7 @@ describe("ACP consumer of shared Runtime temporary wire contract", () => {
         runtime_call_stopped: true,
       },
     };
+    expect(temporaryErrorSchema.safeParse(legacyError).success).toBe(true);
     const released = {
       ...common,
       action: "temporary_release",

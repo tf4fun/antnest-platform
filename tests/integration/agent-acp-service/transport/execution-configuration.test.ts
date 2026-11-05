@@ -140,8 +140,10 @@ describe("execution configuration HTTP contract", () => {
     expect(response.status).toBe(503);
     expect(await response.json()).toEqual({
       code: "configuration_unavailable",
+      category: "unavailable",
       message: "Execution configuration could not be applied",
       retryable: true,
+      request_id: expect.stringMatching(/^[A-Za-z0-9._:-]{1,128}$/) as unknown,
     });
     expect(local.onApplied).not.toHaveBeenCalled();
     expect(
@@ -162,8 +164,10 @@ describe("execution configuration HTTP contract", () => {
     expect(failed.status).toBe(503);
     expect(await failed.json()).toEqual({
       code: "configuration_unavailable",
+      category: "unavailable",
       message: "Execution configuration could not be applied",
       retryable: true,
+      request_id: expect.stringMatching(/^[A-Za-z0-9._:-]{1,128}$/) as unknown,
     });
     await expect(
       local.directory.withAccess(executionIdentity(), () => Promise.resolve()),

@@ -498,7 +498,19 @@ describe("AgentAcpHttpServer", () => {
       await expect(parseError).resolves.toEqual({
         jsonrpc: "2.0",
         id: null,
-        error: { code: -32700, message: "Parse error" },
+        error: {
+          code: -32700,
+          message: "Parse error",
+          data: {
+            code: "invalid_request",
+            category: "invalid_request",
+            message: "Parse error",
+            retryable: false,
+            request_id: expect.stringMatching(
+              /^[A-Za-z0-9._:-]{1,128}$/,
+            ) as unknown,
+          },
+        },
       });
       await initializeRaw(socket, version);
       socket.close();

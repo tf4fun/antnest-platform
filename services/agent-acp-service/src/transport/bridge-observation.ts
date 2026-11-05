@@ -5,7 +5,8 @@ import type { BridgeObservationService } from "../application/bridge-observation
 import { activeHttpSpan } from "../telemetry/http.js";
 import { recordBoundaryError } from "../telemetry/diagnostics.js";
 import { trustedIdentity } from "./trusted-identity.js";
-import { httpFailure } from "./public-error.js";
+import { errorHeaders, httpFailure } from "./public-error.js";
+import { ERROR_CODES } from "../errors.gen.js";
 
 const PREFIX = "/rpc/agent-acp/workspace/sessions/";
 
@@ -49,12 +50,12 @@ export async function serveBridgeObservation(
   try {
     if (request.method !== "GET") {
       response.setHeader("Allow", "GET");
-      failure(response, "method_not_allowed");
+      failure(response, ERROR_CODES.METHOD_NOT_ALLOWED);
       return;
     }
     const identity = trustedIdentity(request.headers);
     if (identity === null) {
-      failure(response, "access_denied");
+      failure(response, ERROR_CODES.ACCESS_DENIED);
       return;
     }
     if (service === undefined || !(await ready()))
@@ -65,7 +66,7 @@ export async function serveBridgeObservation(
         ? await service.readIntent(binding, route.sessionId, route.intentId)
         : await service.readSession(binding, route.sessionId);
     if (result === null) {
-      failure(response, "intent_unknown");
+      failure(response, ERROR_CODES.INTENT_UNKNOWN);
       return;
     }
     json(response, 200, result);
@@ -96,10 +97,10 @@ function identifier(raw: string | undefined): string | null {
 function mapFailure(error: unknown): { status: number; body: object } {
   if (error instanceof DomainError) {
     if (error.code === "session_not_found" || error.code === "session_access_denied")
-      return httpFailure("session_not_found");
-    if (error.code === "access_denied") return httpFailure("access_denied");
+      return httpFailure(ERROR_CODES.SESSION_NOT_FOUND);
+    if (error.code === "access_denied") return httpFailure(ERROR_CODES.ACCESS_DENIED);
   }
-  return httpFailure("workspace_observation_unavailable");
+  return httpFailure(ERROR_CODES.WORKSPACE_OBSERVATION_UNAVAILABLE);
 }
 
 function failure(response: ServerResponse, code: string): void {
@@ -109,6 +110,9 @@ function failure(response: ServerResponse, code: string): void {
 
 function json(response: ServerResponse, status: number, body: unknown): void {
   if (response.destroyed) return;
-  response.writeHead(status, { "content-type": "application/json", "cache-control": "no-store" });
+  const headers: Record<string, string> = { "content-type": "application/json" };
+  if (status >= 400) Object.assign(headers, errorHeaders(body));
+  else headers["cache-control"] = "no-store";
+  response.writeHead(status, headers);
   response.end(JSON.stringify(body));
 }
