@@ -31,6 +31,17 @@ password request. The existing `login_rate_limited` prefilter remains separate.
 Console user creation and final cross-service HTTPS admission were delivered
 with [#60](https://github.com/tf4fun/antnest-platform/issues/60).
 
+Every public error response carries the shared
+[common envelope](../common/error.schema.json) (`code`, `category`, `message`,
+`retryable`, `request_id`, optional `details`) projected by
+`internal/apierror`, generated from the
+[Gateway slice](../common/slices/edge-gateway.json) of the
+[common registry](../common/errors.json).
+The migration is additive: `code` and `message` keep their legacy values, so
+the session contract stays version 24 while consumers gain `category`,
+`retryable` and `request_id`. The SCIM proxy failure keeps its RFC error
+shape and adds the same envelope as a `urn:antnest:error` extension.
+
 Revision 21 defines [bounded Identity resolution](resolve-cache.md) and its
 [machine-readable policy](resolve-cache-policy.json): scoped positive caching,
 private session-feed invalidation, resource limits and unchanged hard stream
