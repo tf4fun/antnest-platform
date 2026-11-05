@@ -65,7 +65,7 @@ func TestResolvePrincipalMapsStableIdentityFailures(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) {
 		response.Header().Set("Content-Type", "application/json")
 		response.WriteHeader(http.StatusNotFound)
-		_, _ = response.Write([]byte(`{"code":"not_found","message":"missing","retryable":false}`))
+		_, _ = response.Write([]byte(`{"category":"not_found","code":"not_found","message":"missing","request_id":"req-1","retryable":false}`))
 	}))
 	defer server.Close()
 
@@ -150,11 +150,11 @@ func TestDecodeFailureRejectsResponsesOutsideResolvePrincipalContract(t *testing
 		payload string
 		status  int
 	}{
-		"unknown code":       {payload: `{"code":"secret_backend_detail","message":"bad","retryable":false}`, status: http.StatusTeapot},
-		"wrong status":       {payload: `{"code":"not_found","message":"missing","retryable":false}`, status: http.StatusForbidden},
-		"wrong retryability": {payload: `{"code":"internal_error","message":"failed","retryable":false}`, status: http.StatusInternalServerError},
-		"missing message":    {payload: `{"code":"not_found","retryable":false}`, status: http.StatusNotFound},
-		"missing retryable":  {payload: `{"code":"not_found","message":"missing"}`, status: http.StatusNotFound},
+		"unknown code":       {payload: `{"category":"internal_error","code":"secret_backend_detail","message":"bad","request_id":"req-1","retryable":false}`, status: http.StatusTeapot},
+		"wrong status":       {payload: `{"category":"not_found","code":"not_found","message":"missing","request_id":"req-1","retryable":false}`, status: http.StatusForbidden},
+		"wrong retryability": {payload: `{"category":"internal_error","code":"internal_error","message":"failed","request_id":"req-1","retryable":false}`, status: http.StatusInternalServerError},
+		"missing message":    {payload: `{"category":"not_found","code":"not_found","request_id":"req-1","retryable":false}`, status: http.StatusNotFound},
+		"missing retryable":  {payload: `{"category":"not_found","code":"not_found","message":"missing","request_id":"req-1"}`, status: http.StatusNotFound},
 	} {
 		name, test := name, test
 		t.Run(name, func(t *testing.T) {
@@ -264,7 +264,7 @@ func TestResolvePrincipalEmitsBoundedDependencyMetrics(t *testing.T) {
 			return
 		}
 		response.WriteHeader(http.StatusNotFound)
-		_, _ = response.Write([]byte(`{"code":"not_found","message":"missing","retryable":false}`))
+		_, _ = response.Write([]byte(`{"category":"not_found","code":"not_found","message":"missing","request_id":"req-1","retryable":false}`))
 	}))
 	defer server.Close()
 

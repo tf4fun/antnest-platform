@@ -86,6 +86,33 @@ const (
 	ExternalIdentityLastMethod             = "external_identity_last_method"
 	RevisionConflict                       = "revision_conflict"
 	RequestConflict                        = "request_conflict"
+	RuntimeImageInvalid                    = "runtime_image_invalid"
+	AgentNotReady                          = "agent_not_ready"
+	ConfigurationConflict                  = "configuration_conflict"
+	LifecycleTimeout                       = "lifecycle_timeout"
+	RequestTooLarge                        = "request_too_large"
+	InactivePrincipal                      = "inactive_principal"
+	InvalidReference                       = "invalid_reference"
+	LastOrganizationAdmin                  = "last_organization_admin"
+	OidcAuthorizationFailed                = "oidc_authorization_failed"
+	OidcCompletedTokenUnavailable          = "oidc_completed_token_unavailable"
+	OidcExchangeClaimInvalid               = "oidc_exchange_claim_invalid"
+	OidcExchangeFailed                     = "oidc_exchange_failed"
+	OidcExchangeInProgress                 = "oidc_exchange_in_progress"
+	OidcIdentityFailed                     = "oidc_identity_failed"
+	OidcMembershipRequired                 = "oidc_membership_required"
+	OidcPersistenceFailed                  = "oidc_persistence_failed"
+	OidcProviderChanged                    = "oidc_provider_changed"
+	OidcProviderClientIdImmutable          = "oidc_provider_client_id_immutable"
+	OidcProviderFailed                     = "oidc_provider_failed"
+	OidcProviderIssuerImmutable            = "oidc_provider_issuer_immutable"
+	OidcProviderSecretFailed               = "oidc_provider_secret_failed"
+	OidcSessionExpired                     = "oidc_session_expired"
+	OidcSessionFailed                      = "oidc_session_failed"
+	OidcTokenFailed                        = "oidc_token_failed"
+	PreconditionFailed                     = "precondition_failed"
+	RateLimited                            = "rate_limited"
+	VersionConflict                        = "version_conflict"
 )
 
 type Metadata struct {
@@ -171,6 +198,33 @@ var metadata = map[string]Metadata{
 	ExternalIdentityLastMethod:             {Category: "conflict", HTTPStatus: 409, Retryable: false},
 	RevisionConflict:                       {Category: "conflict", HTTPStatus: 409, Retryable: false},
 	RequestConflict:                        {Category: "conflict", HTTPStatus: 409, Retryable: false},
+	RuntimeImageInvalid:                    {Category: "invalid_request", HTTPStatus: 400, Retryable: false},
+	AgentNotReady:                          {Category: "conflict", HTTPStatus: 409, Retryable: true},
+	ConfigurationConflict:                  {Category: "conflict", HTTPStatus: 409, Retryable: false},
+	LifecycleTimeout:                       {Category: "unavailable", HTTPStatus: 504, Retryable: true},
+	RequestTooLarge:                        {Category: "invalid_request", HTTPStatus: 413, Retryable: false},
+	InactivePrincipal:                      {Category: "forbidden", HTTPStatus: 403, Retryable: false},
+	InvalidReference:                       {Category: "invalid_request", HTTPStatus: 400, Retryable: false},
+	LastOrganizationAdmin:                  {Category: "conflict", HTTPStatus: 409, Retryable: false},
+	OidcAuthorizationFailed:                {Category: "invalid_request", HTTPStatus: 400, Retryable: false},
+	OidcCompletedTokenUnavailable:          {Category: "not_found", HTTPStatus: 410, Retryable: false},
+	OidcExchangeClaimInvalid:               {Category: "invalid_request", HTTPStatus: 400, Retryable: false},
+	OidcExchangeFailed:                     {Category: "internal", HTTPStatus: 500, Retryable: false},
+	OidcExchangeInProgress:                 {Category: "conflict", HTTPStatus: 409, Retryable: false},
+	OidcIdentityFailed:                     {Category: "internal", HTTPStatus: 500, Retryable: false},
+	OidcMembershipRequired:                 {Category: "forbidden", HTTPStatus: 403, Retryable: false},
+	OidcPersistenceFailed:                  {Category: "internal", HTTPStatus: 500, Retryable: false},
+	OidcProviderChanged:                    {Category: "conflict", HTTPStatus: 409, Retryable: false},
+	OidcProviderClientIdImmutable:          {Category: "conflict", HTTPStatus: 409, Retryable: false},
+	OidcProviderFailed:                     {Category: "internal", HTTPStatus: 500, Retryable: false},
+	OidcProviderIssuerImmutable:            {Category: "conflict", HTTPStatus: 409, Retryable: false},
+	OidcProviderSecretFailed:               {Category: "internal", HTTPStatus: 500, Retryable: false},
+	OidcSessionExpired:                     {Category: "not_found", HTTPStatus: 410, Retryable: false},
+	OidcSessionFailed:                      {Category: "invalid_request", HTTPStatus: 400, Retryable: false},
+	OidcTokenFailed:                        {Category: "internal", HTTPStatus: 500, Retryable: false},
+	PreconditionFailed:                     {Category: "precondition_failed", HTTPStatus: 412, Retryable: false},
+	RateLimited:                            {Category: "rate_limited", HTTPStatus: 429, Retryable: true},
+	VersionConflict:                        {Category: "conflict", HTTPStatus: 409, Retryable: false},
 }
 
 type Error struct {

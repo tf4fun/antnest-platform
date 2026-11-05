@@ -424,6 +424,10 @@ try {
         directory,
         error,
         stage,
+        publicSource: {
+          file: "tests/e2e/acp-files/client.mjs",
+          url: import.meta.url,
+        },
         inventory: {
           connectionInventory,
           initializationRequests,

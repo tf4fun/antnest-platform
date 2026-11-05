@@ -365,6 +365,16 @@ func TestErrorCodeConsumerParity(t *testing.T) {
 		"invalid_model_spec", "invalid_cursor", "execution_audit_unavailable",
 		"invalid_package", "name_conflict", "content_changed",
 		"source_invalid", "temporarily_unavailable", "source_unavailable",
+		"runtime_image_invalid", "agent_not_ready", "configuration_conflict",
+		"lifecycle_timeout", "request_too_large", "inactive_principal",
+		"invalid_reference", "last_organization_admin", "oidc_authorization_failed",
+		"oidc_completed_token_unavailable", "oidc_exchange_claim_invalid",
+		"oidc_exchange_failed", "oidc_exchange_in_progress", "oidc_identity_failed",
+		"oidc_membership_required", "oidc_persistence_failed", "oidc_provider_changed",
+		"oidc_provider_client_id_immutable", "oidc_provider_failed",
+		"oidc_provider_issuer_immutable", "oidc_provider_secret_failed",
+		"oidc_session_expired", "oidc_session_failed", "oidc_token_failed",
+		"precondition_failed", "rate_limited", "version_conflict",
 	}
 	for code := range modelCallPolicyFailureStatus {
 		consumed = append(consumed, code)

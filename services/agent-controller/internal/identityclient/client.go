@@ -148,7 +148,10 @@ func decodeFailure(payload []byte, status int) error {
 		Message   string `json:"message"`
 		Retryable *bool  `json:"retryable"`
 	}
-	if err := decodeStrictJSON(payload, &response); err != nil ||
+	// Failure envelopes tolerate optional fields (category, request_id,
+	// details); the closed contract map still gates code, status and
+	// retryability, so unknown fields must not downgrade to invalid_response.
+	if err := json.Unmarshal(payload, &response); err != nil ||
 		strings.TrimSpace(response.Message) == "" || response.Retryable == nil {
 		return dependencyFailure("invalid_response", true)
 	}

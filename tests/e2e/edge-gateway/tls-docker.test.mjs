@@ -17,6 +17,7 @@ import {
 } from "../../support/candidate-images.mjs";
 import { assertNoStore, GatewayClient } from "../identity-closeout/support.mjs";
 import { assertSecretFree } from "../identity-closeout/evidence.mjs";
+import { summarizeFailure } from "../../support/verification/failure.mjs";
 import {
   configuration,
   dockerClient,
@@ -813,6 +814,8 @@ test(
           "--mount",
           `type=bind,src=${resolve("tests")},dst=/tests,readonly`,
           "--mount",
+          `type=bind,src=${resolve("contracts")},dst=/contracts,readonly`,
+          "--mount",
           `type=bind,src=${resolve(certificateDirectory, "ca.pem")},dst=/tls/ca.pem,readonly`,
           "--env",
           "NODE_EXTRA_CA_CERTS=/tls/ca.pem",
@@ -881,6 +884,7 @@ test(
       failure = error;
       if (workspacePage && !workspacePage.isClosed()) {
         const diagnostics = {
+          failure: summarizeFailure(error),
           requests: browserRequests,
           page: await workspacePage.locator("body").innerText(),
         };
