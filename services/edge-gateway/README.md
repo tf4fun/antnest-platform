@@ -49,7 +49,9 @@ Gateway still owns browser credential stripping and route authorization.
   hashed assets, and the Workspace HTTP/SSE API with leased SSE observation.
 - Per-dependency workload credentials, route-selected caller context, verified
   presentation headers, security headers, request limits and tracing.
-- Proxy availability and external error projection.
+- Proxy availability and external error projection over the generated common
+  envelope (`internal/apierror`, from
+  [`contracts/common/slices/edge-gateway.json`](../../contracts/common/slices/edge-gateway.json)).
 
 ## Non-responsibilities
 

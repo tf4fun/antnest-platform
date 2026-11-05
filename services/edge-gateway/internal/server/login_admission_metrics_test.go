@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
@@ -223,7 +224,21 @@ func TestLoginAdmissionMetricsRemainSingleAfterIdentityPasswordRefusal(t *testin
 			response := httptest.NewRecorder()
 			f.handler.ServeHTTP(response, f.request(http.MethodPost, "/api/session/login",
 				`{"organization_slug":"engineering","email":"member@example.com","password":"wrong"}`))
-			if response.Code != failure.status || strings.TrimSpace(response.Body.String()) != failure.body ||
+			var expected map[string]any
+			if err := json.Unmarshal([]byte(failure.body), &expected); err != nil {
+				t.Fatal(err)
+			}
+			categories := map[string]string{
+				"credential_busy":         "unavailable",
+				"credential_rate_limited": "rate_limited",
+			}
+			expected["category"] = categories[expected["code"].(string)]
+			expected["request_id"] = response.Header().Get("X-Request-ID")
+			if err := compileCommonErrorSchema(t).Validate(expected); err != nil {
+				t.Fatalf("forwarded refusal fails the common schema: %v", err)
+			}
+			if response.Code != failure.status ||
+				!reflect.DeepEqual(commonErrorBody(t, response), expected) ||
 				response.Header().Get("Cache-Control") != "no-store" || len(response.Header().Values("Set-Cookie")) != 0 ||
 				!reflect.DeepEqual(response.Header().Values("Retry-After"), failure.retryAfter) {
 				t.Fatal("Gateway admission changed the typed Identity refusal")

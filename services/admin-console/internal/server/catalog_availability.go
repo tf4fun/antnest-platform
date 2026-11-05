@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"time"
 
+	"github.com/tf4fun/antnest-platform/services/admin-console/internal/apierror"
 	"github.com/tf4fun/antnest-platform/services/admin-console/internal/principal"
 	"github.com/tf4fun/antnest-platform/services/admin-console/internal/upstream"
 )
@@ -35,7 +36,7 @@ func (h *handler) catalogAvailability(owner, parameter string) adminHandler {
 			return
 		}
 		if input.ExpectedEnabled == nil || input.Enabled == nil {
-			writeError(w, http.StatusBadRequest, "invalid_request", "expected_enabled and enabled must be explicit booleans")
+			writeError(w, http.StatusBadRequest, apierror.InvalidRequest, "expected_enabled and enabled must be explicit booleans")
 			return
 		}
 		requestID, ok := commandRequestID(w, r, actor.OrganizationID, "catalog-availability")

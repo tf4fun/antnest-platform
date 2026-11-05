@@ -6,6 +6,12 @@
   "authentication_contract": "service-authentication.md",
   "authenticated_actor": "identity_signed_cct_verified_by_console",
   "runtime_resources_contract": "runtime-resources.schema.json",
+  "error": {
+    "$ref": "../common/error.schema.json",
+    "required": ["code", "category", "message", "retryable", "request_id"],
+    "codes": "../common/slices/admin-console.json",
+    "migration": "additive expansion to the common envelope; old consumers keep reading code/message, one release"
+  },
   "routes": {
     "search_skill_sources": {
       "method": "POST",

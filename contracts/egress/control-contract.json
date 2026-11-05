@@ -66,7 +66,8 @@
     "attachment_state_request": "attachment-state-request.schema.json",
     "resource_version_request": "resource-version-request.schema.json",
     "service_token": "../platform/service-token-callers.schema.json",
-    "tunnel_key_request": "tunnel-key-request.schema.json"
+    "tunnel_key_request": "tunnel-key-request.schema.json",
+    "error": "../common/error.schema.json"
   },
   "error_codes": [
     "service_unauthenticated",
@@ -86,6 +87,7 @@
     "control_plane_unavailable",
     "tunnel_key_unavailable",
     "tunnel_key_conflict",
-    "attachment_open"
+    "attachment_open",
+    "internal"
   ]
 }

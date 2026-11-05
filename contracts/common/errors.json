@@ -1,0 +1,2190 @@
+{
+  "version": 1,
+  "categories": [
+    "invalid_request",
+    "unauthenticated",
+    "forbidden",
+    "not_found",
+    "conflict",
+    "precondition_failed",
+    "rate_limited",
+    "unavailable",
+    "internal"
+  ],
+  "errors": [
+    {
+      "code": "invalid_request",
+      "category": "invalid_request",
+      "retryable": false,
+      "http_status": 400,
+      "owner": "platform",
+      "description": "Request fields are missing, malformed, or failed validation."
+    },
+    {
+      "code": "unauthenticated",
+      "category": "unauthenticated",
+      "retryable": false,
+      "http_status": 401,
+      "owner": "platform",
+      "description": "Authentication credentials are missing, invalid, or expired."
+    },
+    {
+      "code": "forbidden",
+      "category": "forbidden",
+      "retryable": false,
+      "http_status": 403,
+      "owner": "platform",
+      "description": "The caller is authenticated but not allowed to perform the request."
+    },
+    {
+      "code": "not_found",
+      "category": "not_found",
+      "retryable": false,
+      "http_status": 404,
+      "owner": "platform",
+      "description": "The requested resource does not exist."
+    },
+    {
+      "code": "conflict",
+      "category": "conflict",
+      "retryable": false,
+      "http_status": 409,
+      "owner": "platform",
+      "description": "The request conflicts with the current state of the resource."
+    },
+    {
+      "code": "precondition_failed",
+      "category": "precondition_failed",
+      "retryable": false,
+      "http_status": 412,
+      "owner": "platform",
+      "description": "A required precondition, such as a resource version check, failed."
+    },
+    {
+      "code": "rate_limited",
+      "category": "rate_limited",
+      "retryable": true,
+      "http_status": 429,
+      "owner": "platform",
+      "description": "Admission rate limiting rejected the request; retry after the announced delay."
+    },
+    {
+      "code": "unavailable",
+      "category": "unavailable",
+      "retryable": true,
+      "http_status": 503,
+      "owner": "platform",
+      "description": "A required dependency is temporarily unavailable; retrying is safe."
+    },
+    {
+      "code": "internal",
+      "category": "internal",
+      "retryable": false,
+      "http_status": 500,
+      "owner": "platform",
+      "description": "An unexpected internal failure occurred while serving the request."
+    },
+    {
+      "code": "internal_error",
+      "category": "internal",
+      "retryable": false,
+      "http_status": 500,
+      "owner": "platform",
+      "description": "Deprecated wire name for internal errors from earlier envelopes.",
+      "deprecated_alias_of": "internal"
+    },
+    {
+      "code": "unauthorized",
+      "category": "unauthenticated",
+      "retryable": false,
+      "http_status": 401,
+      "owner": "platform",
+      "description": "Deprecated wire name for unauthenticated from earlier envelopes.",
+      "deprecated_alias_of": "unauthenticated"
+    },
+    {
+      "code": "version_conflict",
+      "category": "conflict",
+      "retryable": false,
+      "http_status": 409,
+      "owner": "platform",
+      "description": "Deprecated wire name for conflict on stale resource versions.",
+      "deprecated_alias_of": "conflict"
+    },
+    {
+      "code": "resource_version_conflict",
+      "category": "conflict",
+      "retryable": false,
+      "http_status": 409,
+      "owner": "platform",
+      "description": "Deprecated wire name for conflict on resource version mismatches.",
+      "deprecated_alias_of": "conflict"
+    },
+    {
+      "code": "revision_conflict",
+      "category": "conflict",
+      "retryable": false,
+      "http_status": 409,
+      "owner": "platform",
+      "description": "Deprecated wire name for conflict on revision mismatches.",
+      "deprecated_alias_of": "conflict"
+    },
+    {
+      "code": "request_conflict",
+      "category": "conflict",
+      "retryable": false,
+      "http_status": 409,
+      "owner": "platform",
+      "description": "Deprecated wire name for conflict on repeated or racing requests.",
+      "deprecated_alias_of": "conflict"
+    },
+    {
+      "code": "method_not_allowed",
+      "category": "invalid_request",
+      "retryable": false,
+      "http_status": 405,
+      "owner": "edge-gateway",
+      "description": "The HTTP method is not supported for this route."
+    },
+    {
+      "code": "request_too_large",
+      "category": "invalid_request",
+      "retryable": false,
+      "http_status": 413,
+      "owner": "edge-gateway",
+      "description": "The request body or headers exceed the admission limit."
+    },
+    {
+      "code": "principal_changed",
+      "category": "conflict",
+      "retryable": false,
+      "http_status": 409,
+      "owner": "edge-gateway",
+      "description": "The authenticated principal changed since the session evidence was issued."
+    },
+    {
+      "code": "csrf_failed",
+      "category": "forbidden",
+      "retryable": false,
+      "http_status": 403,
+      "owner": "edge-gateway",
+      "description": "The request failed origin or CSRF token verification."
+    },
+    {
+      "code": "identity_unavailable",
+      "category": "unavailable",
+      "retryable": true,
+      "http_status": 503,
+      "owner": "edge-gateway",
+      "description": "Identity Service could not be reached to serve the request."
+    },
+    {
+      "code": "console_unavailable",
+      "category": "unavailable",
+      "retryable": true,
+      "http_status": 503,
+      "owner": "edge-gateway",
+      "description": "Admin Console could not be reached to serve the request."
+    },
+    {
+      "code": "workspace_unavailable",
+      "category": "unavailable",
+      "retryable": true,
+      "http_status": 503,
+      "owner": "edge-gateway",
+      "description": "Agent UI could not be reached to serve the browser workspace."
+    },
+    {
+      "code": "agent_unavailable",
+      "category": "unavailable",
+      "retryable": true,
+      "http_status": 503,
+      "owner": "edge-gateway",
+      "description": "The Agent service could not be reached to serve the request."
+    },
+    {
+      "code": "login_method_unavailable",
+      "category": "invalid_request",
+      "retryable": false,
+      "http_status": 400,
+      "owner": "edge-gateway",
+      "description": "The requested login method is not enabled for the organization."
+    },
+    {
+      "code": "login_rate_limited",
+      "category": "rate_limited",
+      "retryable": true,
+      "http_status": 429,
+      "owner": "edge-gateway",
+      "description": "Login admission rate limiting rejected the attempt; retry after the announced delay."
+    },
+    {
+      "code": "invalid_current_password",
+      "category": "invalid_request",
+      "retryable": false,
+      "http_status": 400,
+      "owner": "edge-gateway",
+      "description": "The supplied current password is incorrect."
+    },
+    {
+      "code": "external_identity_last_method",
+      "category": "conflict",
+      "retryable": false,
+      "http_status": 409,
+      "owner": "edge-gateway",
+      "description": "The external identity is the membership's last available login method."
+    },
+    {
+      "code": "credential_busy",
+      "category": "unavailable",
+      "retryable": true,
+      "http_status": 503,
+      "owner": "edge-gateway",
+      "description": "Password verification capacity is saturated; retry after the announced delay."
+    },
+    {
+      "code": "credential_rate_limited",
+      "category": "rate_limited",
+      "retryable": true,
+      "http_status": 429,
+      "owner": "edge-gateway",
+      "description": "Password verification attempts were rate limited; retry after the announced delay."
+    },
+    {
+      "code": "invalid_idempotency_key",
+      "category": "invalid_request",
+      "retryable": false,
+      "http_status": 400,
+      "owner": "admin-console",
+      "description": "The Idempotency-Key header is missing or malformed."
+    },
+    {
+      "code": "runtime_image_required",
+      "category": "invalid_request",
+      "retryable": false,
+      "http_status": 400,
+      "owner": "admin-console",
+      "description": "A runtime image selection is required for this operation."
+    },
+    {
+      "code": "invalid_argument",
+      "category": "invalid_request",
+      "retryable": false,
+      "http_status": 400,
+      "owner": "admin-console",
+      "description": "The request contains an invalid argument."
+    },
+    {
+      "code": "bad_request",
+      "category": "invalid_request",
+      "retryable": false,
+      "http_status": 400,
+      "owner": "admin-console",
+      "description": "The upstream request is invalid."
+    },
+    {
+      "code": "unsupported_media_type",
+      "category": "invalid_request",
+      "retryable": false,
+      "http_status": 415,
+      "owner": "admin-console",
+      "description": "The upstream request content type is invalid."
+    },
+    {
+      "code": "limit_exceeded",
+      "category": "invalid_request",
+      "retryable": false,
+      "http_status": 413,
+      "owner": "admin-console",
+      "description": "The request exceeds the configured limit."
+    },
+    {
+      "code": "encoding_failed",
+      "category": "internal",
+      "retryable": false,
+      "http_status": 500,
+      "owner": "admin-console",
+      "description": "The request could not be encoded for the upstream call."
+    },
+    {
+      "code": "streaming_unavailable",
+      "category": "internal",
+      "retryable": false,
+      "http_status": 500,
+      "owner": "admin-console",
+      "description": "The response stream could not be established."
+    },
+    {
+      "code": "upstream_error",
+      "category": "internal",
+      "retryable": false,
+      "http_status": 502,
+      "owner": "admin-console",
+      "description": "The upstream dependency returned an unclassified failure."
+    },
+    {
+      "code": "upstream_rejected",
+      "category": "internal",
+      "retryable": false,
+      "http_status": 502,
+      "owner": "admin-console",
+      "description": "The upstream dependency rejected the request."
+    },
+    {
+      "code": "invalid_upstream_response",
+      "category": "unavailable",
+      "retryable": true,
+      "http_status": 502,
+      "owner": "admin-console",
+      "description": "The upstream dependency returned a malformed failure response."
+    },
+    {
+      "code": "dependency_invalid_response",
+      "category": "unavailable",
+      "retryable": true,
+      "http_status": 502,
+      "owner": "admin-console",
+      "description": "A required dependency returned an invalid response."
+    },
+    {
+      "code": "provider_discovery_failed",
+      "category": "unavailable",
+      "retryable": true,
+      "http_status": 502,
+      "owner": "admin-console",
+      "description": "Provider discovery failed at the configured endpoint."
+    },
+    {
+      "code": "dependency_unavailable",
+      "category": "unavailable",
+      "retryable": true,
+      "http_status": 503,
+      "owner": "admin-console",
+      "description": "A required dependency is temporarily unavailable."
+    },
+    {
+      "code": "service_stopping",
+      "category": "unavailable",
+      "retryable": true,
+      "http_status": 503,
+      "owner": "admin-console",
+      "description": "The dependency is draining and cannot serve the request."
+    },
+    {
+      "code": "application_unavailable",
+      "category": "unavailable",
+      "retryable": true,
+      "http_status": 503,
+      "owner": "admin-console",
+      "description": "The backing application is temporarily unavailable."
+    },
+    {
+      "code": "agent_inventory_unavailable",
+      "category": "unavailable",
+      "retryable": true,
+      "http_status": 503,
+      "owner": "admin-console",
+      "description": "The agent inventory dependency is temporarily unavailable."
+    },
+    {
+      "code": "identity_dependency_unavailable",
+      "category": "unavailable",
+      "retryable": true,
+      "http_status": 503,
+      "owner": "admin-console",
+      "description": "Identity authorization dependency is unavailable."
+    },
+    {
+      "code": "provider_endpoint_unavailable",
+      "category": "unavailable",
+      "retryable": true,
+      "http_status": 503,
+      "owner": "admin-console",
+      "description": "The provider endpoint is temporarily unavailable."
+    },
+    {
+      "code": "cleanup_failed",
+      "category": "unavailable",
+      "retryable": true,
+      "http_status": 503,
+      "owner": "admin-console",
+      "description": "Dependent resource cleanup did not complete; retry is safe."
+    },
+    {
+      "code": "busy",
+      "category": "rate_limited",
+      "retryable": true,
+      "http_status": 429,
+      "owner": "admin-console",
+      "description": "The dependency is saturated; retry after backoff."
+    },
+    {
+      "code": "caller_context_required",
+      "category": "unauthenticated",
+      "retryable": false,
+      "http_status": 401,
+      "owner": "admin-console",
+      "description": "A caller context token is required for this operation."
+    },
+    {
+      "code": "caller_context_invalid",
+      "category": "unauthenticated",
+      "retryable": false,
+      "http_status": 401,
+      "owner": "admin-console",
+      "description": "Caller context verification failed."
+    },
+    {
+      "code": "service_unauthenticated",
+      "category": "unauthenticated",
+      "retryable": false,
+      "http_status": 401,
+      "owner": "admin-console",
+      "description": "Service authentication rejected the request."
+    },
+    {
+      "code": "caller_not_allowed",
+      "category": "forbidden",
+      "retryable": false,
+      "http_status": 403,
+      "owner": "admin-console",
+      "description": "The service caller is not allowed for this operation."
+    },
+    {
+      "code": "organization_mismatch",
+      "category": "forbidden",
+      "retryable": false,
+      "http_status": 403,
+      "owner": "admin-console",
+      "description": "The request organization does not match the authenticated scope."
+    },
+    {
+      "code": "actor_mismatch",
+      "category": "forbidden",
+      "retryable": false,
+      "http_status": 403,
+      "owner": "admin-console",
+      "description": "The actor does not match the caller context."
+    },
+    {
+      "code": "access_denied",
+      "category": "forbidden",
+      "retryable": false,
+      "http_status": 403,
+      "owner": "admin-console",
+      "description": "Access to the requested operation is denied."
+    },
+    {
+      "code": "provider_endpoint_forbidden",
+      "category": "forbidden",
+      "retryable": false,
+      "http_status": 422,
+      "owner": "admin-console",
+      "description": "The provider endpoint refused the request payload."
+    },
+    {
+      "code": "reference_not_found",
+      "category": "not_found",
+      "retryable": false,
+      "http_status": 404,
+      "owner": "admin-console",
+      "description": "The referenced resource does not exist."
+    },
+    {
+      "code": "agent_not_found",
+      "category": "not_found",
+      "retryable": false,
+      "http_status": 404,
+      "owner": "admin-console",
+      "description": "The requested agent does not exist."
+    },
+    {
+      "code": "agent_network_not_found",
+      "category": "not_found",
+      "retryable": false,
+      "http_status": 404,
+      "owner": "admin-console",
+      "description": "The requested agent network does not exist."
+    },
+    {
+      "code": "policy_revision_not_found",
+      "category": "not_found",
+      "retryable": false,
+      "http_status": 404,
+      "owner": "admin-console",
+      "description": "The requested policy revision does not exist."
+    },
+    {
+      "code": "revision_not_found",
+      "category": "not_found",
+      "retryable": false,
+      "http_status": 404,
+      "owner": "admin-console",
+      "description": "The requested revision does not exist."
+    },
+    {
+      "code": "model_profile_not_found",
+      "category": "not_found",
+      "retryable": false,
+      "http_status": 404,
+      "owner": "admin-console",
+      "description": "The requested model profile does not exist."
+    },
+    {
+      "code": "template_not_found",
+      "category": "not_found",
+      "retryable": false,
+      "http_status": 404,
+      "owner": "admin-console",
+      "description": "The requested template does not exist."
+    },
+    {
+      "code": "operation_not_found",
+      "category": "not_found",
+      "retryable": false,
+      "http_status": 404,
+      "owner": "admin-console",
+      "description": "The requested operation does not exist."
+    },
+    {
+      "code": "reference_disabled",
+      "category": "conflict",
+      "retryable": false,
+      "http_status": 409,
+      "owner": "admin-console",
+      "description": "The referenced resource is disabled."
+    },
+    {
+      "code": "agent_network_unavailable",
+      "category": "conflict",
+      "retryable": false,
+      "http_status": 409,
+      "owner": "admin-console",
+      "description": "The agent network is not currently available for the operation."
+    },
+    {
+      "code": "policy_revision_conflict",
+      "category": "conflict",
+      "retryable": false,
+      "http_status": 409,
+      "owner": "admin-console",
+      "description": "The policy revision conflicts with the current state."
+    },
+    {
+      "code": "idempotency_conflict",
+      "category": "conflict",
+      "retryable": false,
+      "http_status": 409,
+      "owner": "admin-console",
+      "description": "An equivalent operation is already in flight for this idempotency key."
+    },
+    {
+      "code": "preparation_not_found",
+      "category": "not_found",
+      "retryable": false,
+      "http_status": 404,
+      "owner": "admin-console",
+      "description": "Skill preparation was not found"
+    },
+    {
+      "code": "audit_not_found",
+      "category": "not_found",
+      "retryable": false,
+      "http_status": 404,
+      "owner": "admin-console",
+      "description": "Execution audit record was not found"
+    },
+    {
+      "code": "resource_in_use",
+      "category": "conflict",
+      "retryable": false,
+      "http_status": 409,
+      "owner": "admin-console",
+      "description": "Resource is referenced and cannot be changed"
+    },
+    {
+      "code": "request_id_conflict",
+      "category": "conflict",
+      "retryable": false,
+      "http_status": 409,
+      "owner": "admin-console",
+      "description": "Request identifier was already used with different content"
+    },
+    {
+      "code": "lifecycle_conflict",
+      "category": "conflict",
+      "retryable": false,
+      "http_status": 409,
+      "owner": "admin-console",
+      "description": "Lifecycle operation conflicts with the current state"
+    },
+    {
+      "code": "execution_configuration_capacity_exceeded",
+      "category": "conflict",
+      "retryable": false,
+      "http_status": 409,
+      "owner": "admin-console",
+      "description": "Execution configuration exceeds capacity"
+    },
+    {
+      "code": "external_identity_conflict",
+      "category": "conflict",
+      "retryable": false,
+      "http_status": 409,
+      "owner": "admin-console",
+      "description": "External identity is already assigned"
+    },
+    {
+      "code": "external_identity_restore_required",
+      "category": "conflict",
+      "retryable": false,
+      "http_status": 409,
+      "owner": "admin-console",
+      "description": "External identity binding was revoked and requires explicit restoration"
+    },
+    {
+      "code": "invalid_model_spec",
+      "category": "invalid_request",
+      "retryable": false,
+      "http_status": 400,
+      "owner": "admin-console",
+      "description": "Model specification is invalid"
+    },
+    {
+      "code": "invalid_cursor",
+      "category": "invalid_request",
+      "retryable": false,
+      "http_status": 400,
+      "owner": "admin-console",
+      "description": "Pagination cursor is invalid"
+    },
+    {
+      "code": "execution_audit_unavailable",
+      "category": "unavailable",
+      "retryable": true,
+      "http_status": 503,
+      "owner": "admin-console",
+      "description": "Execution audit data is unavailable"
+    },
+    {
+      "code": "invalid_package",
+      "category": "invalid_request",
+      "retryable": false,
+      "http_status": 400,
+      "owner": "admin-console",
+      "description": "Skill package is invalid"
+    },
+    {
+      "code": "name_conflict",
+      "category": "conflict",
+      "retryable": false,
+      "http_status": 409,
+      "owner": "admin-console",
+      "description": "Name is already in use"
+    },
+    {
+      "code": "content_changed",
+      "category": "conflict",
+      "retryable": false,
+      "http_status": 409,
+      "owner": "admin-console",
+      "description": "Content changed since it was read"
+    },
+    {
+      "code": "source_invalid",
+      "category": "unavailable",
+      "retryable": true,
+      "http_status": 502,
+      "owner": "admin-console",
+      "description": "Configured source is invalid"
+    },
+    {
+      "code": "temporarily_unavailable",
+      "category": "unavailable",
+      "retryable": true,
+      "http_status": 503,
+      "owner": "admin-console",
+      "description": "Service is temporarily unavailable"
+    },
+    {
+      "code": "source_unavailable",
+      "category": "unavailable",
+      "retryable": true,
+      "http_status": 503,
+      "owner": "admin-console",
+      "description": "Configured source is unavailable"
+    },
+    {
+      "code": "inactive_principal",
+      "category": "forbidden",
+      "retryable": false,
+      "http_status": 403,
+      "owner": "identity-service",
+      "description": "The principal is inactive"
+    },
+    {
+      "code": "last_organization_admin",
+      "category": "conflict",
+      "retryable": false,
+      "http_status": 409,
+      "owner": "identity-service",
+      "description": "An organization must retain at least one active administrator"
+    },
+    {
+      "code": "invalid_reference",
+      "category": "invalid_request",
+      "retryable": false,
+      "http_status": 400,
+      "owner": "identity-service",
+      "description": "The referenced identity resource is invalid"
+    },
+    {
+      "code": "oidc_provider_issuer_immutable",
+      "category": "conflict",
+      "retryable": false,
+      "http_status": 409,
+      "owner": "identity-service",
+      "description": "OIDC provider issuer cannot be changed"
+    },
+    {
+      "code": "oidc_provider_client_id_immutable",
+      "category": "conflict",
+      "retryable": false,
+      "http_status": 409,
+      "owner": "identity-service",
+      "description": "OIDC provider client ID cannot be changed"
+    },
+    {
+      "code": "oidc_provider_changed",
+      "category": "conflict",
+      "retryable": false,
+      "http_status": 409,
+      "owner": "identity-service",
+      "description": "OIDC provider changed since login started"
+    },
+    {
+      "code": "oidc_membership_required",
+      "category": "forbidden",
+      "retryable": false,
+      "http_status": 403,
+      "owner": "identity-service",
+      "description": "OIDC login requires an organization membership"
+    },
+    {
+      "code": "oidc_exchange_in_progress",
+      "category": "conflict",
+      "retryable": false,
+      "http_status": 409,
+      "owner": "identity-service",
+      "description": "OIDC exchange is already in progress"
+    },
+    {
+      "code": "oidc_exchange_claim_invalid",
+      "category": "invalid_request",
+      "retryable": false,
+      "http_status": 400,
+      "owner": "identity-service",
+      "description": "OIDC exchange claims are invalid"
+    },
+    {
+      "code": "oidc_session_failed",
+      "category": "invalid_request",
+      "retryable": false,
+      "http_status": 400,
+      "owner": "identity-service",
+      "description": "OIDC session could not be completed"
+    },
+    {
+      "code": "oidc_session_expired",
+      "category": "not_found",
+      "retryable": false,
+      "http_status": 410,
+      "owner": "identity-service",
+      "description": "OIDC login session has expired"
+    },
+    {
+      "code": "oidc_completed_token_unavailable",
+      "category": "not_found",
+      "retryable": false,
+      "http_status": 410,
+      "owner": "identity-service",
+      "description": "OIDC completed token is no longer available"
+    },
+    {
+      "code": "oidc_authorization_failed",
+      "category": "invalid_request",
+      "retryable": false,
+      "http_status": 400,
+      "owner": "identity-service",
+      "description": "OIDC authorization failed"
+    },
+    {
+      "code": "oidc_provider_failed",
+      "category": "internal",
+      "retryable": false,
+      "http_status": 500,
+      "owner": "identity-service",
+      "description": "OIDC provider operation failed"
+    },
+    {
+      "code": "oidc_provider_secret_failed",
+      "category": "internal",
+      "retryable": false,
+      "http_status": 500,
+      "owner": "identity-service",
+      "description": "OIDC provider secret operation failed"
+    },
+    {
+      "code": "oidc_exchange_failed",
+      "category": "internal",
+      "retryable": false,
+      "http_status": 500,
+      "owner": "identity-service",
+      "description": "OIDC exchange failed"
+    },
+    {
+      "code": "oidc_identity_failed",
+      "category": "internal",
+      "retryable": false,
+      "http_status": 500,
+      "owner": "identity-service",
+      "description": "OIDC identity operation failed"
+    },
+    {
+      "code": "oidc_token_failed",
+      "category": "internal",
+      "retryable": false,
+      "http_status": 500,
+      "owner": "identity-service",
+      "description": "OIDC token operation failed"
+    },
+    {
+      "code": "oidc_persistence_failed",
+      "category": "internal",
+      "retryable": false,
+      "http_status": 500,
+      "owner": "identity-service",
+      "description": "OIDC persistence operation failed"
+    },
+    {
+      "code": "runtime_image_invalid",
+      "category": "invalid_request",
+      "retryable": false,
+      "http_status": 400,
+      "owner": "agent-controller",
+      "description": "Runtime image reference is invalid"
+    },
+    {
+      "code": "agent_not_ready",
+      "category": "conflict",
+      "retryable": true,
+      "http_status": 409,
+      "owner": "agent-controller",
+      "description": "Agent is not ready"
+    },
+    {
+      "code": "configuration_conflict",
+      "category": "conflict",
+      "retryable": false,
+      "http_status": 409,
+      "owner": "agent-controller",
+      "description": "Agent configuration conflicts with the current revision"
+    },
+    {
+      "code": "lifecycle_timeout",
+      "category": "unavailable",
+      "retryable": true,
+      "http_status": 504,
+      "owner": "agent-controller",
+      "description": "Lifecycle operation timed out"
+    },
+    {
+      "code": "acp_member_not_allowed",
+      "category": "forbidden",
+      "retryable": false,
+      "http_status": 403,
+      "owner": "runtime-controller",
+      "description": "Acp member not allowed"
+    },
+    {
+      "code": "acp_incarnation_unverified",
+      "category": "forbidden",
+      "retryable": false,
+      "http_status": 403,
+      "owner": "runtime-controller",
+      "description": "Acp incarnation unverified"
+    },
+    {
+      "code": "acp_incarnation_conflict",
+      "category": "conflict",
+      "retryable": false,
+      "http_status": 409,
+      "owner": "runtime-controller",
+      "description": "Acp incarnation conflict"
+    },
+    {
+      "code": "skill_preparation_closed",
+      "category": "conflict",
+      "retryable": false,
+      "http_status": 409,
+      "owner": "runtime-controller",
+      "description": "Skill preparation closed"
+    },
+    {
+      "code": "runtime_lifecycle_conflict",
+      "category": "conflict",
+      "retryable": false,
+      "http_status": 409,
+      "owner": "runtime-controller",
+      "description": "Runtime lifecycle conflict"
+    },
+    {
+      "code": "runtime_revision_conflict",
+      "category": "conflict",
+      "retryable": false,
+      "http_status": 409,
+      "owner": "runtime-controller",
+      "description": "Runtime revision conflict"
+    },
+    {
+      "code": "prepared_skill_set_invalidated",
+      "category": "conflict",
+      "retryable": false,
+      "http_status": 409,
+      "owner": "runtime-controller",
+      "description": "Prepared skill set invalidated"
+    },
+    {
+      "code": "tunnel_key_registration_rejected",
+      "category": "conflict",
+      "retryable": false,
+      "http_status": 409,
+      "owner": "runtime-controller",
+      "description": "Tunnel key registration rejected"
+    },
+    {
+      "code": "runtime_drift",
+      "category": "conflict",
+      "retryable": false,
+      "http_status": 409,
+      "owner": "runtime-controller",
+      "description": "Runtime drift"
+    },
+    {
+      "code": "storage_in_use",
+      "category": "conflict",
+      "retryable": false,
+      "http_status": 409,
+      "owner": "runtime-controller",
+      "description": "Storage in use"
+    },
+    {
+      "code": "storage_ownership_conflict",
+      "category": "conflict",
+      "retryable": false,
+      "http_status": 409,
+      "owner": "runtime-controller",
+      "description": "Storage ownership conflict"
+    },
+    {
+      "code": "runtime_connection_stale",
+      "category": "conflict",
+      "retryable": false,
+      "http_status": 409,
+      "owner": "runtime-controller",
+      "description": "Runtime connection stale"
+    },
+    {
+      "code": "agent_mutation_in_progress",
+      "category": "conflict",
+      "retryable": true,
+      "http_status": 409,
+      "owner": "runtime-controller",
+      "description": "Agent mutation in progress"
+    },
+    {
+      "code": "acp_registration_unavailable",
+      "category": "unavailable",
+      "retryable": true,
+      "http_status": 503,
+      "owner": "runtime-controller",
+      "description": "Acp registration unavailable"
+    },
+    {
+      "code": "acp_registry_unavailable",
+      "category": "unavailable",
+      "retryable": true,
+      "http_status": 503,
+      "owner": "runtime-controller",
+      "description": "Acp registry unavailable"
+    },
+    {
+      "code": "mutation_lock_lost",
+      "category": "unavailable",
+      "retryable": true,
+      "http_status": 503,
+      "owner": "runtime-controller",
+      "description": "Mutation lock lost"
+    },
+    {
+      "code": "skill_preparation_unavailable",
+      "category": "unavailable",
+      "retryable": true,
+      "http_status": 503,
+      "owner": "runtime-controller",
+      "description": "Skill preparation unavailable"
+    },
+    {
+      "code": "skill_cleanup_in_progress",
+      "category": "unavailable",
+      "retryable": true,
+      "http_status": 503,
+      "owner": "runtime-controller",
+      "description": "Skill cleanup in progress"
+    },
+    {
+      "code": "tunnel_registration_unavailable",
+      "category": "unavailable",
+      "retryable": true,
+      "http_status": 503,
+      "owner": "runtime-controller",
+      "description": "Tunnel registration unavailable"
+    },
+    {
+      "code": "skill_preflight_unavailable",
+      "category": "unavailable",
+      "retryable": true,
+      "http_status": 503,
+      "owner": "runtime-controller",
+      "description": "Skill preflight unavailable"
+    },
+    {
+      "code": "platform_unavailable",
+      "category": "unavailable",
+      "retryable": true,
+      "http_status": 503,
+      "owner": "runtime-controller",
+      "description": "Platform unavailable"
+    },
+    {
+      "code": "runtime_capacity_exhausted",
+      "category": "unavailable",
+      "retryable": true,
+      "http_status": 503,
+      "owner": "runtime-controller",
+      "description": "Runtime capacity exhausted"
+    },
+    {
+      "code": "runtime_connection_unavailable",
+      "category": "unavailable",
+      "retryable": true,
+      "http_status": 503,
+      "owner": "runtime-controller",
+      "description": "Runtime connection unavailable"
+    },
+    {
+      "code": "deadline_exceeded",
+      "category": "unavailable",
+      "retryable": true,
+      "http_status": 504,
+      "owner": "runtime-controller",
+      "description": "Deadline exceeded"
+    },
+    {
+      "code": "runtime_not_ready",
+      "category": "internal",
+      "retryable": false,
+      "http_status": 500,
+      "owner": "runtime-controller",
+      "description": "Runtime not ready"
+    },
+    {
+      "code": "operation_failed",
+      "category": "internal",
+      "retryable": false,
+      "http_status": 500,
+      "owner": "runtime-controller",
+      "description": "Operation failed"
+    },
+    {
+      "code": "image_not_found",
+      "category": "not_found",
+      "retryable": false,
+      "http_status": 404,
+      "owner": "runtime-controller",
+      "description": "Image not found"
+    },
+    {
+      "code": "runtime_not_found",
+      "category": "not_found",
+      "retryable": false,
+      "http_status": 404,
+      "owner": "runtime-controller",
+      "description": "Runtime not found"
+    },
+    {
+      "code": "storage_not_found",
+      "category": "not_found",
+      "retryable": false,
+      "http_status": 404,
+      "owner": "runtime-controller",
+      "description": "Storage not found"
+    },
+    {
+      "code": "route_not_found",
+      "category": "not_found",
+      "retryable": false,
+      "http_status": 404,
+      "owner": "runtime-controller",
+      "description": "Route not found"
+    },
+    {
+      "code": "observation_cursor_expired",
+      "category": "not_found",
+      "retryable": false,
+      "http_status": 410,
+      "owner": "runtime-controller",
+      "description": "Observation cursor expired"
+    },
+    {
+      "code": "idempotency_key_required",
+      "category": "invalid_request",
+      "retryable": false,
+      "http_status": 400,
+      "owner": "runtime-controller",
+      "description": "Idempotency key required"
+    },
+    {
+      "code": "image_not_allowed",
+      "category": "invalid_request",
+      "retryable": false,
+      "http_status": 422,
+      "owner": "runtime-controller",
+      "description": "Image not allowed"
+    },
+    {
+      "code": "invalid_params",
+      "category": "invalid_request",
+      "retryable": false,
+      "http_status": 400,
+      "owner": "antnest-runtime",
+      "description": "Invalid params"
+    },
+    {
+      "code": "invalid_path",
+      "category": "invalid_request",
+      "retryable": false,
+      "http_status": 400,
+      "owner": "antnest-runtime",
+      "description": "Invalid path"
+    },
+    {
+      "code": "content_not_utf8",
+      "category": "invalid_request",
+      "retryable": false,
+      "http_status": 400,
+      "owner": "antnest-runtime",
+      "description": "Content not utf8"
+    },
+    {
+      "code": "old_string_not_found",
+      "category": "invalid_request",
+      "retryable": false,
+      "http_status": 400,
+      "owner": "antnest-runtime",
+      "description": "Old string not found"
+    },
+    {
+      "code": "old_string_not_unique",
+      "category": "invalid_request",
+      "retryable": false,
+      "http_status": 400,
+      "owner": "antnest-runtime",
+      "description": "Old string not unique"
+    },
+    {
+      "code": "temporary_background_not_supported",
+      "category": "invalid_request",
+      "retryable": false,
+      "http_status": 400,
+      "owner": "antnest-runtime",
+      "description": "Temporary background not supported"
+    },
+    {
+      "code": "result_too_large",
+      "category": "invalid_request",
+      "retryable": false,
+      "http_status": 413,
+      "owner": "antnest-runtime",
+      "description": "Result too large"
+    },
+    {
+      "code": "body_too_large",
+      "category": "invalid_request",
+      "retryable": false,
+      "http_status": 413,
+      "owner": "antnest-runtime",
+      "description": "Body too large"
+    },
+    {
+      "code": "body_timed_out",
+      "category": "invalid_request",
+      "retryable": false,
+      "http_status": 408,
+      "owner": "antnest-runtime",
+      "description": "Body timed out"
+    },
+    {
+      "code": "invalid_content_type",
+      "category": "invalid_request",
+      "retryable": false,
+      "http_status": 415,
+      "owner": "antnest-runtime",
+      "description": "Invalid content type"
+    },
+    {
+      "code": "canceled",
+      "category": "invalid_request",
+      "retryable": false,
+      "http_status": 499,
+      "owner": "antnest-runtime",
+      "description": "Canceled"
+    },
+    {
+      "code": "edit_failed",
+      "category": "internal",
+      "retryable": false,
+      "http_status": 500,
+      "owner": "antnest-runtime",
+      "description": "Edit failed"
+    },
+    {
+      "code": "edit_read_failed",
+      "category": "internal",
+      "retryable": false,
+      "http_status": 500,
+      "owner": "antnest-runtime",
+      "description": "Edit read failed"
+    },
+    {
+      "code": "encode_result_failed",
+      "category": "internal",
+      "retryable": false,
+      "http_status": 500,
+      "owner": "antnest-runtime",
+      "description": "Encode result failed"
+    },
+    {
+      "code": "outcome_unknown",
+      "category": "internal",
+      "retryable": false,
+      "http_status": 500,
+      "owner": "antnest-runtime",
+      "description": "Outcome unknown"
+    },
+    {
+      "code": "output_capture_failed",
+      "category": "internal",
+      "retryable": false,
+      "http_status": 500,
+      "owner": "antnest-runtime",
+      "description": "Output capture failed"
+    },
+    {
+      "code": "read_failed",
+      "category": "internal",
+      "retryable": false,
+      "http_status": 500,
+      "owner": "antnest-runtime",
+      "description": "Read failed"
+    },
+    {
+      "code": "runtime_failed",
+      "category": "internal",
+      "retryable": false,
+      "http_status": 500,
+      "owner": "antnest-runtime",
+      "description": "Runtime failed"
+    },
+    {
+      "code": "spawn_failed",
+      "category": "internal",
+      "retryable": false,
+      "http_status": 500,
+      "owner": "antnest-runtime",
+      "description": "Spawn failed"
+    },
+    {
+      "code": "wait_failed",
+      "category": "internal",
+      "retryable": false,
+      "http_status": 500,
+      "owner": "antnest-runtime",
+      "description": "Wait failed"
+    },
+    {
+      "code": "write_failed",
+      "category": "internal",
+      "retryable": false,
+      "http_status": 500,
+      "owner": "antnest-runtime",
+      "description": "Write failed"
+    },
+    {
+      "code": "child_process_containment_unproven",
+      "category": "internal",
+      "retryable": false,
+      "http_status": 500,
+      "owner": "antnest-runtime",
+      "description": "Child process containment unproven"
+    },
+    {
+      "code": "atomic_skill_replace_unsupported",
+      "category": "conflict",
+      "retryable": false,
+      "http_status": 409,
+      "owner": "antnest-runtime",
+      "description": "Atomic skill replace unsupported"
+    },
+    {
+      "code": "temporary_run_closed",
+      "category": "conflict",
+      "retryable": false,
+      "http_status": 409,
+      "owner": "antnest-runtime",
+      "description": "Temporary run closed"
+    },
+    {
+      "code": "temporary_scope_busy",
+      "category": "conflict",
+      "retryable": false,
+      "http_status": 409,
+      "owner": "antnest-runtime",
+      "description": "Temporary scope busy"
+    },
+    {
+      "code": "skill_background_task_running",
+      "category": "conflict",
+      "retryable": false,
+      "http_status": 409,
+      "owner": "antnest-runtime",
+      "description": "Skill background task running"
+    },
+    {
+      "code": "skill_managed_call_in_flight",
+      "category": "conflict",
+      "retryable": false,
+      "http_status": 409,
+      "owner": "antnest-runtime",
+      "description": "Skill managed call in flight"
+    },
+    {
+      "code": "skill_storage_full",
+      "category": "conflict",
+      "retryable": false,
+      "http_status": 409,
+      "owner": "antnest-runtime",
+      "description": "Skill storage full"
+    },
+    {
+      "code": "skill_writers_unknown",
+      "category": "conflict",
+      "retryable": false,
+      "http_status": 409,
+      "owner": "antnest-runtime",
+      "description": "Skill writers unknown"
+    },
+    {
+      "code": "run_closed",
+      "category": "conflict",
+      "retryable": false,
+      "http_status": 409,
+      "owner": "antnest-runtime",
+      "description": "Run closed"
+    },
+    {
+      "code": "runtime_execution_mismatch",
+      "category": "conflict",
+      "retryable": false,
+      "http_status": 409,
+      "owner": "antnest-runtime",
+      "description": "Runtime execution mismatch"
+    },
+    {
+      "code": "runtime_busy",
+      "category": "unavailable",
+      "retryable": true,
+      "http_status": 503,
+      "owner": "antnest-runtime",
+      "description": "Runtime busy"
+    },
+    {
+      "code": "runtime_unavailable",
+      "category": "unavailable",
+      "retryable": true,
+      "http_status": 503,
+      "owner": "antnest-runtime",
+      "description": "Runtime unavailable"
+    },
+    {
+      "code": "clock_unavailable",
+      "category": "unavailable",
+      "retryable": true,
+      "http_status": 503,
+      "owner": "antnest-runtime",
+      "description": "Clock unavailable"
+    },
+    {
+      "code": "temporary_unavailable",
+      "category": "unavailable",
+      "retryable": true,
+      "http_status": 503,
+      "owner": "antnest-runtime",
+      "description": "Temporary unavailable"
+    },
+    {
+      "code": "maintenance_unavailable",
+      "category": "unavailable",
+      "retryable": true,
+      "http_status": 503,
+      "owner": "antnest-runtime",
+      "description": "Maintenance unavailable"
+    },
+    {
+      "code": "timeout",
+      "category": "unavailable",
+      "retryable": true,
+      "http_status": 504,
+      "owner": "antnest-runtime",
+      "description": "Timeout"
+    },
+    {
+      "code": "host_not_allowed",
+      "category": "forbidden",
+      "retryable": false,
+      "http_status": 403,
+      "owner": "antnest-runtime",
+      "description": "Host not allowed"
+    },
+    {
+      "code": "temporary_disabled",
+      "category": "forbidden",
+      "retryable": false,
+      "http_status": 403,
+      "owner": "antnest-runtime",
+      "description": "Temporary disabled"
+    },
+    {
+      "code": "maintenance_disabled",
+      "category": "forbidden",
+      "retryable": false,
+      "http_status": 403,
+      "owner": "antnest-runtime",
+      "description": "Maintenance disabled"
+    },
+    {
+      "code": "runtime_unauthorized",
+      "category": "unauthenticated",
+      "retryable": false,
+      "http_status": 401,
+      "owner": "antnest-runtime",
+      "description": "Runtime unauthorized"
+    },
+    {
+      "code": "temporary_unauthorized",
+      "category": "unauthenticated",
+      "retryable": false,
+      "http_status": 401,
+      "owner": "antnest-runtime",
+      "description": "Temporary unauthorized"
+    },
+    {
+      "code": "maintenance_unauthorized",
+      "category": "unauthenticated",
+      "retryable": false,
+      "http_status": 401,
+      "owner": "antnest-runtime",
+      "description": "Maintenance unauthorized"
+    },
+    {
+      "code": "unknown_action",
+      "category": "not_found",
+      "retryable": false,
+      "http_status": 404,
+      "owner": "antnest-runtime",
+      "description": "Unknown action"
+    },
+    {
+      "code": "address_pool_exhausted",
+      "category": "conflict",
+      "retryable": false,
+      "http_status": 409,
+      "owner": "runtime-egress",
+      "description": "Address pool exhausted"
+    },
+    {
+      "code": "tunnel_key_unavailable",
+      "category": "conflict",
+      "retryable": false,
+      "http_status": 409,
+      "owner": "runtime-egress",
+      "description": "Tunnel key unavailable"
+    },
+    {
+      "code": "tunnel_key_conflict",
+      "category": "conflict",
+      "retryable": false,
+      "http_status": 409,
+      "owner": "runtime-egress",
+      "description": "Tunnel key conflict"
+    },
+    {
+      "code": "attachment_open",
+      "category": "conflict",
+      "retryable": false,
+      "http_status": 409,
+      "owner": "runtime-egress",
+      "description": "Attachment open"
+    },
+    {
+      "code": "control_plane_unavailable",
+      "category": "unavailable",
+      "retryable": true,
+      "http_status": 503,
+      "owner": "runtime-egress",
+      "description": "Control plane unavailable"
+    },
+    {
+      "code": "service_not_ready",
+      "category": "unavailable",
+      "retryable": true,
+      "http_status": 503,
+      "owner": "runtime-egress",
+      "description": "Service not ready"
+    },
+    {
+      "code": "bridge_capacity_exceeded",
+      "category": "rate_limited",
+      "retryable": true,
+      "http_status": 429,
+      "owner": "agent-ui",
+      "description": "Bridge capacity exceeded"
+    },
+    {
+      "code": "replay_capacity_exceeded",
+      "category": "rate_limited",
+      "retryable": true,
+      "http_status": 429,
+      "owner": "agent-ui",
+      "description": "Replay capacity exceeded"
+    },
+    {
+      "code": "stream_capacity_exceeded",
+      "category": "rate_limited",
+      "retryable": true,
+      "http_status": 429,
+      "owner": "agent-ui",
+      "description": "Stream capacity exceeded"
+    },
+    {
+      "code": "upload_capacity_exceeded",
+      "category": "rate_limited",
+      "retryable": true,
+      "http_status": 429,
+      "owner": "agent-ui",
+      "description": "Upload capacity exceeded"
+    },
+    {
+      "code": "connection_quota_exceeded",
+      "category": "rate_limited",
+      "retryable": true,
+      "http_status": 429,
+      "owner": "agent-acp-service",
+      "description": "Connection quota exceeded"
+    },
+    {
+      "code": "history_condition_required",
+      "category": "precondition_failed",
+      "retryable": false,
+      "http_status": 428,
+      "owner": "agent-ui",
+      "description": "History condition required"
+    },
+    {
+      "code": "intent_key_mismatch",
+      "category": "conflict",
+      "retryable": false,
+      "http_status": 409,
+      "owner": "agent-ui",
+      "description": "Intent key mismatch"
+    },
+    {
+      "code": "operation_conflict",
+      "category": "conflict",
+      "retryable": false,
+      "http_status": 409,
+      "owner": "agent-ui",
+      "description": "Operation conflict"
+    },
+    {
+      "code": "stale_cursor",
+      "category": "conflict",
+      "retryable": false,
+      "http_status": 409,
+      "owner": "agent-ui",
+      "description": "Stale cursor"
+    },
+    {
+      "code": "stale_history",
+      "category": "conflict",
+      "retryable": false,
+      "http_status": 409,
+      "owner": "agent-ui",
+      "description": "Stale history"
+    },
+    {
+      "code": "permission_conflict",
+      "category": "conflict",
+      "retryable": false,
+      "http_status": 409,
+      "owner": "agent-ui",
+      "description": "Permission conflict"
+    },
+    {
+      "code": "invalid_command_result",
+      "category": "internal",
+      "retryable": false,
+      "http_status": 502,
+      "owner": "agent-ui",
+      "description": "Invalid command result"
+    },
+    {
+      "code": "history_unavailable",
+      "category": "unavailable",
+      "retryable": true,
+      "http_status": 503,
+      "owner": "agent-ui",
+      "description": "History unavailable"
+    },
+    {
+      "code": "upstream_unavailable",
+      "category": "unavailable",
+      "retryable": true,
+      "http_status": 503,
+      "owner": "agent-ui",
+      "description": "Upstream unavailable"
+    },
+    {
+      "code": "workspace_deadline_exceeded",
+      "category": "unavailable",
+      "retryable": true,
+      "http_status": 504,
+      "owner": "agent-ui",
+      "description": "Workspace deadline exceeded"
+    },
+    {
+      "code": "session_access_denied",
+      "category": "forbidden",
+      "retryable": false,
+      "http_status": 403,
+      "owner": "agent-acp-service",
+      "description": "Session access denied"
+    },
+    {
+      "code": "client_mcp_not_allowed",
+      "category": "forbidden",
+      "retryable": false,
+      "http_status": 403,
+      "owner": "agent-acp-service",
+      "description": "Client mcp not allowed"
+    },
+    {
+      "code": "agent_busy",
+      "category": "conflict",
+      "retryable": true,
+      "http_status": 409,
+      "owner": "agent-acp-service",
+      "description": "Agent busy"
+    },
+    {
+      "code": "session_busy",
+      "category": "conflict",
+      "retryable": true,
+      "http_status": 409,
+      "owner": "agent-acp-service",
+      "description": "Session busy"
+    },
+    {
+      "code": "runtime_barrier_required",
+      "category": "conflict",
+      "retryable": true,
+      "http_status": 409,
+      "owner": "agent-acp-service",
+      "description": "Runtime barrier required"
+    },
+    {
+      "code": "configuration_not_ready",
+      "category": "unavailable",
+      "retryable": true,
+      "http_status": 503,
+      "owner": "agent-acp-service",
+      "description": "Configuration not ready"
+    },
+    {
+      "code": "agent_preparing",
+      "category": "unavailable",
+      "retryable": true,
+      "http_status": 503,
+      "owner": "agent-acp-service",
+      "description": "Agent preparing"
+    },
+    {
+      "code": "recovery_pending",
+      "category": "unavailable",
+      "retryable": true,
+      "http_status": 503,
+      "owner": "agent-acp-service",
+      "description": "Recovery pending"
+    },
+    {
+      "code": "configuration_unavailable",
+      "category": "unavailable",
+      "retryable": true,
+      "http_status": 503,
+      "owner": "agent-acp-service",
+      "description": "Configuration unavailable"
+    },
+    {
+      "code": "settlement_unavailable",
+      "category": "unavailable",
+      "retryable": true,
+      "http_status": 503,
+      "owner": "agent-acp-service",
+      "description": "Settlement unavailable"
+    },
+    {
+      "code": "execution_state_unavailable",
+      "category": "unavailable",
+      "retryable": true,
+      "http_status": 503,
+      "owner": "agent-acp-service",
+      "description": "Execution state unavailable"
+    },
+    {
+      "code": "workspace_observation_unavailable",
+      "category": "unavailable",
+      "retryable": true,
+      "http_status": 503,
+      "owner": "agent-acp-service",
+      "description": "Workspace observation unavailable"
+    },
+    {
+      "code": "learning_changes_unavailable",
+      "category": "unavailable",
+      "retryable": true,
+      "http_status": 503,
+      "owner": "agent-acp-service",
+      "description": "Learning changes unavailable"
+    },
+    {
+      "code": "learning_status_unavailable",
+      "category": "unavailable",
+      "retryable": true,
+      "http_status": 503,
+      "owner": "agent-acp-service",
+      "description": "Learning status unavailable"
+    },
+    {
+      "code": "acp_http_peer_disconnected",
+      "category": "unavailable",
+      "retryable": true,
+      "http_status": 503,
+      "owner": "agent-acp-service",
+      "description": "Acp http peer disconnected"
+    },
+    {
+      "code": "acp_http_unavailable",
+      "category": "unavailable",
+      "retryable": true,
+      "http_status": 503,
+      "owner": "agent-acp-service",
+      "description": "Acp http unavailable"
+    },
+    {
+      "code": "permission_timeout",
+      "category": "unavailable",
+      "retryable": true,
+      "http_status": 408,
+      "owner": "agent-acp-service",
+      "description": "Permission timeout"
+    },
+    {
+      "code": "model_unavailable",
+      "category": "conflict",
+      "retryable": false,
+      "http_status": 409,
+      "owner": "agent-acp-service",
+      "description": "Model unavailable"
+    },
+    {
+      "code": "provider_unavailable",
+      "category": "conflict",
+      "retryable": false,
+      "http_status": 409,
+      "owner": "agent-acp-service",
+      "description": "Provider unavailable"
+    },
+    {
+      "code": "skill_unavailable",
+      "category": "conflict",
+      "retryable": false,
+      "http_status": 409,
+      "owner": "agent-acp-service",
+      "description": "Skill unavailable"
+    },
+    {
+      "code": "agent_operation_conflict",
+      "category": "conflict",
+      "retryable": false,
+      "http_status": 409,
+      "owner": "agent-acp-service",
+      "description": "Agent operation conflict"
+    },
+    {
+      "code": "intent_already_recorded",
+      "category": "conflict",
+      "retryable": false,
+      "http_status": 409,
+      "owner": "agent-acp-service",
+      "description": "Intent already recorded"
+    },
+    {
+      "code": "session_append_conflict",
+      "category": "conflict",
+      "retryable": false,
+      "http_status": 409,
+      "owner": "agent-acp-service",
+      "description": "Session append conflict"
+    },
+    {
+      "code": "session_not_active",
+      "category": "conflict",
+      "retryable": false,
+      "http_status": 409,
+      "owner": "agent-acp-service",
+      "description": "Session not active"
+    },
+    {
+      "code": "session_workspace_mismatch",
+      "category": "conflict",
+      "retryable": false,
+      "http_status": 409,
+      "owner": "agent-acp-service",
+      "description": "Session workspace mismatch"
+    },
+    {
+      "code": "permission_stale",
+      "category": "conflict",
+      "retryable": false,
+      "http_status": 409,
+      "owner": "agent-acp-service",
+      "description": "Permission stale"
+    },
+    {
+      "code": "permission_connection_changed",
+      "category": "conflict",
+      "retryable": false,
+      "http_status": 409,
+      "owner": "agent-acp-service",
+      "description": "Permission connection changed"
+    },
+    {
+      "code": "cursor_expired",
+      "category": "conflict",
+      "retryable": false,
+      "http_status": 409,
+      "owner": "agent-acp-service",
+      "description": "Cursor expired"
+    },
+    {
+      "code": "run_cancelled",
+      "category": "conflict",
+      "retryable": false,
+      "http_status": 409,
+      "owner": "agent-acp-service",
+      "description": "Run cancelled"
+    },
+    {
+      "code": "configuration_base_mismatch",
+      "category": "conflict",
+      "retryable": false,
+      "http_status": 409,
+      "owner": "agent-acp-service",
+      "description": "Configuration base mismatch"
+    },
+    {
+      "code": "invalid_configuration",
+      "category": "invalid_request",
+      "retryable": false,
+      "http_status": 400,
+      "owner": "agent-acp-service",
+      "description": "Invalid configuration"
+    },
+    {
+      "code": "invalid_execution_configuration",
+      "category": "invalid_request",
+      "retryable": false,
+      "http_status": 400,
+      "owner": "agent-acp-service",
+      "description": "Invalid execution configuration"
+    },
+    {
+      "code": "invalid_context_budget",
+      "category": "invalid_request",
+      "retryable": false,
+      "http_status": 400,
+      "owner": "agent-acp-service",
+      "description": "Invalid context budget"
+    },
+    {
+      "code": "tool_name_collision",
+      "category": "invalid_request",
+      "retryable": false,
+      "http_status": 400,
+      "owner": "agent-acp-service",
+      "description": "Tool name collision"
+    },
+    {
+      "code": "invalid_directory_filter",
+      "category": "invalid_request",
+      "retryable": false,
+      "http_status": 400,
+      "owner": "agent-acp-service",
+      "description": "Invalid directory filter"
+    },
+    {
+      "code": "invalid_agent_settlement",
+      "category": "invalid_request",
+      "retryable": false,
+      "http_status": 400,
+      "owner": "agent-acp-service",
+      "description": "Invalid agent settlement"
+    },
+    {
+      "code": "unsupported_workspace",
+      "category": "invalid_request",
+      "retryable": false,
+      "http_status": 400,
+      "owner": "agent-acp-service",
+      "description": "Unsupported workspace"
+    },
+    {
+      "code": "unsupported_audio_content",
+      "category": "invalid_request",
+      "retryable": false,
+      "http_status": 400,
+      "owner": "agent-acp-service",
+      "description": "Unsupported audio content"
+    },
+    {
+      "code": "unsupported_resource_content",
+      "category": "invalid_request",
+      "retryable": false,
+      "http_status": 400,
+      "owner": "agent-acp-service",
+      "description": "Unsupported resource content"
+    },
+    {
+      "code": "invalid_json",
+      "category": "invalid_request",
+      "retryable": false,
+      "http_status": 400,
+      "owner": "agent-acp-service",
+      "description": "Invalid json"
+    },
+    {
+      "code": "context_budget_exhausted",
+      "category": "invalid_request",
+      "retryable": false,
+      "http_status": 422,
+      "owner": "agent-acp-service",
+      "description": "Context budget exhausted"
+    },
+    {
+      "code": "budget_exceeded",
+      "category": "invalid_request",
+      "retryable": false,
+      "http_status": 422,
+      "owner": "agent-acp-service",
+      "description": "Budget exceeded"
+    },
+    {
+      "code": "context_compaction_failed",
+      "category": "internal",
+      "retryable": false,
+      "http_status": 500,
+      "owner": "agent-acp-service",
+      "description": "Context compaction failed"
+    },
+    {
+      "code": "provider_handle_released",
+      "category": "internal",
+      "retryable": false,
+      "http_status": 500,
+      "owner": "agent-acp-service",
+      "description": "Provider handle released"
+    },
+    {
+      "code": "database_error",
+      "category": "internal",
+      "retryable": false,
+      "http_status": 500,
+      "owner": "agent-acp-service",
+      "description": "Database error"
+    },
+    {
+      "code": "session_not_found",
+      "category": "not_found",
+      "retryable": false,
+      "http_status": 404,
+      "owner": "agent-acp-service",
+      "description": "Session not found"
+    },
+    {
+      "code": "intent_unknown",
+      "category": "not_found",
+      "retryable": false,
+      "http_status": 404,
+      "owner": "agent-acp-service",
+      "description": "Intent unknown"
+    },
+    {
+      "code": "invalid_runtime_information",
+      "category": "internal",
+      "retryable": false,
+      "http_status": 502,
+      "owner": "agent-acp-service",
+      "description": "Invalid runtime information"
+    },
+    {
+      "code": "configuration_too_large",
+      "category": "invalid_request",
+      "retryable": false,
+      "http_status": 413,
+      "owner": "agent-acp-service",
+      "description": "Configuration too large"
+    },
+    {
+      "code": "acp_peer_membership_conflict",
+      "category": "conflict",
+      "retryable": false,
+      "http_status": 409,
+      "owner": "agent-acp-service",
+      "description": "Acp peer membership conflict"
+    },
+    {
+      "code": "acp_peer_incarnation_mismatch",
+      "category": "conflict",
+      "retryable": false,
+      "http_status": 409,
+      "owner": "agent-acp-service",
+      "description": "Acp peer incarnation mismatch"
+    },
+    {
+      "code": "acp_peer_hop_rejected",
+      "category": "conflict",
+      "retryable": false,
+      "http_status": 409,
+      "owner": "agent-acp-service",
+      "description": "Acp peer hop rejected"
+    },
+    {
+      "code": "acp_probe_intent_mismatch",
+      "category": "conflict",
+      "retryable": false,
+      "http_status": 409,
+      "owner": "agent-acp-service",
+      "description": "Acp probe intent mismatch"
+    },
+    {
+      "code": "model_unsupported_content",
+      "category": "invalid_request",
+      "retryable": false,
+      "http_status": 400,
+      "owner": "agent-acp-service",
+      "description": "Model unsupported content"
+    },
+    {
+      "code": "context_overflow",
+      "category": "invalid_request",
+      "retryable": false,
+      "http_status": 422,
+      "owner": "agent-acp-service",
+      "description": "Context overflow"
+    },
+    {
+      "code": "model_http_error",
+      "category": "internal",
+      "retryable": false,
+      "http_status": 502,
+      "owner": "agent-acp-service",
+      "description": "Model http error"
+    },
+    {
+      "code": "model_invalid_response",
+      "category": "internal",
+      "retryable": false,
+      "http_status": 502,
+      "owner": "agent-acp-service",
+      "description": "Model invalid response"
+    },
+    {
+      "code": "persistence_interrupted",
+      "category": "internal",
+      "retryable": false,
+      "http_status": 500,
+      "owner": "agent-acp-service",
+      "description": "Persistence interrupted"
+    },
+    {
+      "code": "service_restarted_during_tool",
+      "category": "internal",
+      "retryable": false,
+      "http_status": 500,
+      "owner": "agent-acp-service",
+      "description": "Service restarted during tool"
+    },
+    {
+      "code": "tool_outcome_unknown",
+      "category": "internal",
+      "retryable": false,
+      "http_status": 500,
+      "owner": "agent-acp-service",
+      "description": "Tool outcome unknown"
+    },
+    {
+      "code": "run_deadline_exceeded",
+      "category": "unavailable",
+      "retryable": false,
+      "http_status": 504,
+      "owner": "agent-acp-service",
+      "description": "Run deadline exceeded"
+    },
+    {
+      "code": "service_restarted_during_run",
+      "category": "unavailable",
+      "retryable": false,
+      "http_status": 503,
+      "owner": "agent-acp-service",
+      "description": "Service restarted during run"
+    },
+    {
+      "code": "temporary_skill_cleanup_pending",
+      "category": "unavailable",
+      "retryable": false,
+      "http_status": 503,
+      "owner": "agent-acp-service",
+      "description": "Temporary skill cleanup pending"
+    }
+  ]
+}

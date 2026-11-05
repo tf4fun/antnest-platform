@@ -2,6 +2,7 @@ package registry
 
 import (
 	"encoding/json"
+	"github.com/tf4fun/antnest-platform/services/skill-registry/internal/apierror"
 	"io"
 	"net/http"
 	"strconv"
@@ -9,22 +10,22 @@ import (
 
 func (h *Handler) readDiscovery(w http.ResponseWriter, r *http.Request, out any) (map[string]json.RawMessage, bool) {
 	if h.discovery == nil {
-		writeError(w, failure("temporarily_unavailable", "Skill discovery is not configured"))
+		writeError(w, failure(apierror.TemporarilyUnavailable, "Skill discovery is not configured"))
 		return nil, false
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, 4<<10)
 	data, err := io.ReadAll(r.Body)
 	if err != nil {
-		writeError(w, failure("limit_exceeded", "discovery request exceeds 4 KiB"))
+		writeError(w, failure(apierror.LimitExceeded, "discovery request exceeds 4 KiB"))
 		return nil, false
 	}
 	if err := decodeOne(data, out); err != nil {
-		writeError(w, failure("invalid_request", "invalid discovery request"))
+		writeError(w, failure(apierror.InvalidRequest, "invalid discovery request"))
 		return nil, false
 	}
 	var fields map[string]json.RawMessage
 	if err := json.Unmarshal(data, &fields); err != nil || fields == nil {
-		writeError(w, failure("invalid_request", "JSON object required"))
+		writeError(w, failure(apierror.InvalidRequest, "JSON object required"))
 		return nil, false
 	}
 	return fields, true
@@ -36,7 +37,7 @@ func (h *Handler) updateProjection(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if raw, ok := fields["active"]; !ok || string(raw) != "true" && string(raw) != "false" {
-		writeError(w, failure("invalid_request", "active is required"))
+		writeError(w, failure(apierror.InvalidRequest, "active is required"))
 		return
 	}
 	out, err := h.discovery.Update(r.Context(), in)
@@ -58,11 +59,11 @@ func (h *Handler) searchSkills(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if _, explicit := fields["limit"]; explicit && in.Limit < 1 {
-		writeError(w, failure("invalid_request", "limit must be 1–50"))
+		writeError(w, failure(apierror.InvalidRequest, "limit must be 1–50"))
 		return
 	}
 	if _, explicit := fields["requesting_agent_id"]; explicit && !agentID.MatchString(in.RequestingAgentID) {
-		writeError(w, failure("invalid_request", "invalid requesting Agent identity"))
+		writeError(w, failure(apierror.InvalidRequest, "invalid requesting Agent identity"))
 		return
 	}
 	if err := verifiedScope(r, &in.OrganizationID, &in.ActorID); err != nil {
@@ -120,7 +121,7 @@ func (h *Handler) promoteSkill(w http.ResponseWriter, r *http.Request) {
 	_, hasSkill := fields["skill_id"]
 	_, hasVersion := fields["expected_version"]
 	if hasSkill != hasVersion || hasSkill && (in.SkillID == "" || in.ExpectedVersion < 1) {
-		writeError(w, failure("invalid_request", "append requires both Skill and expected version"))
+		writeError(w, failure(apierror.InvalidRequest, "append requires both Skill and expected version"))
 		return
 	}
 	if err := verifiedScope(r, &in.OrganizationID, &in.ActorID); err != nil {

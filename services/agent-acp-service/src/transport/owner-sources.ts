@@ -30,6 +30,7 @@ import { OWNER_CONTROL_PATHS } from "./owner-control.js";
 import type { HttpOwnerForwardingOptions } from "./owner-http.js";
 import type { RequestAuthentication } from "./request-authentication.js";
 import { serveSkillSource, sourceFailure, type SourceOperation } from "./skill-sources.js";
+import { ERROR_CODES } from "../errors.gen.js";
 
 type SourceContext = Extract<
   OwnerControlRequest,
@@ -60,7 +61,7 @@ const copiedHeaders = [
 // ACP ZIP artifacts contain one <=16KiB SKILL.md and retain a separate bound.
 const maximumInspectBytes = 256 * 1024;
 const maximumArtifactBytes = 64 * 1024;
-const unavailable = () => new SkillSourceError("source_unavailable");
+const unavailable = () => new SkillSourceError(ERROR_CODES.SOURCE_UNAVAILABLE);
 const cancelled = (error: unknown, signal: AbortSignal) =>
   signal.aborted &&
   (error === signal.reason ||
@@ -186,7 +187,7 @@ export class OwnerSourceTransport {
     } catch (error) {
       if (error instanceof DomainError && error.code === "access_denied") {
         if (operation.route === "inspect") return this.json({ items: [] });
-        throw new SkillSourceError("not_found");
+        throw new SkillSourceError(ERROR_CODES.NOT_FOUND);
       }
       throw error;
     }

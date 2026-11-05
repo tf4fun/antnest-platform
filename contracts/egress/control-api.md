@@ -359,8 +359,10 @@ Errors have one stable shape:
 ```json
 {
   "code": "resource_version_conflict",
+  "category": "conflict",
   "message": "policy assignment changed",
-  "retryable": false
+  "retryable": false,
+  "request_id": "request-1"
 }
 ```
 
@@ -385,6 +387,7 @@ Errors have one stable shape:
 | `tunnel_key_unavailable`    |     409 | Open references an absent or unreadable prepared generation; no mutation occurs                          |
 | `tunnel_key_conflict`       |     409 | Existing key ID has different identity or key material                                                   |
 | `attachment_open`          |     409 | A new candidate cannot be registered while traffic is open                                              |
+| `internal`               |     500 | Canonical fallback for unregistered error codes                                                       |
 
 Internal failures never expose SQL, credentials, packet payloads, or command
 stderr in the response.
@@ -404,3 +407,5 @@ The [handoff contract check](../../tests/integration/runtime-egress/policy-v2-ha
 also validates the shared schema, scoped content identity and digest recipe.
 These are contract/component checks, not a deployed end-to-end or release
 claim. Exact-candidate Repository and Integration CI remain the PR gates.
+
+Error bodies now emit the five-field common envelope (`code`, `category`, `message`, `retryable`, `request_id`) matching `../common/error.schema.json`; `operation_failed` retains the Egress legacy 503/retryable-true override. Additive — no revision bump.

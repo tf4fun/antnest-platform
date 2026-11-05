@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/tf4fun/antnest-platform/modules/service-authentication/serviceauth"
+	"github.com/tf4fun/antnest-platform/services/runtime-controller/internal/apierror"
 )
 
 type Security struct{ Authentication *serviceauth.Receiver }
@@ -59,7 +60,7 @@ func (h *Handler) authenticate(response http.ResponseWriter, request *http.Reque
 			}
 		}
 		if !valid {
-			writeJSON(response, http.StatusUnsupportedMediaType, errorResponse{Code: "unsupported_media_type", Message: "JSON with UTF-8 is required", Retryable: false})
+			writeJSON(response, http.StatusUnsupportedMediaType, errorResponse{Code: apierror.UnsupportedMediaType, Message: "JSON with UTF-8 is required", Retryable: false})
 			return false
 		}
 	}

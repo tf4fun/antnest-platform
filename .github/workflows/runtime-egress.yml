@@ -12,6 +12,7 @@ on:
       - contracts/runtime/**
       - contracts/egress/**
       - contracts/platform/**
+      - contracts/common/**
       - tests/support/ci-ownership.json
       - rust-toolchain.toml
       - .github/workflows/runtime-egress.yml
@@ -26,6 +27,7 @@ on:
       - contracts/runtime/**
       - contracts/egress/**
       - contracts/platform/**
+      - contracts/common/**
       - tests/support/ci-ownership.json
       - rust-toolchain.toml
       - .github/workflows/runtime-egress.yml

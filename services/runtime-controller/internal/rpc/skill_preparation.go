@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net/http"
 
+	"github.com/tf4fun/antnest-platform/services/runtime-controller/internal/apierror"
 	"github.com/tf4fun/antnest-platform/services/runtime-controller/internal/control"
 	"github.com/tf4fun/antnest-platform/services/runtime-controller/internal/skillset"
 )
@@ -79,12 +80,12 @@ func (h *Handler) releaseSkillPreparation(response http.ResponseWriter, request 
 }
 
 func writeSkillPreparationUnavailable(response http.ResponseWriter) {
-	writeJSON(response, http.StatusServiceUnavailable, errorResponse{Code: "skill_preparation_unavailable", Message: "Skill preparation is unavailable", Retryable: true})
+	writeJSON(response, http.StatusServiceUnavailable, errorResponse{Code: apierror.SkillPreparationUnavailable, Message: "Skill preparation is unavailable", Retryable: true})
 }
 
 func writeSkillPreparationError(response http.ResponseWriter, err error) {
 	if errors.Is(err, control.ErrNotFound) {
-		writeJSON(response, http.StatusNotFound, errorResponse{Code: "preparation_not_found", Message: "Skill preparation was not found", Retryable: false})
+		writeJSON(response, http.StatusNotFound, errorResponse{Code: apierror.PreparationNotFound, Message: "Skill preparation was not found", Retryable: false})
 		return
 	}
 	writeError(response, err)

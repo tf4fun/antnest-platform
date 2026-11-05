@@ -274,7 +274,44 @@
             "retryable": {
               "const": false
             }
-          }
+          },
+          "allOf": [
+            {
+              "if": {
+                "anyOf": [
+                  {
+                    "required": ["category"],
+                    "properties": { "category": {} }
+                  },
+                  {
+                    "required": ["request_id"],
+                    "properties": { "request_id": {} }
+                  }
+                ]
+              },
+              "then": {
+                "required": [
+                  "code",
+                  "category",
+                  "message",
+                  "request_id",
+                  "retryable"
+                ],
+                "properties": {
+                  "code": {},
+                  "category": {},
+                  "message": {},
+                  "request_id": {},
+                  "retryable": {}
+                },
+                "allOf": [
+                  {
+                    "$ref": "https://antnest.local/contracts/common/error.schema.json"
+                  }
+                ]
+              }
+            }
+          ]
         },
         {
           "type": "object",
@@ -296,7 +333,44 @@
             "retryable": {
               "const": true
             }
-          }
+          },
+          "allOf": [
+            {
+              "if": {
+                "anyOf": [
+                  {
+                    "required": ["category"],
+                    "properties": { "category": {} }
+                  },
+                  {
+                    "required": ["request_id"],
+                    "properties": { "request_id": {} }
+                  }
+                ]
+              },
+              "then": {
+                "required": [
+                  "code",
+                  "category",
+                  "message",
+                  "request_id",
+                  "retryable"
+                ],
+                "properties": {
+                  "code": {},
+                  "category": {},
+                  "message": {},
+                  "request_id": {},
+                  "retryable": {}
+                },
+                "allOf": [
+                  {
+                    "$ref": "https://antnest.local/contracts/common/error.schema.json"
+                  }
+                ]
+              }
+            }
+          ]
         }
       ]
     }

@@ -295,29 +295,29 @@
   },
   "guarded_sources": {
     "services/agent-acp-service/src/transport/acp/http-transport.ts": {
-      "sha256": "83c9192f19757a660f6a52f4982d74e48b91203111cce8cccc3e52f0716eba10",
+      "sha256": "7489051fb0035e5fc6535ffb99da2f1591c44a46b6dd80a8bc07d3c14f0fc1b5",
       "routes": ["POST /v1/acp", "GET /v1/acp", "DELETE /v1/acp"]
     },
     "services/agent-acp-service/src/transport/agent-execution-state.ts": {
-      "sha256": "8548b888792ecde4d577bda540ea5ff7fba8b69404887a25ccbae99fe628e739",
+      "sha256": "16ac6c040f82980f0ff1cace8a591b8765c85cd0a32811a85aed33b5bfd26744",
       "routes": [
         "POST /rpc/agent-acp/get-agent-execution-state",
         "POST /rpc/agent-acp/watch-agent-execution-state"
       ]
     },
     "services/agent-acp-service/src/transport/agent-settlement.ts": {
-      "sha256": "281e8e3763c9e9630c8fd42a9c7bb7f4b3e9e3d084ed62af06554d27bd084d23",
+      "sha256": "1884542c1d624bcf715123327ede8bd3cf9fe11cf4d31d5a35550edcd0f7f272",
       "routes": ["POST /rpc/agent-acp/settle-agent"]
     },
     "services/agent-acp-service/src/transport/bridge-observation.ts": {
-      "sha256": "870592518f10ef4aae6d950b4e103b7f449f36d44dd5d4f36da19c5ad6fe1e7c",
+      "sha256": "07ca3afe45d4faa4a9e5302a42bfca34574ce33dde914ec4bc20dd2d7c123978",
       "routes": [
         "GET /rpc/agent-acp/workspace/sessions/{session_id}/execution",
         "GET /rpc/agent-acp/workspace/sessions/{session_id}/intents/{intent_id}"
       ]
     },
     "services/agent-acp-service/src/transport/execution-audit.ts": {
-      "sha256": "ec694e964e8178933ab29a21b80ac69eebf445bcd2fb0b767c406b70954dfddb",
+      "sha256": "b9e28c6b25a35b94480174662fc76412b89784b0e5ff66d0c6f49712ef6e0672",
       "routes": [
         "POST /rpc/agent-acp/list-execution-audits",
         "POST /rpc/agent-acp/get-execution-audit",
@@ -325,7 +325,7 @@
       ]
     },
     "services/agent-acp-service/src/transport/execution-configuration.ts": {
-      "sha256": "9108b93f64ebc42143a38c43b15d03129176f89cb5ad7323b2b119a5adf6b6ac",
+      "sha256": "473a72a6858f955f359798ef4e65fe6603c4f826c9790ce13d2741d06ed1fd5f",
       "routes": [
         "POST /rpc/agent-acp/apply-execution-delta",
         "POST /rpc/agent-acp/apply-execution-snapshot",
@@ -333,34 +333,34 @@
       ]
     },
     "services/agent-acp-service/src/transport/http-server.ts": {
-      "sha256": "80a3e5e84d0223c8ad2cffa48a858251bc1b68ad1210381fa5b77e26766903b9",
+      "sha256": "6bab07e09200258a0b44ef926c16f0777882d7128cffd451e1e7e1c31ff62682",
       "routes": ["GET /status", "UPGRADE /v1/acp", "UPGRADE /v2/acp"]
     },
     "services/agent-acp-service/src/transport/learning-changes.ts": {
-      "sha256": "f5185e4dcdfdcc3310c5e025d24e4c777bbaec630aecbef6ac83138592fab3b0",
+      "sha256": "0455b639297155c824ee8c73c3796dec3d2ecab496c601b2e870eb7f4df98439",
       "routes": [
         "GET /rpc/agent-acp/workspace/agents/{agent_id}/learning-changes"
       ]
     },
     "services/agent-acp-service/src/transport/learning-status.ts": {
-      "sha256": "cb4efc63fc61e78f5a159893f6ef9c4d53b4dd007f865eb973cc71701c004e63",
+      "sha256": "6afd7c2c891f86ff4c11968ae82ff458d839c1f565b7a613260122bcc2fbb2ee",
       "routes": [
         "GET /rpc/agent-acp/workspace/agents/{agent_id}/learning-status"
       ]
     },
     "services/agent-acp-service/src/transport/rpc-request.ts": {
-      "sha256": "8607a208dd72a159d1d490b92fe07e603dce355148bdfabdb53cd4f9b93a5f9a",
+      "sha256": "237498c04aebaa86df0bb4f3144d5c33efb87bda3b846251debd349e33d65a36",
       "routes": []
     },
     "services/agent-acp-service/src/transport/skill-sources.ts": {
-      "sha256": "19b021caa7e48acad56df58f8107729966f6c0c0ec0ced1cc1acc4e8e2d5015a",
+      "sha256": "0e4dfffdaa50e6650b64e453c0a42b5d24a60586cbda63ab6f0a47902776c1e5",
       "routes": [
         "POST /internal/skill-sources/inspect",
         "POST /internal/skill-sources/artifact"
       ]
     },
     "services/agent-acp-service/src/transport/request-authentication.ts": {
-      "sha256": "e740f46f8bb175df2602dfcd2137da5a7d8bb09eef56b1b1d9520c7706ebb7e9",
+      "sha256": "c1910ea345c6ff4e8001f2df863280ba4383ebb40c7ad28cc08bb382e1c3dd06",
       "routes": [
         "DELETE /v1/acp",
         "GET /rpc/agent-acp/workspace/agents/{agent_id}/learning-changes",
@@ -395,18 +395,18 @@
       "routes": []
     },
     "services/agent-acp-service/src/transport/runtime-barrier-query.ts": {
-      "sha256": "c31e853a6692cb11b67617663b619c0b4a5adfed4dca92d273f30d429ccfe460",
+      "sha256": "f94742a2b3e5d56e75402e437e79cc28702f81dca346b254a65b2a949cc64e43",
       "routes": ["POST /rpc/agent-acp/get-runtime-barrier"]
     },
     "services/agent-acp-service/src/transport/owner-probe-server.ts": {
-      "sha256": "170738f7ac39044221c7a9dfc078986941bd032be31b8e67de86bab0fe492d85",
+      "sha256": "6197a951773b7b60aba197e7458e4711f7f5dd0a11f2b05436b0431e0ea20b4e",
       "routes": [
         "POST /internal/acp-owner/incarnation/probe",
         "* /internal/acp-owner/incarnation/probe"
       ]
     },
     "services/agent-acp-service/src/transport/peer-server.ts": {
-      "sha256": "c1d46a640d6b5477ec6ea5168cca54c8eb6ff2efffb4670c845d08b4a21f7dfd",
+      "sha256": "5c009f045c075e01fe526cc9f0a32579785896e0bdf52b331c1390658f0a09f0",
       "routes": [
         "POST /internal/acp-peer/identity",
         "POST /internal/acp-peer/publications/apply",
@@ -422,7 +422,7 @@
       ]
     },
     "services/agent-acp-service/src/transport/owner-http.ts": {
-      "sha256": "cccb737803c20f363b55cc8ee0202ab797810011a40e652304e303d22e9cb49a",
+      "sha256": "be16087137af95e073fae664b6aa96d21366ef68979baccfc928e649e37c561b",
       "routes": [
         "POST /internal/acp-peer/forward/http",
         "GET /internal/acp-peer/forward/http",
@@ -430,7 +430,7 @@
       ]
     },
     "services/agent-acp-service/src/transport/owner-control.ts": {
-      "sha256": "e3b3154fbc2947e6c6487a773d9dca2cbe0923c8793a2d2785744f9ee94b365e",
+      "sha256": "6781b394bd8c8d4c16a7a25adf1c71707f4ef71083d20c6a5acf6e30786aa0ce",
       "routes": [
         "POST /internal/acp-peer/control/state-read",
         "POST /internal/acp-peer/control/state-watch",
@@ -438,7 +438,7 @@
       ]
     },
     "services/agent-acp-service/src/transport/owner-sources.ts": {
-      "sha256": "41f737777e3b93bd540274c25a87c1733c4f4a40ee87c9a79585c69d51161751",
+      "sha256": "9b329e4c85b3f82783db1296af1f3febd9b112e757fc7d1bad2ae16b807c316e",
       "routes": [
         "POST /internal/acp-peer/control/source-inspect",
         "POST /internal/acp-peer/control/source-artifact"

@@ -1,4 +1,5 @@
-import { randomUUID } from "node:crypto";
+import { workspaceError } from "../protocol/api-error.ts";
+import { ERROR_CODES } from "../errors.gen.ts";
 import { recordPromptInputPrepared } from "../telemetry.ts";
 import type { ContentBlock } from "@agentclientprotocol/sdk";
 import { z } from "zod";
@@ -107,7 +108,7 @@ export function createCommandHandler(dependencies: {
     if (parts === null)
       return error(
         404,
-        "route_not_found",
+        ERROR_CODES.ROUTE_NOT_FOUND,
         "Workspace route was not found",
         "none",
       );
@@ -136,12 +137,12 @@ export function createCommandHandler(dependencies: {
     if (scope === null)
       return error(
         401,
-        "unauthenticated",
+        ERROR_CODES.UNAUTHENTICATED,
         "Trusted identity is missing",
         "login",
       );
     if (scope.agentId !== agentId)
-      return error(403, "access_denied", "Agent access denied", "none");
+      return error(403, ERROR_CODES.ACCESS_DENIED, "Agent access denied", "none");
     let authorized: AuthorizedSession;
     try {
       authorized = await dependencies.authorize(
@@ -151,41 +152,41 @@ export function createCommandHandler(dependencies: {
       );
     } catch (cause) {
       if (cause instanceof AgentAccessRevokedError)
-        return error(403, "access_denied", "Agent access denied", "none");
+        return error(403, ERROR_CODES.ACCESS_DENIED, "Agent access denied", "none");
       const capacity = bridgeCapacityResponse(cause);
       if (capacity !== null) return capacity;
       const missing = missingSessionResponse(cause);
       if (missing !== null) return missing;
       if (cause instanceof OperationReconciliationTimeoutError)
-        return error(504, "workspace_deadline_exceeded", "Operation reconciliation timed out", "retry_read");
+        return error(504, ERROR_CODES.WORKSPACE_DEADLINE_EXCEEDED, "Operation reconciliation timed out", "retry_read");
       if (cause instanceof ReplayCapacityError)
         return error(
           429,
-          "replay_capacity_exceeded",
+          ERROR_CODES.REPLAY_CAPACITY_EXCEEDED,
           "Concurrent replay queue is full",
           "retry_read",
         );
       return error(
         503,
-        "upstream_unavailable",
+        ERROR_CODES.UPSTREAM_UNAVAILABLE,
         "Session access could not be verified",
         "retry_read",
       );
     }
     try {
       if (!sameCondition(authorized.condition, { ...scope, sessionId }))
-        return error(403, "access_denied", "Session access denied", "none");
+        return error(403, ERROR_CODES.ACCESS_DENIED, "Session access denied", "none");
       if (resource === "prompts") {
         const query = [...url.searchParams.entries()];
         const retry = query.length === 1 && query[0]![0] === "action" && query[0]![1] === "retry";
         if (query.length !== 0 && !retry)
-          return error(422, "invalid_request", "Prompt query is invalid", "none");
+          return error(422, ERROR_CODES.INVALID_REQUEST, "Prompt query is invalid", "none");
         const maxAcpPromptBytes = dependencies.maxAcpPromptBytes ?? defaultAcpPromptBytes;
         const body = promptSchema.parse(await readBody(request, Math.min(bodyLimit, maxAcpPromptBytes)));
         if (request.headers.get("idempotency-key") !== body.intentId)
           return error(
             409,
-            "intent_key_mismatch",
+            ERROR_CODES.INTENT_KEY_MISMATCH,
             "Idempotency key must match intent ID",
             "none",
           );
@@ -193,14 +194,14 @@ export function createCommandHandler(dependencies: {
         if (token === null)
           return error(
             428,
-            "history_condition_required",
+            ERROR_CODES.HISTORY_CONDITION_REQUIRED,
             "Current history condition is required",
             "refresh",
           );
         if (!dependencies.tokens.matches(token, authorized.condition))
           return error(
             409,
-            "stale_history",
+            ERROR_CODES.STALE_HISTORY,
             "History condition is stale",
             "refresh",
           );
@@ -247,28 +248,28 @@ export function createCommandHandler(dependencies: {
       return json(await authorized.operations.read(sessionId, intentId!));
     } catch (cause) {
       if (cause instanceof AgentAccessRevokedError)
-        return error(403, "access_denied", "Agent access denied", "none");
+        return error(403, ERROR_CODES.ACCESS_DENIED, "Agent access denied", "none");
       const missing = missingSessionResponse(cause);
       if (missing !== null) return missing;
       if (cause instanceof BodyTooLargeError)
         return error(
           413,
-          "request_too_large",
+          ERROR_CODES.REQUEST_TOO_LARGE,
           "Request body exceeds the limit",
           "none",
         );
       if (cause instanceof z.ZodError || cause instanceof SyntaxError)
-        return error(422, "invalid_request", "Request body is invalid", "none");
+        return error(422, ERROR_CODES.INVALID_REQUEST, "Request body is invalid", "none");
       if (cause instanceof OperationConflictError)
         return error(
           409,
-          "operation_conflict",
+          ERROR_CODES.OPERATION_CONFLICT,
           cause.message,
           "query_operation",
         );
       return error(
         503,
-        "upstream_unavailable",
+        ERROR_CODES.UPSTREAM_UNAVAILABLE,
         "Workspace operation is unavailable",
         "retry_read",
       );
@@ -313,13 +314,13 @@ export function trustedScope(request: Request): BridgeScope | null {
 
 export function bridgeCapacityResponse(cause: unknown): Response | null {
   return cause instanceof BridgeCapacityError
-    ? error(429, "bridge_capacity_exceeded", "Bridge owner capacity is exhausted", "retry_read")
+    ? error(429, ERROR_CODES.BRIDGE_CAPACITY_EXCEEDED, "Bridge owner capacity is exhausted", "retry_read")
     : null;
 }
 
 export function missingSessionResponse(cause: unknown): Response | null {
   return cause instanceof SessionNotFoundError
-    ? error(404, "session_not_found", "Session not found", "none") : null;
+    ? error(404, ERROR_CODES.SESSION_NOT_FOUND, "Session not found", "none") : null;
 }
 
 function sameCondition(
@@ -425,14 +426,8 @@ export function error(
   message: string,
   recovery: "refresh" | "query_operation" | "login" | "retry_read" | "none",
 ): Response {
-  return json(
-    {
-      code,
-      message,
-      requestId: randomUUID(),
-      retryable: status >= 500,
-      recovery,
-    },
-    status,
-  );
+  const envelope = workspaceError(code, message, recovery, "", status >= 500);
+  const response = json(envelope, status);
+  response.headers.set("x-request-id", envelope.request_id);
+  return response;
 }

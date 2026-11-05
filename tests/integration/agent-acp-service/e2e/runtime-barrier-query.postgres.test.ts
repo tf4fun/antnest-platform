@@ -16,6 +16,7 @@ import { createLegacyRunRepositories } from "../../../../services/agent-acp-serv
 import { SecretBox } from "../../../../services/agent-acp-service/src/adapters/postgres/secret-box.js";
 import { createLegacySessionRepository } from "../../../../services/agent-acp-service/src/adapters/postgres/session-repository.js";
 import { publicExecutionConfiguration } from "../../../../services/agent-acp-service/src/domain/execution-configuration.js";
+import { ERROR_METADATA } from "../../../../services/agent-acp-service/src/errors.gen.js";
 import { runSnapshot } from "../../../../services/agent-acp-service/src/domain/run-snapshot.js";
 import { NOOP_TELEMETRY } from "../../../../services/agent-acp-service/src/ports/telemetry.js";
 import {
@@ -169,7 +170,30 @@ describe.skipIf(databaseUrl === undefined)(
         throw new Error("Runtime barrier response is not JSON");
       }
       expect(raw.includes(privateCanary)).toBe(false);
-      return { status: response.status, body, raw };
+      return { status: response.status, body, raw, headers: response.headers };
+    }
+
+    const SAFE_REQUEST_ID = /^[A-Za-z0-9._:-]{1,128}$/;
+
+    function expectCommonError(
+      response: Awaited<ReturnType<typeof query>>,
+      expected: { code: string; message: string; retryable: boolean },
+    ) {
+      const metadata = Object.hasOwn(ERROR_METADATA, expected.code)
+        ? ERROR_METADATA[expected.code]
+        : undefined;
+      if (metadata === undefined)
+        throw new Error(`missing registry metadata for ${expected.code}`);
+      const requestId = response.headers.get("x-request-id");
+      expect(requestId).toMatch(SAFE_REQUEST_ID);
+      expect(response.headers.get("cache-control")).toBe("no-store");
+      expect(
+        isDeepStrictEqual(response.body, {
+          ...expected,
+          category: metadata.category,
+          request_id: requestId,
+        }),
+      ).toBe(true);
     }
 
     function clearResult() {
@@ -378,39 +402,33 @@ describe.skipIf(databaseUrl === undefined)(
       ]) {
         const response = await query(input);
         expect(response.status).toBe(404);
-        expect(
-          isDeepStrictEqual(response.body, {
-            code: "not_found",
-            message: "Resource was not found",
-            retryable: false,
-          }),
-        ).toBe(true);
+        expectCommonError(response, {
+          code: "not_found",
+          message: "Resource was not found",
+          retryable: false,
+        });
       }
       const conflict = await query({
         ...scope(),
         expected_runtime_revision: "stale-runtime-revision",
       });
       expect(conflict.status).toBe(409);
-      expect(
-        isDeepStrictEqual(conflict.body, {
-          code: "configuration_conflict",
-          message: "Configuration revision conflicts with current state",
-          retryable: false,
-        }),
-      ).toBe(true);
+      expectCommonError(conflict, {
+        code: "configuration_conflict",
+        message: "Configuration revision conflicts with current state",
+        retryable: false,
+      });
     });
 
     it("rejects extra private authority fields without reflecting their contents", async () => {
       const before = await history();
       const response = await query({ ...scope(), credential: privateCanary });
       expect(response.status).toBe(400);
-      expect(
-        isDeepStrictEqual(response.body, {
-          code: "invalid_request",
-          message: "Request is invalid",
-          retryable: false,
-        }),
-      ).toBe(true);
+      expectCommonError(response, {
+        code: "invalid_request",
+        message: "Request is invalid",
+        retryable: false,
+      });
       expect(isDeepStrictEqual(await history(), before)).toBe(true);
     });
 
@@ -705,13 +723,11 @@ describe.skipIf(databaseUrl === undefined)(
 
     function expectUnavailable(response: Awaited<ReturnType<typeof query>>) {
       expect(response.status).toBe(503);
-      expect(
-        isDeepStrictEqual(response.body, {
-          code: "execution_state_unavailable",
-          message: "Agent execution state is unavailable",
-          retryable: true,
-        }),
-      ).toBe(true);
+      expectCommonError(response, {
+        code: "execution_state_unavailable",
+        message: "Agent execution state is unavailable",
+        retryable: true,
+      });
     }
 
     function throwFailures(failures: unknown[], message: string): void {

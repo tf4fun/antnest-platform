@@ -56,6 +56,7 @@ import type {
   TemplateList,
   TemplateDefaults,
 } from "./types";
+import { readRemoteError } from "./api-errors.ts";
 
 export class APIError extends Error {
   constructor(
@@ -196,7 +197,7 @@ async function request<T>(path: string, init: RequestInit = {}, options: { unval
     }
     assertResponse();
     if (!response.ok) {
-      const remote = (body !== null && typeof body === "object" ? body : {}) as RemoteErrorBody;
+      const remote = readRemoteError(body, response.status);
       const code = typeof remote.code === "string" ? remote.code : "request_failed";
       const message = typeof remote.message === "string" ? remote.message : "Request failed.";
       if (options.writer !== "logout") notifySessionFailure(requestSession, path, response.status, code);
@@ -340,7 +341,7 @@ async function skillArtifact(skillID: string, version: number): Promise<Blob> {
     assertSessionRequest(session);
     if (!response.ok) {
       let failure: RemoteErrorBody = {};
-      try { failure = await response.json() as RemoteErrorBody; } catch { /* bounded BFF failure fallback */ }
+      try { failure = readRemoteError(await response.json(), response.status); } catch { /* bounded BFF failure fallback */ }
       assertSessionRequest(session);
       const code = typeof failure.code === "string" ? failure.code : "request_failed";
       notifySessionFailure(session, path, response.status, code);

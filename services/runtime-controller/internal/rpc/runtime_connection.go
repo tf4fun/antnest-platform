@@ -7,6 +7,7 @@ import (
 	"net/http"
 
 	"github.com/tf4fun/antnest-platform/modules/service-authentication/serviceauth"
+	"github.com/tf4fun/antnest-platform/services/runtime-controller/internal/apierror"
 	"github.com/tf4fun/antnest-platform/services/runtime-controller/internal/control"
 	"github.com/tf4fun/antnest-platform/services/runtime-controller/internal/deployment"
 )
@@ -23,7 +24,7 @@ func (h *Handler) resolveRuntimeConnection(w http.ResponseWriter, r *http.Reques
 	r.Body = http.MaxBytesReader(w, r.Body, 4096)
 	raw, err := io.ReadAll(r.Body)
 	if err != nil || serviceauth.DecodeObject(raw, &request) != nil || deployment.ValidateRevision(request.RuntimeRevision) != nil || request.ExpectedExecutionID == "" || len(request.ExpectedExecutionID) > 200 {
-		writeJSON(w, http.StatusBadRequest, errorResponse{Code: "invalid_request", Message: "Exact Runtime revision and execution identity are required", Retryable: false})
+		writeJSON(w, http.StatusBadRequest, errorResponse{Code: apierror.InvalidRequest, Message: "Exact Runtime revision and execution identity are required", Retryable: false})
 		return
 	}
 	resolver, ok := h.service.(RuntimeConnectionService)

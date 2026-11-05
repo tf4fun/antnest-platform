@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/tf4fun/antnest-platform/services/skill-registry/internal/apierror"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -21,7 +22,7 @@ func databaseError(err error) error {
 	}
 	var pgErr *pgconn.PgError
 	if errors.As(err, &pgErr) && pgErr.Code == "23505" && pgErr.ConstraintName == "skills_organization_id_name_key" {
-		return failure("name_conflict", "Skill name already exists in organization")
+		return failure(apierror.NameConflict, "Skill name already exists in organization")
 	}
 	return fmt.Errorf("registry storage unavailable: %w", err)
 }
@@ -39,7 +40,7 @@ func (s *PostgresStore) Receipt(ctx context.Context, org, requestID string) (str
 	}
 	var value Version
 	if len(encoded) == 0 || json.Unmarshal(encoded, &value) != nil || value.SkillID == "" {
-		return "", Version{}, false, failure("temporarily_unavailable", "publication receipt is incomplete")
+		return "", Version{}, false, failure(apierror.TemporarilyUnavailable, "publication receipt is incomplete")
 	}
 	return fingerprint, value, true, nil
 }
@@ -66,11 +67,11 @@ func (s *PostgresStore) Publish(ctx context.Context, input PublishRecord) (Versi
 			return Version{}, databaseError(err)
 		}
 		if fingerprint != input.Fingerprint {
-			return Version{}, failure("request_conflict", "request ID was used with different input")
+			return Version{}, failure(apierror.RequestConflict, "request ID was used with different input")
 		}
 		var previous Version
 		if len(frozen) == 0 || json.Unmarshal(frozen, &previous) != nil || previous.SkillID == "" {
-			return Version{}, failure("temporarily_unavailable", "publication receipt is incomplete")
+			return Version{}, failure(apierror.TemporarilyUnavailable, "publication receipt is incomplete")
 		}
 		return previous, nil
 	}
@@ -89,16 +90,16 @@ func (s *PostgresStore) Publish(ctx context.Context, input PublishRecord) (Versi
             WHERE skill_id = $1 AND organization_id = $2 FOR UPDATE`,
 			input.SkillID, input.OrganizationID).Scan(&head, &name)
 		if errors.Is(err, pgx.ErrNoRows) {
-			return Version{}, failure("not_found", "Skill not found")
+			return Version{}, failure(apierror.NotFound, "Skill not found")
 		}
 		if err != nil {
 			return Version{}, databaseError(err)
 		}
 		if name != input.Package.Name {
-			return Version{}, failure("invalid_package", "Skill name cannot change between versions")
+			return Version{}, failure(apierror.InvalidPackage, "Skill name cannot change between versions")
 		}
 		if head != input.ExpectedVersion {
-			return Version{}, failure("revision_conflict", "current Skill version changed")
+			return Version{}, failure(apierror.RevisionConflict, "current Skill version changed")
 		}
 		version = head + 1
 		_, err = tx.Exec(ctx, `UPDATE skills SET current_version = $1 WHERE skill_id = $2`, version, input.SkillID)
@@ -153,7 +154,7 @@ func (s *PostgresStore) GetVersion(ctx context.Context, org, id string, version 
         WHERE s.organization_id = $1 AND s.skill_id = $2 AND v.version = $3`,
 		org, id, version).Scan(&encoded)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return Version{}, failure("not_found", "Skill version not found")
+		return Version{}, failure(apierror.NotFound, "Skill version not found")
 	}
 	if err != nil {
 		return Version{}, databaseError(err)
@@ -183,7 +184,7 @@ func (s *PostgresStore) List(ctx context.Context, org, after string, limit int) 
 		}
 		var current Version
 		if err := json.Unmarshal(encoded, &current); err != nil || current.SkillID != item.SkillID || current.Version != item.CurrentVersion {
-			return nil, failure("temporarily_unavailable", "stored Skill head metadata is inconsistent")
+			return nil, failure(apierror.TemporarilyUnavailable, "stored Skill head metadata is inconsistent")
 		}
 		item.Description, item.ArtifactDigest, item.ContentDigest = current.Description, current.ArtifactDigest, current.ContentDigest
 		item.ArtifactSize, item.UnpackedSize, item.PackageRulesVersion = current.ArtifactSize, current.UnpackedSize, current.PackageRulesVersion
@@ -196,7 +197,7 @@ func (s *PostgresStore) Versions(ctx context.Context, org, id string, after int6
 	var exists int
 	err := s.pool.QueryRow(ctx, `SELECT 1 FROM skills WHERE organization_id = $1 AND skill_id = $2`, org, id).Scan(&exists)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, failure("not_found", "Skill not found")
+		return nil, failure(apierror.NotFound, "Skill not found")
 	}
 	if err != nil {
 		return nil, databaseError(err)
@@ -231,14 +232,14 @@ func (s *PostgresStore) Artifact(ctx context.Context, org, id string, version in
         WHERE s.organization_id = $1 AND s.skill_id = $2 AND v.version = $3`,
 		org, id, version).Scan(&metadata, &artifact)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return Version{}, nil, failure("not_found", "Skill version not found")
+		return Version{}, nil, failure(apierror.NotFound, "Skill version not found")
 	}
 	if err != nil {
 		return Version{}, nil, databaseError(err)
 	}
 	var value Version
 	if err := json.Unmarshal(metadata, &value); err != nil || digest(artifact) != value.ArtifactDigest || len(artifact) != value.ArtifactSize {
-		return Version{}, nil, failure("temporarily_unavailable", "stored artifact does not match its identity")
+		return Version{}, nil, failure(apierror.TemporarilyUnavailable, "stored artifact does not match its identity")
 	}
 	return value, artifact, nil
 }

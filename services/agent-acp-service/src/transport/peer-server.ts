@@ -20,6 +20,9 @@ import { fields } from "../adapters/service-authentication.js";
 import { OWNER_HTTP_PATH } from "./owner-http.js";
 import { OWNER_CONTROL_PATHS } from "./owner-control.js";
 import { strictObject } from "../adapters/strict-json.js";
+import { ERROR_CODES } from "../errors.gen.js";
+import type { ApiError } from "../errors.gen.js";
+import { commonError } from "./public-error.js";
 import { WebSocketServer, type WebSocket } from "ws";
 import { startWebSocketLiveness } from "./acp/websocket-liveness.js";
 import type { Duplex } from "node:stream";
@@ -170,14 +173,16 @@ export class PeerServer {
     });
     this.server.on("clientError", (_error, socket) => {
       if (socket.destroyed || !socket.writable) return;
-      const body = errorBody("invalid_request");
+      const body = errorBody(ERROR_CODES.INVALID_REQUEST);
+      const raw = Buffer.from(JSON.stringify(body));
       socket.end(
-        `HTTP/1.1 400 Bad Request\r\nContent-Type: application/json\r\nCache-Control: no-store\r\nConnection: close\r\nContent-Length: ${body.byteLength}\r\n\r\n${body.toString("utf8")}`,
+        `HTTP/1.1 400 Bad Request\r\nContent-Type: application/json\r\nCache-Control: no-store\r\nX-Request-ID: ${body.request_id}\r\nConnection: close\r\nContent-Length: ${raw.byteLength}\r\n\r\n${raw.toString("utf8")}`,
       );
     });
     this.server.on("error", () => {
       this.cleanupErrors.push(new Error("Peer listener listener failed"));
-      for (const owner of this.active) owner.controller.abort(new PeerFailure("internal_error"));
+      for (const owner of this.active)
+        owner.controller.abort(new PeerFailure(ERROR_CODES.INTERNAL_ERROR));
       for (const socket of this.sockets.keys()) socket.destroy();
     });
   }
@@ -223,7 +228,8 @@ export class PeerServer {
       this.httpReceiptDeadline = performance.now() + 5000;
     for (const controller of this.forwards) controller.abort(new Error("Peer listener closing"));
     for (const owner of this.active)
-      if (!owner.httpReceipt) owner.controller.abort(new PeerFailure("configuration_unavailable"));
+      if (!owner.httpReceipt)
+        owner.controller.abort(new PeerFailure(ERROR_CODES.CONFIGURATION_UNAVAILABLE));
     void this.stop().then(receipt.resolve, receipt.reject);
     return receipt.promise;
   }
@@ -282,16 +288,16 @@ export class PeerServer {
       for (const request of this.active)
         if (request.request.socket === socket) request.controller.abort(new PeerFailure(code));
     };
-    const onError = () => interrupt("invalid_request");
+    const onError = () => interrupt(ERROR_CODES.INVALID_REQUEST);
     const timer = setTimeout(() => {
-      interrupt("deadline_exceeded");
+      interrupt(ERROR_CODES.DEADLINE_EXCEEDED);
       socket.destroy();
     }, this.timeoutMs);
     timer.unref();
     socket.on("error", onError);
     socket.once("close", () => {
       clearTimeout(timer);
-      interrupt("invalid_request");
+      interrupt(ERROR_CODES.INVALID_REQUEST);
       socket.off("error", onError);
       this.sockets.delete(socket);
       receipt.resolve();
@@ -317,32 +323,32 @@ export class PeerServer {
         request.url !== OWNER_FORWARD_PATH ||
         request.method !== "GET"
       )
-        throw new PeerFailure("route_not_found");
+        throw new PeerFailure(ERROR_CODES.ROUTE_NOT_FOUND);
       const authenticated = this.authentication.authenticate(request);
       if (authenticated.code !== null)
         throw new PeerFailure(
-          authenticated.code === "caller_not_allowed"
-            ? "caller_not_allowed"
-            : "service_unauthenticated",
+          authenticated.code === ERROR_CODES.CALLER_NOT_ALLOWED
+            ? ERROR_CODES.CALLER_NOT_ALLOWED
+            : ERROR_CODES.SERVICE_UNAUTHENTICATED,
         );
       const headers = fields(request).filter(
         (field) => field.name.toLowerCase() === OWNER_FORWARD_HEADER.toLowerCase(),
       );
       if (headers.length !== 1 || request.headers.expect !== undefined)
-        throw new PeerFailure("invalid_request");
+        throw new PeerFailure(ERROR_CODES.INVALID_REQUEST);
       const target = parseOwnerForward(headers[0]!.value);
       if (
         target.source.member_id !== authenticated.caller ||
         target.membership_sha256 !== this.authentication.membership.sha256 ||
         !isDeepStrictEqual(target.target, this.registration)
       )
-        throw new PeerFailure("caller_not_allowed");
+        throw new PeerFailure(ERROR_CODES.CALLER_NOT_ALLOWED);
       const remaining = Date.parse(target.deadline_at) - Date.now();
-      if (remaining <= 0 || remaining > 10000) throw new PeerFailure("deadline_exceeded");
+      if (remaining <= 0 || remaining > 10000) throw new PeerFailure(ERROR_CODES.DEADLINE_EXCEEDED);
       prepared = await this.forward(request, target, controller.signal);
       controller.signal.throwIfAborted();
       if (this.isClosed() || Date.now() >= Date.parse(target.deadline_at))
-        throw new PeerFailure("deadline_exceeded");
+        throw new PeerFailure(ERROR_CODES.DEADLINE_EXCEEDED);
       this.sockets.get(request.socket)?.transfer();
       // The owning server rewrites the URL only after validating the fixed private route.
       const accepted = Promise.withResolvers<void>();
@@ -351,7 +357,7 @@ export class PeerServer {
         startWebSocketLiveness(wire, this.wsPingIntervalMs);
         void prepared!.accept(wire).then(accepted.resolve, accepted.reject);
       });
-      if (!state.upgraded) throw new PeerFailure("invalid_request");
+      if (!state.upgraded) throw new PeerFailure(ERROR_CODES.INVALID_REQUEST);
       await accepted.promise;
     } catch (error) {
       if (state.upgraded) {
@@ -361,7 +367,7 @@ export class PeerServer {
         const status =
           error instanceof PeerFailure || error instanceof PeerDeadlineError
             ? failures[error.code].status
-            : error instanceof DomainError && error.code === "access_denied"
+            : error instanceof DomainError && error.code === ERROR_CODES.ACCESS_DENIED
               ? 403
               : 503;
         socket.end(
@@ -418,14 +424,14 @@ export class PeerServer {
 
   private async serve(owner: RequestOwner): Promise<void> {
     const { request, response, controller } = owner;
-    const onDisconnect = () => controller.abort(new PeerFailure("invalid_request"));
+    const onDisconnect = () => controller.abort(new PeerFailure(ERROR_CODES.INVALID_REQUEST));
     request.on("error", onDisconnect);
     response.on("error", onDisconnect);
     response.once("close", onDisconnect);
     const remaining = Math.max(0, owner.socket.deadline - performance.now());
     const reserve = Math.min(100, remaining / 10);
     const timer = setTimeout(
-      () => controller.abort(new PeerFailure("deadline_exceeded")),
+      () => controller.abort(new PeerFailure(ERROR_CODES.DEADLINE_EXCEEDED)),
       Math.max(0, remaining - reserve),
     );
     timer.unref();
@@ -436,9 +442,9 @@ export class PeerServer {
         if (authentication.www_authenticate !== null)
           response.setHeader("WWW-Authenticate", authentication.www_authenticate);
         throw new PeerFailure(
-          authentication.code === "caller_not_allowed"
-            ? "caller_not_allowed"
-            : "service_unauthenticated",
+          authentication.code === ERROR_CODES.CALLER_NOT_ALLOWED
+            ? ERROR_CODES.CALLER_NOT_ALLOWED
+            : ERROR_CODES.SERVICE_UNAUTHENTICATED,
         );
       }
       if (request.url === OWNER_HTTP_PATH && this.forwardHttp !== undefined) {
@@ -446,11 +452,13 @@ export class PeerServer {
           request.method === "DELETE" &&
           fields(request).some((field) => field.name.toLowerCase() === "acp-connection-id");
         if (this.closed && !(receipt && this.receivingHttpReceipts()))
-          throw new PeerFailure("configuration_unavailable");
-        if (request.headers.expect !== undefined) throw new PeerFailure("invalid_request");
+          throw new PeerFailure(ERROR_CODES.CONFIGURATION_UNAVAILABLE);
+        if (request.headers.expect !== undefined)
+          throw new PeerFailure(ERROR_CODES.INVALID_REQUEST);
         if (!["POST", "GET", "DELETE"].includes(request.method ?? ""))
-          throw new PeerFailure("method_not_allowed");
-        if (authentication.caller === null) throw new PeerFailure("service_unauthenticated");
+          throw new PeerFailure(ERROR_CODES.METHOD_NOT_ALLOWED);
+        if (authentication.caller === null)
+          throw new PeerFailure(ERROR_CODES.SERVICE_UNAUTHENTICATED);
         owner.httpReceipt = receipt;
         // This listener owns one original request per socket and closes it in
         // finally. Advertise that before a client can pipeline its next SSE GET.
@@ -470,10 +478,12 @@ export class PeerServer {
           request.url === OWNER_CONTROL_PATHS["source-inspect"] ||
           request.url === OWNER_CONTROL_PATHS["source-artifact"])
       ) {
-        if (this.closed) throw new PeerFailure("configuration_unavailable");
-        if (request.method !== "POST") throw new PeerFailure("method_not_allowed");
-        if (request.headers.expect !== undefined) throw new PeerFailure("invalid_request");
-        if (authentication.caller === null) throw new PeerFailure("service_unauthenticated");
+        if (this.closed) throw new PeerFailure(ERROR_CODES.CONFIGURATION_UNAVAILABLE);
+        if (request.method !== "POST") throw new PeerFailure(ERROR_CODES.METHOD_NOT_ALLOWED);
+        if (request.headers.expect !== undefined)
+          throw new PeerFailure(ERROR_CODES.INVALID_REQUEST);
+        if (authentication.caller === null)
+          throw new PeerFailure(ERROR_CODES.SERVICE_UNAUTHENTICATED);
         response.shouldKeepAlive = false;
         response.setHeader("Connection", "close");
         await this.forwardControl(
@@ -493,16 +503,16 @@ export class PeerServer {
           [identityPath, publicationPath].some(
             (path) => request.url?.startsWith(`${path}?`) === true,
           )
-            ? "invalid_request"
-            : "route_not_found",
+            ? ERROR_CODES.INVALID_REQUEST
+            : ERROR_CODES.ROUTE_NOT_FOUND,
         );
-      if (request.method !== "POST") throw new PeerFailure("method_not_allowed");
-      if (this.closed) throw new PeerFailure("configuration_unavailable");
+      if (request.method !== "POST") throw new PeerFailure(ERROR_CODES.METHOD_NOT_ALLOWED);
+      if (this.closed) throw new PeerFailure(ERROR_CODES.CONFIGURATION_UNAVAILABLE);
       if (
         request.headers.expect !== undefined ||
         fields(request).some((field) => field.name.toLowerCase() === "antnest-caller-context")
       )
-        throw new PeerFailure("invalid_request");
+        throw new PeerFailure(ERROR_CODES.INVALID_REQUEST);
       requireJson(request);
       const raw = await readBody(request, controller.signal);
       controller.signal.throwIfAborted();
@@ -510,29 +520,29 @@ export class PeerServer {
       try {
         value = strictObject(raw);
       } catch {
-        throw new PeerFailure("invalid_request");
+        throw new PeerFailure(ERROR_CODES.INVALID_REQUEST);
       }
       if (request.url === publicationPath && typeof value.hop === "number" && value.hop !== 1)
-        throw new PeerFailure("acp_peer_hop_rejected");
+        throw new PeerFailure(ERROR_CODES.ACP_PEER_HOP_REJECTED);
       const input =
         request.url === identityPath
           ? parsePeerIdentityRequest(value)
           : parsePeerPublicationRequest(value);
       if (input.source.member_id !== authentication.caller)
-        throw new PeerFailure("caller_not_allowed");
+        throw new PeerFailure(ERROR_CODES.CALLER_NOT_ALLOWED);
       if (input.membership_sha256 !== this.authentication.membership.sha256)
-        throw new PeerFailure("acp_peer_membership_conflict");
+        throw new PeerFailure(ERROR_CODES.ACP_PEER_MEMBERSHIP_CONFLICT);
       if (
         ("target" in input && !isDeepStrictEqual(input.target, this.registration)) ||
         ("target_member_id" in input && input.target_member_id !== this.registration.member_id)
       )
-        throw new PeerFailure("acp_peer_incarnation_mismatch");
+        throw new PeerFailure(ERROR_CODES.ACP_PEER_INCARNATION_MISMATCH);
       const expiresAt = peerDeadline(input.deadline_at);
       const budget = expiresAt - Date.now();
-      if (budget > 10000) throw new PeerFailure("invalid_request");
-      if (budget <= 0) throw new PeerFailure("deadline_exceeded");
+      if (budget > 10000) throw new PeerFailure(ERROR_CODES.INVALID_REQUEST);
+      if (budget <= 0) throw new PeerFailure(ERROR_CODES.DEADLINE_EXCEEDED);
       deadlineTimer = setTimeout(
-        () => controller.abort(new PeerFailure("deadline_exceeded")),
+        () => controller.abort(new PeerFailure(ERROR_CODES.DEADLINE_EXCEEDED)),
         budget,
       );
       deadlineTimer.unref();
@@ -567,11 +577,11 @@ export class PeerServer {
             throw new Error();
           output = receipt;
         } catch {
-          throw new PeerFailure("internal_error");
+          throw new PeerFailure(ERROR_CODES.INTERNAL_ERROR);
         }
       }
       controller.signal.throwIfAborted();
-      if (Date.now() >= expiresAt) throw new PeerFailure("deadline_exceeded");
+      if (Date.now() >= expiresAt) throw new PeerFailure(ERROR_CODES.DEADLINE_EXCEEDED);
       await writeReply(
         response,
         200,
@@ -580,8 +590,15 @@ export class PeerServer {
       );
     } catch (error) {
       const code = failureCode(controller.signal.aborted ? controller.signal.reason : error);
-      if (code === "method_not_allowed") response.setHeader("Allow", "POST");
-      await writeReply(response, failures[code].status, errorBody(code));
+      if (code === ERROR_CODES.METHOD_NOT_ALLOWED) response.setHeader("Allow", "POST");
+      const body = errorBody(code);
+      await writeReply(
+        response,
+        failures[code].status,
+        Buffer.from(JSON.stringify(body)),
+        responseBytes,
+        body.request_id,
+      );
     } finally {
       clearTimeout(timer);
       clearTimeout(deadlineTimer);
@@ -605,20 +622,17 @@ function failureCode(error: unknown): FailureCode {
   if (error instanceof PeerFailure) return error.code;
   if (error instanceof PeerDeadlineError) return error.code;
   if (error instanceof DomainError) {
-    if (error.code === "invalid_request" || error.code === "configuration_unavailable")
+    if (
+      error.code === ERROR_CODES.INVALID_REQUEST ||
+      error.code === ERROR_CODES.CONFIGURATION_UNAVAILABLE
+    )
       return error.code;
   }
-  return "internal_error";
+  return ERROR_CODES.INTERNAL_ERROR;
 }
 
-function errorBody(code: FailureCode): Buffer {
-  return Buffer.from(
-    JSON.stringify({
-      code,
-      message: "ACP peer request did not complete",
-      retryable: failures[code].retryable,
-    }),
-  );
+function errorBody(code: FailureCode): ApiError {
+  return commonError(code, "ACP peer request did not complete", failures[code].retryable);
 }
 
 function requireJson(request: IncomingMessage): void {
@@ -633,12 +647,12 @@ function requireJson(request: IncomingMessage): void {
     encodings.length > 1 ||
     (encodings.length === 1 && encodings[0]!.value.toLowerCase() !== "identity")
   )
-    throw new PeerFailure("unsupported_media_type");
+    throw new PeerFailure(ERROR_CODES.UNSUPPORTED_MEDIA_TYPE);
 }
 
 function readBody(request: IncomingMessage, signal: AbortSignal): Promise<Buffer> {
   if (Number(request.headers["content-length"]) > requestBytes)
-    return Promise.reject(new PeerFailure("request_too_large"));
+    return Promise.reject(new PeerFailure(ERROR_CODES.REQUEST_TOO_LARGE));
   return new Promise<Buffer>((resolve, reject) => {
     const chunks: Buffer[] = [];
     let bytes = 0;
@@ -658,18 +672,18 @@ function readBody(request: IncomingMessage, signal: AbortSignal): Promise<Buffer
     };
     const onData = (chunk: unknown) => {
       if (!Buffer.isBuffer(chunk)) {
-        finish(new PeerFailure("invalid_request"));
+        finish(new PeerFailure(ERROR_CODES.INVALID_REQUEST));
         return;
       }
       bytes += chunk.byteLength;
       if (bytes > requestBytes) {
-        finish(new PeerFailure("request_too_large"));
+        finish(new PeerFailure(ERROR_CODES.REQUEST_TOO_LARGE));
         return;
       }
       chunks.push(chunk);
     };
     const onEnd = () => finish();
-    const onError = () => finish(new PeerFailure("invalid_request"));
+    const onError = () => finish(new PeerFailure(ERROR_CODES.INVALID_REQUEST));
     const onAbort = () => {
       const reason: unknown = signal.reason;
       finish(reason instanceof Error ? reason : new PeerFailure(failureCode(reason)));
@@ -691,10 +705,13 @@ function writeReply(
   status: number,
   raw: Buffer,
   maximum = responseBytes,
+  requestID?: string,
 ): Promise<void> {
   if (raw.byteLength > maximum) {
-    status = failures.internal_error.status;
-    raw = errorBody("internal_error");
+    const body = errorBody(ERROR_CODES.INTERNAL_ERROR);
+    status = failures[ERROR_CODES.INTERNAL_ERROR].status;
+    raw = Buffer.from(JSON.stringify(body));
+    requestID = body.request_id;
   }
   return new Promise<void>((resolve) => {
     if (response.destroyed) {
@@ -715,6 +732,7 @@ function writeReply(
         "Cache-Control": "no-store",
         "Content-Length": raw.byteLength,
         Connection: "close",
+        ...(requestID === undefined ? {} : { "X-Request-ID": requestID }),
       });
       response.end(raw);
     } catch {

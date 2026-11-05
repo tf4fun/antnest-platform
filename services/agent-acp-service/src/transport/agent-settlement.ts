@@ -6,6 +6,7 @@ import { activeHttpSpan } from "../telemetry/http.js";
 import { recordBoundaryError, rpcContent } from "../telemetry/diagnostics.js";
 import { readRpcRequest, rpcJson, RpcRequestError } from "./rpc-request.js";
 import { httpFailure } from "./public-error.js";
+import { ERROR_CODES } from "../errors.gen.js";
 
 export const AGENT_SETTLEMENT_PATH = "/rpc/agent-acp/settle-agent";
 
@@ -59,5 +60,5 @@ export function settlementError(error: unknown) {
     return httpFailure(error.code);
   if (error instanceof DomainError && error.code === "agent_operation_conflict")
     return httpFailure(error.code);
-  return httpFailure("settlement_unavailable");
+  return httpFailure(ERROR_CODES.SETTLEMENT_UNAVAILABLE);
 }

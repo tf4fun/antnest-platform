@@ -355,12 +355,16 @@
     "freshness_contract": "resolve-cache.md#organization-display"
   },
   "error": {
-    "required": ["code", "message"],
+    "$ref": "../common/error.schema.json",
+    "required": ["code", "category", "message", "retryable", "request_id"],
     "codes": [
       "invalid_request",
       "unauthenticated",
       "forbidden",
       "csrf_failed",
+      "method_not_allowed",
+      "request_too_large",
+      "principal_changed",
       "identity_unavailable",
       "login_method_unavailable",
       "login_rate_limited",
@@ -371,8 +375,10 @@
       "external_identity_last_method",
       "not_found",
       "credential_busy",
-      "credential_rate_limited"
-    ]
+      "credential_rate_limited",
+      "internal"
+    ],
+    "migration": "additive expansion to the common envelope; old consumers keep reading code/message, version stays 24 within one release"
   },
   "service_authentication": {
     "contract": "service-authentication.md",

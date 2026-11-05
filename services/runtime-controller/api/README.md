@@ -14,3 +14,7 @@ complete internal JSON-over-HTTP contract consumed by Agent Controller:
 The service's contract tests read these files directly from this Go module.
 Repository-level contract catalogs may link here, but must not copy or redefine
 the schemas.
+- Error envelopes follow the [common error contract](../../../contracts/common/error.schema.json)
+  with the [Runtime Controller slice](../../../contracts/common/slices/runtime-controller.json);
+  the shared owner-incarnation schema gained optional `category`/`request_id`/`details`
+  for N-1 producers ahead of the separate ACP implementation batch.

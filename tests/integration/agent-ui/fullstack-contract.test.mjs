@@ -2,12 +2,14 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { test } from "node:test";
+import { withCommonErrorSchema } from "../../support/common-error-schema.mjs";
 
 const requireFromAcp = createRequire(
   new URL("../../../services/agent-acp-service/package.json", import.meta.url),
 );
 const { Ajv2020 } = requireFromAcp("ajv/dist/2020.js");
 const validator = new Ajv2020({ strict: true, validateFormats: false });
+withCommonErrorSchema(validator);
 
 function json(relativePath) {
   return JSON.parse(

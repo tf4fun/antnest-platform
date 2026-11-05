@@ -621,3 +621,37 @@ async fn private_key_route_accepts_only_runtime_controller() {
         assert_eq!(response.status(), expected);
     }
 }
+
+#[tokio::test]
+async fn common_error_actual_route_envelope() {
+    let response = app()
+        .await
+        .oneshot(
+            Request::get("/internal/missing")
+                .header("antnest-service-authorization", support::workload_header())
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    let request_id = response
+        .headers()
+        .get("x-request-id")
+        .expect("x-request-id header")
+        .to_str()
+        .expect("ascii request id")
+        .to_owned();
+    assert_eq!(response.headers().get("cache-control").unwrap(), "no-store");
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let body: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    let body_object = body.as_object().expect("error body object");
+    assert_eq!(body_object.len(), 5);
+    assert_eq!(body["code"], serde_json::json!("route_not_found"));
+    assert_eq!(body["category"], serde_json::json!("not_found"));
+    assert_eq!(body["retryable"], serde_json::json!(false));
+    assert_eq!(body["request_id"], serde_json::json!(request_id));
+    assert!(!body.to_string().contains(support::workload_token()));
+}

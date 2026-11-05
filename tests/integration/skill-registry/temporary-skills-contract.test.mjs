@@ -6,7 +6,8 @@ import { test } from "node:test";
 const require = createRequire(
   new URL("../../../services/agent-acp-service/package.json", import.meta.url),
 );
-const Ajv = require("ajv");
+const Ajv2020 = require("ajv/dist/2020").default;
+const draft7 = require("ajv/dist/refs/json-schema-draft-07.json");
 const schema = JSON.parse(
   readFileSync(
     new URL(
@@ -15,7 +16,14 @@ const schema = JSON.parse(
     ),
   ),
 );
-const ajv = new Ajv({ strict: true });
+const ajv = new Ajv2020({ strict: true });
+ajv.addMetaSchema(draft7);
+const common = JSON.parse(
+  readFileSync(
+    new URL("../../../contracts/common/error.schema.json", import.meta.url),
+  ),
+);
+ajv.addSchema(common);
 ajv.addSchema(schema);
 const digest = `sha256:${"a".repeat(64)}`;
 const install = {
@@ -108,4 +116,47 @@ test("uncertain temporary effects cannot be mistaken for readonly discovery", ()
     }),
     false,
   );
+});
+
+test("canonical temporary errors carry common fields and reject mutations", () => {
+  const canonical = {
+    code: "outcome_unknown",
+    category: "internal",
+    message: "Temporary Skill request did not complete",
+    retryable: true,
+    request_id: "request_1",
+    details: { effect_state: "unknown", runtime_call_stopped: false },
+    error: {
+      code: "outcome_unknown",
+      category: "internal",
+      message: "Temporary Skill request did not complete",
+      retryable: true,
+      request_id: "request_1",
+      effect_state: "unknown",
+      runtime_call_stopped: false,
+    },
+  };
+  assert(validate("error_reply", canonical));
+  const missingCategory = { ...canonical };
+  delete missingCategory.category;
+  assert.equal(validate("error_reply", missingCategory), false);
+  assert.equal(
+    validate("error_reply", { ...canonical, request_id: "bad id with spaces" }),
+    false,
+  );
+  assert.equal(
+    validate("error_reply", {
+      ...canonical,
+      error: { ...canonical.error, artifact: "private bytes" },
+    }),
+    false,
+  );
+  const internalFallback = {
+    code: "internal",
+    category: "internal",
+    message: "Internal service error",
+    retryable: false,
+    request_id: "request_2",
+  };
+  assert(validate("error_reply", internalFallback));
 });
