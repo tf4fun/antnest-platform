@@ -1161,6 +1161,358 @@
       "http_status": 422,
       "owner": "runtime-controller",
       "description": "Image not allowed"
+    },
+    {
+      "code": "invalid_params",
+      "category": "invalid_request",
+      "retryable": false,
+      "http_status": 400,
+      "owner": "antnest-runtime",
+      "description": "Invalid params"
+    },
+    {
+      "code": "invalid_path",
+      "category": "invalid_request",
+      "retryable": false,
+      "http_status": 400,
+      "owner": "antnest-runtime",
+      "description": "Invalid path"
+    },
+    {
+      "code": "content_not_utf8",
+      "category": "invalid_request",
+      "retryable": false,
+      "http_status": 400,
+      "owner": "antnest-runtime",
+      "description": "Content not utf8"
+    },
+    {
+      "code": "old_string_not_found",
+      "category": "invalid_request",
+      "retryable": false,
+      "http_status": 400,
+      "owner": "antnest-runtime",
+      "description": "Old string not found"
+    },
+    {
+      "code": "old_string_not_unique",
+      "category": "invalid_request",
+      "retryable": false,
+      "http_status": 400,
+      "owner": "antnest-runtime",
+      "description": "Old string not unique"
+    },
+    {
+      "code": "temporary_background_not_supported",
+      "category": "invalid_request",
+      "retryable": false,
+      "http_status": 400,
+      "owner": "antnest-runtime",
+      "description": "Temporary background not supported"
+    },
+    {
+      "code": "result_too_large",
+      "category": "invalid_request",
+      "retryable": false,
+      "http_status": 413,
+      "owner": "antnest-runtime",
+      "description": "Result too large"
+    },
+    {
+      "code": "body_too_large",
+      "category": "invalid_request",
+      "retryable": false,
+      "http_status": 413,
+      "owner": "antnest-runtime",
+      "description": "Body too large"
+    },
+    {
+      "code": "body_timed_out",
+      "category": "invalid_request",
+      "retryable": false,
+      "http_status": 408,
+      "owner": "antnest-runtime",
+      "description": "Body timed out"
+    },
+    {
+      "code": "invalid_content_type",
+      "category": "invalid_request",
+      "retryable": false,
+      "http_status": 415,
+      "owner": "antnest-runtime",
+      "description": "Invalid content type"
+    },
+    {
+      "code": "canceled",
+      "category": "invalid_request",
+      "retryable": false,
+      "http_status": 499,
+      "owner": "antnest-runtime",
+      "description": "Canceled"
+    },
+    {
+      "code": "edit_failed",
+      "category": "internal",
+      "retryable": false,
+      "http_status": 500,
+      "owner": "antnest-runtime",
+      "description": "Edit failed"
+    },
+    {
+      "code": "edit_read_failed",
+      "category": "internal",
+      "retryable": false,
+      "http_status": 500,
+      "owner": "antnest-runtime",
+      "description": "Edit read failed"
+    },
+    {
+      "code": "encode_result_failed",
+      "category": "internal",
+      "retryable": false,
+      "http_status": 500,
+      "owner": "antnest-runtime",
+      "description": "Encode result failed"
+    },
+    {
+      "code": "outcome_unknown",
+      "category": "internal",
+      "retryable": false,
+      "http_status": 500,
+      "owner": "antnest-runtime",
+      "description": "Outcome unknown"
+    },
+    {
+      "code": "output_capture_failed",
+      "category": "internal",
+      "retryable": false,
+      "http_status": 500,
+      "owner": "antnest-runtime",
+      "description": "Output capture failed"
+    },
+    {
+      "code": "read_failed",
+      "category": "internal",
+      "retryable": false,
+      "http_status": 500,
+      "owner": "antnest-runtime",
+      "description": "Read failed"
+    },
+    {
+      "code": "runtime_failed",
+      "category": "internal",
+      "retryable": false,
+      "http_status": 500,
+      "owner": "antnest-runtime",
+      "description": "Runtime failed"
+    },
+    {
+      "code": "spawn_failed",
+      "category": "internal",
+      "retryable": false,
+      "http_status": 500,
+      "owner": "antnest-runtime",
+      "description": "Spawn failed"
+    },
+    {
+      "code": "wait_failed",
+      "category": "internal",
+      "retryable": false,
+      "http_status": 500,
+      "owner": "antnest-runtime",
+      "description": "Wait failed"
+    },
+    {
+      "code": "write_failed",
+      "category": "internal",
+      "retryable": false,
+      "http_status": 500,
+      "owner": "antnest-runtime",
+      "description": "Write failed"
+    },
+    {
+      "code": "child_process_containment_unproven",
+      "category": "internal",
+      "retryable": false,
+      "http_status": 500,
+      "owner": "antnest-runtime",
+      "description": "Child process containment unproven"
+    },
+    {
+      "code": "atomic_skill_replace_unsupported",
+      "category": "conflict",
+      "retryable": false,
+      "http_status": 409,
+      "owner": "antnest-runtime",
+      "description": "Atomic skill replace unsupported"
+    },
+    {
+      "code": "temporary_run_closed",
+      "category": "conflict",
+      "retryable": false,
+      "http_status": 409,
+      "owner": "antnest-runtime",
+      "description": "Temporary run closed"
+    },
+    {
+      "code": "temporary_scope_busy",
+      "category": "conflict",
+      "retryable": false,
+      "http_status": 409,
+      "owner": "antnest-runtime",
+      "description": "Temporary scope busy"
+    },
+    {
+      "code": "skill_background_task_running",
+      "category": "conflict",
+      "retryable": false,
+      "http_status": 409,
+      "owner": "antnest-runtime",
+      "description": "Skill background task running"
+    },
+    {
+      "code": "skill_managed_call_in_flight",
+      "category": "conflict",
+      "retryable": false,
+      "http_status": 409,
+      "owner": "antnest-runtime",
+      "description": "Skill managed call in flight"
+    },
+    {
+      "code": "skill_storage_full",
+      "category": "conflict",
+      "retryable": false,
+      "http_status": 409,
+      "owner": "antnest-runtime",
+      "description": "Skill storage full"
+    },
+    {
+      "code": "skill_writers_unknown",
+      "category": "conflict",
+      "retryable": false,
+      "http_status": 409,
+      "owner": "antnest-runtime",
+      "description": "Skill writers unknown"
+    },
+    {
+      "code": "run_closed",
+      "category": "conflict",
+      "retryable": false,
+      "http_status": 409,
+      "owner": "antnest-runtime",
+      "description": "Run closed"
+    },
+    {
+      "code": "runtime_execution_mismatch",
+      "category": "conflict",
+      "retryable": false,
+      "http_status": 409,
+      "owner": "antnest-runtime",
+      "description": "Runtime execution mismatch"
+    },
+    {
+      "code": "runtime_busy",
+      "category": "unavailable",
+      "retryable": true,
+      "http_status": 503,
+      "owner": "antnest-runtime",
+      "description": "Runtime busy"
+    },
+    {
+      "code": "runtime_unavailable",
+      "category": "unavailable",
+      "retryable": true,
+      "http_status": 503,
+      "owner": "antnest-runtime",
+      "description": "Runtime unavailable"
+    },
+    {
+      "code": "clock_unavailable",
+      "category": "unavailable",
+      "retryable": true,
+      "http_status": 503,
+      "owner": "antnest-runtime",
+      "description": "Clock unavailable"
+    },
+    {
+      "code": "temporary_unavailable",
+      "category": "unavailable",
+      "retryable": true,
+      "http_status": 503,
+      "owner": "antnest-runtime",
+      "description": "Temporary unavailable"
+    },
+    {
+      "code": "maintenance_unavailable",
+      "category": "unavailable",
+      "retryable": true,
+      "http_status": 503,
+      "owner": "antnest-runtime",
+      "description": "Maintenance unavailable"
+    },
+    {
+      "code": "timeout",
+      "category": "unavailable",
+      "retryable": true,
+      "http_status": 504,
+      "owner": "antnest-runtime",
+      "description": "Timeout"
+    },
+    {
+      "code": "host_not_allowed",
+      "category": "forbidden",
+      "retryable": false,
+      "http_status": 403,
+      "owner": "antnest-runtime",
+      "description": "Host not allowed"
+    },
+    {
+      "code": "temporary_disabled",
+      "category": "forbidden",
+      "retryable": false,
+      "http_status": 403,
+      "owner": "antnest-runtime",
+      "description": "Temporary disabled"
+    },
+    {
+      "code": "maintenance_disabled",
+      "category": "forbidden",
+      "retryable": false,
+      "http_status": 403,
+      "owner": "antnest-runtime",
+      "description": "Maintenance disabled"
+    },
+    {
+      "code": "runtime_unauthorized",
+      "category": "unauthenticated",
+      "retryable": false,
+      "http_status": 401,
+      "owner": "antnest-runtime",
+      "description": "Runtime unauthorized"
+    },
+    {
+      "code": "temporary_unauthorized",
+      "category": "unauthenticated",
+      "retryable": false,
+      "http_status": 401,
+      "owner": "antnest-runtime",
+      "description": "Temporary unauthorized"
+    },
+    {
+      "code": "maintenance_unauthorized",
+      "category": "unauthenticated",
+      "retryable": false,
+      "http_status": 401,
+      "owner": "antnest-runtime",
+      "description": "Maintenance unauthorized"
+    },
+    {
+      "code": "unknown_action",
+      "category": "not_found",
+      "retryable": false,
+      "http_status": 404,
+      "owner": "antnest-runtime",
+      "description": "Unknown action"
     }
   ]
 }

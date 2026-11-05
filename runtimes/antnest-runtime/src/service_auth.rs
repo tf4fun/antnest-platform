@@ -312,8 +312,8 @@ impl AdmissionState {
 }
 
 fn rejection(status: axum::http::StatusCode, code: &'static str) -> axum::response::Response {
-    use axum::response::IntoResponse as _;
-    let mut response = (status, axum::Json(serde_json::json!({"code":code, "message":"Runtime request rejected", "retryable":false}))).into_response();
+    let envelope = crate::api_errors_gen::envelope(code, "Runtime request rejected", "", false);
+    let mut response = crate::api_error::http_response(status, envelope);
     if status == axum::http::StatusCode::UNAUTHORIZED {
         response.headers_mut().insert(
             axum::http::header::WWW_AUTHENTICATE,
@@ -360,10 +360,14 @@ pub(crate) async fn admit_http(
             });
         if let Err(error) = outcome {
             return match error {
-                AdmissionError::Unauthenticated => {
-                    rejection(StatusCode::UNAUTHORIZED, "runtime_unauthorized")
-                }
-                AdmissionError::Forbidden => rejection(StatusCode::FORBIDDEN, "caller_not_allowed"),
+                AdmissionError::Unauthenticated => rejection(
+                    StatusCode::UNAUTHORIZED,
+                    crate::api_errors_gen::RUNTIME_UNAUTHORIZED,
+                ),
+                AdmissionError::Forbidden => rejection(
+                    StatusCode::FORBIDDEN,
+                    crate::api_errors_gen::CALLER_NOT_ALLOWED,
+                ),
             };
         }
     }
@@ -379,7 +383,10 @@ pub(crate) async fn admit_http(
             .iter()
             .any(|expected| host.eq_ignore_ascii_case(expected))
     }) {
-        return rejection(StatusCode::FORBIDDEN, "host_not_allowed");
+        return rejection(
+            StatusCode::FORBIDDEN,
+            crate::api_errors_gen::HOST_NOT_ALLOWED,
+        );
     }
     // Do not hand the bearer or unsigned delegated authority to SDK handlers.
     request.headers_mut().remove(SERVICE_HEADER);
@@ -410,12 +417,15 @@ pub(crate) async fn admit_http(
             if !values.is_ok_and(|values| {
                 matches!(values.as_slice(), [value] if multer::parse_boundary(value).is_ok())
             }) {
-                return rejection(StatusCode::UNSUPPORTED_MEDIA_TYPE, "unsupported_media_type");
+                return rejection(StatusCode::UNSUPPORTED_MEDIA_TYPE, crate::api_errors_gen::UNSUPPORTED_MEDIA_TYPE);
             }
             return next.run(request).await;
         }
         if !values.is_ok_and(|values| valid_json_media(&values)) {
-            return rejection(StatusCode::UNSUPPORTED_MEDIA_TYPE, "unsupported_media_type");
+            return rejection(
+                StatusCode::UNSUPPORTED_MEDIA_TYPE,
+                crate::api_errors_gen::UNSUPPORTED_MEDIA_TYPE,
+            );
         }
         let (parts, body) = request.into_parts();
         let bytes =
@@ -423,10 +433,18 @@ pub(crate) async fn admit_http(
                 .await
             {
                 Ok(bytes) => bytes,
-                Err(_) => return rejection(StatusCode::PAYLOAD_TOO_LARGE, "invalid_request"),
+                Err(_) => {
+                    return rejection(
+                        StatusCode::PAYLOAD_TOO_LARGE,
+                        crate::api_errors_gen::INVALID_REQUEST,
+                    );
+                }
             };
         if !valid_json_body(&bytes) {
-            return rejection(StatusCode::BAD_REQUEST, "invalid_request");
+            return rejection(
+                StatusCode::BAD_REQUEST,
+                crate::api_errors_gen::INVALID_REQUEST,
+            );
         }
         request = axum::extract::Request::from_parts(parts, axum::body::Body::from(bytes));
         request.headers_mut().insert(
@@ -593,3 +611,7 @@ impl Receiver {
         Ok(caller.to_owned())
     }
 }
+
+#[cfg(test)]
+#[path = "service_auth_common_error_tests.rs"]
+mod service_auth_common_error_tests;

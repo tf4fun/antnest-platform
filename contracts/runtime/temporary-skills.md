@@ -121,3 +121,12 @@ Docker named-volume/HTTP tests for signed current/next keys, actual read and Bas
 use, background work via cwd/script, completed/cancelled cleanup and restart with
 old-ticket rejection. Traces record bounded Run/source digests and outcomes,
 never package bodies.
+
+### Error envelope migration
+
+`error_reply` now carries the [common error contract](../common/error.schema.json)
+five fields at the top level and inside the legacy `error` member (one-release
+alias for known codes; the canonical `internal` fallback omits the alias).
+`details` duplicates `effect_state`/`runtime_call_stopped`; the model-facing
+`outcome_unknown` retryable is `false` while the legacy HTTP policy keeps
+`status.is_server_error` retryability.

@@ -2,7 +2,8 @@ import { createHash, generateKeyPairSync, verify } from "node:crypto";
 import { createServer } from "node:http";
 import { once } from "node:events";
 import { readFileSync } from "node:fs";
-import { Ajv } from "ajv";
+import { Ajv2020 } from "ajv/dist/2020.js";
+import { createRequire } from "node:module";
 import { describe, expect, it } from "vitest";
 import { RuntimeSkillTemporaryClient } from "../../../../services/agent-acp-service/src/adapters/runtime-skill-temporary-client.js";
 import { RuntimeSkillMaintenanceSigner } from "../../../../services/agent-acp-service/src/adapters/runtime-skill-maintenance-signer.js";
@@ -25,7 +26,23 @@ const schema = JSON.parse(
     "utf8",
   ),
 ) as { $id: string };
-const ajv = new Ajv({ strict: true });
+const ajv = new Ajv2020({ strict: true });
+const serviceRequire = createRequire(
+  new URL(
+    "../../../../services/agent-acp-service/package.json",
+    import.meta.url,
+  ),
+);
+ajv.addMetaSchema(
+  serviceRequire("ajv/dist/refs/json-schema-draft-07.json") as object,
+);
+const commonSchema = JSON.parse(
+  readFileSync(
+    new URL("../../../../contracts/common/error.schema.json", import.meta.url),
+    "utf8",
+  ),
+) as Record<string, unknown>;
+ajv.addSchema(commonSchema);
 ajv.addSchema(schema);
 const common = {
   request_id: "request_1",
