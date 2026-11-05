@@ -647,8 +647,10 @@ describe("ACP v1 Streamable HTTP", () => {
     const body: unknown = await response.json();
     expect(body).toStrictEqual({
       code: "connection_quota_exceeded",
+      category: "rate_limited",
       message: "Connection capacity is exhausted",
       retryable: true,
+      request_id: expect.stringMatching(/^[A-Za-z0-9._:-]{1,128}$/) as unknown,
       retry_after_ms: 1000,
     });
   }

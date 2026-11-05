@@ -214,15 +214,15 @@
   },
   "guarded_sources": {
     "services/agent-ui/web/server/src/http/agent-view-routes.ts": {
-      "sha256": "5c8373bd13dd66ff50c1e3cf1f8f27abb7043687dd02a08e6d24af70f0324670",
+      "sha256": "895f2a543e77322c9a55d9cc11a6efa6ec53f795446b5bc5645fa20539f92abd",
       "routes": ["GET /api/app/workspace/v1/agents/{agentId}/view"]
     },
     "services/agent-ui/web/server/src/http/bootstrap-routes.ts": {
-      "sha256": "b406c2dbf55b6c2befeccf0282b0403b2866ad467f143c54836af1a53061ba7f",
+      "sha256": "4343d04263617af1685a537be2e46dcc797e7f01d62cff907ba43e010c96381f",
       "routes": ["GET /api/app/workspace/v1/bootstrap"]
     },
     "services/agent-ui/web/server/src/http/command-routes.ts": {
-      "sha256": "0eef19eba8f4aa2fb64080909d3c37e25c12f307f7071ad8dfc4a9e1a7a4eb1f",
+      "sha256": "a54109cc7344d1d8083dcdc523a8c253647db2fdba423f45a9873478edf91d6f",
       "routes": [
         "POST /api/app/workspace/v1/agents/{agentId}/sessions/{sessionId}/prompts",
         "GET /api/app/workspace/v1/agents/{agentId}/sessions/{sessionId}/operations/{intentId}",
@@ -230,21 +230,21 @@
       ]
     },
     "services/agent-ui/web/server/src/http/configuration-routes.ts": {
-      "sha256": "12ad29e762d16ae03de83dc45ac60b98ef8171e31c0f59c4cfa859d86642ca19",
+      "sha256": "b644689743fbe0b7a7bee1b87e734f3a2848d1330a2ad013698ebc641699655e",
       "routes": [
         "POST /api/app/workspace/v1/agents/{agentId}/sessions/{sessionId}/configuration"
       ]
     },
     "services/agent-ui/web/server/src/http/control-routes.ts": {
-      "sha256": "e281907b30ada34595fe047e81042d185d2096921551ff6ca16e71d6f32c6d01",
+      "sha256": "be0efbde2265f0a9e79ecc15cd1f330542e99cf1eb24ece1a822a90432dc478d",
       "routes": ["POST /api/app/workspace/v1/agents/{agentId}/commands"]
     },
     "services/agent-ui/web/server/src/http/event-routes.ts": {
-      "sha256": "bac39f23d26e5ce62bf314389d8135a6cbe5a8297368fb59d26268c3c1a83997",
+      "sha256": "1feeffa34eca04ac50333e62962caf50e158b7ef1c766d901231ad1d24ae2cb0",
       "routes": ["GET /api/app/workspace/v1/agents/{agentId}/events"]
     },
     "services/agent-ui/web/server/src/http/history-routes.ts": {
-      "sha256": "0dacd292ca2747f03dfa22197272612b79e419939b7637bbc1587e240bc6f7ca",
+      "sha256": "c962e44194f504b576ff946f13b5fe2b737550dd670e967076a286bafd0123d7",
       "routes": [
         "GET /api/app/workspace/v1/agents/{agentId}/sessions/{sessionId}/turns",
         "GET /api/app/workspace/v1/agents/{agentId}/sessions/{sessionId}/turns/{turnId}/content",
@@ -253,7 +253,7 @@
       ]
     },
     "services/agent-ui/web/server/src/http/node-server.ts": {
-      "sha256": "d4cdad57d09393b02c3f9367b1f4406f6fa712e3e7e10633872c87a72f3c272f",
+      "sha256": "4435164f3f27864e7c04b014ecd67b6954f1011080896ade79e7a92f02964639",
       "routes": [
         "GET /status",
         "GET /live",
@@ -268,20 +268,20 @@
       ]
     },
     "services/agent-ui/web/server/src/http/permission-routes.ts": {
-      "sha256": "7482cca8981283fba9f28a265a32606b1e50fd5e41578a4719b427ad88eb406a",
+      "sha256": "bcb0ffcfe8148b5eeb90042a006423d1e418f27a5bd9f4e45b8b2a0d79ab83f7",
       "routes": [
         "POST /api/app/workspace/v1/agents/{agentId}/permissions/{permissionId}/decision"
       ]
     },
     "services/agent-ui/web/server/src/http/session-routes.ts": {
-      "sha256": "5ce91333ad669e119ce1e47ea77b00acc493ae04c12fb2ebae7609d75ca9b8e1",
+      "sha256": "5ecf0f86f5911a2529385ad6f27e17f73d0f8115466613ae239bbcef7e7b70be",
       "routes": [
         "GET /api/app/workspace/v1/agents/{agentId}/sessions",
         "POST /api/app/workspace/v1/agents/{agentId}/sessions"
       ]
     },
     "services/agent-ui/web/server/src/http/view-routes.ts": {
-      "sha256": "f163cfc5ed19af55332ad97d48f055c996d99872db3015bb25855ca14b80a655",
+      "sha256": "5ab457784e177f6bc5ab215266918af5d1b6062ce977bd987db36027433819ea",
       "routes": [
         "GET /api/app/workspace/v1/agents/{agentId}/sessions/{sessionId}/view"
       ]

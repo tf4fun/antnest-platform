@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { test } from "node:test";
+import { withCommonErrorSchema } from "../../support/common-error-schema.mjs";
 
 const root = new URL("../../../", import.meta.url);
 const require = createRequire(
@@ -11,7 +12,9 @@ const { Ajv2020 } = require("ajv/dist/2020.js");
 const read = (path) => JSON.parse(readFileSync(new URL(path, root), "utf8"));
 const schema = read("contracts/agent-acp/owner-peer.schema.json");
 const manifest = read("contracts/agent-acp/owner-peer-contract.json");
-const ajv = new Ajv2020({ strict: true, allErrors: true });
+const ajv = withCommonErrorSchema(
+  new Ajv2020({ strict: true, allErrors: true }),
+);
 ajv.addSchema(schema);
 const validate = (name, value) =>
   ajv.validate({ $ref: `${schema.$id}#/$defs/${name}` }, value);

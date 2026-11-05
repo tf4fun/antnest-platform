@@ -457,6 +457,20 @@
         "code": {
           "$ref": "#/$defs/code"
         },
+        "category": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "message": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1024
+        },
+        "request_id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9._:-]{1,128}$"
+        },
         "retryable": {
           "type": "boolean"
         },
@@ -510,6 +524,129 @@
               }
             }
           }
+        },
+        {
+          "if": {
+            "anyOf": [
+              {
+                "required": ["category"],
+                "properties": {
+                  "category": {}
+                }
+              },
+              {
+                "required": ["message"],
+                "properties": {
+                  "message": {}
+                }
+              },
+              {
+                "required": ["request_id"],
+                "properties": {
+                  "request_id": {}
+                }
+              }
+            ]
+          },
+          "then": {
+            "required": [
+              "code",
+              "category",
+              "message",
+              "retryable",
+              "request_id"
+            ],
+            "properties": {
+              "code": {},
+              "category": {},
+              "message": {},
+              "retryable": {},
+              "request_id": {}
+            },
+            "allOf": [
+              {
+                "$ref": "https://antnest.local/contracts/common/error.schema.json"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "skillSourceError": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["error"],
+          "properties": {
+            "error": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["code", "message"],
+              "properties": {
+                "code": {
+                  "$ref": "#/$defs/code"
+                },
+                "message": {
+                  "$ref": "#/$defs/message"
+                }
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "code",
+            "category",
+            "message",
+            "retryable",
+            "request_id"
+          ],
+          "properties": {
+            "code": {
+              "$ref": "#/$defs/code"
+            },
+            "category": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64
+            },
+            "message": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 1024
+            },
+            "retryable": {
+              "type": "boolean"
+            },
+            "request_id": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9._:-]{1,128}$"
+            },
+            "details": {
+              "type": "object"
+            },
+            "error": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["code", "message"],
+              "properties": {
+                "code": {
+                  "$ref": "#/$defs/code"
+                },
+                "message": {
+                  "$ref": "#/$defs/message"
+                }
+              }
+            }
+          },
+          "allOf": [
+            {
+              "$ref": "https://antnest.local/contracts/common/error.schema.json"
+            }
+          ]
         }
       ]
     },

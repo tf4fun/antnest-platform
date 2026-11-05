@@ -16,7 +16,10 @@
       "$ref": "https://antnest.dev/contracts/agent-acp/owner-incarnation.schema.json#/$defs/registration_id"
     },
     "acp_incarnation_error": {
-      "$ref": "https://antnest.dev/contracts/agent-acp/owner-incarnation.schema.json#/$defs/error"
+      "$ref": "https://antnest.dev/contracts/agent-acp/owner-incarnation.schema.json#/$defs/error",
+      "allOf": [
+        {"$ref": "https://antnest.local/contracts/common/error.schema.json"}
+      ]
     },
     "tagged_image_reference": {
       "type": "string",
@@ -494,10 +497,19 @@
       }
     },
     "error": {
+      "$ref": "https://antnest.local/contracts/common/error.schema.json",
       "type": "object",
       "additionalProperties": false,
-      "required": ["code", "message", "retryable"],
+      "required": ["code", "category", "message", "retryable", "request_id"],
       "properties": {
+        "category": {
+          "enum": [
+            "invalid_request", "unauthenticated", "forbidden", "not_found",
+            "conflict", "precondition_failed", "rate_limited", "unavailable", "internal"
+          ]
+        },
+        "request_id": {"type": "string", "pattern": "^[A-Za-z0-9._:-]{1,128}$"},
+        "details": {"type": "object"},
         "code": {
           "type": "string",
           "minLength": 1

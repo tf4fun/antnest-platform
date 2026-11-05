@@ -126,7 +126,14 @@ func TestExecutionAuditHTTPPreservesACPFailures(t *testing.T) {
 			require.NoError(t, err)
 			response := requestAdmin(t, newTestHandler(t, client), http.MethodGet, "/api/admin/execution-audits", "")
 			require.Equal(t, item.status, response.Code)
-			require.JSONEq(t, item.body, response.Body.String())
+			var got map[string]any
+			decodeBytes(t, response.Body.Bytes(), &got)
+			var want map[string]any
+			decodeBytes(t, []byte(item.body), &want)
+			want["category"] = registryEntries(t)[want["code"].(string)].category
+			require.Equal(t, response.Header().Get("X-Request-ID"), got["request_id"])
+			delete(got, "request_id")
+			require.Equal(t, want, got)
 			require.Equal(t, "no-store", response.Header().Get("Cache-Control"))
 		})
 	}

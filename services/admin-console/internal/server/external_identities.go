@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strconv"
 
+	"github.com/tf4fun/antnest-platform/services/admin-console/internal/apierror"
 	"github.com/tf4fun/antnest-platform/services/admin-console/internal/principal"
 	"github.com/tf4fun/antnest-platform/services/admin-console/internal/upstream"
 )
@@ -22,7 +23,7 @@ func externalIdentityListInput(response http.ResponseWriter, request *http.Reque
 	if request.Body != nil {
 		body, err := io.ReadAll(io.LimitReader(request.Body, 1))
 		if err != nil || len(body) != 0 {
-			writeError(response, http.StatusBadRequest, "invalid_request", "Request body is not allowed")
+			writeError(response, http.StatusBadRequest, apierror.InvalidRequest, "Request body is not allowed")
 			return 0, "", false
 		}
 	}
@@ -43,7 +44,7 @@ func externalIdentityListInput(response http.ResponseWriter, request *http.Reque
 func externalIdentityPathID(response http.ResponseWriter, request *http.Request, name string) (string, bool) {
 	value := request.PathValue(name)
 	if !browserSessionPublicID.MatchString(value) {
-		writeError(response, http.StatusBadRequest, "invalid_request", "External identity reference is invalid")
+		writeError(response, http.StatusBadRequest, apierror.InvalidRequest, "External identity reference is invalid")
 		return "", false
 	}
 	return value, true
@@ -115,7 +116,7 @@ func (h *handler) bindOrganizationExternalIdentity(response http.ResponseWriter,
 	subject, err := parseExternalIdentitySubject(input.Subject)
 	restore, valid := externalIdentityChoice(input.RestoreRevoked)
 	if !browserSessionPublicID.MatchString(input.ProviderID) || err != nil || !valid {
-		writeError(response, http.StatusBadRequest, "invalid_request", "Provider, subject or restore choice is invalid")
+		writeError(response, http.StatusBadRequest, apierror.InvalidRequest, "Provider, subject or restore choice is invalid")
 		return
 	}
 	requestID, ok := commandRequestID(response, request, actor.OrganizationID, "external-identities")
@@ -145,7 +146,7 @@ func (h *handler) unbindOrganizationExternalIdentity(response http.ResponseWrite
 	}
 	allow, valid := externalIdentityChoice(input.AllowLockout)
 	if !valid {
-		writeError(response, http.StatusBadRequest, "invalid_request", "Lockout choice is invalid")
+		writeError(response, http.StatusBadRequest, apierror.InvalidRequest, "Lockout choice is invalid")
 		return
 	}
 	requestID, ok := commandRequestID(response, request, actor.OrganizationID, "external-identities")
@@ -164,7 +165,7 @@ func (h *handler) forwardExternalIdentity(response http.ResponseWriter, request 
 	response.Header().Set("Cache-Control", "no-store")
 	body, err := json.Marshal(input)
 	if err != nil {
-		writeError(response, 500, "encoding_failed", "Request could not be encoded")
+		writeError(response, 500, apierror.EncodingFailed, "Request could not be encoded")
 		return
 	}
 	result, ok := h.read(response, request, upstream.Identity, http.MethodPost, "/rpc/identity/"+operation, "", body)

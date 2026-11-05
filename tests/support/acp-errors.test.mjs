@@ -138,6 +138,95 @@ for (const [label, initializeResult] of [
   });
 }
 
+function commonReceipt(code) {
+  const receipt = canonicalReceipt(code);
+  const entry = JSON.parse(
+    readFileSync(
+      new URL("../../contracts/common/errors.json", import.meta.url),
+      "utf8",
+    ),
+  ).errors.find((value) => value.code === code);
+  return {
+    ...receipt,
+    data: {
+      ...receipt.data,
+      category: entry.category,
+      message: receipt.message,
+      request_id: "req-1",
+    },
+  };
+}
+
+test("accepts a complete common metadata receipt", () => {
+  const { assertAdmissionError } = api();
+  assertAdmissionError(commonReceipt("agent_busy"), "agent_busy");
+});
+
+test("accepts the legacy two-field receipt unchanged", () => {
+  const { assertAdmissionError } = api();
+  assertAdmissionError(canonicalReceipt("agent_busy"), "agent_busy");
+});
+
+const invalidCommonReceipts = [
+  [
+    "partial metadata missing request_id",
+    (value) => {
+      delete value.data.request_id;
+    },
+  ],
+  [
+    "partial metadata missing category",
+    (value) => {
+      delete value.data.category;
+    },
+  ],
+  [
+    "wrong category",
+    (value) => {
+      value.data.category = "internal";
+    },
+  ],
+  [
+    "unsafe request id",
+    (value) => {
+      value.data.request_id = "bad id!";
+    },
+  ],
+  [
+    "data message mismatch with outer message",
+    (value) => {
+      value.data.message = "different message";
+    },
+  ],
+  [
+    "undefined own metadata",
+    (value) => {
+      value.data.category = undefined;
+    },
+  ],
+  [
+    "private extra field",
+    (value) => {
+      value.data.cause = privateMessage;
+    },
+  ],
+  [
+    "credential details remain rejected",
+    (value) => {
+      value.data.details = { credential: privateMessage };
+    },
+  ],
+];
+
+for (const [label, change] of invalidCommonReceipts) {
+  test(`rejects ${label} on a common metadata receipt`, () => {
+    const { assertAdmissionError } = api();
+    const actual = commonReceipt("agent_busy");
+    change(actual);
+    assert.throws(() => assertAdmissionError(actual, "agent_busy"));
+  });
+}
+
 for (const expected of criticalReceipts) {
   const expectedCode = expected.data.code;
   test(`generates the fixed ${expectedCode} receipt with only public fields`, () => {

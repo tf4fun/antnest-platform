@@ -20,6 +20,7 @@ import (
 	"go.opentelemetry.io/otel/trace"
 
 	"github.com/tf4fun/antnest-platform/modules/service-authentication/serviceauth"
+	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/apierror"
 	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/application"
 	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/domain"
 	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/ports"
@@ -457,8 +458,11 @@ type workspaceAgentListResponse struct {
 
 type errorResponse struct {
 	Code                string                   `json:"code"`
+	Category            string                   `json:"category"`
 	Message             string                   `json:"message"`
 	Retryable           bool                     `json:"retryable"`
+	RequestID           string                   `json:"request_id"`
+	Details             map[string]any           `json:"details,omitempty"`
 	References          []ports.CatalogReference `json:"references,omitempty"`
 	ReferencesTruncated bool                     `json:"references_truncated,omitempty"`
 }
@@ -553,7 +557,7 @@ func (h *handler) getModelProfile(response http.ResponseWriter, request *http.Re
 func (h *handler) getModelProfileUsage(response http.ResponseWriter, request *http.Request) {
 	response.Header().Set("Cache-Control", "no-store")
 	if request.ContentLength != 0 || len(request.TransferEncoding) != 0 {
-		writeError(response, http.StatusBadRequest, "invalid_request", "request is invalid", false)
+		writeError(response, http.StatusBadRequest, apierror.InvalidRequest, "request is invalid", false)
 		return
 	}
 	organizationID, ok := requiredOrganizationQuery(response, request)
@@ -573,7 +577,7 @@ func (h *handler) getModelProfileUsage(response http.ResponseWriter, request *ht
 func (h *handler) listModelProfileEvents(response http.ResponseWriter, request *http.Request) {
 	response.Header().Set("Cache-Control", "no-store")
 	if request.ContentLength != 0 || len(request.TransferEncoding) != 0 {
-		writeError(response, http.StatusBadRequest, "invalid_request", "request is invalid", false)
+		writeError(response, http.StatusBadRequest, apierror.InvalidRequest, "request is invalid", false)
 		return
 	}
 	query, ok := strictQuery(response, request, map[string]struct{}{
@@ -584,7 +588,7 @@ func (h *handler) listModelProfileEvents(response http.ResponseWriter, request *
 	}
 	organizationID := strings.TrimSpace(query.Get("organization_id"))
 	if organizationID == "" {
-		writeError(response, http.StatusBadRequest, "invalid_request", "organization is required", false)
+		writeError(response, http.StatusBadRequest, apierror.InvalidRequest, "organization is required", false)
 		return
 	}
 	afterRevision, ok := nonnegativeInt64(response, query.Get("after_revision"))
@@ -595,7 +599,7 @@ func (h *handler) listModelProfileEvents(response http.ResponseWriter, request *
 	if raw := query.Get("limit"); raw != "" {
 		parsed, err := strconv.Atoi(raw)
 		if err != nil || parsed < 1 || parsed > 100 {
-			writeError(response, http.StatusBadRequest, "invalid_request", "request is invalid", false)
+			writeError(response, http.StatusBadRequest, apierror.InvalidRequest, "request is invalid", false)
 			return
 		}
 		limit = parsed
@@ -699,7 +703,7 @@ func (h *handler) getTemplateRevision(response http.ResponseWriter, request *htt
 	}
 	revision, err := strconv.ParseInt(request.PathValue("revision"), 10, 64)
 	if err != nil || revision < 1 {
-		writeError(response, http.StatusBadRequest, "invalid_request", "Template revision is invalid", false)
+		writeError(response, http.StatusBadRequest, apierror.InvalidRequest, "Template revision is invalid", false)
 		return
 	}
 	view, err := h.catalog.GetTemplateRevision(
@@ -737,7 +741,7 @@ func (h *handler) createAgent(response http.ResponseWriter, request *http.Reques
 		return
 	}
 	if strings.TrimSpace(payload.OrganizationID) == "" || strings.TrimSpace(payload.ActorPrincipalID) == "" {
-		writeError(response, http.StatusBadRequest, "invalid_request", "organization and actor are required", false)
+		writeError(response, http.StatusBadRequest, apierror.InvalidRequest, "organization and actor are required", false)
 		return
 	}
 	ctx := request.Context()
@@ -760,12 +764,12 @@ func (h *handler) getAgent(response http.ResponseWriter, request *http.Request) 
 	query, ok := strictQuery(response, request, map[string]struct{}{"organization_id": {}})
 	if !ok || strings.TrimSpace(query.Get("organization_id")) == "" {
 		if ok {
-			writeError(response, http.StatusBadRequest, "invalid_request", "organization is required", false)
+			writeError(response, http.StatusBadRequest, apierror.InvalidRequest, "organization is required", false)
 		}
 		return
 	}
 	if len(query) != 1 {
-		writeError(response, http.StatusBadRequest, "invalid_request", "request is invalid", false)
+		writeError(response, http.StatusBadRequest, apierror.InvalidRequest, "request is invalid", false)
 		return
 	}
 	agent, err := h.queries.GetAgentForOrganization(
@@ -889,7 +893,7 @@ func (h *handler) streamAgentEvents(
 	controller := http.NewResponseController(response)
 	if err := controller.SetWriteDeadline(time.Time{}); err != nil && !errors.Is(err, http.ErrNotSupported) {
 		result = "setup_error"
-		writeError(response, http.StatusInternalServerError, "internal_error", "streaming is unavailable", true)
+		writeError(response, http.StatusInternalServerError, apierror.InternalError, "streaming is unavailable", true)
 		return
 	}
 	response.Header().Set("Content-Type", "text/event-stream")
@@ -935,7 +939,7 @@ func (h *handler) rebuildAgent(response http.ResponseWriter, request *http.Reque
 		return
 	}
 	if strings.TrimSpace(payload.OrganizationID) == "" || strings.TrimSpace(payload.ActorPrincipalID) == "" {
-		writeError(response, http.StatusBadRequest, "invalid_request", "organization and actor are required", false)
+		writeError(response, http.StatusBadRequest, apierror.InvalidRequest, "organization and actor are required", false)
 		return
 	}
 	if len(payload.Recovery) != 0 {
@@ -962,7 +966,7 @@ func (h *handler) disableAgent(response http.ResponseWriter, request *http.Reque
 		return
 	}
 	if strings.TrimSpace(payload.OrganizationID) == "" || strings.TrimSpace(payload.ActorPrincipalID) == "" {
-		writeError(response, http.StatusBadRequest, "invalid_request", "organization and actor are required", false)
+		writeError(response, http.StatusBadRequest, apierror.InvalidRequest, "organization and actor are required", false)
 		return
 	}
 	ctx := request.Context()
@@ -984,7 +988,7 @@ func (h *handler) enableAgent(response http.ResponseWriter, request *http.Reques
 		return
 	}
 	if strings.TrimSpace(payload.OrganizationID) == "" || strings.TrimSpace(payload.ActorPrincipalID) == "" {
-		writeError(response, http.StatusBadRequest, "invalid_request", "organization and actor are required", false)
+		writeError(response, http.StatusBadRequest, apierror.InvalidRequest, "organization and actor are required", false)
 		return
 	}
 	ctx := request.Context()
@@ -1006,7 +1010,7 @@ func (h *handler) deleteAgent(response http.ResponseWriter, request *http.Reques
 		return
 	}
 	if strings.TrimSpace(payload.OrganizationID) == "" || strings.TrimSpace(payload.ActorPrincipalID) == "" {
-		writeError(response, http.StatusBadRequest, "invalid_request", "organization and actor are required", false)
+		writeError(response, http.StatusBadRequest, apierror.InvalidRequest, "organization and actor are required", false)
 		return
 	}
 	ctx := request.Context()
@@ -1030,7 +1034,7 @@ func (h *handler) getLifecycleOperation(response http.ResponseWriter, request *h
 	operation, err := h.lifecycle.GetLifecycleOperation(request.Context(), request.PathValue("request_id"))
 	if err != nil {
 		if errors.Is(err, ports.ErrNotFound) {
-			writeError(response, http.StatusNotFound, "operation_not_found", "lifecycle operation was not found", false)
+			writeError(response, http.StatusNotFound, apierror.OperationNotFound, "lifecycle operation was not found", false)
 			return
 		}
 		writeServiceError(request.Context(), response, err)
@@ -1038,7 +1042,7 @@ func (h *handler) getLifecycleOperation(response http.ResponseWriter, request *h
 	}
 	if _, err := h.queries.GetAgentForOrganization(request.Context(), query, operation.AgentID); err != nil {
 		if errors.Is(err, application.ErrAgentNotFound) {
-			writeError(response, http.StatusNotFound, "operation_not_found", "lifecycle operation was not found", false)
+			writeError(response, http.StatusNotFound, apierror.OperationNotFound, "lifecycle operation was not found", false)
 			return
 		}
 		writeServiceError(request.Context(), response, err)
@@ -1054,7 +1058,7 @@ func (h *handler) getSkillPreparationStatus(response http.ResponseWriter, reques
 	}
 	status, err := h.lifecycle.GetSkillPreparationStatus(request.Context(), organizationID, request.PathValue("request_id"))
 	if errors.Is(err, ports.ErrNotFound) {
-		writeError(response, http.StatusNotFound, "preparation_not_found", "Skill preparation was not found", false)
+		writeError(response, http.StatusNotFound, apierror.PreparationNotFound, "Skill preparation was not found", false)
 		return
 	}
 	if err != nil {
@@ -1071,7 +1075,7 @@ func requiredOrganizationQuery(response http.ResponseWriter, request *http.Reque
 	}
 	organizationID := strings.TrimSpace(query.Get("organization_id"))
 	if organizationID == "" {
-		writeError(response, http.StatusBadRequest, "invalid_request", "organization is required", false)
+		writeError(response, http.StatusBadRequest, apierror.InvalidRequest, "organization is required", false)
 		return "", false
 	}
 	return organizationID, true
@@ -1081,7 +1085,7 @@ func catalogListInput(response http.ResponseWriter, request *http.Request) (appl
 	query := request.URL.Query()
 	for key := range query {
 		if key != "organization_id" && key != "after_id" && key != "limit" {
-			writeError(response, http.StatusBadRequest, "invalid_request", "request is invalid", false)
+			writeError(response, http.StatusBadRequest, apierror.InvalidRequest, "request is invalid", false)
 			return application.ListCatalogInput{}, false
 		}
 	}
@@ -1089,7 +1093,7 @@ func catalogListInput(response http.ResponseWriter, request *http.Request) (appl
 	if raw := strings.TrimSpace(query.Get("limit")); raw != "" {
 		parsed, err := strconv.Atoi(raw)
 		if err != nil || parsed < 1 {
-			writeError(response, http.StatusBadRequest, "invalid_request", "request is invalid", false)
+			writeError(response, http.StatusBadRequest, apierror.InvalidRequest, "request is invalid", false)
 			return application.ListCatalogInput{}, false
 		}
 		limit = parsed
@@ -1115,7 +1119,7 @@ func agentListInput(response http.ResponseWriter, request *http.Request) (applic
 		case "true":
 			includeDeleted = true
 		default:
-			writeError(response, http.StatusBadRequest, "invalid_request", "request is invalid", false)
+			writeError(response, http.StatusBadRequest, apierror.InvalidRequest, "request is invalid", false)
 			return application.ListAgentsInput{}, false
 		}
 	}
@@ -1124,7 +1128,7 @@ func agentListInput(response http.ResponseWriter, request *http.Request) (applic
 		raw := values[0]
 		parsed, err := strconv.Atoi(raw)
 		if err != nil || parsed < 1 {
-			writeError(response, http.StatusBadRequest, "invalid_request", "request is invalid", false)
+			writeError(response, http.StatusBadRequest, apierror.InvalidRequest, "request is invalid", false)
 			return application.ListAgentsInput{}, false
 		}
 		limit = parsed
@@ -1152,14 +1156,14 @@ func eventListInput(response http.ResponseWriter, request *http.Request) (applic
 	if raw := query.Get("limit"); raw != "" {
 		parsed, err := strconv.Atoi(raw)
 		if err != nil || parsed < 1 {
-			writeError(response, http.StatusBadRequest, "invalid_request", "request is invalid", false)
+			writeError(response, http.StatusBadRequest, apierror.InvalidRequest, "request is invalid", false)
 			return application.ListEventsInput{}, false
 		}
 		limit = parsed
 	}
 	organizationID := strings.TrimSpace(query.Get("organization_id"))
 	if organizationID == "" {
-		writeError(response, http.StatusBadRequest, "invalid_request", "organization is required", false)
+		writeError(response, http.StatusBadRequest, apierror.InvalidRequest, "organization is required", false)
 		return application.ListEventsInput{}, false
 	}
 	return application.ListEventsInput{
@@ -1178,7 +1182,7 @@ func eventWatchInput(
 	}
 	organizationID := strings.TrimSpace(query.Get("organization_id"))
 	if organizationID == "" {
-		writeError(response, http.StatusBadRequest, "invalid_request", "organization is required", false)
+		writeError(response, http.StatusBadRequest, apierror.InvalidRequest, "organization is required", false)
 		return "", 0, false
 	}
 	querySequence, ok := nonnegativeInt64(response, query.Get("after_sequence"))
@@ -1187,7 +1191,7 @@ func eventWatchInput(
 	}
 	headerValues := request.Header.Values("Last-Event-ID")
 	if len(headerValues) > 1 || (len(headerValues) == 1 && strings.TrimSpace(headerValues[0]) == "") {
-		writeError(response, http.StatusBadRequest, "invalid_request", "request is invalid", false)
+		writeError(response, http.StatusBadRequest, apierror.InvalidRequest, "request is invalid", false)
 		return "", 0, false
 	}
 	if len(headerValues) == 0 {
@@ -1205,12 +1209,12 @@ func strictQuery(
 ) (url.Values, bool) {
 	query, err := url.ParseQuery(request.URL.RawQuery)
 	if err != nil {
-		writeError(response, http.StatusBadRequest, "invalid_request", "request is invalid", false)
+		writeError(response, http.StatusBadRequest, apierror.InvalidRequest, "request is invalid", false)
 		return nil, false
 	}
 	for key, values := range query {
 		if _, ok := allowed[key]; !ok || len(values) != 1 || values[0] == "" {
-			writeError(response, http.StatusBadRequest, "invalid_request", "request is invalid", false)
+			writeError(response, http.StatusBadRequest, apierror.InvalidRequest, "request is invalid", false)
 			return nil, false
 		}
 	}
@@ -1223,7 +1227,7 @@ func nonnegativeInt64(response http.ResponseWriter, raw string) (int64, bool) {
 	}
 	value, err := strconv.ParseInt(raw, 10, 64)
 	if err != nil || value < 0 {
-		writeError(response, http.StatusBadRequest, "invalid_request", "request is invalid", false)
+		writeError(response, http.StatusBadRequest, apierror.InvalidRequest, "request is invalid", false)
 		return 0, false
 	}
 	return value, true
@@ -1237,7 +1241,7 @@ func decodeJSON(response http.ResponseWriter, request *http.Request, target any)
 	}
 	if err != nil {
 		telemetry.RecordBoundaryError(request.Context(), err, "decode_request", "invalid_request", "request JSON could not be decoded", false)
-		writeError(response, http.StatusBadRequest, "invalid_request", "request body is invalid", false)
+		writeError(response, http.StatusBadRequest, apierror.InvalidRequest, "request body is invalid", false)
 		return false
 	}
 	observeDTO(response, "request", target)
@@ -1386,56 +1390,56 @@ func writeQueryError(ctx context.Context, response http.ResponseWriter, err erro
 func publicError(err error) (int, errorResponse) {
 	var references *ports.CatalogReferenceConflict
 	if errors.As(err, &references) {
-		return http.StatusConflict, errorResponse{Code: "resource_in_use", Message: "remove current catalog references before disabling this resource", References: references.References, ReferencesTruncated: references.Truncated}
+		return http.StatusConflict, errorResponse{Code: apierror.ResourceInUse, Message: "remove current catalog references before disabling this resource", References: references.References, ReferencesTruncated: references.Truncated}
 	}
 	switch {
 	case errors.Is(err, domain.ErrInvalidImageReference):
 		return http.StatusBadRequest, errorResponse{
-			Code: "runtime_image_invalid", Message: "Enter a valid image name, tag, or digest reference.",
+			Code: apierror.RuntimeImageInvalid, Message: "Enter a valid image name, tag, or digest reference.",
 		}
 	case errors.Is(err, application.ErrInvalidInput), errors.Is(err, ports.ErrInvalidModelCandidates):
-		return http.StatusBadRequest, errorResponse{Code: "invalid_request", Message: "request is invalid"}
+		return http.StatusBadRequest, errorResponse{Code: apierror.InvalidRequest, Message: "request is invalid"}
 	case errors.Is(err, application.ErrInvalidReference), errors.Is(err, ports.ErrNotFound):
-		return http.StatusNotFound, errorResponse{Code: "reference_not_found", Message: "referenced resource was not found"}
+		return http.StatusNotFound, errorResponse{Code: apierror.ReferenceNotFound, Message: "referenced resource was not found"}
 	case errors.Is(err, application.ErrAccessDenied):
-		return http.StatusForbidden, errorResponse{Code: "access_denied", Message: "Agent access is denied"}
+		return http.StatusForbidden, errorResponse{Code: apierror.AccessDenied, Message: "Agent access is denied"}
 	case errors.Is(err, application.ErrAgentNotFound):
-		return http.StatusNotFound, errorResponse{Code: "agent_not_found", Message: "Agent was not found"}
+		return http.StatusNotFound, errorResponse{Code: apierror.AgentNotFound, Message: "Agent was not found"}
 	case errors.Is(err, application.ErrAgentNotReady):
 		return http.StatusConflict, errorResponse{
-			Code: "agent_not_ready", Message: "Agent is not ready", Retryable: true,
+			Code: apierror.AgentNotReady, Message: "Agent is not ready", Retryable: true,
 		}
 	case errors.Is(err, application.ErrLifecycleConflict):
-		return http.StatusConflict, errorResponse{Code: "lifecycle_conflict", Message: "Agent lifecycle is busy"}
+		return http.StatusConflict, errorResponse{Code: apierror.LifecycleConflict, Message: "Agent lifecycle is busy"}
 	case errors.Is(err, ports.ErrDisabledReference):
-		return http.StatusConflict, errorResponse{Code: "reference_disabled", Message: "referenced resource is disabled"}
+		return http.StatusConflict, errorResponse{Code: apierror.ReferenceDisabled, Message: "referenced resource is disabled"}
 	case errors.Is(err, ports.ErrExecutionCapacityExceeded):
-		return http.StatusConflict, errorResponse{Code: "execution_configuration_capacity_exceeded", Message: "execution configuration exceeds the deployment capacity; reduce the proposed configuration"}
+		return http.StatusConflict, errorResponse{Code: apierror.ExecutionConfigurationCapacityExceeded, Message: "execution configuration exceeds the deployment capacity; reduce the proposed configuration"}
 	case errors.Is(err, ports.ErrRequestConflict):
-		return http.StatusConflict, errorResponse{Code: "request_id_conflict", Message: "request identity is already used"}
+		return http.StatusConflict, errorResponse{Code: apierror.RequestIdConflict, Message: "request identity is already used"}
 	case errors.Is(err, ports.ErrConcurrentChange):
-		return http.StatusConflict, errorResponse{Code: "lifecycle_conflict", Message: "resource changed concurrently"}
+		return http.StatusConflict, errorResponse{Code: apierror.LifecycleConflict, Message: "resource changed concurrently"}
 	case errors.Is(err, context.DeadlineExceeded):
 		return http.StatusGatewayTimeout, errorResponse{
-			Code: "lifecycle_timeout", Message: "lifecycle operation timed out", Retryable: true,
+			Code: apierror.LifecycleTimeout, Message: "lifecycle operation timed out", Retryable: true,
 		}
 	case errors.Is(err, context.Canceled):
 		return http.StatusServiceUnavailable, errorResponse{
-			Code: "dependency_unavailable", Message: "dependency is unavailable", Retryable: true,
+			Code: apierror.DependencyUnavailable, Message: "dependency is unavailable", Retryable: true,
 		}
 	case errors.Is(err, application.ErrDependencyUnavailable):
 		return http.StatusServiceUnavailable, errorResponse{
-			Code: "dependency_unavailable", Message: "dependency is unavailable", Retryable: true,
+			Code: apierror.DependencyUnavailable, Message: "dependency is unavailable", Retryable: true,
 		}
 	case errors.Is(err, ports.ErrProviderEndpointForbidden):
-		return http.StatusUnprocessableEntity, errorResponse{Code: "provider_endpoint_forbidden", Message: "Provider endpoint is forbidden"}
+		return http.StatusUnprocessableEntity, errorResponse{Code: apierror.ProviderEndpointForbidden, Message: "Provider endpoint is forbidden"}
 	case errors.Is(err, ports.ErrProviderEndpointUnavailable):
-		return http.StatusServiceUnavailable, errorResponse{Code: "provider_endpoint_unavailable", Message: "Provider endpoint is unavailable", Retryable: true}
+		return http.StatusServiceUnavailable, errorResponse{Code: apierror.ProviderEndpointUnavailable, Message: "Provider endpoint is unavailable", Retryable: true}
 	case errors.Is(err, ports.ErrProviderDiscoveryFailed):
-		return http.StatusBadGateway, errorResponse{Code: "provider_discovery_failed", Message: "Provider model discovery failed", Retryable: true}
+		return http.StatusBadGateway, errorResponse{Code: apierror.ProviderDiscoveryFailed, Message: "Provider model discovery failed", Retryable: true}
 	default:
 		return http.StatusInternalServerError, errorResponse{
-			Code: "internal_error", Message: "internal service error", Retryable: true,
+			Code: apierror.InternalError, Message: "internal service error", Retryable: true,
 		}
 	}
 }
@@ -1516,10 +1520,40 @@ func writeError(response http.ResponseWriter, status int, code string, message s
 	writeJSON(response, status, errorResponse{Code: code, Message: message, Retryable: retryable})
 }
 
+func normalizeErrorResponse(response http.ResponseWriter, failure *errorResponse) {
+	envelope := apierror.New(failure.Code, failure.Message, response.Header().Get("X-Request-ID"))
+	if envelope.Code == failure.Code {
+		envelope.Retryable = failure.Retryable
+	} else {
+		failure.References, failure.ReferencesTruncated, failure.Details = nil, false, nil
+	}
+	failure.Code, failure.Category, failure.Message = envelope.Code, envelope.Category, envelope.Message
+	failure.Retryable, failure.RequestID = envelope.Retryable, envelope.RequestID
+	if len(failure.References) != 0 || failure.ReferencesTruncated {
+		failure.Details = map[string]any{"references": failure.References, "references_truncated": failure.ReferencesTruncated}
+	}
+	response.Header().Set("X-Request-ID", envelope.RequestID)
+	response.Header().Set("Cache-Control", "no-store")
+}
+
 func writeJSON(response http.ResponseWriter, status int, value any) {
+	switch failure := value.(type) {
+	case errorResponse:
+		normalizeErrorResponse(response, &failure)
+		value = failure
+	case *errorResponse:
+		if failure != nil {
+			normalizeErrorResponse(response, failure)
+		}
+	}
 	payload, err := json.Marshal(value)
 	if err != nil {
-		http.Error(response, "internal service error", http.StatusInternalServerError)
+		fallback := apierror.New(apierror.Internal, "Internal service error", response.Header().Get("X-Request-ID"))
+		response.Header().Set("X-Request-ID", fallback.RequestID)
+		response.Header().Set("Cache-Control", "no-store")
+		response.Header().Set("Content-Type", "application/json")
+		response.WriteHeader(http.StatusInternalServerError)
+		_ = json.NewEncoder(response).Encode(fallback)
 		return
 	}
 	response.Header().Set("Content-Type", "application/json")

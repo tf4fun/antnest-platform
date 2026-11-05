@@ -26,7 +26,8 @@ import type { PermissionConnectionsPort } from "../../ports/tool-permissions.js"
 import type { LearningNoticePublisher } from "../../application/learning-notice-publisher.js";
 import { activeHttpSpan } from "../../telemetry/http.js";
 import { recordBoundaryError } from "../../telemetry/diagnostics.js";
-import { httpFailure } from "../public-error.js";
+import { ERROR_CODES } from "../../errors.gen.js";
+import { commonError, errorHeaders, httpFailure } from "../public-error.js";
 import type { AgentOwnershipFence } from "../../domain/agent-ownership.js";
 
 export type HttpOwnerAdmission = {
@@ -116,7 +117,7 @@ export class AcpHttpTransport {
         const failure = httpFailure(error.code);
         response.writeHead(failure.status, {
           "content-type": "application/json",
-          "cache-control": "no-store",
+          ...errorHeaders(failure.body),
           "retry-after": "1",
         });
         response.end(JSON.stringify(failure.body));
@@ -537,8 +538,35 @@ function header(request: IncomingMessage, name: string): string | undefined {
   return typeof value === "string" && value.trim() !== "" ? value.trim() : undefined;
 }
 
+function replyEnvelope(status: number) {
+  switch (status) {
+    case 400:
+      return commonError(ERROR_CODES.INVALID_REQUEST, "ACP HTTP request is invalid", false);
+    case 401:
+      return commonError(
+        ERROR_CODES.SERVICE_UNAUTHENTICATED,
+        "ACP HTTP authentication failed",
+        false,
+      );
+    case 403:
+      return commonError(ERROR_CODES.ACCESS_DENIED, "ACP HTTP access denied", false);
+    case 404:
+      return commonError(ERROR_CODES.NOT_FOUND, "ACP HTTP connection was not found", false);
+    case 405:
+      return commonError(ERROR_CODES.METHOD_NOT_ALLOWED, "ACP HTTP method is not allowed", false);
+    case 503:
+      return commonError(ERROR_CODES.AGENT_UNAVAILABLE, "ACP HTTP service is unavailable", true);
+    default:
+      return commonError(ERROR_CODES.INTERNAL, "Internal service error", false);
+  }
+}
+
 function reply(response: ServerResponse, status: number): void {
   if (response.destroyed || response.writableEnded) return;
-  response.writeHead(status, { "content-type": "application/json" });
-  response.end(JSON.stringify({ status }));
+  const body = { ...replyEnvelope(status), status };
+  response.writeHead(status, {
+    "content-type": "application/json",
+    ...errorHeaders(body),
+  });
+  response.end(JSON.stringify(body));
 }

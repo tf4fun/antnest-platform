@@ -3,7 +3,8 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import type { LearningChangeReader } from "../application/learning-change-reader.js";
 import { DomainError } from "../domain/errors.js";
 import { trustedIdentity } from "./trusted-identity.js";
-import { httpFailure } from "./public-error.js";
+import { errorHeaders, httpFailure } from "./public-error.js";
+import { ERROR_CODES } from "../errors.gen.js";
 
 const PREFIX = "/rpc/agent-acp/workspace/agents/";
 const SUFFIX = "/learning-changes";
@@ -55,20 +56,20 @@ export async function serveLearningChanges(
 ): Promise<void> {
   if (request.method !== "GET") {
     response.setHeader("Allow", "GET");
-    failure(response, "method_not_allowed");
+    failure(response, ERROR_CODES.METHOD_NOT_ALLOWED);
     return;
   }
   const identity = trustedIdentity(request.headers);
   if (identity === null) {
-    failure(response, "access_denied");
+    failure(response, ERROR_CODES.ACCESS_DENIED);
     return;
   }
   if (identity.agentId !== route.agentId) {
-    failure(response, "agent_not_found");
+    failure(response, ERROR_CODES.AGENT_NOT_FOUND);
     return;
   }
   if (route.invalid) {
-    failure(response, "invalid_request");
+    failure(response, ERROR_CODES.INVALID_REQUEST);
     return;
   }
   try {
@@ -78,14 +79,14 @@ export async function serveLearningChanges(
     json(response, 200, page);
   } catch (error) {
     if (error instanceof DomainError && error.code === "cursor_expired") {
-      failure(response, "cursor_expired");
+      failure(response, ERROR_CODES.CURSOR_EXPIRED);
       return;
     }
     if (error instanceof DomainError && error.code === "access_denied") {
-      failure(response, "agent_not_found");
+      failure(response, ERROR_CODES.AGENT_NOT_FOUND);
       return;
     }
-    failure(response, "learning_changes_unavailable");
+    failure(response, ERROR_CODES.LEARNING_CHANGES_UNAVAILABLE);
   }
 }
 
@@ -105,6 +106,9 @@ function failure(response: ServerResponse, code: string): void {
 
 function json(response: ServerResponse, status: number, body: unknown): void {
   if (response.destroyed) return;
-  response.writeHead(status, { "content-type": "application/json", "cache-control": "no-store" });
+  const headers: Record<string, string> = { "content-type": "application/json" };
+  if (status >= 400) Object.assign(headers, errorHeaders(body));
+  else headers["cache-control"] = "no-store";
+  response.writeHead(status, headers);
   response.end(JSON.stringify(body));
 }

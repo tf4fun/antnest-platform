@@ -64,24 +64,25 @@ pub const CONTROL_ROUTES: &[(&str, &str)] = &[
 ];
 
 pub const CONTROL_ERROR_CODES: &[&str] = &[
-    "service_unauthenticated",
-    "caller_not_allowed",
-    "unsupported_media_type",
-    "invalid_request",
-    "route_not_found",
-    "agent_network_not_found",
-    "policy_revision_not_found",
-    "method_not_allowed",
-    "agent_network_unavailable",
-    "policy_revision_conflict",
-    "resource_version_conflict",
-    "address_pool_exhausted",
-    "cleanup_failed",
-    "operation_failed",
-    "control_plane_unavailable",
-    "tunnel_key_unavailable",
-    "tunnel_key_conflict",
-    "attachment_open",
+    crate::api_errors_gen::SERVICE_UNAUTHENTICATED,
+    crate::api_errors_gen::CALLER_NOT_ALLOWED,
+    crate::api_errors_gen::UNSUPPORTED_MEDIA_TYPE,
+    crate::api_errors_gen::INVALID_REQUEST,
+    crate::api_errors_gen::ROUTE_NOT_FOUND,
+    crate::api_errors_gen::AGENT_NETWORK_NOT_FOUND,
+    crate::api_errors_gen::POLICY_REVISION_NOT_FOUND,
+    crate::api_errors_gen::METHOD_NOT_ALLOWED,
+    crate::api_errors_gen::AGENT_NETWORK_UNAVAILABLE,
+    crate::api_errors_gen::POLICY_REVISION_CONFLICT,
+    crate::api_errors_gen::RESOURCE_VERSION_CONFLICT,
+    crate::api_errors_gen::ADDRESS_POOL_EXHAUSTED,
+    crate::api_errors_gen::CLEANUP_FAILED,
+    crate::api_errors_gen::OPERATION_FAILED,
+    crate::api_errors_gen::CONTROL_PLANE_UNAVAILABLE,
+    crate::api_errors_gen::TUNNEL_KEY_UNAVAILABLE,
+    crate::api_errors_gen::TUNNEL_KEY_CONFLICT,
+    crate::api_errors_gen::ATTACHMENT_OPEN,
+    crate::api_errors_gen::INTERNAL,
 ];
 
 #[async_trait]
@@ -304,13 +305,13 @@ async fn admit_request(
         return match error {
             AdmissionError::Unauthenticated => ApiError::new(
                 StatusCode::UNAUTHORIZED,
-                "service_unauthenticated",
+                crate::api_errors_gen::SERVICE_UNAUTHENTICATED,
                 "service authentication failed",
                 false,
             ),
             AdmissionError::Forbidden => ApiError::new(
                 StatusCode::FORBIDDEN,
-                "caller_not_allowed",
+                crate::api_errors_gen::CALLER_NOT_ALLOWED,
                 "caller is not allowed",
                 false,
             ),
@@ -351,7 +352,7 @@ async fn admit_request(
     if json && !json_media(&request) {
         return ApiError::new(
             StatusCode::UNSUPPORTED_MEDIA_TYPE,
-            "unsupported_media_type",
+            crate::api_errors_gen::UNSUPPORTED_MEDIA_TYPE,
             "JSON media type is required",
             false,
         )
@@ -401,7 +402,7 @@ async fn bounded_body(request: Request<Body>, json: bool) -> Result<Request<Body
             {
                 ApiError::new(
                     StatusCode::PAYLOAD_TOO_LARGE,
-                    "invalid_request",
+                    crate::api_errors_gen::INVALID_REQUEST,
                     "request body is too large",
                     false,
                 )
@@ -436,7 +437,7 @@ async fn health_request(request: Request<Body>, next: Next) -> Response {
 async fn route_not_found() -> ApiError {
     ApiError::new(
         StatusCode::NOT_FOUND,
-        "route_not_found",
+        crate::api_errors_gen::ROUTE_NOT_FOUND,
         "route was not found",
         false,
     )
@@ -445,7 +446,7 @@ async fn route_not_found() -> ApiError {
 async fn method_not_allowed() -> ApiError {
     ApiError::new(
         StatusCode::METHOD_NOT_ALLOWED,
-        "method_not_allowed",
+        crate::api_errors_gen::METHOD_NOT_ALLOWED,
         "method is not allowed for this route",
         false,
     )
@@ -561,9 +562,9 @@ fn status_response(status: ServiceStatus) -> Response {
     if failed {
         response
             .extensions_mut()
-            .insert(ControlErrorCode("service_not_ready"));
+            .insert(ControlErrorCode(crate::api_errors_gen::SERVICE_NOT_READY));
         response.extensions_mut().insert(SafeFailure {
-            code: "service_not_ready",
+            code: crate::api_errors_gen::SERVICE_NOT_READY,
             message: "Egress initialization or local readiness is incomplete",
             diagnostic: None,
         });
@@ -892,18 +893,11 @@ struct SafeFailure {
     diagnostic: Option<FailureContext>,
 }
 
-#[derive(Serialize)]
-struct ErrorBody {
-    code: &'static str,
-    message: &'static str,
-    retryable: bool,
-}
-
 impl ApiError {
     fn invalid_request() -> Self {
         Self {
             status: StatusCode::BAD_REQUEST,
-            code: "invalid_request",
+            code: crate::api_errors_gen::INVALID_REQUEST,
             message: "request validation failed",
             retryable: false,
             diagnostic: None,
@@ -918,73 +912,73 @@ impl From<ControlError> for ApiError {
             ControlError::InvalidRequest => Self::invalid_request(),
             ControlError::TunnelKeyUnavailable => Self::new(
                 StatusCode::CONFLICT,
-                "tunnel_key_unavailable",
+                crate::api_errors_gen::TUNNEL_KEY_UNAVAILABLE,
                 "prepared tunnel key unavailable",
                 false,
             ),
             ControlError::TunnelKeyConflict => Self::new(
                 StatusCode::CONFLICT,
-                "tunnel_key_conflict",
+                crate::api_errors_gen::TUNNEL_KEY_CONFLICT,
                 "prepared tunnel key conflicts",
                 false,
             ),
             ControlError::AttachmentOpen => Self::new(
                 StatusCode::CONFLICT,
-                "attachment_open",
+                crate::api_errors_gen::ATTACHMENT_OPEN,
                 "close attachment before preparing new tunnel key",
                 false,
             ),
             ControlError::AgentNetworkNotFound => Self::new(
                 StatusCode::NOT_FOUND,
-                "agent_network_not_found",
+                crate::api_errors_gen::AGENT_NETWORK_NOT_FOUND,
                 "Agent network was not found",
                 false,
             ),
             ControlError::PolicyRevisionNotFound => Self::new(
                 StatusCode::NOT_FOUND,
-                "policy_revision_not_found",
+                crate::api_errors_gen::POLICY_REVISION_NOT_FOUND,
                 "policy revision was not found",
                 false,
             ),
             ControlError::AgentNetworkUnavailable => Self::new(
                 StatusCode::CONFLICT,
-                "agent_network_unavailable",
+                crate::api_errors_gen::AGENT_NETWORK_UNAVAILABLE,
                 "Agent network is unavailable",
                 false,
             ),
             ControlError::PolicyRevisionConflict => Self::new(
                 StatusCode::CONFLICT,
-                "policy_revision_conflict",
+                crate::api_errors_gen::POLICY_REVISION_CONFLICT,
                 "policy revision key has different content",
                 false,
             ),
             ControlError::ResourceVersionConflict => Self::new(
                 StatusCode::CONFLICT,
-                "resource_version_conflict",
+                crate::api_errors_gen::RESOURCE_VERSION_CONFLICT,
                 "resource version changed",
                 false,
             ),
             ControlError::AddressPoolExhausted => Self::new(
                 StatusCode::CONFLICT,
-                "address_pool_exhausted",
+                crate::api_errors_gen::ADDRESS_POOL_EXHAUSTED,
                 "address pool is exhausted",
                 false,
             ),
             ControlError::CleanupFailed(_) => Self::new(
                 StatusCode::SERVICE_UNAVAILABLE,
-                "cleanup_failed",
+                crate::api_errors_gen::CLEANUP_FAILED,
                 "data-plane cleanup did not complete",
                 true,
             ),
             ControlError::OperationFailed(_) => Self::new(
                 StatusCode::SERVICE_UNAVAILABLE,
-                "operation_failed",
+                crate::api_errors_gen::OPERATION_FAILED,
                 "control operation did not complete",
                 true,
             ),
             ControlError::ControlPlaneUnavailable(_) => Self::new(
                 StatusCode::SERVICE_UNAVAILABLE,
-                "control_plane_unavailable",
+                crate::api_errors_gen::CONTROL_PLANE_UNAVAILABLE,
                 "control plane is unavailable",
                 true,
             ),
@@ -1013,27 +1007,37 @@ impl ApiError {
 
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
-        let mut response = (
-            self.status,
-            ControlJson(ErrorBody {
-                code: self.code,
-                message: self.message,
-                retryable: self.retryable,
-            }),
-        )
-            .into_response();
-        if self.code == "service_unauthenticated" {
+        let (code, message, retryable) = match crate::api_errors_gen::metadata(self.code) {
+            Some(_) => (self.code, self.message, self.retryable),
+            None => (
+                crate::api_errors_gen::INTERNAL,
+                "Internal service error",
+                false,
+            ),
+        };
+        let envelope = crate::api_errors_gen::envelope(code, message, "", retryable);
+        let request_id = envelope["request_id"]
+            .as_str()
+            .unwrap_or_default()
+            .to_owned();
+        let mut response = (self.status, ControlJson(envelope)).into_response();
+        if let Ok(value) = axum::http::HeaderValue::from_str(&request_id) {
+            response.headers_mut().insert("x-request-id", value);
+        }
+        response.headers_mut().insert(
+            axum::http::header::CACHE_CONTROL,
+            axum::http::HeaderValue::from_static("no-store"),
+        );
+        if code == crate::api_errors_gen::SERVICE_UNAUTHENTICATED {
             response.headers_mut().insert(
                 "www-authenticate",
                 axum::http::HeaderValue::from_static("Bearer realm=\"antnest-service\""),
             );
         }
-        response
-            .extensions_mut()
-            .insert(ControlErrorCode(self.code));
+        response.extensions_mut().insert(ControlErrorCode(code));
         response.extensions_mut().insert(SafeFailure {
-            code: self.code,
-            message: self.message,
+            code,
+            message,
             diagnostic: self.diagnostic.clone(),
         });
         if let Some(diagnostic) = self.diagnostic {
@@ -1092,7 +1096,7 @@ mod tests {
         let response = ApiError::invalid_request().into_response();
         assert_eq!(
             response.extensions().get::<ControlErrorCode>(),
-            Some(&ControlErrorCode("invalid_request"))
+            Some(&ControlErrorCode(crate::api_errors_gen::INVALID_REQUEST))
         );
     }
 
@@ -1109,7 +1113,7 @@ mod tests {
         );
         assert_eq!(
             response.extensions().get::<ControlErrorCode>(),
-            Some(&ControlErrorCode("cleanup_failed"))
+            Some(&ControlErrorCode(crate::api_errors_gen::CLEANUP_FAILED))
         );
     }
 
@@ -1127,7 +1131,11 @@ mod tests {
         );
         assert_eq!(
             response.extensions().get::<ControlErrorCode>(),
-            Some(&ControlErrorCode("operation_failed"))
+            Some(&ControlErrorCode(crate::api_errors_gen::OPERATION_FAILED))
         );
     }
 }
+
+#[cfg(test)]
+#[path = "control/common_error_tests.rs"]
+mod common_error_tests;

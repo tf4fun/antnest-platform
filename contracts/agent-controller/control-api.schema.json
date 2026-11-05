@@ -2118,10 +2118,26 @@
       }
     },
     "error": {
+      "$ref": "https://antnest.local/contracts/common/error.schema.json",
       "type": "object",
       "additionalProperties": false,
-      "required": ["code", "message", "retryable"],
+      "required": ["code", "category", "message", "retryable", "request_id"],
       "properties": {
+        "category": {
+          "enum": [
+            "invalid_request",
+            "unauthenticated",
+            "forbidden",
+            "not_found",
+            "conflict",
+            "precondition_failed",
+            "rate_limited",
+            "unavailable",
+            "internal"
+          ]
+        },
+        "request_id": {"type": "string", "pattern": "^[A-Za-z0-9._:-]{1,128}$"},
+        "details": {"type": "object"},
         "code": {
           "enum": [
             "resource_version_conflict",
@@ -2158,7 +2174,11 @@
             "request_too_large",
             "provider_endpoint_forbidden",
             "provider_endpoint_unavailable",
-            "provider_discovery_failed"
+            "provider_discovery_failed",
+            "internal",
+            "policy_revision_conflict",
+            "not_found",
+            "preparation_not_found"
           ]
         },
         "message": {

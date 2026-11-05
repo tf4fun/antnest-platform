@@ -17,6 +17,7 @@ on:
       - contracts/egress/**
       - contracts/identity/**
       - contracts/platform/**
+      - contracts/common/**
       - contracts/skill-learning/**
       - contracts/skill-registry/**
       - go.work
@@ -40,6 +41,7 @@ on:
       - contracts/egress/**
       - contracts/identity/**
       - contracts/platform/**
+      - contracts/common/**
       - contracts/skill-learning/**
       - contracts/skill-registry/**
       - go.work

@@ -6,12 +6,24 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
 
 func TestDiscoveryHTTPResponsesMatchSharedSchemaAndRejectMixedAuthority(t *testing.T) {
 	compiler := jsonschema.NewCompiler()
+	common, err := os.ReadFile(filepath.Join("..", "..", "..", "..", "contracts", "common", "error.schema.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	commonDoc, err := jsonschema.UnmarshalJSON(bytes.NewReader(common))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := compiler.AddResource("https://antnest.local/contracts/common/error.schema.json", commonDoc); err != nil {
+		t.Fatal(err)
+	}
 	for _, name := range []string{"registry-api", "discovery-api"} {
 		data, err := os.ReadFile("../../../../contracts/skill-registry/" + name + ".schema.json")
 		if err != nil {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/tf4fun/antnest-platform/services/skill-registry/internal/apierror"
 	"mime"
 	"net/http"
 	"net/url"
@@ -46,22 +47,22 @@ func (h *Handler) auth(allowed []string, jsonBody bool, next http.HandlerFunc) h
 	return func(w http.ResponseWriter, r *http.Request) {
 		caller, _ := r.Context().Value(workloadKey{}).(string)
 		if !slices.Contains(allowed, caller) {
-			writeBoundaryError(w, 403, "caller_not_allowed", "Caller cannot use this route", false)
+			writeBoundaryError(w, 403, apierror.CallerNotAllowed, "Caller cannot use this route", false)
 			return
 		}
 		query, err := url.ParseQuery(r.URL.RawQuery)
 		if err != nil {
-			writeBoundaryError(w, 400, "invalid_request", "Request query is malformed", false)
+			writeBoundaryError(w, 400, apierror.InvalidRequest, "Request query is malformed", false)
 			return
 		}
 		for _, values := range query {
 			if len(values) != 1 {
-				writeBoundaryError(w, 400, "invalid_request", "Repeated query fields are invalid", false)
+				writeBoundaryError(w, 400, apierror.InvalidRequest, "Repeated query fields are invalid", false)
 				return
 			}
 		}
 		if r.Method != http.MethodGet && r.Method != http.MethodHead && r.URL.RawQuery != "" {
-			writeBoundaryError(w, 400, "invalid_request", "Mutations do not accept query fields", false)
+			writeBoundaryError(w, 400, apierror.InvalidRequest, "Mutations do not accept query fields", false)
 			return
 		}
 		if caller == "admin-console" {
@@ -77,28 +78,28 @@ func (h *Handler) auth(allowed []string, jsonBody bool, next http.HandlerFunc) h
 			claims, err := h.security.CallerContext.Verify(r.Context(), tokens[0], callercontext.Expected{Consumer: "skill-registry", Tolerance: 30})
 			if err != nil {
 				if errors.Is(err, callercontext.ErrDependency) {
-					writeBoundaryError(w, 503, "identity_dependency_unavailable", "Identity authorization dependency is unavailable", true)
+					writeBoundaryError(w, 503, apierror.IdentityDependencyUnavailable, "Identity authorization dependency is unavailable", true)
 				} else {
-					writeBoundaryError(w, 401, "caller_context_invalid", "Caller context verification failed", false)
+					writeBoundaryError(w, 401, apierror.CallerContextInvalid, "Caller context verification failed", false)
 				}
 				return
 			}
 			if !organizationID.MatchString(claims.Organization) || !userID.MatchString(claims.Subject) {
-				writeBoundaryError(w, 401, "caller_context_invalid", "Caller identity is invalid", false)
+				writeBoundaryError(w, 401, apierror.CallerContextInvalid, "Caller identity is invalid", false)
 				return
 			}
 			if claims.SystemRole != "admin" && claims.OrganizationRole != "admin" {
-				writeBoundaryError(w, 403, "forbidden", "Administrator access is required", false)
+				writeBoundaryError(w, 403, apierror.Forbidden, "Administrator access is required", false)
 				return
 			}
 			r = r.WithContext(context.WithValue(r.Context(), claimsKey{}, claims))
 		}
 		if jsonBody && !validJSONMedia(r.Header) {
-			writeBoundaryError(w, 415, "unsupported_media_type", "UTF-8 application/json is required", false)
+			writeBoundaryError(w, 415, apierror.UnsupportedMediaType, "UTF-8 application/json is required", false)
 			return
 		}
 		if !jsonBody && r.Method == http.MethodPost && !validMultipartMedia(r.Header) {
-			writeBoundaryError(w, 415, "unsupported_media_type", "One unencoded multipart/form-data upload is required", false)
+			writeBoundaryError(w, 415, apierror.UnsupportedMediaType, "One unencoded multipart/form-data upload is required", false)
 			return
 		}
 		copyRequest := r.Clone(r.Context())
@@ -147,17 +148,17 @@ func verifiedScope(r *http.Request, org *string, actor *string) error {
 		return nil
 	}
 	if *org == "" {
-		return failure("invalid_request", "Organization identity is required")
+		return failure(apierror.InvalidRequest, "Organization identity is required")
 	}
 	if *org != claims.Organization {
-		return failure("organization_mismatch", "Organization differs from verified caller")
+		return failure(apierror.OrganizationMismatch, "Organization differs from verified caller")
 	}
 	if actor != nil {
 		if *actor == "" {
-			return failure("invalid_request", "Actor identity is required")
+			return failure(apierror.InvalidRequest, "Actor identity is required")
 		}
 		if *actor != claims.Subject {
-			return failure("actor_mismatch", "Actor differs from verified caller")
+			return failure(apierror.ActorMismatch, "Actor differs from verified caller")
 		}
 		*actor = claims.Subject
 	}
@@ -166,7 +167,11 @@ func verifiedScope(r *http.Request, org *string, actor *string) error {
 }
 
 func writeBoundaryError(w http.ResponseWriter, status int, code, message string, retryable bool) {
-	writeJSON(w, status, map[string]any{"error": map[string]any{"code": code, "message": message, "retryable": retryable}})
+	envelope := apierror.New(code, message, w.Header().Get("X-Request-ID"))
+	if envelope.Code == code {
+		envelope.Retryable = retryable
+	}
+	writeRegistryError(w, status, envelope)
 }
 
 func writeAuthenticationError(w http.ResponseWriter, err error) {

@@ -27,6 +27,7 @@ func TestGatewayPasswordAdmissionFailureProjectionAndRecovery(t *testing.T) {
 			{"busy", browserRPCFailure{503, passwordBusyJSON, []string{"1"}}, 503, passwordBusyJSON, "1"},
 			{"rate-first", browserRPCFailure{429, passwordRateJSON, []string{"1"}}, 429, passwordRateJSON, "1"},
 			{"rate-max", browserRPCFailure{429, passwordRateJSON, []string{"900"}}, 429, passwordRateJSON, "900"},
+			{"n-metadata", browserRPCFailure{503, `{"code":"credential_busy","category":"unavailable","message":"Password verification is busy","retryable":true,"request_id":"identity-req-1"}`, []string{"1"}}, 503, `{"code":"credential_busy","category":"unavailable","message":"Password verification is busy","retryable":true,"request_id":"identity-req-1"}`, "1"},
 			{"missing-header", browserRPCFailure{429, passwordRateJSON, nil}, 503, "", ""},
 			{"duplicate-header", browserRPCFailure{429, passwordRateJSON, []string{"1", "1"}}, 503, "", ""},
 			{"wrong-delay", browserRPCFailure{503, passwordBusyJSON, []string{"2"}}, 503, "", ""},
@@ -53,10 +54,24 @@ func TestGatewayPasswordAdmissionFailureProjectionAndRecovery(t *testing.T) {
 				}
 				want := row.body
 				if want == "" {
-					want = `{"code":"identity_unavailable","message":"Identity Service is unavailable"}`
+					want = `{"code":"identity_unavailable","category":"unavailable","message":"Identity Service is unavailable","retryable":true}`
 				}
 				var gotBody, wantBody map[string]any
-				if json.Unmarshal(w.Body.Bytes(), &gotBody) != nil || json.Unmarshal([]byte(want), &wantBody) != nil || len(gotBody) != len(wantBody) {
+				if json.Unmarshal(w.Body.Bytes(), &gotBody) != nil || json.Unmarshal([]byte(want), &wantBody) != nil {
+					t.Fatal("password failure changed public body shape")
+				}
+				requestID, _ := gotBody["request_id"].(string)
+				if requestID == "" || requestID != w.Header().Get("X-Request-ID") {
+					t.Fatal("password failure lost the response request id")
+				}
+				delete(gotBody, "request_id")
+				delete(wantBody, "request_id")
+				wantBody["category"] = map[string]string{
+					"credential_busy":         "unavailable",
+					"credential_rate_limited": "rate_limited",
+					"identity_unavailable":    "unavailable",
+				}[wantBody["code"].(string)]
+				if len(gotBody) != len(wantBody) {
 					t.Fatal("password failure changed public body shape")
 				}
 				for key, value := range wantBody {

@@ -33,7 +33,8 @@ import {
   writeStateChunk,
 } from "./agent-execution-state.js";
 import type { HttpOwnerForwardingOptions } from "./owner-http.js";
-import { httpFailure } from "./public-error.js";
+import { errorHeaders, httpFailure } from "./public-error.js";
+import { ERROR_CODES } from "../errors.gen.js";
 import type { RequestAuthentication } from "./request-authentication.js";
 import { trustedIdentity } from "./trusted-identity.js";
 import { AGENT_SETTLEMENT_PATH, settleAgent, settlementError } from "./agent-settlement.js";
@@ -646,16 +647,16 @@ export class OwnerControlTransport {
     this.sendFailure(
       response,
       httpFailure(
-        error instanceof DomainError && error.code === "access_denied"
+        error instanceof DomainError && error.code === ERROR_CODES.ACCESS_DENIED
           ? error.code
-          : "execution_state_unavailable",
+          : ERROR_CODES.EXECUTION_STATE_UNAVAILABLE,
       ),
     );
   }
   private sendFailure(response: ServerResponse, failure: ReturnType<typeof httpFailure>) {
     response.writeHead(failure.status, {
       "content-type": "application/json",
-      "cache-control": "no-store",
+      ...errorHeaders(failure.body),
     });
     response.end(JSON.stringify(failure.body));
   }

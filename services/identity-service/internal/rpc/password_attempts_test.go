@@ -37,12 +37,14 @@ func TestPasswordRPCRateLimitIsCanonicalAndBounded(t *testing.T) {
 				handler := authenticatedBusinessHandler(t, Dependencies{Directory: services, LocalAuth: services, OIDC: services, SCIM: services, BrowserSessions: browser})
 				response := httptest.NewRecorder()
 				handler.ServeHTTP(response, httptest.NewRequest(http.MethodPost, ContractRoutes[route.name], strings.NewReader(route.body)))
-				want := map[string]any{"code": "credential_rate_limited", "message": "Too many password attempts", "retryable": true}
+				want := map[string]any{"code": "credential_rate_limited", "category": "rate_limited", "message": "Too many password attempts", "retryable": true}
 				var got map[string]any
 				if err := json.Unmarshal(response.Body.Bytes(), &got); err != nil {
 					t.Fatal(err)
 				}
-				if response.Code != http.StatusTooManyRequests || !reflect.DeepEqual(got, want) ||
+				requestID, _ := got["request_id"].(string)
+				delete(got, "request_id")
+				if requestID == "" || requestID != response.Header().Get("X-Request-ID") || response.Code != http.StatusTooManyRequests || !reflect.DeepEqual(got, want) ||
 					!reflect.DeepEqual(response.Header().Values("Retry-After"), []string{failure.retry}) ||
 					response.Header().Get("Cache-Control") != "no-store" || len(response.Header().Values("Set-Cookie")) != 0 || services.calls+browser.calls != 1 {
 					t.Fatalf("rate-limit projection is not canonical: status=%d retry=%q calls=%d", response.Code, response.Header().Values("Retry-After"), services.calls+browser.calls)

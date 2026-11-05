@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/tf4fun/antnest-platform/modules/service-authentication/serviceauth"
+	"github.com/tf4fun/antnest-platform/services/admin-console/internal/apierror"
 	"github.com/tf4fun/antnest-platform/services/admin-console/internal/principal"
 	"github.com/tf4fun/antnest-platform/services/admin-console/internal/upstream"
 )
@@ -294,7 +295,7 @@ func decodeUpstreamModelCallPolicy(payload []byte, organizationID string) (contr
 
 func (h *handler) getModelCallPolicy(response http.ResponseWriter, request *http.Request, actor principal.Principal) {
 	if request.URL.RawQuery != "" || request.ContentLength > 0 || len(request.TransferEncoding) != 0 {
-		writeError(response, http.StatusBadRequest, "invalid_request", "Organization model policy reads take no input")
+		writeError(response, http.StatusBadRequest, apierror.InvalidRequest, "Organization model policy reads take no input")
 		return
 	}
 	result, ok := h.read(response, request, upstream.AgentController, http.MethodGet,
@@ -318,7 +319,7 @@ func (h *handler) getModelCallPolicy(response http.ResponseWriter, request *http
 
 func (h *handler) setModelCallPolicy(response http.ResponseWriter, request *http.Request, actor principal.Principal) {
 	if request.URL.RawQuery != "" {
-		writeError(response, http.StatusBadRequest, "invalid_request", "Organization model policy writes take no query")
+		writeError(response, http.StatusBadRequest, apierror.InvalidRequest, "Organization model policy writes take no query")
 		return
 	}
 	var input modelCallPolicyInput
@@ -326,11 +327,11 @@ func (h *handler) setModelCallPolicy(response http.ResponseWriter, request *http
 		return
 	}
 	if input.ExpectedPrincipal != [2]string{actor.OrganizationID, actor.UserID} {
-		writeError(response, http.StatusConflict, "principal_changed", "The signed-in account changed")
+		writeError(response, http.StatusConflict, apierror.PrincipalChanged, "The signed-in account changed")
 		return
 	}
 	if len(request.Header.Values("Idempotency-Key")) != 1 {
-		writeError(response, http.StatusBadRequest, "invalid_request", "Exactly one Idempotency-Key is required")
+		writeError(response, http.StatusBadRequest, apierror.InvalidRequest, "Exactly one Idempotency-Key is required")
 		return
 	}
 	requestID, ok := commandRequestID(response, request, actor.OrganizationID, "model-policy")
@@ -344,7 +345,7 @@ func (h *handler) setModelCallPolicy(response http.ResponseWriter, request *http
 		"daily": input.Daily, "monthly": input.Monthly,
 	})
 	if err != nil {
-		writeError(response, http.StatusInternalServerError, "encoding_failed", "Request could not be encoded")
+		writeError(response, http.StatusInternalServerError, apierror.EncodingFailed, "Request could not be encoded")
 		return
 	}
 	result, ok := h.read(response, request, upstream.AgentController, http.MethodPut,
@@ -420,5 +421,5 @@ func writeModelCallPolicyFailure(response http.ResponseWriter, result bufferedRe
 		writeError(response, status, code, "The platform rejected the organization model policy request")
 		return
 	}
-	writeError(response, http.StatusBadGateway, "upstream_error", "The platform model policy request failed")
+	writeError(response, http.StatusBadGateway, apierror.UpstreamError, "The platform model policy request failed")
 }

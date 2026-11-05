@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 
+	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/apierror"
 	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/application"
 	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/domain"
 	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/ports"
@@ -32,7 +33,7 @@ func WithSkillLearningPolicyRoutes(base http.Handler, service SkillLearningPolic
 			return
 		}
 		if query.Get("organization_id") == "" || query.Get("principal_id") == "" {
-			writeError(response, http.StatusBadRequest, "invalid_request", "organization_id and principal_id are required", false)
+			writeError(response, http.StatusBadRequest, apierror.InvalidRequest, "organization_id and principal_id are required", false)
 			return
 		}
 		policy, err := service.Get(request.Context(), query.Get("organization_id"), request.PathValue("agent_id"), query.Get("principal_id"))
@@ -65,7 +66,7 @@ func WithSkillLearningPolicyRoutes(base http.Handler, service SkillLearningPolic
 
 func writeSkillLearningPolicyError(ctx context.Context, response http.ResponseWriter, err error) {
 	if errors.Is(err, ports.ErrConcurrentChange) {
-		writeError(response, http.StatusConflict, "policy_revision_conflict", "Reload the Skill learning policy before updating", false)
+		writeError(response, http.StatusConflict, apierror.PolicyRevisionConflict, "Reload the Skill learning policy before updating", false)
 		return
 	}
 	writeServiceError(ctx, response, err)
