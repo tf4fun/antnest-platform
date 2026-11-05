@@ -52,7 +52,7 @@ async fn handle(
         _ => {
             return failure(
                 StatusCode::NOT_FOUND,
-                "unknown_action",
+                crate::api_errors_gen::UNKNOWN_ACTION,
                 ToolEffectState::None,
                 true,
             );
@@ -61,7 +61,7 @@ async fn handle(
     if state.verifiers.is_empty() {
         return failure(
             StatusCode::FORBIDDEN,
-            "temporary_disabled",
+            crate::api_errors_gen::TEMPORARY_DISABLED,
             ToolEffectState::None,
             true,
         );
@@ -72,7 +72,7 @@ async fn handle(
         _ => {
             return failure(
                 StatusCode::UNAUTHORIZED,
-                "temporary_unauthorized",
+                crate::api_errors_gen::TEMPORARY_UNAUTHORIZED,
                 ToolEffectState::None,
                 true,
             );
@@ -94,7 +94,7 @@ async fn handle(
             Ok(body) => body,
             Err(code) => {
                 return failure(
-                    if code == "body_timed_out" {
+                    if code == crate::api_errors_gen::BODY_TIMED_OUT {
                         StatusCode::REQUEST_TIMEOUT
                     } else {
                         StatusCode::PAYLOAD_TOO_LARGE
@@ -110,7 +110,7 @@ async fn handle(
         Err(_) => {
             return failure(
                 StatusCode::SERVICE_UNAVAILABLE,
-                "clock_unavailable",
+                crate::api_errors_gen::CLOCK_UNAVAILABLE,
                 ToolEffectState::None,
                 true,
             );
@@ -129,7 +129,7 @@ async fn handle(
         Err(_) => {
             return failure(
                 StatusCode::UNAUTHORIZED,
-                "temporary_unauthorized",
+                crate::api_errors_gen::TEMPORARY_UNAUTHORIZED,
                 ToolEffectState::None,
                 true,
             );
@@ -138,7 +138,7 @@ async fn handle(
     let Some(actor) = &state.actor else {
         return failure(
             StatusCode::SERVICE_UNAVAILABLE,
-            "temporary_unavailable",
+            crate::api_errors_gen::TEMPORARY_UNAVAILABLE,
             ToolEffectState::None,
             true,
         );
@@ -146,10 +146,10 @@ async fn handle(
     if action == "install" {
         let prepared = match parse_temporary_install(&content_type, body, &ticket).await {
             Ok(prepared) => prepared,
-            Err("request_conflict") => {
+            Err(crate::api_errors_gen::REQUEST_CONFLICT) => {
                 return failure(
                     StatusCode::CONFLICT,
-                    "request_conflict",
+                    crate::api_errors_gen::REQUEST_CONFLICT,
                     ToolEffectState::None,
                     true,
                 );
@@ -157,7 +157,7 @@ async fn handle(
             Err(_) => {
                 return failure(
                     StatusCode::BAD_REQUEST,
-                    "invalid_request",
+                    crate::api_errors_gen::INVALID_REQUEST,
                     ToolEffectState::None,
                     true,
                 );
@@ -185,7 +185,7 @@ async fn handle(
         if content_type.split(';').next().map(str::trim) != Some("application/json") {
             return failure(
                 StatusCode::BAD_REQUEST,
-                "invalid_request",
+                crate::api_errors_gen::INVALID_REQUEST,
                 ToolEffectState::None,
                 true,
             );
@@ -195,7 +195,7 @@ async fn handle(
             Err(_) => {
                 return failure(
                     StatusCode::BAD_REQUEST,
-                    "invalid_request",
+                    crate::api_errors_gen::INVALID_REQUEST,
                     ToolEffectState::None,
                     true,
                 );
@@ -223,22 +223,37 @@ pub(crate) async fn receive_temporary_body(
 ) -> Result<axum::body::Bytes, &'static str> {
     tokio::time::timeout(timeout, to_bytes(body, limit))
         .await
-        .map_err(|_| "body_timed_out")?
-        .map_err(|_| "body_too_large")
+        .map_err(|_| crate::api_errors_gen::BODY_TIMED_OUT)?
+        .map_err(|_| crate::api_errors_gen::BODY_TOO_LARGE)
 }
 fn executor_failure(error: ToolError) -> Response {
     let (status, code) = match error.code {
-        ToolErrorCode::InvalidParams | ToolErrorCode::InvalidPath => {
-            (StatusCode::CONFLICT, "request_conflict")
+        ToolErrorCode::InvalidParams | ToolErrorCode::InvalidPath => (
+            StatusCode::CONFLICT,
+            crate::api_errors_gen::REQUEST_CONFLICT,
+        ),
+        ToolErrorCode::TemporaryRunClosed => {
+            (StatusCode::CONFLICT, crate::api_errors_gen::RUN_CLOSED)
         }
-        ToolErrorCode::TemporaryRunClosed => (StatusCode::CONFLICT, "run_closed"),
-        ToolErrorCode::TemporaryScopeBusy => (StatusCode::CONFLICT, "temporary_scope_busy"),
-        ToolErrorCode::SkillStorageFull => (StatusCode::CONFLICT, "limit_exceeded"),
-        ToolErrorCode::RuntimeBusy => (StatusCode::SERVICE_UNAVAILABLE, "runtime_busy"),
-        _ if error.effect_state == ToolEffectState::Unknown => {
-            (StatusCode::SERVICE_UNAVAILABLE, "outcome_unknown")
+        ToolErrorCode::TemporaryScopeBusy => (
+            StatusCode::CONFLICT,
+            crate::api_errors_gen::TEMPORARY_SCOPE_BUSY,
+        ),
+        ToolErrorCode::SkillStorageFull => {
+            (StatusCode::CONFLICT, crate::api_errors_gen::LIMIT_EXCEEDED)
         }
-        _ => (StatusCode::SERVICE_UNAVAILABLE, "temporary_unavailable"),
+        ToolErrorCode::RuntimeBusy => (
+            StatusCode::SERVICE_UNAVAILABLE,
+            crate::api_errors_gen::RUNTIME_BUSY,
+        ),
+        _ if error.effect_state == ToolEffectState::Unknown => (
+            StatusCode::SERVICE_UNAVAILABLE,
+            crate::api_errors_gen::OUTCOME_UNKNOWN,
+        ),
+        _ => (
+            StatusCode::SERVICE_UNAVAILABLE,
+            crate::api_errors_gen::TEMPORARY_UNAVAILABLE,
+        ),
     };
     failure(
         status,
@@ -248,7 +263,22 @@ fn executor_failure(error: ToolError) -> Response {
     )
 }
 fn failure(status: StatusCode, code: &str, effect: ToolEffectState, stopped: bool) -> Response {
-    private_json((status,Json(json!({"error":{"code":code,"message":"Temporary Skill request did not complete","retryable":status.is_server_error(),"effect_state":effect,"runtime_call_stopped":stopped}}))).into_response())
+    let envelope = crate::api_errors_gen::envelope(
+        code,
+        "Temporary Skill request did not complete",
+        "",
+        status.is_server_error(),
+    );
+    let mut value = envelope.clone();
+    if crate::api_errors_gen::metadata(code).is_some() {
+        let mut nested = envelope;
+        nested["effect_state"] = serde_json::json!(effect);
+        nested["runtime_call_stopped"] = serde_json::json!(stopped);
+        value["error"] = nested;
+        value["details"] =
+            serde_json::json!({"effect_state": effect, "runtime_call_stopped": stopped});
+    }
+    crate::api_error::http_response(status, value)
 }
 fn private_json(mut response: Response) -> Response {
     response.headers_mut().insert(
@@ -257,3 +287,7 @@ fn private_json(mut response: Response) -> Response {
     );
     response
 }
+
+#[cfg(test)]
+#[path = "skill_temporary_common_error_tests.rs"]
+mod skill_temporary_common_error_tests;

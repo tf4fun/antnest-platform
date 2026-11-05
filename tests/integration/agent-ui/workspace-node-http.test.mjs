@@ -7,6 +7,7 @@ import {
 import assert from "node:assert/strict";
 import { applyAgentDelta } from "../../../services/agent-ui/web/server/dist/protocol/agent-view-delta.js";
 import { test } from "node:test";
+import { withCommonErrorSchema } from "../../support/common-error-schema.mjs";
 import { once } from "node:events";
 import { readFileSync } from "node:fs";
 import { get, request as httpRequest } from "node:http";
@@ -41,42 +42,52 @@ const viewSchema = JSON.parse(
     "utf8",
   ),
 );
-const validateView = new Ajv2020({
-  strict: true,
-  validateFormats: false,
-}).compile({
+const validateView = withCommonErrorSchema(
+  new Ajv2020({
+    strict: true,
+    validateFormats: false,
+  }),
+).compile({
   $schema: "https://json-schema.org/draft/2020-12/schema",
   $defs: viewSchema.$defs,
   $ref: "#/$defs/sessionView",
 });
-const validateAgentView = new Ajv2020({
-  strict: true,
-  validateFormats: false,
-}).compile({
+const validateAgentView = withCommonErrorSchema(
+  new Ajv2020({
+    strict: true,
+    validateFormats: false,
+  }),
+).compile({
   $schema: "https://json-schema.org/draft/2020-12/schema",
   $defs: viewSchema.$defs,
   $ref: "#/$defs/agentView",
 });
-const validateStreamEvent = new Ajv2020({
-  strict: true,
-  validateFormats: false,
-}).compile({
+const validateStreamEvent = withCommonErrorSchema(
+  new Ajv2020({
+    strict: true,
+    validateFormats: false,
+  }),
+).compile({
   $schema: "https://json-schema.org/draft/2020-12/schema",
   $defs: viewSchema.$defs,
   $ref: "#/$defs/streamEvent",
 });
-const validateProcess = new Ajv2020({
-  strict: true,
-  validateFormats: false,
-}).compile({
+const validateProcess = withCommonErrorSchema(
+  new Ajv2020({
+    strict: true,
+    validateFormats: false,
+  }),
+).compile({
   $schema: "https://json-schema.org/draft/2020-12/schema",
   $defs: viewSchema.$defs,
   $ref: "#/$defs/processPage",
 });
-const validateProcessContent = new Ajv2020({
-  strict: true,
-  validateFormats: false,
-}).compile({
+const validateProcessContent = withCommonErrorSchema(
+  new Ajv2020({
+    strict: true,
+    validateFormats: false,
+  }),
+).compile({
   $schema: "https://json-schema.org/draft/2020-12/schema",
   $defs: viewSchema.$defs,
   $ref: "#/$defs/processContentPage",
@@ -2525,3 +2536,105 @@ test(
     );
   },
 );
+
+test("common_error actual 404 envelope matches common and workspace contracts", async (t) => {
+  let handled = 0;
+  const runtime = {
+    handle: () => {
+      handled += 1;
+      return null;
+    },
+  };
+  const server = createWorkspaceHttpServer(runtime);
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  t.after(async () => {
+    server.closeAllConnections();
+    server.close();
+    await once(server, "close");
+  });
+  const address = server.address();
+  assert.ok(address && typeof address !== "string");
+  const base = `http://127.0.0.1:${address.port}/api/app/workspace/v1/agents/agent-1`;
+  const headers = {
+    "x-antnest-organization-id": "org-1",
+    "x-antnest-principal-id": "user-1",
+    "x-antnest-agent-id": "agent-1",
+  };
+  const bodyByPath = new Map();
+  for (const [path, expectHandled] of [
+    ["missing", 0],
+    ["view", 1],
+  ]) {
+    const before = handled;
+    const response = await fetch(`${base}/${path}`, { headers });
+    assert.equal(response.status, 404);
+    assert.equal(
+      handled - before,
+      expectHandled,
+      `${path} must ${expectHandled ? "" : "not "}reach runtime.handle`,
+    );
+    bodyByPath.set(path, { response, body: await response.json() });
+  }
+  const common = JSON.parse(
+    readFileSync(
+      new URL("../../../contracts/common/error.schema.json", import.meta.url),
+      "utf8",
+    ),
+  );
+  const validateCommon = withCommonErrorSchema(
+    new Ajv2020({ strict: true, validateFormats: false }),
+  ).getSchema(common.$id);
+  assert.equal(typeof validateCommon, "function");
+  const validateWorkspaceError = withCommonErrorSchema(
+    new Ajv2020({ strict: true, validateFormats: false }),
+  ).compile({
+    $schema: "https://json-schema.org/draft/2020-12/schema",
+    $defs: viewSchema.$defs,
+    $ref: "#/$defs/error",
+  });
+  for (const { response, body } of bodyByPath.values()) {
+    assert.equal(response.headers.get("cache-control"), "no-store");
+    const requestId = response.headers.get("x-request-id");
+    assert.ok(requestId && /^[A-Za-z0-9._:-]{1,128}$/.test(requestId));
+    assert.equal(
+      validateCommon(body),
+      true,
+      "actual body must satisfy common error schema",
+    );
+    assert.equal(
+      validateWorkspaceError(body),
+      true,
+      "actual body must satisfy workspace error def",
+    );
+    assert.equal(body.request_id, requestId);
+    assert.equal(body.requestId, requestId);
+    assert.equal(body.code, "route_not_found");
+    assert.equal(body.category, "not_found");
+    assert.equal(body.retryable, false);
+  }
+  const { body } = bodyByPath.get("view");
+  for (const mutation of [
+    (({ category, ...rest }) => rest)(body),
+    (({ request_id, ...rest }) => rest)(body),
+    { ...body, request_id: "bad id with spaces" },
+  ]) {
+    assert.equal(
+      validateWorkspaceError(mutation),
+      false,
+      "mutation must reject",
+    );
+  }
+  const legacy = {
+    code: "route_not_found",
+    message: "Workspace route was not found",
+    requestId: "request-1",
+    retryable: false,
+    recovery: "none",
+  };
+  assert.equal(
+    validateWorkspaceError(legacy),
+    true,
+    "legacy N-1 body still valid",
+  );
+});

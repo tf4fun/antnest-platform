@@ -46,10 +46,41 @@
         "operationId": { "$ref": "#/$defs/id" },
         "recovery": {
           "enum": ["refresh", "query_operation", "login", "retry_read", "none"]
-        }
+        },
+        "category": {
+          "enum": ["invalid_request", "unauthenticated", "forbidden", "not_found", "conflict", "precondition_failed", "rate_limited", "unavailable", "internal"]
+        },
+        "request_id": { "type": "string", "pattern": "^[A-Za-z0-9._:-]{1,128}$" },
+        "details": { "type": "object" }
       },
       "required": ["code", "message", "requestId", "retryable", "recovery"],
-      "additionalProperties": false
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "anyOf": [
+              { "properties": {"category": {"type": "string"}}, "required": ["category"] },
+              { "properties": {"request_id": {"type": "string"}}, "required": ["request_id"] },
+              { "properties": {"details": {"type": "object"}}, "required": ["details"] }
+            ]
+          },
+          "then": {
+            "allOf": [
+              {"$ref": "https://antnest.local/contracts/common/error.schema.json"},
+              {
+                "required": ["code", "category", "message", "retryable", "request_id"],
+                "properties": {
+                  "code": {"type": "string"},
+                  "category": {"type": "string"},
+                  "message": {"type": "string"},
+                  "retryable": {"type": "boolean"},
+                  "request_id": {"type": "string"}
+                }
+              }
+            ]
+          }
+        }
+      ]
     },
     "promptQueryEntries": {
       "description": "Explicit Prompt retry query. Preserve the ordered decoded query entries, including duplicates; ordinary submit has no entries and explicit retry has exactly one action=retry entry.",

@@ -576,7 +576,7 @@ func TestListEndpointsRejectInvalidPaginationWithoutCallingAuthorities(t *testin
 
 func TestLifecycleCommandDelegatesTenantAuthorityToAgentController(t *testing.T) {
 	backend := newBackendStub()
-	backend.enqueue(http.StatusNotFound, `{"code":"agent_not_found"}`)
+	backend.enqueue(http.StatusNotFound, `{"code":"agent_not_found","message":"Agent was not found"}`)
 	handler := newTestHandler(t, backend)
 	response := requestAdmin(t, handler, http.MethodPost, "/api/admin/agents/agent-2/disable", `{}`)
 	if response.Code != http.StatusNotFound {

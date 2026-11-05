@@ -301,15 +301,23 @@ async fn maintenance_request(
     request: Request,
 ) -> Response {
     if !matches!(action.as_str(), "install" | "digest") {
-        return maintenance_error(StatusCode::NOT_FOUND, "unknown_action");
+        return maintenance_error(StatusCode::NOT_FOUND, crate::api_errors_gen::UNKNOWN_ACTION);
     }
     if state.verifiers.is_empty() {
-        return maintenance_error(StatusCode::FORBIDDEN, "maintenance_disabled");
+        return maintenance_error(
+            StatusCode::FORBIDDEN,
+            crate::api_errors_gen::MAINTENANCE_DISABLED,
+        );
     }
     let mut authorization_headers = request.headers().get_all(AUTHORIZATION).iter();
     let authorization = match (authorization_headers.next(), authorization_headers.next()) {
         (Some(header), None) => header.to_str().unwrap_or("").to_owned(),
-        _ => return maintenance_error(StatusCode::UNAUTHORIZED, "maintenance_unauthorized"),
+        _ => {
+            return maintenance_error(
+                StatusCode::UNAUTHORIZED,
+                crate::api_errors_gen::MAINTENANCE_UNAUTHORIZED,
+            );
+        }
     };
     let content_type = request
         .headers()
@@ -318,7 +326,10 @@ async fn maintenance_request(
         .unwrap_or("")
         .to_owned();
     if authorization.is_empty() {
-        return maintenance_error(StatusCode::UNAUTHORIZED, "maintenance_unauthorized");
+        return maintenance_error(
+            StatusCode::UNAUTHORIZED,
+            crate::api_errors_gen::MAINTENANCE_UNAUTHORIZED,
+        );
     }
     if let Some(reason) = execution_fence_error(request.headers(), &state.status) {
         return execution_fence_response(reason);
@@ -330,11 +341,21 @@ async fn maintenance_request(
     };
     let body = match to_bytes(request.into_body(), limit).await {
         Ok(bytes) => bytes,
-        Err(_) => return maintenance_error(StatusCode::PAYLOAD_TOO_LARGE, "body_too_large"),
+        Err(_) => {
+            return maintenance_error(
+                StatusCode::PAYLOAD_TOO_LARGE,
+                crate::api_errors_gen::BODY_TOO_LARGE,
+            );
+        }
     };
     let now = match SystemTime::now().duration_since(UNIX_EPOCH) {
         Ok(duration) => duration.as_secs(),
-        Err(_) => return maintenance_error(StatusCode::SERVICE_UNAVAILABLE, "clock_unavailable"),
+        Err(_) => {
+            return maintenance_error(
+                StatusCode::SERVICE_UNAVAILABLE,
+                crate::api_errors_gen::CLOCK_UNAVAILABLE,
+            );
+        }
     };
     let ticket = match verify_maintenance_ticket(
         &authorization,
@@ -346,21 +367,40 @@ async fn maintenance_request(
         now,
     ) {
         Ok(ticket) => ticket,
-        Err(_) => return maintenance_error(StatusCode::UNAUTHORIZED, "maintenance_unauthorized"),
+        Err(_) => {
+            return maintenance_error(
+                StatusCode::UNAUTHORIZED,
+                crate::api_errors_gen::MAINTENANCE_UNAUTHORIZED,
+            );
+        }
     };
     if action == "install" {
         let install = match parse_install_request(&content_type, body, &ticket).await {
             Ok(install) => install,
-            Err("request_conflict") => {
-                return maintenance_error(StatusCode::CONFLICT, "request_conflict");
+            Err(crate::api_errors_gen::REQUEST_CONFLICT) => {
+                return maintenance_error(
+                    StatusCode::CONFLICT,
+                    crate::api_errors_gen::REQUEST_CONFLICT,
+                );
             }
-            Err("limit_exceeded") => {
-                return maintenance_error(StatusCode::PAYLOAD_TOO_LARGE, "limit_exceeded");
+            Err(crate::api_errors_gen::LIMIT_EXCEEDED) => {
+                return maintenance_error(
+                    StatusCode::PAYLOAD_TOO_LARGE,
+                    crate::api_errors_gen::LIMIT_EXCEEDED,
+                );
             }
-            Err(_) => return maintenance_error(StatusCode::BAD_REQUEST, "invalid_request"),
+            Err(_) => {
+                return maintenance_error(
+                    StatusCode::BAD_REQUEST,
+                    crate::api_errors_gen::INVALID_REQUEST,
+                );
+            }
         };
         let Some(actor) = &state.actor else {
-            return maintenance_error(StatusCode::SERVICE_UNAVAILABLE, "maintenance_unavailable");
+            return maintenance_error(
+                StatusCode::SERVICE_UNAVAILABLE,
+                crate::api_errors_gen::MAINTENANCE_UNAVAILABLE,
+            );
         };
         let receipt = |outcome: &str, observed_digest: Option<String>| {
             json!({
@@ -387,17 +427,31 @@ async fn maintenance_request(
         };
     }
     if content_type != "application/json" {
-        return maintenance_error(StatusCode::UNSUPPORTED_MEDIA_TYPE, "invalid_content_type");
+        return maintenance_error(
+            StatusCode::UNSUPPORTED_MEDIA_TYPE,
+            crate::api_errors_gen::INVALID_CONTENT_TYPE,
+        );
     }
     let request = match parse_control_request(&action, &body, &ticket) {
         Ok(ControlRequest::Digest(request)) => request,
-        Err("request_conflict") => {
-            return maintenance_error(StatusCode::CONFLICT, "request_conflict");
+        Err(crate::api_errors_gen::REQUEST_CONFLICT) => {
+            return maintenance_error(
+                StatusCode::CONFLICT,
+                crate::api_errors_gen::REQUEST_CONFLICT,
+            );
         }
-        _ => return maintenance_error(StatusCode::BAD_REQUEST, "invalid_request"),
+        _ => {
+            return maintenance_error(
+                StatusCode::BAD_REQUEST,
+                crate::api_errors_gen::INVALID_REQUEST,
+            );
+        }
     };
     let Some(actor) = &state.actor else {
-        return maintenance_error(StatusCode::SERVICE_UNAVAILABLE, "maintenance_unavailable");
+        return maintenance_error(
+            StatusCode::SERVICE_UNAVAILABLE,
+            crate::api_errors_gen::MAINTENANCE_UNAVAILABLE,
+        );
     };
     let receipt = |outcome: &str, observed_digest: Option<String>| {
         json!({
@@ -446,27 +500,54 @@ fn unsettled_install(error: MaintenanceCallError, receipt: impl Fn(&str) -> Valu
 
 fn maintenance_tool_error(error: ToolError) -> Response {
     let (status, code) = match error.code {
-        ToolErrorCode::InvalidParams | ToolErrorCode::InvalidPath => {
-            (StatusCode::CONFLICT, "request_conflict")
-        }
-        ToolErrorCode::RuntimeBusy => (StatusCode::SERVICE_UNAVAILABLE, "runtime_busy"),
-        ToolErrorCode::OutcomeUnknown => (StatusCode::SERVICE_UNAVAILABLE, "outcome_unknown"),
-        ToolErrorCode::AtomicSkillReplaceUnsupported => {
-            (StatusCode::CONFLICT, "atomic_skill_replace_unsupported")
-        }
-        _ => (StatusCode::SERVICE_UNAVAILABLE, "maintenance_unavailable"),
+        ToolErrorCode::InvalidParams | ToolErrorCode::InvalidPath => (
+            StatusCode::CONFLICT,
+            crate::api_errors_gen::REQUEST_CONFLICT,
+        ),
+        ToolErrorCode::RuntimeBusy => (
+            StatusCode::SERVICE_UNAVAILABLE,
+            crate::api_errors_gen::RUNTIME_BUSY,
+        ),
+        ToolErrorCode::OutcomeUnknown => (
+            StatusCode::SERVICE_UNAVAILABLE,
+            crate::api_errors_gen::OUTCOME_UNKNOWN,
+        ),
+        ToolErrorCode::AtomicSkillReplaceUnsupported => (
+            StatusCode::CONFLICT,
+            crate::api_errors_gen::ATOMIC_SKILL_REPLACE_UNSUPPORTED,
+        ),
+        _ => (
+            StatusCode::SERVICE_UNAVAILABLE,
+            crate::api_errors_gen::MAINTENANCE_UNAVAILABLE,
+        ),
     };
     maintenance_error(status, code)
 }
 
-fn maintenance_error(status: StatusCode, code: &'static str) -> Response {
-    (
-        status,
-        Json(json!({"error": {"code": code,
-        "message": "Skill maintenance request was not admitted",
-        "retryable": status.is_server_error()}})),
+fn managed_unavailable_response() -> Response {
+    crate::api_error::http_response(
+        StatusCode::SERVICE_UNAVAILABLE,
+        crate::api_errors_gen::envelope(
+            crate::api_errors_gen::RUNTIME_UNAVAILABLE,
+            "A required managed MCP service is unavailable",
+            "",
+            true,
+        ),
     )
-        .into_response()
+}
+
+fn maintenance_error(status: StatusCode, code: &'static str) -> Response {
+    let envelope = crate::api_errors_gen::envelope(
+        code,
+        "Skill maintenance request was not admitted",
+        "",
+        status.is_server_error(),
+    );
+    let mut value = envelope.clone();
+    if crate::api_errors_gen::metadata(code).is_some() {
+        value["error"] = envelope;
+    }
+    crate::api_error::http_response(status, value)
 }
 
 #[derive(Clone)]
@@ -548,7 +629,7 @@ async fn trace_http_request(
     };
     let response = match fence_error {
         Some(reason) => execution_fence_response(reason),
-        None if path == MCP_PATH && !state.managed.healthy() => (StatusCode::SERVICE_UNAVAILABLE, Json(json!({"code":"runtime_unavailable", "message":"A required managed MCP service is unavailable"}))).into_response(),
+        None if path == MCP_PATH && !state.managed.healthy() => managed_unavailable_response(),
         None => next.run(request).instrument(span.clone()).await,
     };
     if fence_error.is_some() {
@@ -655,15 +736,15 @@ pub(crate) fn execution_fence_error(
 }
 
 fn execution_fence_response(reason: &'static str) -> Response {
-    (
-        StatusCode::CONFLICT,
-        Json(json!({
-            "code": "runtime_execution_mismatch",
-            "message": "Runtime execution changed; refresh the Runtime inspection before retrying",
-            "reason": reason,
-        })),
-    )
-        .into_response()
+    let mut envelope = crate::api_errors_gen::envelope(
+        crate::api_errors_gen::RUNTIME_EXECUTION_MISMATCH,
+        "Runtime execution changed; refresh the Runtime inspection before retrying",
+        "",
+        false,
+    );
+    envelope["reason"] = serde_json::json!(reason);
+    envelope["details"] = serde_json::json!({"reason": reason});
+    crate::api_error::http_response(StatusCode::CONFLICT, envelope)
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -712,7 +793,9 @@ impl HttpCompletion {
         let code = self.status.as_u16();
         let (outcome, error_type) = match termination {
             BodyTermination::BodyError => ("error", "http_body_error"),
-            BodyTermination::ClientDisconnected => ("canceled", "client_disconnected"),
+            BodyTermination::ClientDisconnected => {
+                (crate::api_errors_gen::CANCELED, "client_disconnected")
+            }
             BodyTermination::EndOfStream => status_outcome(self.status),
         };
         self.metrics.http(
@@ -1273,9 +1356,9 @@ impl ServerHandler for RuntimeToolServer {
         context: RequestContext<RoleServer>,
     ) -> Result<ReadResourceResponse, rmcp::ErrorData> {
         if request.uri != INFORMATION_URI {
-            return Err(rmcp::ErrorData::resource_not_found(
-                "Unknown Runtime resource",
-                None,
+            return Err(common_protocol_error(
+                rmcp::ErrorData::resource_not_found("Unknown Runtime resource", None),
+                "",
             ));
         }
         let information = self.tools.information(context.ct).await.map_err(|error| {
@@ -1379,9 +1462,9 @@ pub(crate) fn reject_reserved_maintenance_tool(name: &str) -> Result<(), rmcp::E
     if name.starts_with("antnest_skill_maintenance_")
         || name.starts_with("antnest_skill_temporary_")
     {
-        return Err(rmcp::ErrorData::invalid_params(
-            "Reserved maintenance tool name",
-            None,
+        return Err(common_protocol_error(
+            rmcp::ErrorData::invalid_params("Reserved maintenance tool name", None),
+            "",
         ));
     }
     Ok(())
@@ -1389,9 +1472,9 @@ pub(crate) fn reject_reserved_maintenance_tool(name: &str) -> Result<(), rmcp::E
 
 fn reject_tool_continuation(request: &CallToolRequestParams) -> Result<(), rmcp::ErrorData> {
     if request.input_responses.is_some() || request.request_state.is_some() {
-        return Err(rmcp::ErrorData::invalid_params(
-            "Tool continuations are not supported",
-            None,
+        return Err(common_protocol_error(
+            rmcp::ErrorData::invalid_params("Tool continuations are not supported", None),
+            "",
         ));
     }
     Ok(())
@@ -1590,7 +1673,7 @@ where
             .bytes()
             .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
     {
-        span.set_attribute("antnest.request.id", request_id);
+        span.set_attribute("antnest.request.id", request_id.clone());
     }
     diagnostics::rpc_content(
         &span,
@@ -1599,7 +1682,10 @@ where
         &request,
     );
     let started = Instant::now();
-    let result = execute(context).instrument(span.clone()).await;
+    let result = execute(context)
+        .instrument(span.clone())
+        .await
+        .map_err(|error| common_protocol_error(error, &request_id));
     let (outcome, error_type, error_code) = match &result {
         Ok(value) => match diagnostics::protocol_error(tool, value) {
             Some(code) => ("error", code, None),
@@ -1615,10 +1701,11 @@ where
     span.set_attribute(
         "antnest.operation.outcome",
         match error_type {
-            "canceled" => "canceled",
-            "runtime_busy" | "runtime_unavailable" | "invalid_params" | "invalid_path" => {
-                "rejected"
-            }
+            crate::api_errors_gen::CANCELED => crate::api_errors_gen::CANCELED,
+            crate::api_errors_gen::RUNTIME_BUSY
+            | "runtime_unavailable"
+            | crate::api_errors_gen::INVALID_PARAMS
+            | crate::api_errors_gen::INVALID_PATH => "rejected",
             _ => outcome,
         },
     );
@@ -1685,6 +1772,40 @@ where
     result
 }
 
+fn common_protocol_error(mut error: rmcp::ErrorData, request_id: &str) -> rmcp::ErrorData {
+    let mut code = match error.code.0 {
+        -32_602 => crate::api_errors_gen::INVALID_PARAMS,
+        -32_601 | -32_002 => crate::api_errors_gen::NOT_FOUND,
+        -32_600 | -32_700 | -32_022 | -32_021 | -32_020 => crate::api_errors_gen::INVALID_REQUEST,
+        _ => crate::api_errors_gen::INTERNAL,
+    };
+    let mut legacy_code = None;
+    if let Some(data) = &error.data
+        && let Some(candidate) = data
+            .get("error_code")
+            .or_else(|| data.get("code"))
+            .and_then(|value| value.as_str())
+        && crate::api_errors_gen::metadata(candidate).is_some()
+    {
+        code = candidate;
+        legacy_code = Some(candidate.to_owned());
+    }
+    let retryable = crate::api_errors_gen::metadata(code)
+        .map(|meta| meta.retryable)
+        .unwrap_or(false);
+    let mut data = crate::api_errors_gen::envelope(
+        code,
+        jsonrpc_safe_message(error.code.0),
+        request_id,
+        retryable,
+    );
+    if let Some(legacy) = legacy_code {
+        data["error_code"] = serde_json::json!(legacy);
+    }
+    error.data = Some(data);
+    error
+}
+
 fn jsonrpc_safe_message(code: i32) -> &'static str {
     match code {
         -32_022 => "MCP protocol version is unsupported",
@@ -1706,9 +1827,9 @@ fn jsonrpc_error_type(code: i32) -> &'static str {
         -32_021 => "missing_required_client_capability",
         -32_020 => "header_mismatch",
         -32_002 => "resource_not_found",
-        -32_600 => "invalid_request",
+        -32_600 => crate::api_errors_gen::INVALID_REQUEST,
         -32_601 => "method_not_found",
-        -32_602 => "invalid_params",
+        -32_602 => crate::api_errors_gen::INVALID_PARAMS,
         -32_603 => "internal_error",
         -32_700 => "parse_error",
         _ => "jsonrpc_error",
@@ -1782,7 +1903,7 @@ fn tool_result<T: Serialize>(
                 );
                 CallToolResult::structured(value)
             }
-            Err(error) => {
+            Err(_error) => {
                 metrics.tool(
                     name,
                     "error",
@@ -1805,12 +1926,23 @@ fn tool_result<T: Serialize>(
                     reason = diagnostics::safe_tool_message(ToolErrorCode::EncodeResultFailed),
                     "Runtime MCP tool failed"
                 );
-                CallToolResult::structured_error(json!({
-                    "error_code": ToolErrorCode::EncodeResultFailed,
-                    "message": error.to_string(),
-                    "effect_state": ToolEffectState::Settled,
-                    "effect_source": null
-                }))
+                CallToolResult::structured_error({
+                    let mut value = crate::api_errors_gen::envelope(
+                        crate::api_errors_gen::ENCODE_RESULT_FAILED,
+                        "Runtime tool result could not be encoded",
+                        "",
+                        false,
+                    );
+                    value["error_code"] =
+                        serde_json::json!(crate::api_errors_gen::ENCODE_RESULT_FAILED);
+                    value["effect_state"] = serde_json::json!(ToolEffectState::Settled);
+                    value["effect_source"] = serde_json::Value::Null;
+                    value["details"] = serde_json::json!({
+                        "effect_state": ToolEffectState::Settled,
+                        "effect_source": serde_json::Value::Null,
+                    });
+                    value
+                })
             }
         },
         Err(error) => {
@@ -1838,12 +1970,21 @@ fn tool_result<T: Serialize>(
                 reason = diagnostics::safe_tool_message(code),
                 "Runtime MCP tool failed"
             );
-            CallToolResult::structured_error(json!({
-                "error_code": code,
-                "message": message,
+            let effect_source = (effect_state == ToolEffectState::Unknown).then_some("runtime_mcp");
+            let code = code.as_str();
+            let retryable = match crate::api_errors_gen::metadata(code) {
+                Some(meta) if effect_state != ToolEffectState::Unknown => meta.retryable,
+                _ => false,
+            };
+            let mut value = crate::api_errors_gen::envelope(code, &message, "", retryable);
+            value["error_code"] = serde_json::json!(code);
+            value["effect_state"] = serde_json::json!(effect_state);
+            value["effect_source"] = serde_json::json!(effect_source);
+            value["details"] = serde_json::json!({
                 "effect_state": effect_state,
-                "effect_source": (effect_state == ToolEffectState::Unknown).then_some("runtime_mcp")
-            }))
+                "effect_source": effect_source,
+            });
+            CallToolResult::structured_error(value)
         }
     }
 }
@@ -1940,7 +2081,7 @@ mod tool_result_tests {
         };
         assert_eq!(result.is_error, Some(true));
         let value = result.structured_content.unwrap();
-        assert_eq!(value["error_code"], "outcome_unknown");
+        assert_eq!(value["error_code"], crate::api_errors_gen::OUTCOME_UNKNOWN);
         assert_eq!(value["effect_state"], "unknown");
         assert_eq!(value["effect_source"], "runtime_mcp");
     }
@@ -1993,7 +2134,7 @@ mod tool_result_tests {
             span.attributes
                 .iter()
                 .any(|attr| attr.key.as_str() == "error.type"
-                    && attr.value.as_str() == "outcome_unknown")
+                    && attr.value.as_str() == crate::api_errors_gen::OUTCOME_UNKNOWN)
         );
         assert!(!format!("{span:?}").contains("canary"));
         provider.shutdown().unwrap();
@@ -2027,7 +2168,10 @@ mod tool_result_tests {
         );
         assert!(known.meta.is_none());
         let structured = known.structured_content.expect("known error");
-        assert_eq!(structured["error_code"], "invalid_path");
+        assert_eq!(
+            structured["error_code"],
+            crate::api_errors_gen::INVALID_PATH
+        );
         assert_eq!(structured["effect_state"], "none");
         assert!(structured["effect_source"].is_null());
 
@@ -2040,7 +2184,10 @@ mod tool_result_tests {
         );
         assert!(unknown.meta.is_none());
         let structured = unknown.structured_content.expect("unknown error");
-        assert_eq!(structured["error_code"], "outcome_unknown");
+        assert_eq!(
+            structured["error_code"],
+            crate::api_errors_gen::OUTCOME_UNKNOWN
+        );
         assert_eq!(structured["effect_state"], "unknown");
         assert_eq!(structured["effect_source"], "runtime_mcp");
     }
@@ -2082,3 +2229,7 @@ mod tool_result_tests {
         RuntimeIdentity::new("agent-1", 1).expect("identity")
     }
 }
+
+#[cfg(test)]
+#[path = "mcp_common_error_tests.rs"]
+mod mcp_common_error_tests;

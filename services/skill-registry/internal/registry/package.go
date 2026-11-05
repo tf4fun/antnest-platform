@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"encoding/binary"
 	"encoding/hex"
+	"github.com/tf4fun/antnest-platform/services/skill-registry/internal/apierror"
 	"io"
 	"io/fs"
 	"path"
@@ -68,14 +69,14 @@ func digest(data []byte) string {
 
 func ValidatePackage(ctx context.Context, artifact []byte) (Package, error) {
 	if len(artifact) == 0 || len(artifact) > MaxArtifactBytes {
-		return Package{}, failure("limit_exceeded", "ZIP size must be 1–8 MiB")
+		return Package{}, failure(apierror.LimitExceeded, "ZIP size must be 1–8 MiB")
 	}
 	archive, err := zip.NewReader(bytes.NewReader(artifact), int64(len(artifact)))
 	if err != nil {
-		return Package{}, failure("invalid_package", "invalid ZIP archive")
+		return Package{}, failure(apierror.InvalidPackage, "invalid ZIP archive")
 	}
 	if len(archive.File) == 0 || len(archive.File) > MaxFiles {
-		return Package{}, failure("limit_exceeded", "ZIP entry count exceeds 256")
+		return Package{}, failure(apierror.LimitExceeded, "ZIP entry count exceeds 256")
 	}
 	result := Package{Artifact: artifact, ArtifactDigest: digest(artifact)}
 	seen := make(map[string]bool, len(archive.File)) // true means directory
@@ -87,20 +88,20 @@ func ValidatePackage(ctx context.Context, artifact []byte) (Package, error) {
 		isDirectory := strings.HasSuffix(entry.Name, "/")
 		name := strings.TrimSuffix(entry.Name, "/")
 		if !validArchivePath(name) {
-			return Package{}, failure("invalid_package", "invalid ZIP entry path")
+			return Package{}, failure(apierror.InvalidPackage, "invalid ZIP entry path")
 		}
 		if _, exists := seen[name]; exists {
-			return Package{}, failure("invalid_package", "duplicate ZIP path")
+			return Package{}, failure(apierror.InvalidPackage, "duplicate ZIP path")
 		}
 		seen[name] = isDirectory
 		mode := entry.Mode()
 		if entry.Flags&1 != 0 || entry.NonUTF8 || !safeZIPExtra(entry.Extra) ||
 			mode&fs.ModeType != 0 && mode&fs.ModeType != fs.ModeDir || isDirectory != mode.IsDir() {
-			return Package{}, failure("invalid_package", "ZIP contains an encrypted or nonregular entry")
+			return Package{}, failure(apierror.InvalidPackage, "ZIP contains an encrypted or nonregular entry")
 		}
 		if isDirectory {
 			if entry.UncompressedSize64 != 0 {
-				return Package{}, failure("invalid_package", "directory contains data")
+				return Package{}, failure(apierror.InvalidPackage, "directory contains data")
 			}
 			continue
 		}
@@ -109,11 +110,11 @@ func ValidatePackage(ctx context.Context, artifact []byte) (Package, error) {
 			maxSize = MaxSkillBytes
 		}
 		if entry.UncompressedSize64 > maxSize || result.UnpackedSize+entry.UncompressedSize64 > MaxUnpackedBytes {
-			return Package{}, failure("limit_exceeded", "unpacked ZIP size exceeds limit")
+			return Package{}, failure(apierror.LimitExceeded, "unpacked ZIP size exceeds limit")
 		}
 		stream, err := entry.Open()
 		if err != nil {
-			return Package{}, failure("invalid_package", "cannot open ZIP entry")
+			return Package{}, failure(apierror.InvalidPackage, "cannot open ZIP entry")
 		}
 		fileHash := sha256.New()
 		var sink io.Writer = fileHash
@@ -127,10 +128,10 @@ func ValidatePackage(ctx context.Context, artifact []byte) (Package, error) {
 			return Package{}, err
 		}
 		if actual > int64(maxSize) || result.UnpackedSize+uint64(actual) > MaxUnpackedBytes {
-			return Package{}, failure("limit_exceeded", "unpacked ZIP size exceeds limit")
+			return Package{}, failure(apierror.LimitExceeded, "unpacked ZIP size exceeds limit")
 		}
 		if copyErr != nil || closeErr != nil || uint64(actual) != entry.UncompressedSize64 {
-			return Package{}, failure("invalid_package", "ZIP entry checksum or size differs")
+			return Package{}, failure(apierror.InvalidPackage, "ZIP entry checksum or size differs")
 		}
 		result.UnpackedSize += uint64(actual)
 		result.Files = append(result.Files, File{
@@ -142,12 +143,12 @@ func ValidatePackage(ctx context.Context, artifact []byte) (Package, error) {
 		}
 	}
 	if manifest == nil {
-		return Package{}, failure("invalid_package", "root SKILL.md is required")
+		return Package{}, failure(apierror.InvalidPackage, "root SKILL.md is required")
 	}
 	for name := range seen {
 		for parent := path.Dir(name); parent != "."; parent = path.Dir(parent) {
 			if directory, exists := seen[parent]; exists && !directory {
-				return Package{}, failure("invalid_package", "file conflicts with nested path")
+				return Package{}, failure(apierror.InvalidPackage, "file conflicts with nested path")
 			}
 		}
 	}
@@ -219,12 +220,12 @@ func manifestDigest(files []File) string {
 
 func parseManifest(data []byte) (string, string, error) {
 	if !utf8.Valid(data) || bytes.HasPrefix(data, []byte{0xef, 0xbb, 0xbf}) {
-		return "", "", failure("invalid_package", "SKILL.md must be UTF-8 without BOM")
+		return "", "", failure(apierror.InvalidPackage, "SKILL.md must be UTF-8 without BOM")
 	}
 	lines := strings.Split(string(data), "\n")
 	line := func(value string) string { return strings.TrimSuffix(value, "\r") }
 	if len(lines) < 3 || line(lines[0]) != "---" {
-		return "", "", failure("invalid_package", "SKILL.md must begin with exact frontmatter delimiter")
+		return "", "", failure(apierror.InvalidPackage, "SKILL.md must begin with exact frontmatter delimiter")
 	}
 	end := -1
 	for i := 1; i < len(lines); i++ {
@@ -233,11 +234,11 @@ func parseManifest(data []byte) (string, string, error) {
 			break
 		}
 		if line(lines[i]) == "..." {
-			return "", "", failure("invalid_package", "YAML document end marker is forbidden")
+			return "", "", failure(apierror.InvalidPackage, "YAML document end marker is forbidden")
 		}
 	}
 	if end < 0 {
-		return "", "", failure("invalid_package", "SKILL.md frontmatter has no exact closing delimiter")
+		return "", "", failure(apierror.InvalidPackage, "SKILL.md frontmatter has no exact closing delimiter")
 	}
 	header := make([]string, 0, end-1)
 	for _, value := range lines[1:end] {
@@ -246,11 +247,11 @@ func parseManifest(data []byte) (string, string, error) {
 	decoder := yaml.NewDecoder(strings.NewReader(strings.Join(header, "\n")))
 	var document yaml.Node
 	if err := decoder.Decode(&document); err != nil || len(document.Content) != 1 || document.Content[0].Kind != yaml.MappingNode {
-		return "", "", failure("invalid_package", "Skill frontmatter must be one mapping")
+		return "", "", failure(apierror.InvalidPackage, "Skill frontmatter must be one mapping")
 	}
 	var second yaml.Node
 	if err := decoder.Decode(&second); err != io.EOF {
-		return "", "", failure("invalid_package", "multiple YAML documents are forbidden")
+		return "", "", failure(apierror.InvalidPackage, "multiple YAML documents are forbidden")
 	}
 	count := 0
 	if err := checkNode(&document, 0, &count); err != nil {
@@ -272,11 +273,11 @@ func parseManifest(data []byte) (string, string, error) {
 		}
 	}
 	if len(name) < 1 || len(name) > 64 || !namePattern.MatchString(name) {
-		return "", "", failure("invalid_package", "invalid Skill name")
+		return "", "", failure(apierror.InvalidPackage, "invalid Skill name")
 	}
 	description = strings.TrimSpace(description)
 	if description == "" || len(description) > 512 || strings.ContainsRune(description, 0) {
-		return "", "", failure("invalid_package", "invalid Skill description")
+		return "", "", failure(apierror.InvalidPackage, "invalid Skill description")
 	}
 	return name, description, nil
 }
@@ -284,17 +285,17 @@ func parseManifest(data []byte) (string, string, error) {
 func checkNode(node *yaml.Node, depth int, count *int) error {
 	*count += 1
 	if depth > 16 || *count > 512 {
-		return failure("invalid_package", "YAML nesting or node count exceeds limit")
+		return failure(apierror.InvalidPackage, "YAML nesting or node count exceeds limit")
 	}
 	if node.Anchor != "" || node.Kind == yaml.AliasNode || node.Style&yaml.TaggedStyle != 0 {
-		return failure("invalid_package", "YAML anchors, aliases and explicit tags are forbidden")
+		return failure(apierror.InvalidPackage, "YAML anchors, aliases and explicit tags are forbidden")
 	}
 	if node.Kind == yaml.MappingNode {
 		seen := map[string]bool{}
 		for i := 0; i < len(node.Content); i += 2 {
 			key := node.Content[i]
 			if key.Kind != yaml.ScalarNode || key.Tag != "!!str" || key.Value == "<<" || seen[key.Value] {
-				return failure("invalid_package", "YAML merge or duplicate/nonstring key is forbidden")
+				return failure(apierror.InvalidPackage, "YAML merge or duplicate/nonstring key is forbidden")
 			}
 			seen[key.Value] = true
 		}
@@ -309,10 +310,10 @@ func checkNode(node *yaml.Node, depth int, count *int) error {
 
 func stringField(node *yaml.Node) (string, error) {
 	if node.Kind != yaml.ScalarNode || node.Tag != "!!str" {
-		return "", failure("invalid_package", "Skill name and description must be YAML strings")
+		return "", failure(apierror.InvalidPackage, "Skill name and description must be YAML strings")
 	}
 	if node.Style&(yaml.SingleQuotedStyle|yaml.DoubleQuotedStyle|yaml.LiteralStyle|yaml.FoldedStyle) == 0 && rejectPlain(node.Value) {
-		return "", failure("invalid_package", "plain YAML value is not a portable string")
+		return "", failure(apierror.InvalidPackage, "plain YAML value is not a portable string")
 	}
 	return node.Value, nil
 }

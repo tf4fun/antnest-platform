@@ -44,7 +44,11 @@ func TestModelPriceCommandsPreserveIntentAndOwnerValidation(t *testing.T) {
 			for _, status := range []int{http.StatusCreated, http.StatusBadRequest} {
 				backend := newBackendStub()
 				model := `{"model":"priced"` + price + `}`
-				backend.enqueue(status, `{"model_profile_id":"model-1","model":`+model+`}`)
+				body := `{"model_profile_id":"model-1","model":` + model + `}`
+				if status >= 400 {
+					body = `{"code":"invalid_request","message":"Rejected"}`
+				}
+				backend.enqueue(status, body)
 				result := requestAdmin(t, newTestHandler(t, backend), http.MethodPost, path,
 					modelCommandBody(path, "Priced", model))
 				if result.Code != status {

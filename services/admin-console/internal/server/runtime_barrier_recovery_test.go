@@ -295,15 +295,17 @@ func TestRuntimeBarrierRecoveryReadsOriginalOperationAndKeepsConflicts(t *testin
 	for _, code := range []string{"lifecycle_conflict", "request_id_conflict"} {
 		t.Run(code, func(t *testing.T) {
 			backend := newBackendStub()
-			expected := map[string]any{"code": code, "message": "Recovery was not admitted", "retryable": false}
-			backend.enqueueFor(consoleRuntimeRecoveryUpstreamPath, http.StatusConflict, consoleRuntimeRecoveryJSON(t, expected))
+			expected := map[string]any{"code": code, "category": "conflict", "message": "Recovery was not admitted", "retryable": false}
+			backend.enqueueFor(consoleRuntimeRecoveryUpstreamPath, http.StatusConflict, consoleRuntimeRecoveryJSON(t, map[string]any{"code": code, "message": "Recovery was not admitted", "retryable": false}))
 			response := httptest.NewRecorder()
 			request := scopedLifecycleRequest(http.MethodPost, consoleRuntimeRecoveryPath, consoleRuntimeRecoveryBody(consoleRuntimeRecoveryRaw), "org-1")
 			request.Header.Set("Idempotency-Key", consoleRuntimeRecoveryID)
 			newTestHandler(t, backend).ServeHTTP(response, request)
 			var actual map[string]any
 			decodeBytes(t, response.Body.Bytes(), &actual)
-			if response.Code != http.StatusConflict || !reflect.DeepEqual(actual, expected) {
+			requestID, _ := actual["request_id"].(string)
+			delete(actual, "request_id")
+			if response.Code != http.StatusConflict || requestID == "" || requestID != response.Header().Get("X-Request-ID") || !reflect.DeepEqual(actual, expected) {
 				t.Fatalf("conflict or retry policy changed: status=%d body=%s", response.Code, response.Body)
 			}
 			call := backend.singleCall(t)

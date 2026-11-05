@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 
+	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/apierror"
 	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/ports"
 )
 
@@ -18,12 +19,12 @@ func (h *handler) resolveMCPSecrets(w http.ResponseWriter, r *http.Request) {
 	}
 	resolver, ok := h.catalog.(mcpSecretResolver)
 	if !ok {
-		writeError(w, http.StatusServiceUnavailable, "dependency_unavailable", "Managed MCP bootstrap unavailable", true)
+		writeError(w, http.StatusServiceUnavailable, apierror.DependencyUnavailable, "Managed MCP bootstrap unavailable", true)
 		return
 	}
 	values, err := resolver.ResolveMCPSecrets(r.Context(), input)
 	if err != nil {
-		writeError(w, http.StatusServiceUnavailable, "dependency_unavailable", "Managed MCP bootstrap unavailable", true)
+		writeError(w, http.StatusServiceUnavailable, apierror.DependencyUnavailable, "Managed MCP bootstrap unavailable", true)
 		return
 	}
 	w.Header().Set("Cache-Control", "no-store")

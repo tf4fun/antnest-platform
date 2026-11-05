@@ -229,3 +229,122 @@ func TestPasswordAdmissionClientRejectsMixedSuccess(t *testing.T) {
 		}
 	}
 }
+
+func TestPasswordFailureDecoderAcceptsNewMetadata(t *testing.T) {
+	for _, row := range []struct {
+		name string
+		body string
+	}{
+		{"n-1", credentialBusyBody},
+		{"n", strings.TrimSuffix(credentialBusyBody, "}") + `,"category":"unavailable","request_id":"identity-req-1"}`},
+		{"n-details", strings.TrimSuffix(credentialBusyBody, "}") + `,"category":"unavailable","request_id":"identity-req-1","details":{"retry_after":1}}`},
+		{"n-rate", strings.TrimSuffix(credentialRateBody, "}") + `,"category":"rate_limited","request_id":"identity-req-2"}`},
+	} {
+		t.Run(row.name, func(t *testing.T) {
+			response := jsonResponse(503, row.body)
+			if row.name == "n-rate" {
+				response = jsonResponse(429, row.body)
+			}
+			response.Header.Set("Retry-After", "1")
+			err := callPasswordRPC(t, "local-login", response)
+			if _, ok := PasswordAdmissionFailure(err); !ok {
+				t.Fatal("compatible password failure was rejected")
+			}
+		})
+	}
+}
+
+func TestPasswordFailureDecoderRejectsPartialMetadata(t *testing.T) {
+	for _, row := range []struct {
+		name string
+		body string
+	}{
+		{"category-only", strings.TrimSuffix(credentialBusyBody, "}") + `,"category":"unavailable"}`},
+		{"id-only", strings.TrimSuffix(credentialBusyBody, "}") + `,"request_id":"identity-req-1"}`},
+		{"details-only", strings.TrimSuffix(credentialBusyBody, "}") + `,"details":{"a":1}}`},
+		{"wrong-category", strings.TrimSuffix(credentialBusyBody, "}") + `,"category":"rate_limited","request_id":"identity-req-1"}`},
+		{"unknown-category", strings.TrimSuffix(credentialBusyBody, "}") + `,"category":"forbidden","request_id":"identity-req-1"}`},
+		{"empty-id", strings.TrimSuffix(credentialBusyBody, "}") + `,"category":"unavailable","request_id":""}`},
+		{"unsafe-id", strings.TrimSuffix(credentialBusyBody, "}") + `,"category":"unavailable","request_id":"bad id!!"}`},
+		{"long-id", strings.TrimSuffix(credentialBusyBody, "}") + `,"category":"unavailable","request_id":"` + strings.Repeat("a", 129) + `"}`},
+		{"details-scalar", strings.TrimSuffix(credentialBusyBody, "}") + `,"category":"unavailable","request_id":"identity-req-1","details":1}`},
+		{"details-array", strings.TrimSuffix(credentialBusyBody, "}") + `,"category":"unavailable","request_id":"identity-req-1","details":[1]}`},
+		{"canary-member", strings.TrimSuffix(credentialBusyBody, "}") + `,"private-token-canary":true}`},
+	} {
+		t.Run(row.name, func(t *testing.T) {
+			response := jsonResponse(503, row.body)
+			response.Header.Set("Retry-After", "1")
+			err := callPasswordRPC(t, "local-login", response)
+			if _, ok := PasswordAdmissionFailure(err); ok {
+				t.Fatal("malformed failure acquired trusted retry metadata")
+			}
+		})
+	}
+}
+
+func TestPasswordFailureSuccessRejectsReservedMetadata(t *testing.T) {
+	for _, field := range []string{
+		`"category":"unavailable"`, `"request_id":"identity-req-1"`,
+		`"Category":"unavailable"`, `"Request_ID":"identity-req-1"`,
+	} {
+		if validPasswordSuccess([]byte(`{"access_token":"new-private-token","token_id":"token-2",` + field + `}`)) {
+			t.Fatalf("success body with reserved %s was accepted", field)
+		}
+	}
+	if !validPasswordSuccess([]byte(`{"access_token":"new-private-token","token_id":"token-2","details":{"a":1}}`)) {
+		t.Fatal("clean success body was rejected")
+	}
+}
+
+func TestPasswordFailureDecoderRejectsExplicitNullMetadata(t *testing.T) {
+	for _, row := range []struct {
+		name string
+		body string
+	}{
+		{"null-category", strings.TrimSuffix(credentialBusyBody, "}") + `,"category":null}`},
+		{"null-id", strings.TrimSuffix(credentialBusyBody, "}") + `,"request_id":null}`},
+		{"null-both", strings.TrimSuffix(credentialBusyBody, "}") + `,"category":null,"request_id":null}`},
+		{"null-details", strings.TrimSuffix(credentialBusyBody, "}") + `,"details":null}`},
+		{"typed-category", strings.TrimSuffix(credentialBusyBody, "}") + `,"category":1}`},
+		{"typed-id", strings.TrimSuffix(credentialBusyBody, "}") + `,"request_id":1}`},
+	} {
+		t.Run(row.name, func(t *testing.T) {
+			response := jsonResponse(503, row.body)
+			response.Header.Set("Retry-After", "1")
+			err := callPasswordRPC(t, "local-login", response)
+			if _, ok := PasswordAdmissionFailure(err); ok {
+				t.Fatal("explicit null or mistyped metadata acquired trusted retry metadata")
+			}
+		})
+	}
+}
+
+func TestPasswordFailureDecoderValidatesLegacyMetadata(t *testing.T) {
+	t.Run("n-accepted", func(t *testing.T) {
+		response := jsonResponse(400, `{"code":"unauthenticated","message":"denied","retryable":false,"category":"unauthenticated","request_id":"identity-req-1"}`)
+		err := callPasswordRPC(t, "local-login", response)
+		if !IsCode(err, "unauthenticated") {
+			t.Fatal("new metadata on a legacy code was rejected")
+		}
+	})
+	for _, row := range []struct {
+		name string
+		body string
+	}{
+		{"wrong-category", `{"code":"unauthenticated","message":"denied","retryable":false,"category":"forbidden","request_id":"identity-req-1"}`},
+		{"null-category", `{"code":"unauthenticated","message":"denied","retryable":false,"category":null,"request_id":"identity-req-1"}`},
+		{"null-id", `{"code":"unauthenticated","message":"denied","retryable":false,"category":"unauthenticated","request_id":null}`},
+		{"partial", `{"code":"unauthenticated","message":"denied","retryable":false,"category":"unauthenticated"}`},
+	} {
+		t.Run(row.name, func(t *testing.T) {
+			err := callPasswordRPC(t, "local-login", jsonResponse(400, row.body))
+			var remote *RemoteError
+			if errors.As(err, &remote) {
+				t.Fatal("malformed metadata fell back into an unvalidated remote classification")
+			}
+			if _, ok := PasswordAdmissionFailure(err); ok {
+				t.Fatal("malformed metadata acquired trusted retry metadata")
+			}
+		})
+	}
+}

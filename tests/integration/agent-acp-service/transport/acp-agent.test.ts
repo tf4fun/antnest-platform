@@ -6,8 +6,8 @@ import {
   type OutputApplication,
 } from "../support/output-application.js";
 import * as acp from "@agentclientprotocol/sdk/experimental/v2/unstable";
-
 import { createAcpV2Agent } from "../../../../services/agent-acp-service/src/transport/acp/v2/agent.js";
+import { ERROR_METADATA } from "../../../../services/agent-acp-service/src/errors.gen.js";
 import {
   RunRecoveryRequiredError,
   type AcpApplicationPort,
@@ -18,6 +18,28 @@ import {
 import type { ConnectionBinding } from "../../../../services/agent-acp-service/src/domain/types.js";
 import { DomainError } from "../../../../services/agent-acp-service/src/domain/errors.js";
 import { ModelBudgetExceededError } from "../../../../services/agent-acp-service/src/domain/model-budget.js";
+
+const SAFE_REQUEST_ID = /^[A-Za-z0-9._:-]{1,128}$/;
+
+function expectedCommonData(
+  code: string,
+  message: string,
+  retryable: boolean,
+  extra: Record<string, unknown> = {},
+) {
+  const publicCode = Object.hasOwn(ERROR_METADATA, code) ? code : "internal";
+  const meta = ERROR_METADATA[publicCode];
+  if (meta === undefined)
+    throw new Error(`missing registry metadata ${publicCode}`);
+  return {
+    code: publicCode,
+    category: meta.category,
+    message,
+    retryable,
+    request_id: expect.stringMatching(SAFE_REQUEST_ID) as unknown,
+    ...extra,
+  };
+}
 
 const binding: ConnectionBinding = {
   connectionId: "connection-1",
@@ -129,11 +151,26 @@ describe("ACP v2 agent mapping", () => {
           },
         });
         const data = (result as { data: Record<string, unknown> }).data;
-        expect(Object.keys(data).sort()).toEqual(
-          delay === undefined
-            ? ["code", "retryable"]
-            : ["code", "retry_after_ms", "retryable"],
-        );
+        const expectedKeys = [
+          "category",
+          "code",
+          "message",
+          "request_id",
+          "retryable",
+        ];
+        if (delay !== undefined) expectedKeys.push("retry_after_ms");
+        expect(Object.keys(data).sort()).toEqual(expectedKeys.sort());
+        const expectedDataCode =
+          code === null || code === "connection_binding_stale"
+            ? "internal_error"
+            : code;
+        const expectedMeta = Object.hasOwn(ERROR_METADATA, expectedDataCode)
+          ? ERROR_METADATA[expectedDataCode]
+          : undefined;
+        expect(expectedMeta).toBeDefined();
+        expect(data.category).toBe(expectedMeta?.category);
+        expect(data.message).toBe((result as { message: string }).message);
+        expect(data.request_id).toMatch(/^[A-Za-z0-9._:-]{1,128}$/);
         expect(JSON.stringify(result)).not.toContain(
           "PRIVATE_ADMISSION_DETAIL",
         );
@@ -179,11 +216,16 @@ describe("ACP v2 agent mapping", () => {
           (error: unknown) => error,
         );
       expect(result).toMatchObject({ code: -32043 });
-      expect((result as { data: unknown }).data).toEqual({
-        code: "budget_exceeded",
-        retryable: false,
-        details: { budget },
-      });
+      expect((result as { data: unknown }).data).toEqual(
+        expectedCommonData(
+          "budget_exceeded",
+          "Execution budget has been exceeded",
+          false,
+          {
+            details: { budget },
+          },
+        ),
+      );
       await expect(
         context.request(acp.methods.agent.session.new, {
           cwd: "/workspace",

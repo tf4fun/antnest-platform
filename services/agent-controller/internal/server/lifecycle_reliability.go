@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/apierror"
 	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/application"
 )
 
@@ -40,7 +41,7 @@ func (h *handler) cancelLifecycleOperation(response http.ResponseWriter, request
 	}
 	if strings.TrimSpace(payload.OrganizationID) == "" || strings.TrimSpace(payload.ActorPrincipalID) == "" ||
 		strings.TrimSpace(payload.OperationRequestID) == "" {
-		writeError(response, http.StatusBadRequest, "invalid_request", "organization, actor and operation request are required", false)
+		writeError(response, http.StatusBadRequest, apierror.InvalidRequest, "organization, actor and operation request are required", false)
 		return
 	}
 	result, err := service.CancelLifecycleOperation(request.Context(), application.CancelLifecycleOperationInput{
@@ -71,7 +72,7 @@ func (h *handler) clearLifecycleQuarantine(response http.ResponseWriter, request
 		return
 	}
 	if strings.TrimSpace(payload.OrganizationID) == "" || strings.TrimSpace(payload.ActorPrincipalID) == "" {
-		writeError(response, http.StatusBadRequest, "invalid_request", "organization and actor are required", false)
+		writeError(response, http.StatusBadRequest, apierror.InvalidRequest, "organization and actor are required", false)
 		return
 	}
 	agent, err := service.ClearLifecycleQuarantine(request.Context(), application.ClearLifecycleQuarantineInput{

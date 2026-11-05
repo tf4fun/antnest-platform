@@ -3,6 +3,7 @@ package server
 import (
 	"net/http"
 
+	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/apierror"
 	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/application"
 	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/ports"
 )
@@ -32,7 +33,7 @@ func (h *handler) setCatalogAvailability(response http.ResponseWriter, request *
 		return
 	}
 	if payload.ExpectedEnabled == nil || payload.Enabled == nil {
-		writeError(response, http.StatusBadRequest, "invalid_request", "expected_enabled and enabled must be explicit booleans", false)
+		writeError(response, http.StatusBadRequest, apierror.InvalidRequest, "expected_enabled and enabled must be explicit booleans", false)
 		return
 	}
 	result, err := h.catalog.SetCatalogAvailability(request.Context(), application.SetCatalogAvailabilityInput{

@@ -77,6 +77,7 @@
     "executor",
     "platform"
   ],
+  "error_envelope": "../common/error.schema.json",
   "tool_errors": [
     "canceled",
     "child_process_containment_unproven",
@@ -102,6 +103,8 @@
     "write_failed"
   ],
   "tool_result": {
+    "error_envelope": "../common/error.schema.json",
+    "notes": "tool structured errors carry the common envelope fields (code/category/message/retryable/request_id + details duplicating effect fields); error_code remains a one-release N-1 alias; JSON-RPC ErrorData.data adapts common fields without changing the outer numeric code/message",
     "effect_states": ["none", "settled", "unknown"],
     "unknown_effect_source": "runtime_mcp",
     "success_effect_state": "settled",

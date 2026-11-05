@@ -1,5 +1,7 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { SkillSources } from "../application/skill-sources.js";
+import { commonError, errorHeaders } from "./public-error.js";
+import { ERROR_CODES } from "../errors.gen.js";
 import { resolveErrorDefinition } from "../domain/error-catalog.js";
 import {
   SkillSourceError,
@@ -37,16 +39,16 @@ export async function serveSkillSource(
   lifetime?: { signal: AbortSignal; deadline: number },
 ): Promise<void> {
   if (options === undefined || authenticatedCaller(request) !== "skill-registry") {
-    json(response, "unauthorized");
+    json(response, ERROR_CODES.UNAUTHORIZED);
     return;
   }
   if (request.method !== "POST") {
     response.setHeader("Allow", "POST");
-    json(response, "method_not_allowed");
+    json(response, ERROR_CODES.METHOD_NOT_ALLOWED);
     return;
   }
   if (route === "invalid") {
-    json(response, "invalid_request");
+    json(response, ERROR_CODES.INVALID_REQUEST);
     return;
   }
   const disconnected = new AbortController();
@@ -69,10 +71,10 @@ export async function serveSkillSource(
         ? skillSourceInspectSchema.safeParse(parsed)
         : skillSourceArtifactSchema.safeParse(parsed);
     if (!checked.success) {
-      json(response, "invalid_request");
+      json(response, ERROR_CODES.INVALID_REQUEST);
       return;
     }
-    if (!(await ready())) throw new SkillSourceError("source_unavailable");
+    if (!(await ready())) throw new SkillSourceError(ERROR_CODES.SOURCE_UNAVAILABLE);
     if (route === "inspect") {
       const input = skillSourceInspectSchema.parse(parsed);
       if (await forward?.({ route, input }, signal, deadline)) return;
@@ -108,18 +110,24 @@ export function sourceFailure(response: ServerResponse, error: unknown): void {
     return;
   }
   const failure =
-    error instanceof SkillSourceError ? error : new SkillSourceError("source_unavailable");
+    error instanceof SkillSourceError
+      ? error
+      : new SkillSourceError(ERROR_CODES.SOURCE_UNAVAILABLE);
   json(response, failure.code);
 }
 
 function json(response: ServerResponse, code: string): void {
   const definition = resolveErrorDefinition(code, "skill_source");
   jsonBody(response, definition.httpStatus, {
+    ...commonError(definition.code, definition.message, definition.retryable),
     error: { code: definition.code, message: definition.message },
   });
 }
 function jsonBody(response: ServerResponse, status: number, value: unknown): void {
   if (response.destroyed || response.writableEnded) return;
-  response.writeHead(status, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+  response.writeHead(status, {
+    "Content-Type": "application/json",
+    ...errorHeaders(value),
+  });
   response.end(JSON.stringify(value));
 }

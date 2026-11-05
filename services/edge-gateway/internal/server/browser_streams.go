@@ -10,6 +10,7 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 
+	"github.com/tf4fun/antnest-platform/services/edge-gateway/internal/apierror"
 	"github.com/tf4fun/antnest-platform/services/edge-gateway/internal/browserstream"
 	"github.com/tf4fun/antnest-platform/services/edge-gateway/internal/identity"
 	"github.com/tf4fun/antnest-platform/services/edge-gateway/internal/streamio"
@@ -44,9 +45,9 @@ func (h *handler) guardBrowserStream(response http.ResponseWriter, request *http
 	})
 	if err != nil {
 		cancelLease()
-		status, code := http.StatusServiceUnavailable, "identity_unavailable"
+		status, code := http.StatusServiceUnavailable, apierror.IdentityUnavailable
 		if errors.Is(err, browserstream.ErrRejected) {
-			status, code = http.StatusUnauthorized, "unauthenticated"
+			status, code = http.StatusUnauthorized, apierror.Unauthenticated
 		}
 		writeError(response, status, code, "Session could not be verified")
 		return response, request, nil, err

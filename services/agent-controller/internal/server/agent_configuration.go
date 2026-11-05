@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 
+	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/apierror"
 	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/application"
 	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/ports"
 	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/telemetry"
@@ -17,7 +18,7 @@ func (h *handler) setAgentAuthorization(response http.ResponseWriter, request *h
 		return
 	}
 	if input.Authorization.ToolRules == nil {
-		writeError(response, http.StatusBadRequest, "invalid_request", "authorization.tool_rules must be an array", false)
+		writeError(response, http.StatusBadRequest, apierror.InvalidRequest, "authorization.tool_rules must be an array", false)
 		return
 	}
 	revision, err := h.configuration.SetAgentAuthorization(request.Context(), input)
@@ -35,11 +36,11 @@ func writeAgentConfigurationError(ctx context.Context, response http.ResponseWri
 	var payload errorResponse
 	switch {
 	case errors.Is(err, ports.ErrConcurrentChange):
-		status, payload = http.StatusConflict, errorResponse{Code: "configuration_conflict", Message: "Reload the Agent authorization before updating"}
+		status, payload = http.StatusConflict, errorResponse{Code: apierror.ConfigurationConflict, Message: "Reload the Agent authorization before updating"}
 	case errors.Is(err, application.ErrAccessDenied):
-		status, payload = http.StatusForbidden, errorResponse{Code: "access_denied", Message: "Agent access is denied"}
+		status, payload = http.StatusForbidden, errorResponse{Code: apierror.AccessDenied, Message: "Agent access is denied"}
 	case errors.Is(err, context.DeadlineExceeded), errors.Is(err, context.Canceled):
-		status, payload = http.StatusServiceUnavailable, errorResponse{Code: "dependency_unavailable", Message: "dependency is unavailable", Retryable: true}
+		status, payload = http.StatusServiceUnavailable, errorResponse{Code: apierror.DependencyUnavailable, Message: "dependency is unavailable", Retryable: true}
 	default:
 		writeServiceError(ctx, response, err)
 		return

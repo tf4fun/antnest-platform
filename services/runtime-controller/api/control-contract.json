@@ -784,6 +784,11 @@
       "retryable": true,
       "body": "control-api.schema.json#/$defs/error"
     },
+    "internal": {
+      "status": 500,
+      "retryable": false,
+      "body": "control-api.schema.json#/$defs/error"
+    },
     "service_unauthenticated": {
       "status": 401,
       "retryable": false,

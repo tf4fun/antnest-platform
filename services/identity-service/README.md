@@ -76,7 +76,11 @@ inventory return `expires_at`, `issued_by` and `issuer_review_required` without
 exposing stored hashes. Expired credentials are rejected, issuer authority loss
 revokes or flags tokens, and User/Group responses expose ETag and `meta.version`
 with conditional PUT/PATCH/DELETE. Stale conditions return 412 and retain the safe
-`precondition_failed` code in request spans, error events and completion logs
+`precondition_failed` code in request spans, error events and completion logs.
+Error envelopes follow the [common error contract](../../contracts/common/error.schema.json)
+with the [Identity slice](../../contracts/common/slices/identity-service.json); SCIM protocol
+errors carry a `urn:antnest:error` extension, and the legacy `version_conflict`/`internal_error`
+wire retryable values are preserved from domain errors rather than registry defaults
 without exporting credentials. Rotation issues an independent credential; the
 original remains usable until expiry or explicit revocation. Console 54
 provides lifecycle display and rotation controls; current consumer references

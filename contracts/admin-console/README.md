@@ -435,3 +435,18 @@ request, with explicit retry preserving the original body and ID. A conflict
 never falls back to ordinary Rebuild. Event notifications refresh Agent state;
 a notification ID is not an operation receipt. This consumer contract does not
 stand in for the remaining Agent UI or real manual recovery integration batch.
+
+Every public error response carries the shared
+[common envelope](../common/error.schema.json) (`code`, `category`, `message`,
+`retryable`, `request_id`, optional `details`) projected by
+`internal/apierror`, generated from the
+[Admin Console slice](../common/slices/admin-console.json) of the
+[common registry](../common/errors.json). The migration is additive: `code`
+and `message` keep their legacy values so the contract stays version 60 while
+consumers gain `category`, `retryable` and `request_id`. Non-2xx upstream
+payloads are re-projected rather than forwarded verbatim: only slice-known
+codes keep their code/message, `references`/`references_truncated` survive at
+top level and under `details`, and unknown or malformed payloads become
+`502 invalid_upstream_response`. Browser decoding goes through
+[`web/src/lib/api-errors.ts`](../../services/admin-console/web/src/lib/api-errors.ts),
+which fills absent `category`/`retryable` from generated metadata.

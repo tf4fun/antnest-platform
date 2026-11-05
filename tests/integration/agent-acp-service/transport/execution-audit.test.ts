@@ -288,8 +288,10 @@ describe("administrative audit RPC boundary", () => {
     expect(response.status).toBe(503);
     expect(await response.json()).toEqual({
       code: "execution_audit_unavailable",
+      category: "unavailable",
       message: "Execution audit is unavailable",
       retryable: true,
+      request_id: expect.stringMatching(/^[A-Za-z0-9._:-]{1,128}$/) as unknown,
     });
   });
 
