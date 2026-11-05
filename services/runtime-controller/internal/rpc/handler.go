@@ -20,6 +20,7 @@ import (
 	"go.opentelemetry.io/otel/trace"
 
 	"github.com/tf4fun/antnest-platform/modules/service-authentication/serviceauth"
+	"github.com/tf4fun/antnest-platform/services/runtime-controller/internal/apierror"
 	"github.com/tf4fun/antnest-platform/services/runtime-controller/internal/control"
 	"github.com/tf4fun/antnest-platform/services/runtime-controller/internal/deployment"
 	"github.com/tf4fun/antnest-platform/services/runtime-controller/internal/observation"
@@ -222,7 +223,7 @@ func (h *Handler) inspectRuntime(response http.ResponseWriter, request *http.Req
 	if err != nil {
 		if errors.Is(err, control.ErrNotFound) {
 			writeJSON(response, http.StatusNotFound, errorResponse{
-				Code: "runtime_not_found", Message: "Runtime environment was not found", Retryable: false,
+				Code: apierror.RuntimeNotFound, Message: "Runtime environment was not found", Retryable: false,
 			})
 			return
 		}
@@ -316,7 +317,7 @@ func (h *Handler) getOperation(response http.ResponseWriter, request *http.Reque
 	if err != nil {
 		if errors.Is(err, control.ErrNotFound) {
 			writeJSON(response, http.StatusNotFound, errorResponse{
-				Code: "operation_not_found", Message: "Runtime operation was not found", Retryable: false,
+				Code: apierror.OperationNotFound, Message: "Runtime operation was not found", Retryable: false,
 			})
 			return
 		}
@@ -425,13 +426,13 @@ func (h *Handler) watchObservations(response http.ResponseWriter, request *http.
 
 func (*Handler) methodNotAllowed(response http.ResponseWriter, _ *http.Request) {
 	writeJSON(response, http.StatusMethodNotAllowed, errorResponse{
-		Code: "method_not_allowed", Message: "method is not allowed for this route", Retryable: false,
+		Code: apierror.MethodNotAllowed, Message: "method is not allowed for this route", Retryable: false,
 	})
 }
 
 func (*Handler) notFound(response http.ResponseWriter, _ *http.Request) {
 	writeJSON(response, http.StatusNotFound, errorResponse{
-		Code: "route_not_found", Message: "route was not found", Retryable: false,
+		Code: apierror.RouteNotFound, Message: "route was not found", Retryable: false,
 	})
 }
 
@@ -491,7 +492,7 @@ func requireIdempotencyKey(response http.ResponseWriter, request *http.Request) 
 	value := strings.TrimSpace(request.Header.Get("Idempotency-Key"))
 	if value == "" {
 		writeJSON(response, http.StatusBadRequest, errorResponse{
-			Code: "idempotency_key_required", Message: "Idempotency-Key is required", Retryable: false,
+			Code: apierror.IdempotencyKeyRequired, Message: "Idempotency-Key is required", Retryable: false,
 		})
 		return "", false
 	}
@@ -704,34 +705,34 @@ func writeOperationError(response http.ResponseWriter, operation deployment.Oper
 	status := http.StatusConflict
 	retryable := false
 	switch code {
-	case "runtime_not_ready":
+	case apierror.RuntimeNotReady:
 		// Retain the diagnosis when replaying operations from before creation/readiness separation.
 		message = "Runtime did not become ready; check its startup configuration and required MCP processes"
 		status = http.StatusInternalServerError
-	case "runtime_drift":
+	case apierror.RuntimeDrift:
 		message = "managed Runtime has different immutable identity"
-	case "tunnel_key_registration_rejected":
+	case apierror.TunnelKeyRegistrationRejected:
 		message = "Egress rejected the prepared tunnel identity"
-	case "storage_in_use":
+	case apierror.StorageInUse:
 		message = "Agent storage is still used by a managed Runtime"
-	case "storage_ownership_conflict":
+	case apierror.StorageOwnershipConflict:
 		message = "workspace volume is not owned by this Agent"
-	case "storage_not_found":
+	case apierror.StorageNotFound:
 		message = "required Runtime storage is not available"
 		status = http.StatusNotFound
-	case "platform_unavailable":
+	case apierror.PlatformUnavailable:
 		message = "deployment platform did not return a conclusive result"
 		status = http.StatusServiceUnavailable
 		retryable = true
-	case "runtime_capacity_exhausted":
+	case apierror.RuntimeCapacityExhausted:
 		message = "Runtime management IPv4 capacity is exhausted"
 		status = http.StatusServiceUnavailable
 		retryable = true
-	case "runtime_not_found":
+	case apierror.RuntimeNotFound:
 		message = "managed Runtime was not found"
 		status = http.StatusNotFound
 	default:
-		code = "operation_failed"
+		code = apierror.OperationFailed
 		status = http.StatusInternalServerError
 	}
 	writeJSON(response, status, errorResponse{Code: code, Message: message, Retryable: retryable})
@@ -749,7 +750,7 @@ func classifyError(err error) errorDescriptor {
 	result := errorDescriptor{
 		status: http.StatusInternalServerError,
 		response: errorResponse{
-			Code: "internal_error", Message: "internal service error", Retryable: true,
+			Code: apierror.InternalError, Message: "internal service error", Retryable: true,
 		},
 	}
 	var cursorExpired *control.ObservationCursorExpiredError
@@ -758,7 +759,7 @@ func classifyError(err error) errorDescriptor {
 		return errorDescriptor{
 			status: http.StatusGone,
 			response: errorResponse{
-				Code:      "observation_cursor_expired",
+				Code:      apierror.ObservationCursorExpired,
 				Message:   "observation cursor is outside the retained journal",
 				Retryable: false, ResetSequence: &reset,
 			},
@@ -767,49 +768,49 @@ func classifyError(err error) errorDescriptor {
 	switch {
 	case errors.Is(err, control.ErrInvalidRequest), errors.Is(err, deployment.ErrInvalid):
 		result.status = http.StatusBadRequest
-		result.response = errorResponse{Code: "invalid_request", Message: "request is invalid", Retryable: false}
+		result.response = errorResponse{Code: apierror.InvalidRequest, Message: "request is invalid", Retryable: false}
 	case errors.Is(err, control.ErrRequestConflict):
 		result.status = http.StatusConflict
-		result.response = errorResponse{Code: "request_id_conflict", Message: "request ID was already used for different input", Retryable: false}
+		result.response = errorResponse{Code: apierror.RequestIdConflict, Message: "request ID was already used for different input", Retryable: false}
 	case errors.Is(err, control.ErrAgentMutationInProgress):
 		result.status = http.StatusConflict
-		result.response = errorResponse{Code: "agent_mutation_in_progress", Message: "another Agent mutation is still in progress", Retryable: true}
+		result.response = errorResponse{Code: apierror.AgentMutationInProgress, Message: "another Agent mutation is still in progress", Retryable: true}
 	case errors.Is(err, control.ErrMutationLockLost):
 		result.status = http.StatusServiceUnavailable
-		result.response = errorResponse{Code: "mutation_lock_lost", Message: "Agent mutation coordination was interrupted", Retryable: true}
+		result.response = errorResponse{Code: apierror.MutationLockLost, Message: "Agent mutation coordination was interrupted", Retryable: true}
 	case errors.Is(err, control.ErrLifecycleConflict):
 		result.status = http.StatusConflict
-		result.response = errorResponse{Code: "runtime_lifecycle_conflict", Message: "operation is not valid for the current Runtime lifecycle state", Retryable: false}
+		result.response = errorResponse{Code: apierror.RuntimeLifecycleConflict, Message: "operation is not valid for the current Runtime lifecycle state", Retryable: false}
 	case errors.Is(err, control.ErrRevisionConflict):
 		result.status = http.StatusConflict
-		result.response = errorResponse{Code: "runtime_revision_conflict", Message: "Runtime revision is stale", Retryable: false}
+		result.response = errorResponse{Code: apierror.RuntimeRevisionConflict, Message: "Runtime revision is stale", Retryable: false}
 	case errors.Is(err, control.ErrPreparedSkillSetInvalidated):
 		result.status = http.StatusConflict
-		result.response = errorResponse{Code: "prepared_skill_set_invalidated", Message: "prepared Skill set is unavailable or invalidated", Retryable: false}
+		result.response = errorResponse{Code: apierror.PreparedSkillSetInvalidated, Message: "prepared Skill set is unavailable or invalidated", Retryable: false}
 	case errors.Is(err, control.ErrSkillPreflightUnavailable):
 		result.status = http.StatusServiceUnavailable
-		result.response = errorResponse{Code: "skill_preflight_unavailable", Message: "prepared Skill volume inspection is unavailable", Retryable: true}
+		result.response = errorResponse{Code: apierror.SkillPreflightUnavailable, Message: "prepared Skill volume inspection is unavailable", Retryable: true}
 	case errors.Is(err, control.ErrTunnelRegistrationUnavailable):
 		result.status = http.StatusServiceUnavailable
-		result.response = errorResponse{Code: "tunnel_registration_unavailable", Message: "Egress tunnel registration is unavailable; retry the same request", Retryable: true}
+		result.response = errorResponse{Code: apierror.TunnelRegistrationUnavailable, Message: "Egress tunnel registration is unavailable; retry the same request", Retryable: true}
 	case errors.Is(err, repositoryport.ErrSkillCleanupInProgress):
 		result.status = http.StatusServiceUnavailable
-		result.response = errorResponse{Code: "skill_cleanup_in_progress", Message: "Skill set cleanup is in progress", Retryable: true}
+		result.response = errorResponse{Code: apierror.SkillCleanupInProgress, Message: "Skill set cleanup is in progress", Retryable: true}
 	case errors.Is(err, repositoryport.ErrSkillPreparationClosed):
 		result.status = http.StatusConflict
-		result.response = errorResponse{Code: "skill_preparation_closed", Message: "Agent Skill preparation is closed", Retryable: false}
+		result.response = errorResponse{Code: apierror.SkillPreparationClosed, Message: "Agent Skill preparation is closed", Retryable: false}
 	case errors.Is(err, control.ErrDrift):
 		result.status = http.StatusConflict
-		result.response = errorResponse{Code: "runtime_drift", Message: "Runtime platform state differs from the controller record", Retryable: false}
+		result.response = errorResponse{Code: apierror.RuntimeDrift, Message: "Runtime platform state differs from the controller record", Retryable: false}
 	case errors.Is(err, deployment.ErrIdentityConflict):
 		result.status = http.StatusConflict
-		result.response = errorResponse{Code: "runtime_drift", Message: "managed Runtime has different immutable identity", Retryable: false}
+		result.response = errorResponse{Code: apierror.RuntimeDrift, Message: "managed Runtime has different immutable identity", Retryable: false}
 	case errors.Is(err, control.ErrNotFound):
 		result.status = http.StatusNotFound
-		result.response = errorResponse{Code: "runtime_not_found", Message: "Runtime environment was not found", Retryable: false}
+		result.response = errorResponse{Code: apierror.RuntimeNotFound, Message: "Runtime environment was not found", Retryable: false}
 	case errors.Is(err, context.DeadlineExceeded):
 		result.status = http.StatusGatewayTimeout
-		result.response = errorResponse{Code: "deadline_exceeded", Message: "operation deadline exceeded", Retryable: true}
+		result.response = errorResponse{Code: apierror.DeadlineExceeded, Message: "operation deadline exceeded", Retryable: true}
 	}
 	return result
 }
@@ -822,7 +823,33 @@ func writeError(response http.ResponseWriter, err error) {
 	writeJSON(response, descriptor.status, descriptor.response)
 }
 
+func normalizeErrorResponse(response http.ResponseWriter, failure *errorResponse) {
+	envelope := apierror.New(failure.Code, failure.Message, response.Header().Get("X-Request-ID"))
+	if envelope.Code == failure.Code {
+		envelope.Retryable = failure.Retryable
+		if failure.ResetSequence != nil {
+			envelope.Details = map[string]any{"reset_sequence": *failure.ResetSequence}
+		}
+	} else {
+		failure.ResetSequence, failure.Details = nil, nil
+	}
+	failure.Code, failure.Category, failure.Message = envelope.Code, envelope.Category, envelope.Message
+	failure.Retryable, failure.RequestID = envelope.Retryable, envelope.RequestID
+	failure.Details = envelope.Details
+	response.Header().Set("X-Request-ID", envelope.RequestID)
+	response.Header().Set("Cache-Control", "no-store")
+}
+
 func writeJSON(response http.ResponseWriter, status int, value any) {
+	switch failure := value.(type) {
+	case errorResponse:
+		normalizeErrorResponse(response, &failure)
+		value = failure
+	case *errorResponse:
+		if failure != nil {
+			normalizeErrorResponse(response, failure)
+		}
+	}
 	observeResponse(response, value)
 	response.Header().Set("Content-Type", "application/json")
 	response.WriteHeader(status)
