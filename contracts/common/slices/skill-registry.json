@@ -1,0 +1,27 @@
+{
+  "service": "skill-registry",
+  "codes": [
+    "actor_mismatch",
+    "busy",
+    "caller_context_invalid",
+    "caller_context_required",
+    "caller_not_allowed",
+    "content_changed",
+    "forbidden",
+    "identity_dependency_unavailable",
+    "internal",
+    "invalid_package",
+    "invalid_request",
+    "limit_exceeded",
+    "name_conflict",
+    "not_found",
+    "organization_mismatch",
+    "request_conflict",
+    "revision_conflict",
+    "service_unauthenticated",
+    "source_invalid",
+    "source_unavailable",
+    "temporarily_unavailable",
+    "unsupported_media_type"
+  ]
+}
