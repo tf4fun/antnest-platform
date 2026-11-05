@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { ERROR_METADATA } from "../src/errors.gen.ts";
+import { ERROR_CODES, ERROR_METADATA } from "../src/errors.gen.ts";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import { RequestError } from "@agentclientprotocol/sdk/unstable";
@@ -520,12 +520,18 @@ for (const { name, failure, code, message } of promptFailureCases)
     const expected = {
       operationId: intent.intentId, sessionId: intent.sessionId,
       acceptance: "unknown", phase: "uncertain",
-      error: {
-        code, category: ERROR_METADATA[code].category, message, requestId: error.requestId,
-        request_id: error.requestId, operationId: intent.intentId,
-        retryable: false, recovery: "query_operation",
-        details: { recovery: "query_operation", operationId: intent.intentId },
-      },
+      error: Object.hasOwn(ERROR_METADATA, code)
+        ? {
+            code, category: ERROR_METADATA[code].category, message, requestId: error.requestId,
+            request_id: error.requestId, operationId: intent.intentId,
+            retryable: false, recovery: "query_operation",
+            details: { recovery: "query_operation", operationId: intent.intentId },
+          }
+        : {
+            code: ERROR_CODES.INTERNAL, category: "internal",
+            message: "Internal service error", requestId: error.requestId,
+            request_id: error.requestId, retryable: false, recovery: "none",
+          },
     };
     assert.deepEqual(snapshot, expected);
     for (let read = 0; read < 3; read++) {

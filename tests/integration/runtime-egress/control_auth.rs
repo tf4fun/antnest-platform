@@ -212,10 +212,11 @@ impl HttpResponse {
         assert!(object["message"].as_str().is_some_and(|v| !v.is_empty()));
         let request_id = object["request_id"].as_str().unwrap();
         assert!(!request_id.is_empty() && request_id.len() <= 128);
-        assert!(request_id
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric()
-                || matches!(c, '.' | '_' | ':' | '-')));
+        assert!(
+            request_id
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | ':' | '-'))
+        );
         assert!(!String::from_utf8_lossy(&self.body).contains(support::workload_token()));
     }
 }
