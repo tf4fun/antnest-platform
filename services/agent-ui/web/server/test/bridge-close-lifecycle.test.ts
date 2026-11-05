@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { AcpHttpBridge, AgentAccessRevokedError, consumeAgentExecutionStateStream } from "../src/adapters/acp-http.ts";
+import { AcpHttpBridge, AgentAccessRevokedError, consumeAgentExecutionStateStream, type AcpBridgeCallbacks } from "../src/adapters/acp-http.ts";
 import { AgentBridgeOwner, type AcpBridgePort } from "../src/bridge/agent-owner.ts";
-import { BridgeRegistry } from "../src/bridge/registry.ts";
+import { BridgeRegistry, type BridgeScope } from "../src/bridge/registry.ts";
 import { testScope } from "./support/auth-fixture.ts";
 
 const scope = { organizationId: "org", principalId: "user", agentId: "agent" };
@@ -20,7 +20,18 @@ const ownerInput = (port: Partial<AcpBridgePort>) => ({
 const registryOptions = { now: () => 0, idleMs: 0,
   epoch: () => "epoch", incarnation: () => "incarnation" };
 
-const earlyDenied = { code: "access_denied", message: "Agent access is not allowed", retryable: false };
+const earlyDenied = {
+  category: "forbidden",
+  code: "access_denied",
+  message: "Agent access is not allowed",
+  request_id: "test-early-denial",
+  retryable: false,
+};
+const legacyEarlyDenied = {
+  code: "access_denied",
+  message: "Agent access is not allowed",
+  retryable: false,
+};
 function earlyInitialization(status = 403, body: BodyInit = JSON.stringify(earlyDenied)) {
   const response = new Response(body, { status, headers: { "content-type": "application/json" } });
   const requested = deferred();
@@ -49,6 +60,14 @@ async function initializationError(fixture: ReturnType<typeof earlyInitializatio
 
 test("a complete early HTTP access denial preserves its typed error after original response cleanup", async () => {
   const fixture = earlyInitialization();
+  const error = await initializationError(fixture);
+  assert(error instanceof AgentAccessRevokedError);
+  assert.deepEqual(fixture.calls, ["initialize"], "no session/new, list, Prompt or initialize replay");
+  assert.equal(fixture.response.body?.locked, false, "the original response reader is released before rejection");
+});
+
+test("a complete legacy three-field early HTTP access denial still preserves its typed error", async () => {
+  const fixture = earlyInitialization(403, JSON.stringify(legacyEarlyDenied));
   const error = await initializationError(fixture);
   assert(error instanceof AgentAccessRevokedError);
   assert.deepEqual(fixture.calls, ["initialize"], "no session/new, list, Prompt or initialize replay");
@@ -140,6 +159,26 @@ const invalidEarlyDenials: Array<{ name: string; status: number; body: BodyInit 
     0xff,
     ...new TextEncoder().encode('","retryable":false}'),
   ]) },
+  { name: "wrong category", status: 403, body: JSON.stringify({ ...earlyDenied, category: "internal" }) },
+  { name: "nonstring request id", status: 403, body: JSON.stringify({ ...earlyDenied, request_id: 42 }) },
+  { name: "empty request id", status: 403, body: JSON.stringify({ ...earlyDenied, request_id: "" }) },
+  { name: "unsafe request id", status: 403, body: JSON.stringify({ ...earlyDenied, request_id: "../escape" }) },
+  { name: "request id over 128 characters", status: 403,
+    body: JSON.stringify({ ...earlyDenied, request_id: "a".repeat(129) }) },
+  { name: "newline request id", status: 403,
+    body: JSON.stringify({ ...earlyDenied, request_id: "line-one\nline-two" }) },
+  { name: "trailing-newline request id", status: 403,
+    body: JSON.stringify({ ...earlyDenied, request_id: "test-early-denial\n" }) },
+  { name: "category without request id", status: 403, body: JSON.stringify({
+    category: earlyDenied.category, code: earlyDenied.code,
+    message: earlyDenied.message, retryable: earlyDenied.retryable }) },
+  { name: "request id without category", status: 403, body: JSON.stringify({
+    code: earlyDenied.code, message: earlyDenied.message,
+    request_id: earlyDenied.request_id, retryable: earlyDenied.retryable }) },
+  { name: "details field", status: 403,
+    body: JSON.stringify({ ...earlyDenied, details: { reason: "private" } }) },
+  { name: "duplicate metadata key", status: 403,
+    body: '{"category":"forbidden","category":"forbidden","code":"access_denied","message":"Agent access is not allowed","request_id":"test-early-denial","retryable":false}' },
 ];
 for (const entry of invalidEarlyDenials) {
   test(`early initialize ${entry.name} stays a dependency failure`, async () => {
@@ -177,15 +216,23 @@ test("early initialize body read failures never retain private upstream details"
 
 function initializedGetFailure(response: () => Promise<Response>,
   deleteResponse: () => Promise<Response> = () => Promise.resolve(new Response(null, { status: 202 })),
-  closeTimeoutMs?: number) {
+  closeTimeoutMs?: number,
+  open?: {
+    scope?: BridgeScope;
+    callbacks?: AcpBridgeCallbacks;
+    signal?: AbortSignal;
+    watch?: () => Response | Promise<Response>;
+  }) {
   const get = deferred(), releaseGet = deferred(), supplied = deferred();
   const deleting = deferred(), cleanup = deferred();
   const calls: string[] = [];
   const connectionId = "original-initialized-connection";
   const opening = AcpHttpBridge.open({
-    baseUrl: new URL("http://acp.invalid"), scope: testScope(scope),
+    baseUrl: new URL("http://acp.invalid"), scope: open?.scope ?? testScope(scope),
     ...(closeTimeoutMs === undefined ? {} : { closeTimeoutMs }),
-    callbacks: { update() {}, requestPermission() { return { outcome: { outcome: "cancelled" } }; } },
+    ...(open?.signal === undefined ? {} : { signal: open.signal }),
+    callbacks: open?.callbacks ??
+      { update() {}, requestPermission() { return { outcome: { outcome: "cancelled" } }; } },
     fetchImpl: async (input, init) => {
       const request = new Request(input, init);
       if (request.method === "GET") {
@@ -204,6 +251,11 @@ function initializedGetFailure(response: () => Promise<Response>,
         await cleanup.promise;
         return deleteResponse();
       }
+      if (open?.watch !== undefined &&
+        new URL(request.url).pathname === "/rpc/agent-acp/watch-agent-execution-state") {
+        calls.push("watch");
+        return open.watch();
+      }
       const message = await request.json();
       calls.push(message.method);
       assert.equal(message.method, "initialize", "closed transport must not dispatch another business RPC");
@@ -220,6 +272,13 @@ function initializedGetFailure(response: () => Promise<Response>,
 }
 
 const forwardedPeerLoss = {
+  category: "unavailable",
+  code: "acp_http_peer_disconnected",
+  message: "Original ACP HTTP peer disconnected",
+  request_id: "test-peer-loss",
+  retryable: true,
+};
+const legacyForwardedPeerLoss = {
   code: "acp_http_peer_disconnected",
   message: "Original ACP HTTP peer disconnected",
   retryable: true,
@@ -248,6 +307,34 @@ test("a strict forwarded peer loss permits replacement only after original clean
     assert.equal(bridge.canReplaceAfterPeerLoss, false);
     fixture.cleanup();
     const failure = await outcome;
+    assert(failure instanceof AggregateError, "replacement qualification must not fabricate a successful close");
+    assert.equal(bridge.close(), closing);
+    await assert.rejects(closing, (error: unknown) => error === failure);
+    assert.equal(response.body?.locked, false);
+    assert.equal(bridge.canReplaceAfterPeerLoss, true);
+    assert.deepEqual(fixture.calls, ["initialize", "GET", "DELETE"], "no business RPC or initialization replay");
+  } finally {
+    fixture.releaseGet(); fixture.cleanup();
+    await Promise.allSettled([closing, bridge.close()]);
+  }
+});
+
+test("a legacy three-field forwarded peer loss still qualifies replacement after original cleanup", async () => {
+  const response = Response.json(legacyForwardedPeerLoss, { status: 503 });
+  const fixture = initializedGetFailure(
+    () => Promise.reject(new TypeError("original GET disconnected")),
+    () => Promise.resolve(response),
+  );
+  const bridge = await fixture.opening;
+  let closing: Promise<void> | undefined;
+  try {
+    await fixture.get;
+    fixture.releaseGet();
+    await fixture.deleting;
+    await bridge.closed.then(() => undefined, () => undefined);
+    closing = bridge.close();
+    fixture.cleanup();
+    const failure = await closing.then(() => undefined, (error: unknown) => error);
     assert(failure instanceof AggregateError, "replacement qualification must not fabricate a successful close");
     assert.equal(bridge.close(), closing);
     await assert.rejects(closing, (error: unknown) => error === failure);
@@ -401,6 +488,26 @@ const invalidForwardedPeerLosses: Array<{
     0xff, ...new TextEncoder().encode('","retryable":true}'),
   ]) },
   { name: "body over 65536 bytes", status: 503, body: JSON.stringify(forwardedPeerLoss) + " ".repeat(65536) },
+  { name: "wrong category", status: 503, body: JSON.stringify({ ...forwardedPeerLoss, category: "internal" }) },
+  { name: "nonstring request id", status: 503, body: JSON.stringify({ ...forwardedPeerLoss, request_id: 42 }) },
+  { name: "empty request id", status: 503, body: JSON.stringify({ ...forwardedPeerLoss, request_id: "" }) },
+  { name: "unsafe request id", status: 503, body: JSON.stringify({ ...forwardedPeerLoss, request_id: "../escape" }) },
+  { name: "request id over 128 characters", status: 503,
+    body: JSON.stringify({ ...forwardedPeerLoss, request_id: "a".repeat(129) }) },
+  { name: "newline request id", status: 503,
+    body: JSON.stringify({ ...forwardedPeerLoss, request_id: "line-one\nline-two" }) },
+  { name: "trailing-newline request id", status: 503,
+    body: JSON.stringify({ ...forwardedPeerLoss, request_id: "test-peer-loss\n" }) },
+  { name: "category without request id", status: 503, body: JSON.stringify({
+    category: forwardedPeerLoss.category, code: forwardedPeerLoss.code,
+    message: forwardedPeerLoss.message, retryable: forwardedPeerLoss.retryable }) },
+  { name: "request id without category", status: 503, body: JSON.stringify({
+    code: forwardedPeerLoss.code, message: forwardedPeerLoss.message,
+    request_id: forwardedPeerLoss.request_id, retryable: forwardedPeerLoss.retryable }) },
+  { name: "details field", status: 503,
+    body: JSON.stringify({ ...forwardedPeerLoss, details: { reason: "private" } }) },
+  { name: "duplicate metadata key", status: 503,
+    body: '{"category":"unavailable","category":"unavailable","code":"acp_http_peer_disconnected","message":"Original ACP HTTP peer disconnected","request_id":"test-peer-loss","retryable":true}' },
 ];
 
 for (const entry of invalidForwardedPeerLosses) {
@@ -442,6 +549,145 @@ for (const entry of invalidForwardedPeerLosses) {
     }
   });
 }
+
+test("concurrent observations replace a peer-lost owner once only after the canonical DELETE and watch join", async () => {
+  const deleteLoss = Response.json(forwardedPeerLoss, { status: 503 });
+  const watchStarted = deferred(), watchCancelled = deferred(), releaseWatch = deferred();
+  let firstBridge: AcpHttpBridge | undefined;
+  const freshBridges: AcpHttpBridge[] = [];
+  const bodies: ReadableStream[] = [];
+  let created = 0;
+  let firstFixture: ReturnType<typeof initializedGetFailure> | undefined;
+  const keepOpen = () => new ReadableStream<Uint8Array>();
+  const registry = new BridgeRegistry<AgentBridgeOwner>({
+    now: () => 0, idleMs: 0, epoch: () => "envelope-epoch",
+    incarnation: () => `envelope-incarnation-${created + 1}`,
+    create: (current, retainWork, initialization) => AgentBridgeOwner.open({
+      scope: current, retainWork, signal: initialization.signal,
+      connect: async (selected, callbacks, signal) => {
+        if (++created === 1) {
+          const fixture = initializedGetFailure(
+            () => Promise.reject(new TypeError("fetch failed", {
+              cause: Object.assign(new Error("original GET peer reset"), { code: "ECONNRESET" }),
+            })),
+            () => Promise.resolve(deleteLoss),
+            undefined,
+            { scope: selected, callbacks, signal, watch: () => {
+              watchStarted.resolve();
+              const body = new ReadableStream<Uint8Array>({ cancel() {
+                watchCancelled.resolve();
+                return releaseWatch.promise;
+              } });
+              bodies.push(body);
+              return new Response(body, { headers: { "content-type": "text/event-stream" } });
+            } },
+          );
+          firstFixture = fixture;
+          return fixture.opening;
+        }
+        const bridge = await AcpHttpBridge.open({ baseUrl: new URL("http://acp.invalid"),
+          scope: selected, callbacks, signal,
+          fetchImpl: async (input, init) => {
+            const request = new Request(input, init);
+            const path = new URL(request.url).pathname;
+            let response: Response;
+            if (path === "/rpc/agent-acp/watch-agent-execution-state") {
+              response = new Response(keepOpen(), { headers: { "content-type": "text/event-stream" } });
+            } else if (request.method === "GET") {
+              assert.equal(request.headers.get("acp-connection-id"), "fresh-initialized-connection");
+              response = new Response(keepOpen(), { headers: { "content-type": "text/event-stream" } });
+            } else if (request.method === "DELETE") {
+              assert.equal(request.headers.get("acp-connection-id"), "fresh-initialized-connection");
+              response = new Response(null, { status: 202 });
+            } else {
+              const message = await request.json() as {
+                id: number | string; method: string; params: { protocolVersion: number };
+              };
+              assert.equal(message.method, "initialize",
+                "the replacement must not replay a Prompt or another business RPC");
+              assert.equal(request.headers.has("acp-connection-id"), false);
+              response = Response.json({ jsonrpc: "2.0", id: message.id, result: {
+                protocolVersion: message.params.protocolVersion,
+                agentCapabilities: { loadSession: true },
+                _meta: { "antnest.dev/bridge": { intentReceipt: 1, targetCancel: 1, deliveryMark: 1 } },
+              } }, { headers: { "acp-connection-id": "fresh-initialized-connection" } });
+            }
+            if (response.body) bodies.push(response.body);
+            return response;
+          },
+        });
+        freshBridges.push(bridge);
+        return bridge;
+      },
+    }),
+  });
+  const observations: Array<ReturnType<typeof registry.observe>> = [];
+  let firstLease: Awaited<ReturnType<typeof registry.observe>> | undefined;
+  let oldClose: Promise<void> | undefined;
+  try {
+    firstLease = await registry.observe(testScope({ ...scope }));
+    firstLease.release();
+    assert(firstFixture !== undefined, "the first owner must use the initialized GET fixture");
+    const fixture = firstFixture;
+    await Promise.all([fixture.get, watchStarted.promise]);
+    fixture.releaseGet();
+    await fixture.deleting;
+    firstBridge = await fixture.opening;
+    await firstBridge.closed.then(() => undefined, () => undefined);
+    fixture.cleanup();
+    oldClose = firstLease.owner.close();
+    const ownerOutcome = oldClose.then(() => undefined, (error: unknown) => error);
+    await watchCancelled.promise;
+    await turn();
+    const current = testScope({ ...scope });
+    observations.push(registry.observe(current), registry.observe(current));
+    let settled = 0;
+    for (const task of observations)
+      void task.then(() => { settled++; }, () => { settled++; });
+    await turn();
+    assert.equal(settled, 0, "no replacement before the original cleanup finishes");
+    assert.equal(created, 1);
+    assert.equal(firstLease.owner.canReplaceAfterPeerLoss, false);
+    releaseWatch.resolve();
+    const [failure, leases] = await Promise.all([ownerOutcome, Promise.all(observations)]);
+    assert(failure instanceof AggregateError, "the original owner close must remain rejected");
+    assert.equal(firstLease.owner.close(), oldClose, "the original close result stays stable");
+    await assert.rejects(oldClose, (error: unknown) => error === failure);
+    assert.equal(firstLease.owner.canReplaceAfterPeerLoss, true);
+    assert.equal(created, 2, "concurrent observations share exactly one replacement");
+    assert.equal(freshBridges.length, 1);
+    assert.equal(leases[0].owner, leases[1].owner);
+    assert.notEqual(leases[0].owner, firstLease.owner);
+    assert.notEqual(leases[0].incarnation, firstLease.incarnation);
+    assert.equal(deleteLoss.body?.locked, false, "the canonical DELETE body released its original reader");
+    assert.deepEqual(fixture.calls.filter((call) => call !== "watch"),
+      ["initialize", "GET", "DELETE"], "no business RPC or initialization replay");
+    assert.equal(fixture.calls.filter((call) => call === "watch").length, 1);
+    for (const lease of leases) lease.release();
+  } finally {
+    releaseWatch.resolve();
+    firstFixture?.releaseGet();
+    firstFixture?.cleanup();
+    firstLease?.release();
+    const observed = await Promise.allSettled(observations);
+    for (const result of observed)
+      if (result.status === "fulfilled") result.value.release();
+    const drained = await registry.drain(1_000);
+    const firstClose = firstBridge === undefined ? undefined :
+      await firstBridge.close().then(() => "fulfilled", () => "rejected");
+    const freshClosed = await Promise.allSettled(freshBridges.map((bridge) => bridge.close()));
+    await Promise.allSettled([oldClose, firstBridge?.closed,
+      ...freshBridges.map((bridge) => bridge.closed)]);
+    if (created > 1) {
+      assert.deepEqual(drained, { forced: false });
+      assert.equal(firstClose, "rejected", "the original transport close failure is preserved");
+    }
+    assert.equal(registry.snapshotMetrics().owners, 0, "every captured owner slot drains");
+    for (const result of freshClosed)
+      assert.equal(result.status, "fulfilled", "fresh Bridge cleanup failures must remain blocking");
+    assert(bodies.every((body) => !body.locked), "all original response readers released");
+  }
+});
 
 test("an initialized connection preserves a complete GET access denial after its original cleanup", async () => {
   const reading = deferred(), eof = deferred();
