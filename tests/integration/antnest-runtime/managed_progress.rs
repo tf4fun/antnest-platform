@@ -99,12 +99,14 @@ async fn managed_progress_is_live_token_scoped_and_drained_before_result() {
     let mut client = session::connect(read, write, CancellationToken::new(), source.clone())
         .await
         .unwrap();
-    let mut server = server.await.unwrap();
     let mut catalog = Catalog::default();
     catalog
         .add_server("fixture", client.peer().clone(), source)
         .await
         .unwrap();
+    // In the modern lifecycle the server-side serve() resolves on the first
+    // post-discovery request rather than during client negotiation.
+    let mut server = server.await.unwrap();
     for canceled in [false, true, false] {
         let (updates, mut received) = mpsc::unbounded_channel();
         let sink = ProgressSink::new(move |update| {

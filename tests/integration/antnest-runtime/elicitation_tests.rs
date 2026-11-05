@@ -177,10 +177,6 @@ async fn sdk_negotiation_preserves_modern_and_legacy_noninteractive_tools() {
         .await
         .expect("client negotiation timed out")
         .unwrap();
-        let mut server = tokio::time::timeout(Duration::from_secs(2), server)
-            .await
-            .expect("fixture initialization timed out")
-            .unwrap();
         assert_eq!(client.peer().peer_info().unwrap().protocol_version, version);
         let mut catalog = Catalog::default();
         tokio::time::timeout(
@@ -190,6 +186,13 @@ async fn sdk_negotiation_preserves_modern_and_legacy_noninteractive_tools() {
         .await
         .expect("discovery timed out")
         .unwrap();
+        // In the modern lifecycle the server-side serve() resolves on the first
+        // post-discovery request rather than during client negotiation, so the
+        // join handle is only awaited after the first call reached it.
+        let mut server = tokio::time::timeout(Duration::from_secs(2), server)
+            .await
+            .expect("fixture initialization timed out")
+            .unwrap();
 
         let result = catalog
             .call(
