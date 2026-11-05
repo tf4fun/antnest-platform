@@ -221,3 +221,14 @@ failure, promotion rollback/CAS/idempotence and independent formal reads after
 source removal. The complete dual-Agent learning → projection → temporary use →
 promotion → Template/rebuild workflow is covered by the
 `make e2e-skill-deployment` Docker E2E target.
+
+### Error envelope
+
+HTTP failures use the [common error contract](../common/error.schema.json) five-field
+envelope at the top level **and** inside the legacy `error` member (one-release alias for
+old consumers) with the [Skill Registry slice](../common/slices/skill-registry.json) of
+emitted codes.
+
+### Error consumer compatibility
+
+The HTTP Skill Source consumer accepts the legacy nested `{error:{code,message}}` conflict reply and the common five-field envelope (`code`, `category`, `message`, `retryable`, `request_id`) with optional object `details` and an exact two-field `error` alias. New metadata is all-or-none; aliases must agree. Unknown keys, partial or null common fields, mismatched aliases, non-object details, and oversized bodies fall back to conservative `source_unavailable`. Deploy this consumer before ACP producers emit common fields.

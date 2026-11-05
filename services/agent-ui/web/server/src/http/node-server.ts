@@ -1,3 +1,5 @@
+import { workspaceError } from "../protocol/api-error.ts";
+import { ERROR_CODES } from "../errors.gen.ts";
 import {
   createServer,
   type IncomingMessage,
@@ -51,7 +53,21 @@ export function createWorkspaceHttpServer(runtime: WorkspaceHandler, options: Do
       : work();
     void observed.catch(() => {
       if (outgoing.headersSent) outgoing.destroy();
-      else outgoing.writeHead(503).end();
+      else {
+        const envelope = workspaceError(
+          ERROR_CODES.WORKSPACE_UNAVAILABLE,
+          "Workspace is unavailable",
+          "retry_read",
+          "",
+          true,
+        );
+        outgoing.writeHead(503, {
+          "content-type": "application/json; charset=utf-8",
+          "cache-control": "no-store",
+          "x-request-id": envelope.request_id,
+        });
+        outgoing.end(JSON.stringify(envelope));
+      }
     });
   };
   const server = options.authentication.workload.serverTLS
@@ -117,24 +133,26 @@ async function serve(
       return;
     }
     if (!admitted.policy.known) {
-      const failure = workspaceFailure(404, "route_not_found");
+      const failure = workspaceFailure(404, ERROR_CODES.ROUTE_NOT_FOUND);
       outgoing.writeHead(failure.status, Object.fromEntries(failure.headers));
       outgoing.end(await failure.text()); return;
     }
     if (admitted.policy.json) requireJsonMedia(incoming);
     if (options.isDraining?.()) {
+      const envelope = workspaceError(
+        ERROR_CODES.WORKSPACE_UNAVAILABLE,
+        "Workspace is draining",
+        "retry_read",
+        "",
+        true,
+      );
       outgoing.writeHead(503, {
         "content-type": "application/json; charset=utf-8",
         "cache-control": "no-store",
         "retry-after": "1",
+        "x-request-id": envelope.request_id,
       });
-      outgoing.end(JSON.stringify({
-        code: "workspace_unavailable",
-        message: "Workspace is draining",
-        requestId: randomUUID(),
-        retryable: true,
-        recovery: "retry_read",
-      }));
+      outgoing.end(JSON.stringify(envelope));
       return;
     }
     const assetName = new URL(url, "http://workspace.internal").pathname.match(/^\/workspace\/assets\/([A-Za-z0-9_.-]+)$/)?.[1];
@@ -237,19 +255,19 @@ async function serve(
       outgoing.writeHead(failure.status, Object.fromEntries(failure.headers));
       outgoing.end(await failure.text()); return;
     }
+    const envelope = workspaceError(
+      ERROR_CODES.WORKSPACE_UNAVAILABLE,
+      "Workspace is unavailable",
+      "retry_read",
+      "",
+      true,
+    );
     outgoing.writeHead(503, {
       "content-type": "application/json",
       "cache-control": "no-store",
+      "x-request-id": envelope.request_id,
     });
-    outgoing.end(
-      JSON.stringify({
-        code: "workspace_unavailable",
-        message: "Workspace is unavailable",
-        requestId: randomUUID(),
-        retryable: true,
-        recovery: "retry_read",
-      }),
-    );
+    outgoing.end(JSON.stringify(envelope));
   } finally { releaseUpload?.(); }
 }
 
@@ -281,7 +299,7 @@ async function serveEventStream(
   let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
   let finished = false;
   const responseTask = async () => {
-    const response = await runtime.handle(request) ?? workspaceFailure(404, "route_not_found");
+    const response = await runtime.handle(request) ?? workspaceFailure(404, ERROR_CODES.ROUTE_NOT_FOUND);
     if (request.signal.aborted || Date.now() >= expiresAt) {
       await response.body?.cancel();
       assertOpen();
@@ -321,11 +339,21 @@ async function serveEventStream(
   }
 }
 
-function workspaceFailure(status: number, code: string): Response {
-  return Response.json({ code, message: "Workspace request was rejected", requestId: randomUUID(),
-    retryable: status >= 500 || status === 429,
-    recovery: status === 401 ? "login" : status === 429 ? "refresh" : status >= 500 ? "retry_read" : "none" },
-    { status, headers: { "cache-control": "no-store" } });
+function workspaceFailure(status: number, code: string, message = "Workspace request was rejected"): Response {
+  const envelope = workspaceError(
+    code,
+    message,
+    status === 401 ? "login" : status === 429 ? "refresh" : status >= 500 ? "retry_read" : "none",
+    "",
+    status >= 500 || status === 429,
+  );
+  return Response.json(envelope, {
+    status,
+    headers: {
+      "cache-control": "no-store",
+      "x-request-id": envelope.request_id,
+    },
+  });
 }
 
 class HttpDeadlineError extends Error {}
@@ -346,10 +374,11 @@ async function serveOrdinary(
     request.signal.addEventListener("abort", abort, { once: true });
   });
   const read = async () => {
-    const response = await runtime.handle(request) ?? Response.json({
-      code: "route_not_found", message: "Workspace route was not found",
-      requestId: randomUUID(), retryable: false, recovery: "none",
-    }, { status: 404 });
+    const response = await runtime.handle(request) ?? workspaceFailure(
+      404,
+      ERROR_CODES.ROUTE_NOT_FOUND,
+      "Workspace route was not found",
+    );
     if (request.signal.aborted) {
       await response.body?.cancel();
       request.signal.throwIfAborted();
@@ -375,11 +404,17 @@ async function serveOrdinary(
   } catch (cause) {
     if (cause instanceof HttpDeadlineError && !output.destroyed) {
       const prompt = /\/prompts$|\/operations\/[^/]+\/cancel$/u.test(new URL(request.url).pathname);
+      const envelope = workspaceError(
+        ERROR_CODES.WORKSPACE_DEADLINE_EXCEEDED,
+        "Workspace request timed out",
+        prompt ? "query_operation" : request.method === "GET" ? "retry_read" : "refresh",
+        "",
+        true,
+      );
       output.writeHead(504, { "content-type": "application/json; charset=utf-8",
-        "cache-control": "no-store", connection: "close" });
-      output.end(JSON.stringify({ code: "workspace_deadline_exceeded",
-        message: "Workspace request timed out", requestId: randomUUID(), retryable: true,
-        recovery: prompt ? "query_operation" : request.method === "GET" ? "retry_read" : "refresh" }));
+        "cache-control": "no-store", connection: "close",
+        "x-request-id": envelope.request_id });
+      output.end(JSON.stringify(envelope));
       // Only this HTTP wait expires. Accepted ACP work has its own lifetime.
       disconnect.abort(cause);
     } else if (!output.destroyed) throw cause;

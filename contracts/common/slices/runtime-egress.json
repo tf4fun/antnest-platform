@@ -1,0 +1,25 @@
+{
+  "service": "runtime-egress",
+  "codes": [
+    "address_pool_exhausted",
+    "agent_network_not_found",
+    "agent_network_unavailable",
+    "attachment_open",
+    "caller_not_allowed",
+    "cleanup_failed",
+    "control_plane_unavailable",
+    "internal",
+    "invalid_request",
+    "method_not_allowed",
+    "operation_failed",
+    "policy_revision_conflict",
+    "policy_revision_not_found",
+    "resource_version_conflict",
+    "route_not_found",
+    "service_not_ready",
+    "service_unauthenticated",
+    "tunnel_key_conflict",
+    "tunnel_key_unavailable",
+    "unsupported_media_type"
+  ]
+}

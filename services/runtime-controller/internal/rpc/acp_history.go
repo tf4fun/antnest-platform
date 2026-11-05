@@ -8,11 +8,12 @@ import (
 
 	"github.com/tf4fun/antnest-platform/modules/service-authentication/serviceauth"
 	"github.com/tf4fun/antnest-platform/services/runtime-controller/internal/acpincarnation"
+	"github.com/tf4fun/antnest-platform/services/runtime-controller/internal/apierror"
 )
 
 func (h *Handler) historyAcpIncarnations(w http.ResponseWriter, r *http.Request) {
 	if r.ContentLength > acpIncarnationRequestBytes {
-		writeAcpIncarnationError(w, "request_too_large")
+		writeAcpIncarnationError(w, apierror.RequestTooLarge)
 		return
 	}
 	var raw []byte
@@ -21,11 +22,11 @@ func (h *Handler) historyAcpIncarnations(w http.ResponseWriter, r *http.Request)
 		raw, err = io.ReadAll(io.LimitReader(r.Body, acpIncarnationRequestBytes+1))
 	}
 	if acpIncarnationTimedOut(r.Context(), err) {
-		writeAcpIncarnationError(w, "deadline_exceeded")
+		writeAcpIncarnationError(w, apierror.DeadlineExceeded)
 		return
 	}
 	if len(raw) > acpIncarnationRequestBytes {
-		writeAcpIncarnationError(w, "request_too_large")
+		writeAcpIncarnationError(w, apierror.RequestTooLarge)
 		return
 	}
 	var wire struct {
@@ -33,20 +34,20 @@ func (h *Handler) historyAcpIncarnations(w http.ResponseWriter, r *http.Request)
 		Cursor   json.RawMessage `json:"cursor"`
 	}
 	if err != nil || serviceauth.DecodeObject(raw, &wire) != nil || len(wire.Cursor) == 0 {
-		writeAcpIncarnationError(w, "invalid_request")
+		writeAcpIncarnationError(w, apierror.InvalidRequest)
 		return
 	}
 	input := acpincarnation.HistoryRequest{MemberID: wire.MemberID}
 	if !bytes.Equal(bytes.TrimSpace(wire.Cursor), []byte("null")) {
 		var cursor acpincarnation.HistoryCursor
 		if serviceauth.DecodeObject(wire.Cursor, &cursor) != nil {
-			writeAcpIncarnationError(w, "invalid_request")
+			writeAcpIncarnationError(w, apierror.InvalidRequest)
 			return
 		}
 		input.Cursor = &cursor
 	}
 	if !acpincarnation.ValidHistoryRequest(input) {
-		writeAcpIncarnationError(w, "invalid_request")
+		writeAcpIncarnationError(w, apierror.InvalidRequest)
 		return
 	}
 	page, err := h.incarnations.History(r.Context(), input)
@@ -55,12 +56,12 @@ func (h *Handler) historyAcpIncarnations(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	if !acpincarnation.ValidHistoryPage(input, page) {
-		writeAcpIncarnationError(w, "internal_error")
+		writeAcpIncarnationError(w, apierror.InternalError)
 		return
 	}
 	encoded, err := json.Marshal(page)
 	if err != nil || len(encoded) > 32768 {
-		writeAcpIncarnationError(w, "internal_error")
+		writeAcpIncarnationError(w, apierror.InternalError)
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/tf4fun/antnest-platform/modules/service-authentication/serviceauth"
+	"github.com/tf4fun/antnest-platform/services/identity-service/internal/apierror"
 	"github.com/tf4fun/antnest-platform/services/identity-service/internal/telemetry"
 	"net/http"
 	"sync/atomic"
@@ -48,12 +49,10 @@ func NewHandler(probe Probe, rpcHandler, scimHandler http.Handler, authenticatio
 				rejected = serviceauth.Unauthenticated()
 			}
 			telemetry.ProtocolError(w, failure)
-			w.Header().Set("Content-Type", "application/json")
 			if rejected.Challenge != "" {
 				w.Header().Set("WWW-Authenticate", rejected.Challenge)
 			}
-			w.WriteHeader(rejected.Status)
-			_ = json.NewEncoder(w).Encode(map[string]any{"code": rejected.Code, "message": "Service authentication rejected", "retryable": false})
+			apierror.WriteError(w, rejected.Status, rejected.Code, "Service authentication rejected", false)
 			return
 		}
 		scimHandler.ServeHTTP(w, r)

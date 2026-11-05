@@ -21,6 +21,7 @@ import (
 
 	"github.com/tf4fun/antnest-platform/modules/service-authentication/callercontext"
 
+	"github.com/tf4fun/antnest-platform/services/edge-gateway/internal/apierror"
 	"github.com/tf4fun/antnest-platform/services/edge-gateway/internal/browserstream"
 	gatewayconfig "github.com/tf4fun/antnest-platform/services/edge-gateway/internal/config"
 	"github.com/tf4fun/antnest-platform/services/edge-gateway/internal/identity"
@@ -227,7 +228,7 @@ func (h *handler) routes() {
 	h.mux.HandleFunc("POST /api/session/external-identities/notices/acknowledge", telemetry.Handler(h.acknowledgeBrowserExternalIdentityNotices))
 	h.mux.HandleFunc("/api/app/workspace/v1/{path...}", telemetry.Handler(h.workspaceBridgeAPI))
 	h.mux.HandleFunc("/api/app/{path...}", func(response http.ResponseWriter, _ *http.Request) {
-		writeError(response, http.StatusNotFound, "not_found", "Resource was not found")
+		writeError(response, http.StatusNotFound, apierror.NotFound, "Resource was not found")
 	})
 	h.mux.HandleFunc("GET /protocol/oidc/callback", telemetry.Handler(h.oidcCallback))
 	h.mux.HandleFunc("/protocol/oidc", h.unknownIdentityProtocol)
@@ -235,11 +236,11 @@ func (h *handler) routes() {
 	h.mux.Handle("/scim/v2", h.scimProxy)
 	h.mux.Handle("/scim/v2/{path...}", h.scimProxy)
 	h.mux.HandleFunc("/api/admin", func(response http.ResponseWriter, _ *http.Request) {
-		writeError(response, http.StatusNotFound, "not_found", "Resource was not found")
+		writeError(response, http.StatusNotFound, apierror.NotFound, "Resource was not found")
 	})
 	h.mux.HandleFunc("/api/admin/{path...}", telemetry.Handler(h.admin))
 	h.mux.HandleFunc("/api/{path...}", func(response http.ResponseWriter, _ *http.Request) {
-		writeError(response, http.StatusNotFound, "not_found", "Resource was not found")
+		writeError(response, http.StatusNotFound, apierror.NotFound, "Resource was not found")
 	})
 	h.mux.HandleFunc("/workspace", h.workspaceApplication)
 	h.mux.HandleFunc("/workspace/{path...}", h.workspaceApplication)
@@ -247,7 +248,7 @@ func (h *handler) routes() {
 }
 
 func (*handler) unknownIdentityProtocol(response http.ResponseWriter, _ *http.Request) {
-	writeError(response, http.StatusNotFound, "not_found", "Resource was not found")
+	writeError(response, http.StatusNotFound, apierror.NotFound, "Resource was not found")
 }
 
 func (h *handler) ServeHTTP(response http.ResponseWriter, request *http.Request) {
@@ -259,7 +260,7 @@ func (h *handler) ServeHTTP(response http.ResponseWriter, request *http.Request)
 	writer := &securityHeaderWriter{ResponseWriter: response, https: h.externalOrigin(request).Scheme == "https"}
 	writer.applyTransportPolicy()
 	if strings.HasPrefix(request.URL.Path, "/api/") && !h.admitOrigin(request) {
-		writeError(writer, http.StatusForbidden, "forbidden", "Request origin is not allowed")
+		writeError(writer, http.StatusForbidden, apierror.Forbidden, "Request origin is not allowed")
 		return
 	}
 	h.mux.ServeHTTP(writer, request)
@@ -284,7 +285,7 @@ func (h *handler) login(response http.ResponseWriter, request *http.Request) err
 	}
 	if strings.TrimSpace(payload.OrganizationSlug) == "" || strings.TrimSpace(payload.Email) == "" ||
 		payload.Password == "" {
-		writeError(response, http.StatusBadRequest, "invalid_request", "Required login field is empty")
+		writeError(response, http.StatusBadRequest, apierror.InvalidRequest, "Required login field is empty")
 		return nil
 	}
 	if !h.admitPasswordLogin(response, request, payload.OrganizationSlug, payload.Email) {
@@ -302,14 +303,14 @@ func (h *handler) login(response http.ResponseWriter, request *http.Request) err
 		return err
 	}
 	if !result.Principal.Active {
-		writeError(response, http.StatusUnauthorized, "unauthenticated", "Session is inactive")
+		writeError(response, http.StatusUnauthorized, apierror.Unauthenticated, "Session is inactive")
 		return nil
 	}
 	if ctx.Err() != nil || !h.liveBrowserMetadata(result.SessionMetadata()) {
 		return h.writeBrowserIdentityError(response, fmt.Errorf("login returned invalid session metadata"), false)
 	}
 	if _, err := h.sessions.Establish(response, result.AccessToken, result.TokenID, result.ExpiresAt); err != nil {
-		writeError(response, http.StatusServiceUnavailable, "identity_unavailable", "Session could not be established")
+		writeError(response, http.StatusServiceUnavailable, apierror.IdentityUnavailable, "Session could not be established")
 		return err
 	}
 	response.Header().Set("Cache-Control", "no-store")
@@ -326,7 +327,7 @@ func (h *handler) loginMethods(response http.ResponseWriter, request *http.Reque
 	}
 	organizationSlug := strings.TrimSpace(payload.OrganizationSlug)
 	if organizationSlug == "" {
-		writeError(response, http.StatusBadRequest, "invalid_request", "Organization is required")
+		writeError(response, http.StatusBadRequest, apierror.InvalidRequest, "Organization is required")
 		return nil
 	}
 	ctx, cancel := context.WithTimeout(request.Context(), h.requestTimeout)
@@ -355,7 +356,7 @@ func (h *handler) startOIDCLogin(response http.ResponseWriter, request *http.Req
 	organizationSlug := strings.TrimSpace(payload.OrganizationSlug)
 	providerName := strings.TrimSpace(payload.ProviderName)
 	if organizationSlug == "" || providerName == "" {
-		writeError(response, http.StatusBadRequest, "invalid_request", "Organization and login method are required")
+		writeError(response, http.StatusBadRequest, apierror.InvalidRequest, "Organization and login method are required")
 		return nil
 	}
 	if !h.admitOIDCStart(response, request) {
@@ -449,19 +450,19 @@ func (h *handler) logout(response http.ResponseWriter, request *http.Request) er
 		return err
 	}
 	if !h.validCSRF(request, principal.SessionID) {
-		writeError(response, http.StatusForbidden, "csrf_failed", "Request could not be verified")
+		writeError(response, http.StatusForbidden, apierror.CsrfFailed, "Request could not be verified")
 		return nil
 	}
 	ctx, cancel := context.WithTimeout(request.Context(), h.requestTimeout)
 	defer cancel()
 	revoked, err := h.identity.RevokeByAccessToken(ctx, values.AccessToken)
 	if err != nil {
-		writeError(response, http.StatusServiceUnavailable, "identity_unavailable", "Session could not be revoked")
+		writeError(response, http.StatusServiceUnavailable, apierror.IdentityUnavailable, "Session could not be revoked")
 		return err
 	}
 	h.sessions.Clear(response)
 	if revoked == identity.RevokeStatusAlreadyInvalid {
-		writeError(response, http.StatusUnauthorized, "unauthenticated", "Session is invalid or expired")
+		writeError(response, http.StatusUnauthorized, apierror.Unauthenticated, "Session is invalid or expired")
 		return nil
 	}
 	response.WriteHeader(http.StatusNoContent)
@@ -470,7 +471,7 @@ func (h *handler) logout(response http.ResponseWriter, request *http.Request) er
 
 func (h *handler) workspaceApplication(response http.ResponseWriter, request *http.Request) {
 	if request.Method != http.MethodGet && request.Method != http.MethodHead {
-		writeError(response, http.StatusMethodNotAllowed, "method_not_allowed", "Method is not allowed")
+		writeError(response, http.StatusMethodNotAllowed, apierror.MethodNotAllowed, "Method is not allowed")
 		return
 	}
 	if request.URL.Path == "/workspace" {
@@ -503,7 +504,7 @@ func (h *handler) authenticateWorkspaceDocument(response http.ResponseWriter, re
 	principal, err := h.identity.Resolve(identity.WithResolution(ctx, profile, agent), values.AccessToken)
 	err = h.browserAdmissionError(ctx, principal, err)
 	if err != nil && !identity.IsCode(err, "unauthenticated") && !identity.IsCode(err, "inactive_principal") {
-		writeError(response, http.StatusServiceUnavailable, "identity_unavailable", "Session could not be verified")
+		writeError(response, http.StatusServiceUnavailable, apierror.IdentityUnavailable, "Session could not be verified")
 		return identity.Principal{}, false
 	}
 	if err != nil || !principal.Active {
@@ -511,7 +512,7 @@ func (h *handler) authenticateWorkspaceDocument(response http.ResponseWriter, re
 		return identity.Principal{}, false
 	}
 	if principal.CallerContext == "" || !callercontext.ValidID(principal.SessionID) {
-		writeError(response, http.StatusServiceUnavailable, "identity_unavailable", "Session could not be verified")
+		writeError(response, http.StatusServiceUnavailable, apierror.IdentityUnavailable, "Session could not be verified")
 		return identity.Principal{}, false
 	}
 	*request = *request.WithContext(identity.WithPrincipal(request.Context(), principal))
@@ -571,15 +572,15 @@ func (h *handler) admin(response http.ResponseWriter, request *http.Request) err
 		return err
 	}
 	if !principal.Administrator() {
-		writeError(response, http.StatusForbidden, "forbidden", "Administrator access is required")
+		writeError(response, http.StatusForbidden, apierror.Forbidden, "Administrator access is required")
 		return nil
 	}
 	if stateChanging(request.Method) && !h.validCSRF(request, principal.SessionID) {
-		writeError(response, http.StatusForbidden, "csrf_failed", "Request could not be verified")
+		writeError(response, http.StatusForbidden, apierror.CsrfFailed, "Request could not be verified")
 		return nil
 	}
 	if !validateNetworkPrincipalPrecondition(request, principal) {
-		writeError(response, http.StatusConflict, "principal_changed", "Account changed. Reload this page before updating network policy.")
+		writeError(response, http.StatusConflict, apierror.PrincipalChanged, "Account changed. Reload this page before updating network policy.")
 		return nil
 	}
 	if isAgentEventWatch(request) {
@@ -600,7 +601,7 @@ func (h *handler) admin(response http.ResponseWriter, request *http.Request) err
 
 func (h *handler) application(response http.ResponseWriter, request *http.Request) {
 	if request.Method != http.MethodGet && request.Method != http.MethodHead {
-		writeError(response, http.StatusMethodNotAllowed, "method_not_allowed", "Method is not allowed")
+		writeError(response, http.StatusMethodNotAllowed, apierror.MethodNotAllowed, "Method is not allowed")
 		return
 	}
 	h.appProxy.ServeHTTP(response, request)
@@ -620,7 +621,7 @@ func (h *handler) authenticateSession(response http.ResponseWriter, request *htt
 		if clearInvalid && status == session.Invalid {
 			h.sessions.Clear(response)
 		}
-		writeError(response, http.StatusUnauthorized, "unauthenticated", "Login is required")
+		writeError(response, http.StatusUnauthorized, apierror.Unauthenticated, "Login is required")
 		return session.Values{}, identity.Principal{}, errInvalidSession
 	}
 	stream := browserStreamRequest(request)
@@ -638,18 +639,18 @@ func (h *handler) authenticateSession(response http.ResponseWriter, request *htt
 		err = browserstream.ErrUnavailable
 	}
 	if err != nil && !identity.IsCode(err, "unauthenticated") && !identity.IsCode(err, "inactive_principal") {
-		writeError(response, http.StatusServiceUnavailable, "identity_unavailable", "Session could not be verified")
+		writeError(response, http.StatusServiceUnavailable, apierror.IdentityUnavailable, "Session could not be verified")
 		return session.Values{}, identity.Principal{}, err
 	}
 	if err != nil || !principal.Active {
 		if clearInvalid {
 			h.sessions.Clear(response)
 		}
-		writeError(response, http.StatusUnauthorized, "unauthenticated", "Session is invalid or expired")
+		writeError(response, http.StatusUnauthorized, apierror.Unauthenticated, "Session is invalid or expired")
 		return session.Values{}, identity.Principal{}, errInvalidSession
 	}
 	if principal.CallerContext == "" || !callercontext.ValidID(principal.SessionID) {
-		writeError(response, http.StatusServiceUnavailable, "identity_unavailable", "Session could not be verified")
+		writeError(response, http.StatusServiceUnavailable, apierror.IdentityUnavailable, "Session could not be verified")
 		return session.Values{}, identity.Principal{}, errors.New("identity omitted caller context")
 	}
 	requestCtx := identity.WithPrincipal(request.Context(), principal)
@@ -675,7 +676,7 @@ func (h *handler) newConsoleProxy(target *url.URL, authenticated bool) *httputil
 	}
 	proxy.ErrorHandler = func(response http.ResponseWriter, request *http.Request, err error) {
 		h.logger.ErrorContext(request.Context(), "Gateway proxy failed", "error_class", "upstream_unavailable")
-		writeError(response, http.StatusServiceUnavailable, "console_unavailable", "Admin Console is unavailable")
+		writeError(response, http.StatusServiceUnavailable, apierror.ConsoleUnavailable, "Admin Console is unavailable")
 	}
 	return proxy
 }
@@ -695,13 +696,16 @@ func (h *handler) newSCIMProxy(target *url.URL) *httputil.ReverseProxy {
 	}
 	proxy.ErrorHandler = func(response http.ResponseWriter, request *http.Request, _ error) {
 		h.logger.ErrorContext(request.Context(), "SCIM proxy failed", "error_class", "upstream_unavailable")
+		envelope := apierror.New(apierror.IdentityUnavailable, "Identity Service is unavailable", response.Header().Get("X-Request-ID"))
+		response.Header().Set("X-Request-ID", envelope.RequestID)
 		response.Header().Set("Content-Type", "application/scim+json")
 		response.Header().Set("Cache-Control", "no-store")
 		response.WriteHeader(http.StatusServiceUnavailable)
 		_ = json.NewEncoder(response).Encode(map[string]any{
-			"schemas": []string{"urn:ietf:params:scim:api:messages:2.0:Error"},
-			"status":  "503",
-			"detail":  "Identity Service is unavailable",
+			"schemas":           []string{"urn:ietf:params:scim:api:messages:2.0:Error"},
+			"status":            "503",
+			"detail":            "Identity Service is unavailable",
+			"urn:antnest:error": envelope,
 		})
 	}
 	return proxy
@@ -722,11 +726,11 @@ func (h *handler) writeIdentityError(response http.ResponseWriter, err error) {
 	}
 	switch {
 	case identity.IsCode(err, "unauthenticated"), identity.IsCode(err, "inactive_principal"):
-		writeError(response, http.StatusUnauthorized, "unauthenticated", "Email or password is incorrect")
+		writeError(response, http.StatusUnauthorized, apierror.Unauthenticated, "Email or password is incorrect")
 	case identity.IsCode(err, "forbidden"):
-		writeError(response, http.StatusForbidden, "forbidden", "Login is not allowed")
+		writeError(response, http.StatusForbidden, apierror.Forbidden, "Login is not allowed")
 	default:
-		writeError(response, http.StatusServiceUnavailable, "identity_unavailable", "Identity Service is unavailable")
+		writeError(response, http.StatusServiceUnavailable, apierror.IdentityUnavailable, "Identity Service is unavailable")
 	}
 }
 
@@ -754,17 +758,17 @@ func (h *handler) writeLoginAdmissionRefusal(response http.ResponseWriter) {
 		seconds++
 	}
 	response.Header().Set("Retry-After", strconv.FormatInt(seconds, 10))
-	writeError(response, http.StatusTooManyRequests, "login_rate_limited", "Too many login attempts")
+	writeError(response, http.StatusTooManyRequests, apierror.LoginRateLimited, "Too many login attempts")
 }
 
 func (h *handler) writePublicOIDCError(response http.ResponseWriter, err error) {
 	switch {
 	case identity.IsCode(err, "bad_request"), identity.IsCode(err, "invalid_argument"):
-		writeError(response, http.StatusBadRequest, "invalid_request", "Login request is invalid")
+		writeError(response, http.StatusBadRequest, apierror.InvalidRequest, "Login request is invalid")
 	case identity.IsCode(err, "forbidden"), identity.IsCode(err, "not_found"):
-		writeError(response, http.StatusBadRequest, "login_method_unavailable", "Login method is unavailable")
+		writeError(response, http.StatusBadRequest, apierror.LoginMethodUnavailable, "Login method is unavailable")
 	default:
-		writeError(response, http.StatusServiceUnavailable, "identity_unavailable", "Identity Service is unavailable")
+		writeError(response, http.StatusServiceUnavailable, apierror.IdentityUnavailable, "Identity Service is unavailable")
 	}
 }
 
@@ -802,18 +806,18 @@ func isAgentEventWatch(request *http.Request) bool {
 
 func decodeJSON(response http.ResponseWriter, request *http.Request, limit int64, target any) bool {
 	if mediaType := strings.ToLower(strings.TrimSpace(strings.Split(request.Header.Get("Content-Type"), ";")[0])); mediaType != "application/json" {
-		writeError(response, http.StatusUnsupportedMediaType, "invalid_request", "Content-Type must be application/json")
+		writeError(response, http.StatusUnsupportedMediaType, apierror.InvalidRequest, "Content-Type must be application/json")
 		return false
 	}
 	decoder := json.NewDecoder(io.LimitReader(request.Body, limit))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(target); err != nil {
-		writeError(response, http.StatusBadRequest, "invalid_request", "Request body is invalid")
+		writeError(response, http.StatusBadRequest, apierror.InvalidRequest, "Request body is invalid")
 		return false
 	}
 	var extra json.RawMessage
 	if err := decoder.Decode(&extra); !errors.Is(err, io.EOF) {
-		writeError(response, http.StatusBadRequest, "invalid_request", "Request body must contain one object")
+		writeError(response, http.StatusBadRequest, apierror.InvalidRequest, "Request body must contain one object")
 		return false
 	}
 	return true
@@ -826,8 +830,9 @@ func writeJSON(response http.ResponseWriter, status int, value any) {
 }
 
 func writeError(response http.ResponseWriter, status int, code, message string) {
-	response.Header().Set("Cache-Control", "no-store")
-	writeJSON(response, status, map[string]any{"code": code, "message": message})
+	envelope := apierror.New(code, message, response.Header().Get("X-Request-ID"))
+	response.Header().Set("X-Request-ID", envelope.RequestID)
+	apierror.WriteError(response, status, envelope.Code, envelope.Message, envelope.Retryable)
 }
 
 func randomRequestID() string {

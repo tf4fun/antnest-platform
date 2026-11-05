@@ -5,6 +5,7 @@ import { activeHttpSpan } from "../telemetry/http.js";
 import { recordBoundaryError } from "../telemetry/diagnostics.js";
 import { readRpcRequest, rpcJson, RpcRequestError } from "./rpc-request.js";
 import { httpFailure } from "./public-error.js";
+import { ERROR_CODES } from "../errors.gen.js";
 
 export const EXECUTION_CONFIGURATION_PATH = "/rpc/agent-acp/apply-execution-snapshot";
 export const EXECUTION_DELTA_PATH = "/rpc/agent-acp/apply-execution-delta";
@@ -99,5 +100,5 @@ function configurationError(error: unknown) {
   if (error instanceof DomainError && error.code === "configuration_base_mismatch") {
     return httpFailure(error.code);
   }
-  return httpFailure("configuration_unavailable");
+  return httpFailure(ERROR_CODES.CONFIGURATION_UNAVAILABLE);
 }

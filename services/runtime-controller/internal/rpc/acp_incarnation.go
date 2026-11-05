@@ -14,6 +14,7 @@ import (
 
 	"github.com/tf4fun/antnest-platform/modules/service-authentication/serviceauth"
 	"github.com/tf4fun/antnest-platform/services/runtime-controller/internal/acpincarnation"
+	"github.com/tf4fun/antnest-platform/services/runtime-controller/internal/apierror"
 	"github.com/tf4fun/antnest-platform/services/runtime-controller/internal/observation"
 	"github.com/tf4fun/antnest-platform/services/runtime-controller/internal/telemetry"
 )
@@ -130,20 +131,20 @@ func (h *Handler) serveAcpIncarnation(w http.ResponseWriter, r *http.Request, re
 	}
 	if bounded.Method != method {
 		w.Header().Set("Allow", method)
-		writeAcpIncarnationError(w, "method_not_allowed")
+		writeAcpIncarnationError(w, apierror.MethodNotAllowed)
 		return
 	}
 	if bounded.URL.RawQuery != "" || bounded.URL.ForceQuery {
-		writeAcpIncarnationError(w, "invalid_request")
+		writeAcpIncarnationError(w, apierror.InvalidRequest)
 		return
 	}
 	if ctx.Err() != nil {
-		writeAcpIncarnationError(w, "deadline_exceeded")
+		writeAcpIncarnationError(w, apierror.DeadlineExceeded)
 		return
 	}
 	if register {
 		if !acpIncarnationJSON(bounded.Header) {
-			writeAcpIncarnationError(w, "unsupported_media_type")
+			writeAcpIncarnationError(w, apierror.UnsupportedMediaType)
 			return
 		}
 		h.acpRegisterMux.ServeHTTP(w, bounded)
@@ -163,7 +164,7 @@ func acpIncarnationJSON(header http.Header) bool {
 
 func (h *Handler) registerAcpIncarnation(w http.ResponseWriter, r *http.Request) {
 	if r.ContentLength > acpIncarnationRequestBytes {
-		writeAcpIncarnationError(w, "request_too_large")
+		writeAcpIncarnationError(w, apierror.RequestTooLarge)
 		return
 	}
 	var raw []byte
@@ -172,16 +173,16 @@ func (h *Handler) registerAcpIncarnation(w http.ResponseWriter, r *http.Request)
 		raw, err = io.ReadAll(io.LimitReader(r.Body, acpIncarnationRequestBytes+1))
 	}
 	if acpIncarnationTimedOut(r.Context(), err) {
-		writeAcpIncarnationError(w, "deadline_exceeded")
+		writeAcpIncarnationError(w, apierror.DeadlineExceeded)
 		return
 	}
 	if len(raw) > acpIncarnationRequestBytes {
-		writeAcpIncarnationError(w, "request_too_large")
+		writeAcpIncarnationError(w, apierror.RequestTooLarge)
 		return
 	}
 	var input acpincarnation.RegisterRequest
 	if err != nil || serviceauth.DecodeObject(raw, &input) != nil || !acpincarnation.ValidMemberID(input.MemberID) || !acpincarnation.ValidUUID(input.IncarnationID) || !acpincarnation.ValidNonce(input.RegistrationNonce) {
-		writeAcpIncarnationError(w, "invalid_request")
+		writeAcpIncarnationError(w, apierror.InvalidRequest)
 		return
 	}
 	value, err := h.incarnations.Register(r.Context(), input)
@@ -190,7 +191,7 @@ func (h *Handler) registerAcpIncarnation(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	if !acpincarnation.ValidUUID(value.RegistrationID) || value.MemberID != input.MemberID || value.IncarnationID != input.IncarnationID {
-		writeAcpIncarnationError(w, "internal_error")
+		writeAcpIncarnationError(w, apierror.InternalError)
 		return
 	}
 	writeAcpIncarnationJSON(w, value)
@@ -199,17 +200,17 @@ func (h *Handler) registerAcpIncarnation(w http.ResponseWriter, r *http.Request)
 func (h *Handler) inspectAcpIncarnation(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("registration_id")
 	if !acpincarnation.ValidUUID(id) || r.ContentLength != 0 {
-		writeAcpIncarnationError(w, "invalid_request")
+		writeAcpIncarnationError(w, apierror.InvalidRequest)
 		return
 	}
 	if r.Body != nil && r.Body != http.NoBody {
 		raw, err := io.ReadAll(io.LimitReader(r.Body, 1))
 		if acpIncarnationTimedOut(r.Context(), err) {
-			writeAcpIncarnationError(w, "deadline_exceeded")
+			writeAcpIncarnationError(w, apierror.DeadlineExceeded)
 			return
 		}
 		if err != nil || len(raw) != 0 {
-			writeAcpIncarnationError(w, "invalid_request")
+			writeAcpIncarnationError(w, apierror.InvalidRequest)
 			return
 		}
 	}
@@ -219,7 +220,7 @@ func (h *Handler) inspectAcpIncarnation(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	if value.RegistrationID != id || !validAcpInspection(value) {
-		writeAcpIncarnationError(w, "internal_error")
+		writeAcpIncarnationError(w, apierror.InternalError)
 		return
 	}
 	if value.ObservedAt != nil {
@@ -261,7 +262,7 @@ func acpIncarnationTimedOut(ctx context.Context, err error) bool {
 
 func writeAcpIncarnationFailure(w http.ResponseWriter, ctx context.Context, err error, register bool) {
 	if acpIncarnationTimedOut(ctx, err) {
-		writeAcpIncarnationError(w, "deadline_exceeded")
+		writeAcpIncarnationError(w, apierror.DeadlineExceeded)
 		return
 	}
 	code := "internal_error"
@@ -282,28 +283,28 @@ func writeAcpIncarnationFailure(w http.ResponseWriter, ctx context.Context, err 
 func writeAcpIncarnationError(w http.ResponseWriter, code string) {
 	status, retryable := http.StatusInternalServerError, true
 	switch code {
-	case "service_unauthenticated":
+	case apierror.ServiceUnauthenticated:
 		status, retryable = http.StatusUnauthorized, false
 	case "caller_not_allowed", "acp_member_not_allowed", "acp_incarnation_unverified":
 		status, retryable = http.StatusForbidden, false
-	case "invalid_request":
+	case apierror.InvalidRequest:
 		status, retryable = http.StatusBadRequest, false
-	case "unsupported_media_type":
+	case apierror.UnsupportedMediaType:
 		status, retryable = http.StatusUnsupportedMediaType, false
-	case "request_too_large":
+	case apierror.RequestTooLarge:
 		status, retryable = http.StatusRequestEntityTooLarge, false
-	case "acp_incarnation_conflict":
+	case apierror.AcpIncarnationConflict:
 		status, retryable = http.StatusConflict, false
-	case "method_not_allowed":
+	case apierror.MethodNotAllowed:
 		status, retryable = http.StatusMethodNotAllowed, false
-	case "route_not_found":
+	case apierror.RouteNotFound:
 		status, retryable = http.StatusNotFound, false
 	case "acp_registration_unavailable", "acp_registry_unavailable":
 		status = http.StatusServiceUnavailable
-	case "deadline_exceeded":
+	case apierror.DeadlineExceeded:
 		status = http.StatusGatewayTimeout
 	default:
-		code = "internal_error"
+		code = apierror.InternalError
 	}
 	writeJSON(w, status, errorResponse{Code: code, Message: "ACP incarnation request did not complete", Retryable: retryable})
 }
@@ -311,7 +312,7 @@ func writeAcpIncarnationError(w http.ResponseWriter, code string) {
 func writeAcpIncarnationJSON(w http.ResponseWriter, value any) {
 	raw, err := json.Marshal(value)
 	if err != nil || len(raw)+1 > acpIncarnationResponseBytes {
-		writeAcpIncarnationError(w, "internal_error")
+		writeAcpIncarnationError(w, apierror.InternalError)
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")

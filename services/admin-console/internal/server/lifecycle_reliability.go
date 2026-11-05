@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"net/url"
 
+	"github.com/tf4fun/antnest-platform/services/admin-console/internal/apierror"
 	"github.com/tf4fun/antnest-platform/services/admin-console/internal/principal"
 	"github.com/tf4fun/antnest-platform/services/admin-console/internal/upstream"
 )
@@ -16,11 +17,11 @@ func (h *handler) cancelLifecycleOperation(
 ) {
 	agentID := request.PathValue("agent_id")
 	if !runtimeRecoveryIdentifier.MatchString(agentID) {
-		writeError(response, http.StatusBadRequest, "invalid_request", "Agent identifier is invalid")
+		writeError(response, http.StatusBadRequest, apierror.InvalidRequest, "Agent identifier is invalid")
 		return
 	}
 	if len(request.URL.RawQuery) != 0 {
-		writeError(response, http.StatusBadRequest, "invalid_request", "Query parameters are not accepted")
+		writeError(response, http.StatusBadRequest, apierror.InvalidRequest, "Query parameters are not accepted")
 		return
 	}
 	var input struct {
@@ -30,7 +31,7 @@ func (h *handler) cancelLifecycleOperation(
 		return
 	}
 	if !required(input.OperationRequestID) || !runtimeRecoveryIdentifier.MatchString(input.OperationRequestID) {
-		writeError(response, http.StatusBadRequest, "invalid_request", "Operation request identifier is invalid")
+		writeError(response, http.StatusBadRequest, apierror.InvalidRequest, "Operation request identifier is invalid")
 		return
 	}
 	payload := map[string]any{
@@ -53,11 +54,11 @@ func (h *handler) clearLifecycleQuarantine(
 ) {
 	agentID := request.PathValue("agent_id")
 	if !runtimeRecoveryIdentifier.MatchString(agentID) {
-		writeError(response, http.StatusBadRequest, "invalid_request", "Agent identifier is invalid")
+		writeError(response, http.StatusBadRequest, apierror.InvalidRequest, "Agent identifier is invalid")
 		return
 	}
 	if len(request.URL.RawQuery) != 0 {
-		writeError(response, http.StatusBadRequest, "invalid_request", "Query parameters are not accepted")
+		writeError(response, http.StatusBadRequest, apierror.InvalidRequest, "Query parameters are not accepted")
 		return
 	}
 	var input struct {
@@ -68,7 +69,7 @@ func (h *handler) clearLifecycleQuarantine(
 	}
 	if input.ExpectedAggregateSequence < 1 ||
 		input.ExpectedAggregateSequence > int64(maximumBrowserVersion) {
-		writeError(response, http.StatusBadRequest, "invalid_request", "Expected aggregate sequence is invalid")
+		writeError(response, http.StatusBadRequest, apierror.InvalidRequest, "Expected aggregate sequence is invalid")
 		return
 	}
 	payload := map[string]any{

@@ -1,6 +1,8 @@
 #![cfg_attr(not(target_os = "linux"), allow(dead_code, unused_imports))]
 #![allow(clippy::large_enum_variant)]
 
+mod api_error;
+pub mod api_errors_gen;
 mod build_info;
 mod command;
 mod config;

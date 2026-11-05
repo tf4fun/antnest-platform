@@ -45,12 +45,14 @@ func TestPasswordRPCBusyIsCanonicalAcrossAllResourceConsumers(t *testing.T) {
 			handler := authenticatedBusinessHandler(t, Dependencies{Directory: services, LocalAuth: services, OIDC: services, SCIM: services, BrowserSessions: browser})
 			response := httptest.NewRecorder()
 			handler.ServeHTTP(response, httptest.NewRequest(http.MethodPost, ContractRoutes[route.name], strings.NewReader(route.body)))
-			want := map[string]any{"code": "credential_busy", "message": "Password verification is busy", "retryable": true}
+			want := map[string]any{"code": "credential_busy", "category": "unavailable", "message": "Password verification is busy", "retryable": true}
 			var got map[string]any
 			if err := json.Unmarshal(response.Body.Bytes(), &got); err != nil {
 				t.Fatal(err)
 			}
-			if response.Code != http.StatusServiceUnavailable || !reflect.DeepEqual(got, want) || response.Header().Get("Retry-After") != "1" || response.Header().Get("Cache-Control") != "no-store" || len(response.Header().Values("Set-Cookie")) != 0 || services.calls+browser.calls != 1 {
+			requestID, _ := got["request_id"].(string)
+			delete(got, "request_id")
+			if requestID == "" || requestID != response.Header().Get("X-Request-ID") || response.Code != http.StatusServiceUnavailable || !reflect.DeepEqual(got, want) || response.Header().Get("Retry-After") != "1" || response.Header().Get("Cache-Control") != "no-store" || len(response.Header().Values("Set-Cookie")) != 0 || services.calls+browser.calls != 1 {
 				t.Fatalf("password busy projection is not canonical: status=%d calls=%d", response.Code, services.calls+browser.calls)
 			}
 		})

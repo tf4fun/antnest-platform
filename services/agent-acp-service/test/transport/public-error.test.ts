@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import catalog from "../../../../contracts/agent-acp/errors.json" with { type: "json" };
 import type { ErrorSurface } from "../../src/domain/error-catalog.js";
 import { DomainError } from "../../src/domain/errors.js";
+import { ERROR_METADATA } from "../../src/errors.gen.js";
 import { ModelBudgetExceededError } from "../../src/domain/model-budget.js";
 import { RunRecoveryRequiredError } from "../../src/ports/acp-application.js";
 import { publicError } from "../../src/transport/public-error.js";
@@ -19,11 +20,18 @@ const definitions: [string, CatalogEntry][] = Object.entries(catalog.errors);
 const surfaces = ["admission", "http", "skill_source"] as const satisfies readonly ErrorSurface[];
 const privateMessage = "PRIVATE_DOMAIN_MESSAGE_NOT_FOR_THE_WIRE";
 const privateCause = "postgres://PRIVATE_CREDENTIALS_AND_UPSTREAM_PAYLOAD";
+const SAFE_REQUEST_ID: unknown = expect.stringMatching(/^[A-Za-z0-9._:-]{1,128}$/);
 const fallback = {
   jsonRpcCode: -32020,
   httpStatus: 500,
   message: "Agent request failed",
-  data: { code: "internal_error", retryable: false },
+  data: {
+    code: "internal_error",
+    category: "internal",
+    message: "Agent request failed",
+    retryable: false,
+    request_id: SAFE_REQUEST_ID,
+  },
 };
 const backoffCodes = new Set([
   "agent_busy",
@@ -41,7 +49,10 @@ function expectedPublicError(code: string, entry: CatalogEntry) {
     message: entry.message,
     data: {
       code,
+      category: ERROR_METADATA[code]?.category,
+      message: entry.message,
       retryable: entry.retryable,
+      request_id: SAFE_REQUEST_ID,
       ...(entry.retry_after_ms === undefined ? {} : { retry_after_ms: entry.retry_after_ms }),
     },
   };
@@ -72,7 +83,14 @@ describe("the shared public ACP error projection", () => {
       jsonRpcCode: -32030,
       httpStatus: 409,
       message: "Agent already has an active Run",
-      data: { code: "agent_busy", retryable: true, retry_after_ms: 1000 },
+      data: {
+        code: "agent_busy",
+        category: "conflict",
+        message: "Agent already has an active Run",
+        retryable: true,
+        retry_after_ms: 1000,
+        request_id: SAFE_REQUEST_ID,
+      },
     });
   });
 
@@ -82,7 +100,13 @@ describe("the shared public ACP error projection", () => {
       jsonRpcCode: -32036,
       httpStatus: 409,
       message: catalog.errors.runtime_barrier_required.message,
-      data: { code: "runtime_barrier_required", retryable: true },
+      data: {
+        code: "runtime_barrier_required",
+        category: ERROR_METADATA.runtime_barrier_required!.category,
+        message: catalog.errors.runtime_barrier_required.message,
+        retryable: true,
+        request_id: SAFE_REQUEST_ID,
+      },
     });
     expect(Object.hasOwn(projected.data, "retry_after_ms")).toBe(false);
   });
@@ -100,7 +124,13 @@ describe("the shared public ACP error projection", () => {
               jsonRpcCode: -32603,
               httpStatus: 500,
               message: "A database operation requires service recovery",
-              data: { code: "database_error", retryable: false },
+              data: {
+                code: "database_error",
+                category: ERROR_METADATA.database_error!.category,
+                message: "A database operation requires service recovery",
+                retryable: false,
+                request_id: SAFE_REQUEST_ID,
+              },
             },
       );
       expect(original.message).toBe(privateMessage);

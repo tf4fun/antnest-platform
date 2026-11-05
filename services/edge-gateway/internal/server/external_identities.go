@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"strconv"
 
+	"github.com/tf4fun/antnest-platform/services/edge-gateway/internal/apierror"
 	"github.com/tf4fun/antnest-platform/services/edge-gateway/internal/identity"
 )
 
@@ -20,18 +21,18 @@ func (h *handler) listBrowserExternalIdentities(response http.ResponseWriter, re
 	}
 	query, err := url.ParseQuery(request.URL.RawQuery)
 	if err != nil || len(query["limit"]) != 1 {
-		writeError(response, http.StatusBadRequest, "invalid_request", "A single limit is required")
+		writeError(response, http.StatusBadRequest, apierror.InvalidRequest, "A single limit is required")
 		return nil
 	}
 	for key, values := range query {
 		if (key != "limit" && key != "after_id" && key != "notice_after_id") || len(values) != 1 || key != "limit" && !identity.ValidPublicID(values[0]) {
-			writeError(response, http.StatusBadRequest, "invalid_request", "Query parameters are invalid")
+			writeError(response, http.StatusBadRequest, apierror.InvalidRequest, "Query parameters are invalid")
 			return nil
 		}
 	}
 	limit, err := strconv.Atoi(query.Get("limit"))
 	if err != nil || limit < 1 || limit > 100 || strconv.Itoa(limit) != query.Get("limit") {
-		writeError(response, http.StatusBadRequest, "invalid_request", "Limit must be an integer from 1 to 100")
+		writeError(response, http.StatusBadRequest, apierror.InvalidRequest, "Limit must be an integer from 1 to 100")
 		return nil
 	}
 	ctx, cancel := context.WithTimeout(request.Context(), h.requestTimeout)
@@ -56,7 +57,7 @@ func (h *handler) unbindBrowserExternalIdentity(response http.ResponseWriter, re
 	}
 	input := identity.ExternalIdentityUnbindInput{RequestID: h.newRequestID(), BindingID: request.PathValue("binding_id")}
 	if !identity.ValidPublicID(input.BindingID) || body.AllowLockout != nil && (bytes.Equal(bytes.TrimSpace(body.AllowLockout), []byte("null")) || json.Unmarshal(body.AllowLockout, &input.AllowLockout) != nil) {
-		writeError(response, http.StatusBadRequest, "invalid_request", "Binding reference or lockout choice is invalid")
+		writeError(response, http.StatusBadRequest, apierror.InvalidRequest, "Binding reference or lockout choice is invalid")
 		return nil
 	}
 	ctx, cancel := context.WithTimeout(request.Context(), h.requestTimeout)
@@ -82,7 +83,7 @@ func (h *handler) acknowledgeBrowserExternalIdentityNotices(response http.Respon
 		return nil
 	}
 	if !identity.ValidExternalIdentityNoticeIDs(body.NoticeIDs) {
-		writeError(response, http.StatusBadRequest, "invalid_request", "One to 100 unique notice references are required")
+		writeError(response, http.StatusBadRequest, apierror.InvalidRequest, "One to 100 unique notice references are required")
 		return nil
 	}
 	ctx, cancel := context.WithTimeout(request.Context(), h.requestTimeout)
@@ -98,9 +99,9 @@ func (h *handler) acknowledgeBrowserExternalIdentityNotices(response http.Respon
 func (h *handler) writeExternalIdentityError(response http.ResponseWriter, err error) error {
 	switch {
 	case identity.IsCode(err, "not_found"):
-		writeError(response, http.StatusNotFound, "not_found", "External identity or notice was not found")
+		writeError(response, http.StatusNotFound, apierror.NotFound, "External identity or notice was not found")
 	case identity.IsCode(err, "external_identity_last_method"):
-		writeError(response, http.StatusConflict, "external_identity_last_method", "This is the Membership's last available login method")
+		writeError(response, http.StatusConflict, apierror.ExternalIdentityLastMethod, "This is the Membership's last available login method")
 	default:
 		return h.writeBrowserIdentityError(response, err, false)
 	}

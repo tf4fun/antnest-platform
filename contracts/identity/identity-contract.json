@@ -977,8 +977,24 @@
     }
   },
   "error": {
-    "required": ["code", "message", "retryable"],
+    "$ref": "../common/error.schema.json",
+    "required": ["code", "category", "message", "retryable", "request_id"],
     "properties": {
+      "category": {
+        "type": "string",
+        "enum": [
+          "invalid_request",
+          "unauthenticated",
+          "forbidden",
+          "not_found",
+          "conflict",
+          "precondition_failed",
+          "rate_limited",
+          "unavailable",
+          "internal"
+        ]
+      },
+      "request_id": {"type": "string", "pattern": "^[A-Za-z0-9._:-]{1,128}$"},
       "code": {
         "type": "string",
         "enum": [
@@ -1073,7 +1089,8 @@
       "external_identity_conflict": 409,
       "external_identity_restore_required": 409,
       "external_identity_last_method": 409
-    }
+    },
+    "migration": "Additive in one release: producers add category and request_id to error envelopes; consumers must accept envelopes that omit them until the next release."
   },
   "methods": {
     "resolve_owner_authorization": {

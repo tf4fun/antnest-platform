@@ -433,7 +433,7 @@
     ]
   },
   "errors": {
-    "shape": ["code", "message", "retryable"],
+    "shape": ["code", "category", "message", "retryable", "request_id"],
     "response": "control-api.schema.json#/$defs/error",
     "status_by_code": {
       "resource_version_conflict": 409,
@@ -444,6 +444,10 @@
       "dependency_invalid_response": 502,
       "invalid_request": 400,
       "runtime_image_invalid": 400,
+      "internal": 500,
+      "policy_revision_conflict": 409,
+      "not_found": 404,
+      "preparation_not_found": 404,
       "request_id_conflict": 409,
       "reference_not_found": 404,
       "reference_disabled": 409,
@@ -481,6 +485,10 @@
       "dependency_invalid_response": true,
       "invalid_request": false,
       "runtime_image_invalid": false,
+      "internal": false,
+      "policy_revision_conflict": false,
+      "not_found": false,
+      "preparation_not_found": false,
       "request_id_conflict": false,
       "reference_not_found": false,
       "reference_disabled": false,

@@ -935,6 +935,9 @@ func (service *catalogServiceStub) ResolveMCPSecrets(context.Context, ports.MCPT
 }
 
 func (service *catalogServiceStub) ResolveExecutionCredential(_ context.Context, input ports.ExecutionCredentialRequest) (ports.ResolvedExecutionCredential, error) {
+	if service.getModelErr != nil {
+		return ports.ResolvedExecutionCredential{}, service.getModelErr
+	}
 	return ports.ResolvedExecutionCredential{OrganizationID: input.OrganizationID, ConnectionID: input.ConnectionID,
 		CredentialVersion: input.CredentialVersion, Method: "api_key", Secret: "synthetic-resolved-secret"}, nil
 }

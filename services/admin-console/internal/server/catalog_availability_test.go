@@ -69,7 +69,16 @@ func TestCatalogAvailabilityPreservesReferenceConflictAndDoesNotRetry(t *testing
 	backend.enqueue(409, body)
 	response := requestCatalog(t, newTestHandler(t, backend), "/api/admin/provider-connections/item/availability", `{"expected_enabled":true,"enabled":false}`, nil)
 	require.Equal(t, 409, response.Code)
-	require.JSONEq(t, body, response.Body.String())
+	var got map[string]any
+	decodeBytes(t, response.Body.Bytes(), &got)
+	require.Equal(t, response.Header().Get("X-Request-ID"), got["request_id"])
+	require.Equal(t, "resource_in_use", got["code"])
+	require.Equal(t, "conflict", got["category"])
+	require.Equal(t, "Resource is referenced", got["message"])
+	require.Equal(t, false, got["retryable"])
+	require.Len(t, got["references"], 3)
+	require.Equal(t, true, got["references_truncated"])
+	require.Equal(t, got["references"], got["details"].(map[string]any)["references"])
 	require.Len(t, backend.calls, 1)
 }
 
@@ -86,11 +95,16 @@ func TestCatalogAvailabilityPreservesOwnerFailures(t *testing.T) {
 	for _, resource := range []string{"provider-connections", "model-profiles", "templates"} {
 		for _, status := range []int{404, 409, 500, 503} {
 			backend := newBackendStub()
-			body := `{"code":"owner_failure","message":"Owner rejected command","retryable":false}`
+			body := `{"code":"conflict","message":"Owner rejected command","retryable":false}`
 			backend.enqueue(status, body)
 			response := requestCatalog(t, newTestHandler(t, backend), "/api/admin/"+resource+"/item/availability", `{"expected_enabled":true,"enabled":false}`, nil)
 			require.Equal(t, status, response.Code)
-			require.JSONEq(t, body, response.Body.String())
+			var got map[string]any
+			decodeBytes(t, response.Body.Bytes(), &got)
+			require.Equal(t, "conflict", got["category"])
+			require.Equal(t, "Owner rejected command", got["message"])
+			require.Equal(t, false, got["retryable"])
+			require.Equal(t, response.Header().Get("X-Request-ID"), got["request_id"])
 			require.Len(t, backend.calls, 1)
 		}
 	}

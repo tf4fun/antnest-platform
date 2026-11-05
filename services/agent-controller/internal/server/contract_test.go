@@ -319,7 +319,7 @@ func TestMachineControlSchemaMatchesGoWireTypes(t *testing.T) {
 		"event_list": agentEventListPayload(application.AgentEventPage{
 			Events: []application.AgentEventView{event}, NextSequence: 1,
 		}),
-		"error": errorResponse{Code: "invalid_request", Message: "invalid", Retryable: false},
+		"error": errorResponse{Code: "invalid_request", Category: "invalid_request", Message: "invalid", Retryable: false, RequestID: "contract-probe"},
 	}
 	for name, value := range values {
 		assertControlWireType(t, compiler, name, value)
@@ -551,6 +551,9 @@ func TestMachineControlContractValidatesActualHTTPErrorBoundary(t *testing.T) {
 		{code: "invalid_request", method: http.MethodPost, path: "/internal/agents", body: "{"},
 		{code: "resource_version_conflict", err: &ports.DependencyError{Service: "runtime-egress", Code: "resource_version_conflict"}, method: http.MethodPut, path: "/internal/agents/agent-1/network-policy", body: networkMutationJSON},
 		{code: "policy_revision_not_found", err: &ports.DependencyError{Service: "runtime-egress", Code: "policy_revision_not_found"}, method: http.MethodPut, path: "/internal/agents/agent-1/network-policy", body: networkMutationJSON},
+		{code: "policy_revision_conflict", err: &ports.DependencyError{Service: "runtime-egress", Code: "policy_revision_conflict"}, method: http.MethodPut, path: "/internal/agents/agent-1/network-policy", body: networkMutationJSON},
+		{code: "not_found", err: ports.ErrNotFound, method: http.MethodPost, path: "/internal/execution-credentials/resolve", body: `{"organization_id":"org-1","connection_id":"conn-1","credential_version":"v1"}`},
+		{code: "preparation_not_found", err: ports.ErrNotFound, method: http.MethodGet, path: "/internal/agent-skill-preparations/request-1?organization_id=org-1"},
 		{code: "agent_network_not_found", err: &ports.DependencyError{Service: "runtime-egress", Code: "agent_network_not_found"}, method: http.MethodPut, path: "/internal/agents/agent-1/network-policy", body: networkMutationJSON},
 		{code: "agent_network_unavailable", err: &ports.DependencyError{Service: "runtime-egress", Code: "agent_network_unavailable"}, method: http.MethodPut, path: "/internal/agents/agent-1/network-policy", body: networkMutationJSON},
 		{code: "cleanup_failed", err: &ports.DependencyError{Service: "runtime-egress", Code: "cleanup_failed"}, method: http.MethodPut, path: "/internal/agents/agent-1/network-policy", body: networkMutationJSON},
@@ -922,6 +925,11 @@ func compileControlSchema(t *testing.T, path string) *jsonschema.Compiler {
 	readContractJSON(t, filepath.Join(repositoryRoot(t), "contracts/agent-controller/runtime-barrier-recovery.schema.json"), &recoveryPolicyContract)
 	if err := compiler.AddResource("https://antnest.local/agent-controller/runtime-barrier-recovery.schema.json", recoveryPolicyContract); err != nil {
 		t.Fatalf("load Runtime barrier recovery contract: %v", err)
+	}
+	var commonErrorContract any
+	readContractJSON(t, filepath.Join(repositoryRoot(t), "contracts/common/error.schema.json"), &commonErrorContract)
+	if err := compiler.AddResource("https://antnest.local/contracts/common/error.schema.json", commonErrorContract); err != nil {
+		t.Fatalf("load common error contract: %v", err)
 	}
 	if err := compiler.AddResource(controlSchemaID, document); err != nil {
 		t.Fatalf("load control schema: %v", err)

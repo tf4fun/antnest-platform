@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/santhosh-tekuri/jsonschema/v6"
@@ -22,6 +23,17 @@ func TestHTTPResponsesMatchRegistryContract(t *testing.T) {
 		t.Fatal(err)
 	}
 	compiler := jsonschema.NewCompiler()
+	common, err := os.ReadFile(filepath.Join("..", "..", "..", "..", "contracts", "common", "error.schema.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	commonDoc, err := jsonschema.UnmarshalJSON(bytes.NewReader(common))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := compiler.AddResource("https://antnest.local/contracts/common/error.schema.json", commonDoc); err != nil {
+		t.Fatal(err)
+	}
 	if err := compiler.AddResource(schemaID, document); err != nil {
 		t.Fatal(err)
 	}
@@ -80,4 +92,22 @@ func TestHTTPResponsesMatchRegistryContract(t *testing.T) {
 	errorResponse := httptest.NewRecorder()
 	handler.ServeHTTP(errorResponse, httptest.NewRequest(http.MethodGet, "/internal/skills?organization_id="+testOrg, nil))
 	assertSchema("error", errorResponse.Body.Bytes())
+	shape, err := compiler.Compile(schemaID + "#/$defs/error")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, mutate := range map[string]func(map[string]any){
+		"missing top category":   func(v map[string]any) { delete(v, "category") },
+		"missing nested request": func(v map[string]any) { delete(v["error"].(map[string]any), "request_id") },
+		"unsafe top request_id":  func(v map[string]any) { v["request_id"] = "bad id with spaces" },
+	} {
+		var value map[string]any
+		if err := json.Unmarshal(errorResponse.Body.Bytes(), &value); err != nil {
+			t.Fatal(err)
+		}
+		mutate(value)
+		if err := shape.Validate(value); err == nil {
+			t.Fatalf("mutated error body %q must violate the error schema", name)
+		}
+	}
 }

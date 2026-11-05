@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"net"
 	"net/http"
+
+	"github.com/tf4fun/antnest-platform/services/admin-console/internal/apierror"
 )
 
 // The existing HTTP response adapter retains its error until dispatch returns.
@@ -47,8 +49,9 @@ func retainFailure(response http.ResponseWriter, err error) {
 
 func writeFailure(response http.ResponseWriter, status int, code, message string, cause error) {
 	retainFailure(response, &adapterFailure{status: status, code: code, message: message, cause: cause})
-	response.Header().Set("Cache-Control", "no-store")
-	writeJSON(response, status, map[string]string{"code": code, "message": message})
+	envelope := apierror.New(code, message, response.Header().Get("X-Request-ID"))
+	response.Header().Set("X-Request-ID", envelope.RequestID)
+	apierror.WriteError(response, status, envelope.Code, envelope.Message, envelope.Retryable)
 }
 
 func safeErrorCode(code string) string {

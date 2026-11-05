@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 
+	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/apierror"
 	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/application"
 	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/domain"
 	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/ports"
@@ -76,7 +77,7 @@ func (h *runtimeBarrierRecoveryPolicyHandler) set(response http.ResponseWriter, 
 	policy, err := h.service.Set(request.Context(), input)
 	if err != nil {
 		if errors.Is(err, ports.ErrConcurrentChange) {
-			writeError(response, http.StatusConflict, "resource_version_conflict", "Reload the Runtime barrier recovery policy before updating", false)
+			writeError(response, http.StatusConflict, apierror.ResourceVersionConflict, "Reload the Runtime barrier recovery policy before updating", false)
 		} else {
 			writeServiceError(request.Context(), response, err)
 		}

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"github.com/tf4fun/antnest-platform/services/skill-registry/internal/apierror"
 	"io"
 	"mime"
 	"net/http"
@@ -24,7 +25,7 @@ func NewHTTPAgentSource(origin string, client *http.Client) (*HTTPAgentSource, e
 	parsed, err := url.Parse(origin)
 	if err != nil || parsed.Host == "" || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.User != nil || parsed.RawQuery != "" || parsed.ForceQuery || parsed.Fragment != "" || (parsed.Path != "" && parsed.Path != "/") ||
 		client == nil {
-		return nil, failure("invalid_request", "invalid private Skill source configuration")
+		return nil, failure(apierror.InvalidRequest, "invalid private Skill source configuration")
 	}
 	copyClient := *client
 	copyClient.Jar = nil
@@ -39,38 +40,32 @@ func (s *HTTPAgentSource) post(ctx context.Context, path string, in any, max int
 	}
 	request, err := http.NewRequestWithContext(ctx, http.MethodPost, s.origin+path, bytes.NewReader(data))
 	if err != nil {
-		return nil, nil, failure("source_unavailable", "Agent Skill source is unavailable")
+		return nil, nil, failure(apierror.SourceUnavailable, "Agent Skill source is unavailable")
 	}
 	request.Header.Set("Content-Type", "application/json")
 	response, err := s.client.Do(request)
 	if err != nil {
-		return nil, nil, failure("source_unavailable", "Agent Skill source is unavailable")
+		return nil, nil, failure(apierror.SourceUnavailable, "Agent Skill source is unavailable")
 	}
 	defer func() { _ = response.Body.Close() }()
 	if response.StatusCode != http.StatusOK {
 		if path == "/internal/skill-sources/artifact" && (response.StatusCode == 403 || response.StatusCode == 404) {
-			return nil, nil, failure("not_found", "Skill source not found")
+			return nil, nil, failure(apierror.NotFound, "Skill source not found")
 		}
 		if response.StatusCode == 409 {
-			body, _ := io.ReadAll(io.LimitReader(response.Body, 4096))
-			var payload struct {
-				Error struct {
-					Code    string `json:"code"`
-					Message string `json:"message"`
-				} `json:"error"`
-			}
-			if decodeOne(body, &payload) == nil && payload.Error.Code == "content_changed" {
-				return nil, nil, failure("content_changed", "Skill source content changed; choose again")
+			body, err := io.ReadAll(io.LimitReader(response.Body, 4097))
+			if err == nil && len(body) <= 4096 && sourceContentChanged(body) {
+				return nil, nil, failure(apierror.ContentChanged, "Skill source content changed; choose again")
 			}
 		}
-		return nil, nil, failure("source_unavailable", "Agent Skill source is unavailable")
+		return nil, nil, failure(apierror.SourceUnavailable, "Agent Skill source is unavailable")
 	}
 	body, err := io.ReadAll(io.LimitReader(response.Body, max+1))
 	if err != nil {
-		return nil, nil, failure("source_unavailable", "Agent Skill source response was interrupted")
+		return nil, nil, failure(apierror.SourceUnavailable, "Agent Skill source response was interrupted")
 	}
 	if int64(len(body)) > max || len(body) == 0 {
-		return nil, nil, failure("source_invalid", "Skill source response exceeds its limit")
+		return nil, nil, failure(apierror.SourceInvalid, "Skill source response exceeds its limit")
 	}
 	kind, _, err := mime.ParseMediaType(response.Header.Get("Content-Type"))
 	expected := "application/json"
@@ -78,10 +73,10 @@ func (s *HTTPAgentSource) post(ctx context.Context, path string, in any, max int
 		expected = "application/zip"
 	}
 	if err != nil || kind != expected {
-		return nil, nil, failure("source_invalid", "invalid Skill source content type")
+		return nil, nil, failure(apierror.SourceInvalid, "invalid Skill source content type")
 	}
 	if expected == "application/zip" && response.ContentLength != int64(len(body)) {
-		return nil, nil, failure("source_invalid", "invalid source artifact length")
+		return nil, nil, failure(apierror.SourceInvalid, "invalid source artifact length")
 	}
 	return body, response.Header, nil
 }
@@ -99,7 +94,7 @@ func (s *HTTPAgentSource) Inspect(ctx context.Context, org, actor string, keys [
 		Items []Projection `json:"items"`
 	}
 	if err := decodeOne(data, &result); err != nil || result.Items == nil || len(result.Items) > MaxDiscoveryLimit {
-		return nil, failure("source_invalid", "invalid source inspection")
+		return nil, failure(apierror.SourceInvalid, "invalid source inspection")
 	}
 	return result.Items, nil
 }
@@ -109,10 +104,72 @@ func (s *HTTPAgentSource) Artifact(ctx context.Context, in SourceArtifactInput) 
 		return nil, err
 	}
 	if headers.Get("X-Antnest-Source-Sequence") != strconv.FormatInt(in.SkillRef.Sequence, 10) || headers.Get("X-Antnest-Content-Digest") != in.ExpectedDigest {
-		return nil, failure("content_changed", "Skill source content changed; choose again")
+		return nil, failure(apierror.ContentChanged, "Skill source content changed; choose again")
 	}
 	if headers.Get("X-Antnest-Artifact-Digest") != digest(data) {
-		return nil, failure("source_invalid", "source artifact digest does not match bytes")
+		return nil, failure(apierror.SourceInvalid, "source artifact digest does not match bytes")
 	}
 	return data, nil
+}
+
+type sourceErrorTop struct {
+	Code      *string         `json:"code"`
+	Category  *string         `json:"category"`
+	Message   *string         `json:"message"`
+	Retryable *bool           `json:"retryable"`
+	RequestID *string         `json:"request_id"`
+	Details   json.RawMessage `json:"details"`
+	Error     *struct {
+		Code    string `json:"code"`
+		Message string `json:"message"`
+	} `json:"error"`
+}
+
+func sourceContentChanged(raw []byte) bool {
+	var top sourceErrorTop
+	if decodeOne(raw, &top) != nil {
+		return false
+	}
+	var fields map[string]json.RawMessage
+	if json.Unmarshal(raw, &fields) != nil {
+		return false
+	}
+	common := []string{"code", "category", "message", "retryable", "request_id", "details"}
+	newShape := false
+	for _, key := range common {
+		if _, present := fields[key]; present {
+			newShape = true
+			break
+		}
+	}
+	if !newShape {
+		return top.Error != nil && top.Error.Code == apierror.ContentChanged
+	}
+	if top.Code == nil || top.Category == nil || top.Message == nil ||
+		top.Retryable == nil || top.RequestID == nil {
+		return false
+	}
+	if *top.Code != apierror.ContentChanged || *top.Message == "" {
+		return false
+	}
+	expected := apierror.New(apierror.ContentChanged, *top.Message, *top.RequestID)
+	if *top.Category != expected.Category ||
+		*top.Retryable != expected.Retryable ||
+		*top.RequestID != expected.RequestID {
+		return false
+	}
+	if top.Details != nil {
+		var details map[string]json.RawMessage
+		if json.Unmarshal(top.Details, &details) != nil || details == nil {
+			return false
+		}
+	}
+	if _, hasAlias := fields["error"]; hasAlias && top.Error == nil {
+		return false
+	}
+	if top.Error != nil &&
+		(top.Error.Code != apierror.ContentChanged || top.Error.Message != *top.Message) {
+		return false
+	}
+	return true
 }

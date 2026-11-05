@@ -1,5 +1,6 @@
 // Browser-safe workspace DTO validation and patching. No Node or ACP runtime imports.
 import { z } from "zod";
+import { ERROR_METADATA } from "../errors.gen.ts";
 import { learningStatusSchema } from "./learning-status.ts";
 import { availableCommandsSchema } from "./available-commands.ts";
 
@@ -8,7 +9,34 @@ const revision = z.number().int().nonnegative().safe();
 const cursor = z.string().min(1).max(4096);
 const content = z.object({ type: z.string().min(1) }).passthrough();
 const error = z.strictObject({ code: z.string().min(1), message: z.string().min(1), requestId: id, operationId: id.optional(),
-  retryable: z.boolean(), recovery: z.enum(["none", "login", "refresh", "retry_read", "query_operation"]) });
+  retryable: z.boolean(), recovery: z.enum(["none", "login", "refresh", "retry_read", "query_operation"]),
+  category: z.enum(["invalid_request", "unauthenticated", "forbidden", "not_found", "conflict", "precondition_failed", "rate_limited", "unavailable", "internal"]).optional(),
+  request_id: z.string().regex(/^[A-Za-z0-9._:-]{1,128}$/).optional(),
+  details: z.record(z.string(), z.unknown()).optional(),
+}).superRefine((value, issue) => {
+  const present = ["category", "request_id", "details"].filter((key) => Object.hasOwn(value, key));
+  if (present.length === 0) return;
+  for (const key of ["category", "request_id"]) {
+    if (!Object.hasOwn(value, key) || (value as Record<string, unknown>)[key] === undefined) {
+      issue.addIssue({ code: "custom", message: `common error metadata requires ${key}`, path: [key] });
+      return;
+    }
+  }
+  if (value.requestId !== value.request_id) {
+    issue.addIssue({ code: "custom", message: "requestId must equal request_id", path: ["request_id"] });
+    return;
+  }
+  const meta = Object.hasOwn(ERROR_METADATA, value.code)
+    ? ERROR_METADATA[value.code as keyof typeof ERROR_METADATA]
+    : undefined;
+  if (meta === undefined || meta.category !== value.category) {
+    issue.addIssue({ code: "custom", message: "category does not match the registered code", path: ["category"] });
+    return;
+  }
+  if (value.details !== undefined && (typeof value.details !== "object" || value.details === null || Array.isArray(value.details))) {
+    issue.addIssue({ code: "custom", message: "details must be a plain object", path: ["details"] });
+  }
+});
 export type OperationError = z.infer<typeof error>;
 export function parseOperationError(value: unknown): OperationError | undefined {
   const parsed = error.safeParse(value);

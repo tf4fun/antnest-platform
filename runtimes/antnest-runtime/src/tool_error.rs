@@ -11,7 +11,7 @@ pub(crate) enum ToolEffectState {
 }
 
 macro_rules! define_tool_error_codes {
-    ($($variant:ident => $value:literal),+ $(,)?) => {
+    ($($variant:ident => $value:path),+ $(,)?) => {
         #[derive(Clone, Copy, Debug, Eq, PartialEq)]
         pub(crate) enum ToolErrorCode {
             $($variant),+
@@ -38,35 +38,35 @@ macro_rules! define_tool_error_codes {
 }
 
 define_tool_error_codes! {
-    AtomicSkillReplaceUnsupported => "atomic_skill_replace_unsupported",
-    Canceled => "canceled",
-    ChildProcessContainmentUnproven => "child_process_containment_unproven",
-    ContentNotUtf8 => "content_not_utf8",
-    EditFailed => "edit_failed",
-    EditReadFailed => "edit_read_failed",
-    EncodeResultFailed => "encode_result_failed",
-    InvalidParams => "invalid_params",
-    InvalidPath => "invalid_path",
-    OldStringNotFound => "old_string_not_found",
-    OldStringNotUnique => "old_string_not_unique",
-    OutcomeUnknown => "outcome_unknown",
-    OutputCaptureFailed => "output_capture_failed",
-    ReadFailed => "read_failed",
-    ResultTooLarge => "result_too_large",
-    RuntimeBusy => "runtime_busy",
-    RuntimeFailed => "runtime_failed",
-    RuntimeUnavailable => "runtime_unavailable",
-    SkillBackgroundTaskRunning => "skill_background_task_running",
-    SkillManagedCallInFlight => "skill_managed_call_in_flight",
-    SkillStorageFull => "skill_storage_full",
-    SkillWritersUnknown => "skill_writers_unknown",
-    SpawnFailed => "spawn_failed",
-    Timeout => "timeout",
-    TemporaryRunClosed => "temporary_run_closed",
-    TemporaryScopeBusy => "temporary_scope_busy",
-    TemporaryBackgroundNotSupported => "temporary_background_not_supported",
-    WaitFailed => "wait_failed",
-    WriteFailed => "write_failed",
+    AtomicSkillReplaceUnsupported => crate::api_errors_gen::ATOMIC_SKILL_REPLACE_UNSUPPORTED,
+    Canceled => crate::api_errors_gen::CANCELED,
+    ChildProcessContainmentUnproven => crate::api_errors_gen::CHILD_PROCESS_CONTAINMENT_UNPROVEN,
+    ContentNotUtf8 => crate::api_errors_gen::CONTENT_NOT_UTF8,
+    EditFailed => crate::api_errors_gen::EDIT_FAILED,
+    EditReadFailed => crate::api_errors_gen::EDIT_READ_FAILED,
+    EncodeResultFailed => crate::api_errors_gen::ENCODE_RESULT_FAILED,
+    InvalidParams => crate::api_errors_gen::INVALID_PARAMS,
+    InvalidPath => crate::api_errors_gen::INVALID_PATH,
+    OldStringNotFound => crate::api_errors_gen::OLD_STRING_NOT_FOUND,
+    OldStringNotUnique => crate::api_errors_gen::OLD_STRING_NOT_UNIQUE,
+    OutcomeUnknown => crate::api_errors_gen::OUTCOME_UNKNOWN,
+    OutputCaptureFailed => crate::api_errors_gen::OUTPUT_CAPTURE_FAILED,
+    ReadFailed => crate::api_errors_gen::READ_FAILED,
+    ResultTooLarge => crate::api_errors_gen::RESULT_TOO_LARGE,
+    RuntimeBusy => crate::api_errors_gen::RUNTIME_BUSY,
+    RuntimeFailed => crate::api_errors_gen::RUNTIME_FAILED,
+    RuntimeUnavailable => crate::api_errors_gen::RUNTIME_UNAVAILABLE,
+    SkillBackgroundTaskRunning => crate::api_errors_gen::SKILL_BACKGROUND_TASK_RUNNING,
+    SkillManagedCallInFlight => crate::api_errors_gen::SKILL_MANAGED_CALL_IN_FLIGHT,
+    SkillStorageFull => crate::api_errors_gen::SKILL_STORAGE_FULL,
+    SkillWritersUnknown => crate::api_errors_gen::SKILL_WRITERS_UNKNOWN,
+    SpawnFailed => crate::api_errors_gen::SPAWN_FAILED,
+    Timeout => crate::api_errors_gen::TIMEOUT,
+    TemporaryRunClosed => crate::api_errors_gen::TEMPORARY_RUN_CLOSED,
+    TemporaryScopeBusy => crate::api_errors_gen::TEMPORARY_SCOPE_BUSY,
+    TemporaryBackgroundNotSupported => crate::api_errors_gen::TEMPORARY_BACKGROUND_NOT_SUPPORTED,
+    WaitFailed => crate::api_errors_gen::WAIT_FAILED,
+    WriteFailed => crate::api_errors_gen::WRITE_FAILED,
 }
 
 impl ToolErrorCode {

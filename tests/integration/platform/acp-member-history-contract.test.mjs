@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { test } from "node:test";
+import { withCommonErrorSchema } from "../../support/common-error-schema.mjs";
 
 const require = createRequire(
   new URL("../../../services/agent-acp-service/package.json", import.meta.url),
@@ -57,6 +58,7 @@ function validators() {
     useDefaults: false,
     removeAdditional: false,
   });
+  withCommonErrorSchema(ajv);
   ajv.addSchema(read("contracts/agent-acp/owner-incarnation.schema.json"));
   ajv.addSchema(read(schemaPath));
   return Object.fromEntries(

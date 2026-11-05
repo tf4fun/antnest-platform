@@ -3,6 +3,7 @@ package registry
 import (
 	"context"
 	"encoding/json"
+	"github.com/tf4fun/antnest-platform/services/skill-registry/internal/apierror"
 	"regexp"
 	"sort"
 	"strings"
@@ -72,7 +73,7 @@ func (ref *SkillRef) UnmarshalJSON(data []byte) error {
 		}
 		*ref = SkillRef{Kind: value.Kind, SkillID: value.SkillID, Version: value.Version}
 	default:
-		return failure("invalid_request", "unknown Skill source")
+		return failure(apierror.InvalidRequest, "unknown Skill source")
 	}
 	return nil
 }
@@ -165,17 +166,17 @@ func discoveryOrder(item DiscoveryItem) string {
 }
 func (d *Discovery) Update(ctx context.Context, p Projection) (ProjectionResult, error) {
 	if !validProjection(p) {
-		return ProjectionResult{}, failure("invalid_request", "invalid source mapping")
+		return ProjectionResult{}, failure(apierror.InvalidRequest, "invalid source mapping")
 	}
 	return d.index.UpsertProjection(ctx, p)
 }
 func (d *Discovery) Search(ctx context.Context, in SearchInput) ([]DiscoveryItem, error) {
 	in.Query = strings.TrimSpace(in.Query)
 	if !organizationID.MatchString(in.OrganizationID) || !userID.MatchString(in.ActorID) || len(in.Query) < 1 || len(in.Query) > 256 || !utf8.ValidString(in.Query) || strings.ContainsRune(in.Query, 0) || in.Limit < 0 || in.Limit > MaxDiscoveryLimit {
-		return nil, failure("invalid_request", "invalid discovery identity, query or limit")
+		return nil, failure(apierror.InvalidRequest, "invalid discovery identity, query or limit")
 	}
 	if in.RequestingAgentID != "" && !agentID.MatchString(in.RequestingAgentID) {
-		return nil, failure("invalid_request", "invalid requesting Agent identity")
+		return nil, failure(apierror.InvalidRequest, "invalid requesting Agent identity")
 	}
 	if in.Limit == 0 {
 		in.Limit = 20
@@ -201,22 +202,22 @@ func (d *Discovery) Search(ctx context.Context, in SearchInput) ([]DiscoveryItem
 	current := map[SourceKey]Projection{}
 	if len(keys) > 0 {
 		if d.source == nil {
-			return nil, failure("source_unavailable", "Agent Skill source is unavailable")
+			return nil, failure(apierror.SourceUnavailable, "Agent Skill source is unavailable")
 		}
 		items, err := d.source.Inspect(ctx, in.OrganizationID, in.ActorID, keys)
 		if err != nil {
 			return nil, sourceFailure(err)
 		}
 		if len(items) > len(keys) {
-			return nil, failure("source_invalid", "invalid source inspection")
+			return nil, failure(apierror.SourceInvalid, "invalid source inspection")
 		}
 		for _, p := range items {
 			key := SourceKey{AgentID: p.AgentID, Name: p.Name}
 			if !validProjection(p) || !p.Active || p.OrganizationID != in.OrganizationID || p.OwnerID != in.ActorID || !wanted[key] {
-				return nil, failure("source_invalid", "invalid source inspection")
+				return nil, failure(apierror.SourceInvalid, "invalid source inspection")
 			}
 			if _, duplicate := current[key]; duplicate {
-				return nil, failure("source_invalid", "repeated source inspection")
+				return nil, failure(apierror.SourceInvalid, "repeated source inspection")
 			}
 			current[key] = p
 		}
@@ -232,7 +233,7 @@ func (d *Discovery) Search(ctx context.Context, in SearchInput) ([]DiscoveryItem
 				continue
 			}
 			if p.Sequence < item.SkillRef.Sequence {
-				return nil, failure("source_invalid", "source inspection is behind its mapping")
+				return nil, failure(apierror.SourceInvalid, "source inspection is behind its mapping")
 			}
 			item = projectionItem(p)
 		}
@@ -249,18 +250,18 @@ func (d *Discovery) Search(ctx context.Context, in SearchInput) ([]DiscoveryItem
 func sourceFailure(err error) error {
 	switch Code(err) {
 	case "not_found":
-		return failure("not_found", "Skill source not found")
+		return failure(apierror.NotFound, "Skill source not found")
 	case "content_changed":
-		return failure("content_changed", "Skill source content changed; choose again")
+		return failure(apierror.ContentChanged, "Skill source content changed; choose again")
 	case "source_invalid":
-		return failure("source_invalid", "Skill source returned invalid content")
+		return failure(apierror.SourceInvalid, "Skill source returned invalid content")
 	default:
-		return failure("source_unavailable", "Agent Skill source is unavailable")
+		return failure(apierror.SourceUnavailable, "Agent Skill source is unavailable")
 	}
 }
 func (d *Discovery) Load(ctx context.Context, in LoadInput) (LoadedPackage, error) {
 	if !organizationID.MatchString(in.OrganizationID) || !userID.MatchString(in.ActorID) || !validRef(in.SkillRef) || !contentDigest.MatchString(in.ExpectedDigest) {
-		return LoadedPackage{}, failure("invalid_request", "invalid selected Skill identity")
+		return LoadedPackage{}, failure(apierror.InvalidRequest, "invalid selected Skill identity")
 	}
 	var artifact []byte
 	if in.SkillRef.Kind == "registry" {
@@ -275,13 +276,13 @@ func (d *Discovery) Load(ctx context.Context, in LoadInput) (LoadedPackage, erro
 			return LoadedPackage{}, err
 		}
 		if !p.Active || p.OwnerID != in.ActorID {
-			return LoadedPackage{}, failure("not_found", "Skill source not found")
+			return LoadedPackage{}, failure(apierror.NotFound, "Skill source not found")
 		}
 		if p.Sequence > in.SkillRef.Sequence {
-			return LoadedPackage{}, failure("content_changed", "Skill source content changed; choose again")
+			return LoadedPackage{}, failure(apierror.ContentChanged, "Skill source content changed; choose again")
 		}
 		if d.source == nil {
-			return LoadedPackage{}, failure("source_unavailable", "Agent Skill source is unavailable")
+			return LoadedPackage{}, failure(apierror.SourceUnavailable, "Agent Skill source is unavailable")
 		}
 		artifact, err = d.source.Artifact(ctx, in)
 		if err != nil {
@@ -293,10 +294,10 @@ func (d *Discovery) Load(ctx context.Context, in LoadInput) (LoadedPackage, erro
 		if ctx.Err() != nil {
 			return LoadedPackage{}, ctx.Err()
 		}
-		return LoadedPackage{}, failure("source_invalid", "selected Skill package is invalid")
+		return LoadedPackage{}, failure(apierror.SourceInvalid, "selected Skill package is invalid")
 	}
 	if pkg.ContentDigest != in.ExpectedDigest || in.SkillRef.Kind == "agent" && pkg.Name != in.SkillRef.Name {
-		return LoadedPackage{}, failure("content_changed", "Skill content changed; choose again")
+		return LoadedPackage{}, failure(apierror.ContentChanged, "Skill content changed; choose again")
 	}
 	return LoadedPackage{SkillRef: in.SkillRef, Package: pkg}, nil
 }
@@ -307,7 +308,7 @@ func promotionFingerprint(in PromoteInput) string {
 func (d *Discovery) Promote(ctx context.Context, in PromoteInput) (Version, error) {
 	if !validRequestID(in.RequestID) || !organizationID.MatchString(in.OrganizationID) || !userID.MatchString(in.ActorID) || !validRef(in.SkillRef) || in.SkillRef.Kind != "agent" || !contentDigest.MatchString(in.ExpectedDigest) ||
 		in.SkillID == "" && in.ExpectedVersion != 0 || in.SkillID != "" && (!skillID.MatchString(in.SkillID) || in.ExpectedVersion < 1) {
-		return Version{}, failure("invalid_request", "invalid Skill promotion identity or target")
+		return Version{}, failure(apierror.InvalidRequest, "invalid Skill promotion identity or target")
 	}
 	fingerprint := promotionFingerprint(in)
 	stored, previous, exists, err := d.service.store.Receipt(ctx, in.OrganizationID, in.RequestID)
@@ -316,7 +317,7 @@ func (d *Discovery) Promote(ctx context.Context, in PromoteInput) (Version, erro
 	}
 	if exists {
 		if stored != fingerprint {
-			return Version{}, failure("request_conflict", "request ID was used with different input")
+			return Version{}, failure(apierror.RequestConflict, "request ID was used with different input")
 		}
 		return previous, nil
 	}

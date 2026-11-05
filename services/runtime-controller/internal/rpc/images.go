@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"strings"
 
+	"github.com/tf4fun/antnest-platform/services/runtime-controller/internal/apierror"
 	"github.com/tf4fun/antnest-platform/services/runtime-controller/internal/platform"
 )
 
@@ -38,20 +39,20 @@ func (h *Handler) resolveImage(response http.ResponseWriter, request *http.Reque
 func classifyImageError(err error) (errorDescriptor, bool) {
 	switch {
 	case errors.Is(err, platform.ErrImageNotAllowed):
-		return errorDescriptor{status: http.StatusUnprocessableEntity, response: errorResponse{Code: "image_not_allowed", Message: "Runtime image is not allowed by operator policy", Retryable: false}}, true
+		return errorDescriptor{status: http.StatusUnprocessableEntity, response: errorResponse{Code: apierror.ImageNotAllowed, Message: "Runtime image is not allowed by operator policy", Retryable: false}}, true
 	case errors.Is(err, platform.ErrInvalidImageReference):
 		return errorDescriptor{status: http.StatusBadRequest, response: errorResponse{
-			Code: "invalid_request", Message: "Select a valid image name, tag or digest reference", Retryable: false,
+			Code: apierror.InvalidRequest, Message: "Select a valid image name, tag or digest reference", Retryable: false,
 		}}, true
 	case errors.Is(err, platform.ErrImageNotFound):
 		return errorDescriptor{status: http.StatusNotFound, response: errorResponse{
-			Code: "image_not_found", Message: "Runtime image is not installed; ask the platform operator to build or load it first", Retryable: false,
+			Code: apierror.ImageNotFound, Message: "Runtime image is not installed; ask the platform operator to build or load it first", Retryable: false,
 		}}, true
 	case errors.Is(err, context.DeadlineExceeded):
 		return errorDescriptor{}, false
 	case errors.Is(err, platform.ErrImageResolutionUnavailable):
 		return errorDescriptor{status: http.StatusServiceUnavailable, response: errorResponse{
-			Code: "platform_unavailable", Message: "Runtime image resolution is temporarily unavailable", Retryable: true,
+			Code: apierror.PlatformUnavailable, Message: "Runtime image resolution is temporarily unavailable", Retryable: true,
 		}}, true
 	default:
 		return errorDescriptor{}, false
