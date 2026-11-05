@@ -570,13 +570,18 @@ payload keys.
 
 ## Errors
 
-All errors use:
+All errors use the [common error contract](../common/error.schema.json) envelope
+with the [Controller slice](../common/slices/agent-controller.json) of emitted
+codes:
 
 ```json
 {
   "code": "agent_not_ready",
+  "category": "conflict",
   "message": "agent is not ready",
-  "retryable": true
+  "retryable": true,
+  "request_id": "req-9f2a",
+  "details": {}
 }
 ```
 
