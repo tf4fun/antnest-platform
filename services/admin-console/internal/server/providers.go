@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/url"
 
+	"github.com/tf4fun/antnest-platform/services/admin-console/internal/apierror"
 	"github.com/tf4fun/antnest-platform/services/admin-console/internal/principal"
 	"github.com/tf4fun/antnest-platform/services/admin-console/internal/upstream"
 )
@@ -75,7 +76,7 @@ func (h *handler) createProviderConnection(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	if !required(input.ProviderKey, input.DisplayName, input.BaseURL, input.Credential.Method, input.Credential.Secret) || input.Models == nil {
-		writeError(w, http.StatusBadRequest, "invalid_request", "Provider connection fields and a models array are required")
+		writeError(w, http.StatusBadRequest, apierror.InvalidRequest, "Provider connection fields and a models array are required")
 		return
 	}
 	requestID, ok := commandRequestID(w, r, actor.OrganizationID, "provider-connect")
@@ -85,7 +86,7 @@ func (h *handler) createProviderConnection(w http.ResponseWriter, r *http.Reques
 	models := make([]map[string]any, 0, len(input.Models))
 	for index, model := range input.Models {
 		if err := validateModelContextMetadata(model.Model); err != nil {
-			writeError(w, http.StatusBadRequest, "invalid_request", "Invalid Model context metadata")
+			writeError(w, http.StatusBadRequest, apierror.InvalidRequest, "Invalid Model context metadata")
 			return
 		}
 		models = append(models, map[string]any{"profile_key": fmt.Sprintf("%s-%d", requestID, index),
@@ -107,7 +108,7 @@ func (h *handler) rotateProviderCredential(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	if !required(input.ExpectedVersion, input.Credential.Method, input.Credential.Secret) {
-		writeError(w, http.StatusBadRequest, "invalid_request", "Credential and its expected version are required")
+		writeError(w, http.StatusBadRequest, apierror.InvalidRequest, "Credential and its expected version are required")
 		return
 	}
 	requestID, ok := commandRequestID(w, r, actor.OrganizationID, "provider-credential")

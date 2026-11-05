@@ -249,6 +249,470 @@
       "http_status": 429,
       "owner": "edge-gateway",
       "description": "Password verification attempts were rate limited; retry after the announced delay."
+    },
+    {
+      "code": "invalid_idempotency_key",
+      "category": "invalid_request",
+      "retryable": false,
+      "http_status": 400,
+      "owner": "admin-console",
+      "description": "The Idempotency-Key header is missing or malformed."
+    },
+    {
+      "code": "runtime_image_required",
+      "category": "invalid_request",
+      "retryable": false,
+      "http_status": 400,
+      "owner": "admin-console",
+      "description": "A runtime image selection is required for this operation."
+    },
+    {
+      "code": "invalid_argument",
+      "category": "invalid_request",
+      "retryable": false,
+      "http_status": 400,
+      "owner": "admin-console",
+      "description": "The request contains an invalid argument."
+    },
+    {
+      "code": "bad_request",
+      "category": "invalid_request",
+      "retryable": false,
+      "http_status": 400,
+      "owner": "admin-console",
+      "description": "The upstream request is invalid."
+    },
+    {
+      "code": "unsupported_media_type",
+      "category": "invalid_request",
+      "retryable": false,
+      "http_status": 415,
+      "owner": "admin-console",
+      "description": "The upstream request content type is invalid."
+    },
+    {
+      "code": "limit_exceeded",
+      "category": "invalid_request",
+      "retryable": false,
+      "http_status": 413,
+      "owner": "admin-console",
+      "description": "The request exceeds the configured limit."
+    },
+    {
+      "code": "encoding_failed",
+      "category": "internal",
+      "retryable": false,
+      "http_status": 500,
+      "owner": "admin-console",
+      "description": "The request could not be encoded for the upstream call."
+    },
+    {
+      "code": "streaming_unavailable",
+      "category": "internal",
+      "retryable": false,
+      "http_status": 500,
+      "owner": "admin-console",
+      "description": "The response stream could not be established."
+    },
+    {
+      "code": "upstream_error",
+      "category": "internal",
+      "retryable": false,
+      "http_status": 502,
+      "owner": "admin-console",
+      "description": "The upstream dependency returned an unclassified failure."
+    },
+    {
+      "code": "upstream_rejected",
+      "category": "internal",
+      "retryable": false,
+      "http_status": 502,
+      "owner": "admin-console",
+      "description": "The upstream dependency rejected the request."
+    },
+    {
+      "code": "invalid_upstream_response",
+      "category": "unavailable",
+      "retryable": true,
+      "http_status": 502,
+      "owner": "admin-console",
+      "description": "The upstream dependency returned a malformed failure response."
+    },
+    {
+      "code": "dependency_invalid_response",
+      "category": "unavailable",
+      "retryable": true,
+      "http_status": 502,
+      "owner": "admin-console",
+      "description": "A required dependency returned an invalid response."
+    },
+    {
+      "code": "provider_discovery_failed",
+      "category": "unavailable",
+      "retryable": true,
+      "http_status": 502,
+      "owner": "admin-console",
+      "description": "Provider discovery failed at the configured endpoint."
+    },
+    {
+      "code": "dependency_unavailable",
+      "category": "unavailable",
+      "retryable": true,
+      "http_status": 503,
+      "owner": "admin-console",
+      "description": "A required dependency is temporarily unavailable."
+    },
+    {
+      "code": "service_stopping",
+      "category": "unavailable",
+      "retryable": true,
+      "http_status": 503,
+      "owner": "admin-console",
+      "description": "The dependency is draining and cannot serve the request."
+    },
+    {
+      "code": "application_unavailable",
+      "category": "unavailable",
+      "retryable": true,
+      "http_status": 503,
+      "owner": "admin-console",
+      "description": "The backing application is temporarily unavailable."
+    },
+    {
+      "code": "agent_inventory_unavailable",
+      "category": "unavailable",
+      "retryable": true,
+      "http_status": 503,
+      "owner": "admin-console",
+      "description": "The agent inventory dependency is temporarily unavailable."
+    },
+    {
+      "code": "identity_dependency_unavailable",
+      "category": "unavailable",
+      "retryable": true,
+      "http_status": 503,
+      "owner": "admin-console",
+      "description": "Identity authorization dependency is unavailable."
+    },
+    {
+      "code": "provider_endpoint_unavailable",
+      "category": "unavailable",
+      "retryable": true,
+      "http_status": 503,
+      "owner": "admin-console",
+      "description": "The provider endpoint is temporarily unavailable."
+    },
+    {
+      "code": "cleanup_failed",
+      "category": "unavailable",
+      "retryable": true,
+      "http_status": 503,
+      "owner": "admin-console",
+      "description": "Dependent resource cleanup did not complete; retry is safe."
+    },
+    {
+      "code": "busy",
+      "category": "rate_limited",
+      "retryable": true,
+      "http_status": 429,
+      "owner": "admin-console",
+      "description": "The dependency is saturated; retry after backoff."
+    },
+    {
+      "code": "caller_context_required",
+      "category": "unauthenticated",
+      "retryable": false,
+      "http_status": 401,
+      "owner": "admin-console",
+      "description": "A caller context token is required for this operation."
+    },
+    {
+      "code": "caller_context_invalid",
+      "category": "unauthenticated",
+      "retryable": false,
+      "http_status": 401,
+      "owner": "admin-console",
+      "description": "Caller context verification failed."
+    },
+    {
+      "code": "service_unauthenticated",
+      "category": "unauthenticated",
+      "retryable": false,
+      "http_status": 401,
+      "owner": "admin-console",
+      "description": "Service authentication rejected the request."
+    },
+    {
+      "code": "caller_not_allowed",
+      "category": "forbidden",
+      "retryable": false,
+      "http_status": 403,
+      "owner": "admin-console",
+      "description": "The service caller is not allowed for this operation."
+    },
+    {
+      "code": "organization_mismatch",
+      "category": "forbidden",
+      "retryable": false,
+      "http_status": 403,
+      "owner": "admin-console",
+      "description": "The request organization does not match the authenticated scope."
+    },
+    {
+      "code": "actor_mismatch",
+      "category": "forbidden",
+      "retryable": false,
+      "http_status": 403,
+      "owner": "admin-console",
+      "description": "The actor does not match the caller context."
+    },
+    {
+      "code": "access_denied",
+      "category": "forbidden",
+      "retryable": false,
+      "http_status": 403,
+      "owner": "admin-console",
+      "description": "Access to the requested operation is denied."
+    },
+    {
+      "code": "provider_endpoint_forbidden",
+      "category": "forbidden",
+      "retryable": false,
+      "http_status": 422,
+      "owner": "admin-console",
+      "description": "The provider endpoint refused the request payload."
+    },
+    {
+      "code": "reference_not_found",
+      "category": "not_found",
+      "retryable": false,
+      "http_status": 404,
+      "owner": "admin-console",
+      "description": "The referenced resource does not exist."
+    },
+    {
+      "code": "agent_not_found",
+      "category": "not_found",
+      "retryable": false,
+      "http_status": 404,
+      "owner": "admin-console",
+      "description": "The requested agent does not exist."
+    },
+    {
+      "code": "agent_network_not_found",
+      "category": "not_found",
+      "retryable": false,
+      "http_status": 404,
+      "owner": "admin-console",
+      "description": "The requested agent network does not exist."
+    },
+    {
+      "code": "policy_revision_not_found",
+      "category": "not_found",
+      "retryable": false,
+      "http_status": 404,
+      "owner": "admin-console",
+      "description": "The requested policy revision does not exist."
+    },
+    {
+      "code": "revision_not_found",
+      "category": "not_found",
+      "retryable": false,
+      "http_status": 404,
+      "owner": "admin-console",
+      "description": "The requested revision does not exist."
+    },
+    {
+      "code": "model_profile_not_found",
+      "category": "not_found",
+      "retryable": false,
+      "http_status": 404,
+      "owner": "admin-console",
+      "description": "The requested model profile does not exist."
+    },
+    {
+      "code": "template_not_found",
+      "category": "not_found",
+      "retryable": false,
+      "http_status": 404,
+      "owner": "admin-console",
+      "description": "The requested template does not exist."
+    },
+    {
+      "code": "operation_not_found",
+      "category": "not_found",
+      "retryable": false,
+      "http_status": 404,
+      "owner": "admin-console",
+      "description": "The requested operation does not exist."
+    },
+    {
+      "code": "reference_disabled",
+      "category": "conflict",
+      "retryable": false,
+      "http_status": 409,
+      "owner": "admin-console",
+      "description": "The referenced resource is disabled."
+    },
+    {
+      "code": "agent_network_unavailable",
+      "category": "conflict",
+      "retryable": false,
+      "http_status": 409,
+      "owner": "admin-console",
+      "description": "The agent network is not currently available for the operation."
+    },
+    {
+      "code": "policy_revision_conflict",
+      "category": "conflict",
+      "retryable": false,
+      "http_status": 409,
+      "owner": "admin-console",
+      "description": "The policy revision conflicts with the current state."
+    },
+    {
+      "code": "idempotency_conflict",
+      "category": "conflict",
+      "retryable": false,
+      "http_status": 409,
+      "owner": "admin-console",
+      "description": "An equivalent operation is already in flight for this idempotency key."
+    },
+    {
+      "code": "preparation_not_found",
+      "category": "not_found",
+      "retryable": false,
+      "http_status": 404,
+      "owner": "admin-console",
+      "description": "Skill preparation was not found"
+    },
+    {
+      "code": "audit_not_found",
+      "category": "not_found",
+      "retryable": false,
+      "http_status": 404,
+      "owner": "admin-console",
+      "description": "Execution audit record was not found"
+    },
+    {
+      "code": "resource_in_use",
+      "category": "conflict",
+      "retryable": false,
+      "http_status": 409,
+      "owner": "admin-console",
+      "description": "Resource is referenced and cannot be changed"
+    },
+    {
+      "code": "request_id_conflict",
+      "category": "conflict",
+      "retryable": false,
+      "http_status": 409,
+      "owner": "admin-console",
+      "description": "Request identifier was already used with different content"
+    },
+    {
+      "code": "lifecycle_conflict",
+      "category": "conflict",
+      "retryable": false,
+      "http_status": 409,
+      "owner": "admin-console",
+      "description": "Lifecycle operation conflicts with the current state"
+    },
+    {
+      "code": "execution_configuration_capacity_exceeded",
+      "category": "conflict",
+      "retryable": false,
+      "http_status": 409,
+      "owner": "admin-console",
+      "description": "Execution configuration exceeds capacity"
+    },
+    {
+      "code": "external_identity_conflict",
+      "category": "conflict",
+      "retryable": false,
+      "http_status": 409,
+      "owner": "admin-console",
+      "description": "External identity is already assigned"
+    },
+    {
+      "code": "external_identity_restore_required",
+      "category": "conflict",
+      "retryable": false,
+      "http_status": 409,
+      "owner": "admin-console",
+      "description": "External identity binding was revoked and requires explicit restoration"
+    },
+    {
+      "code": "invalid_model_spec",
+      "category": "invalid_request",
+      "retryable": false,
+      "http_status": 400,
+      "owner": "admin-console",
+      "description": "Model specification is invalid"
+    },
+    {
+      "code": "invalid_cursor",
+      "category": "invalid_request",
+      "retryable": false,
+      "http_status": 400,
+      "owner": "admin-console",
+      "description": "Pagination cursor is invalid"
+    },
+    {
+      "code": "execution_audit_unavailable",
+      "category": "unavailable",
+      "retryable": true,
+      "http_status": 503,
+      "owner": "admin-console",
+      "description": "Execution audit data is unavailable"
+    },
+    {
+      "code": "invalid_package",
+      "category": "invalid_request",
+      "retryable": false,
+      "http_status": 400,
+      "owner": "admin-console",
+      "description": "Skill package is invalid"
+    },
+    {
+      "code": "name_conflict",
+      "category": "conflict",
+      "retryable": false,
+      "http_status": 409,
+      "owner": "admin-console",
+      "description": "Name is already in use"
+    },
+    {
+      "code": "content_changed",
+      "category": "conflict",
+      "retryable": false,
+      "http_status": 409,
+      "owner": "admin-console",
+      "description": "Content changed since it was read"
+    },
+    {
+      "code": "source_invalid",
+      "category": "unavailable",
+      "retryable": true,
+      "http_status": 502,
+      "owner": "admin-console",
+      "description": "Configured source is invalid"
+    },
+    {
+      "code": "temporarily_unavailable",
+      "category": "unavailable",
+      "retryable": true,
+      "http_status": 503,
+      "owner": "admin-console",
+      "description": "Service is temporarily unavailable"
+    },
+    {
+      "code": "source_unavailable",
+      "category": "unavailable",
+      "retryable": true,
+      "http_status": 503,
+      "owner": "admin-console",
+      "description": "Configured source is unavailable"
     }
   ]
 }
