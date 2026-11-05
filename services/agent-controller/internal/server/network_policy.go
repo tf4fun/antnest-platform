@@ -11,6 +11,7 @@ import (
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
 
+	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/apierror"
 	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/application"
 	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/ports"
 	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/telemetry"
@@ -46,7 +47,7 @@ func (h *handler) setAgentNetworkPolicy(response http.ResponseWriter, request *h
 	}
 	var input application.SetAgentNetworkPolicyInput
 	if err := json.Unmarshal(raw, &input); err != nil {
-		writeJSON(response, http.StatusBadRequest, errorResponse{Code: "invalid_request", Message: "Network policy request is invalid"})
+		writeJSON(response, http.StatusBadRequest, errorResponse{Code: apierror.InvalidRequest, Message: "Network policy request is invalid"})
 		return
 	}
 	input.AgentID = request.PathValue("agent_id")
@@ -69,7 +70,7 @@ func writeNetworkPolicyError(ctx context.Context, response http.ResponseWriter, 
 
 func publicNetworkPolicyError(err error) (int, errorResponse) {
 	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
-		return http.StatusServiceUnavailable, errorResponse{Code: "dependency_unavailable", Message: "Network policy outcome is unknown; retry the original versioned request", Retryable: true}
+		return http.StatusServiceUnavailable, errorResponse{Code: apierror.DependencyUnavailable, Message: "Network policy outcome is unknown; retry the original versioned request", Retryable: true}
 	}
 	var failure *ports.DependencyError
 	if !errors.As(err, &failure) || failure.Service != "runtime-egress" {
@@ -77,7 +78,7 @@ func publicNetworkPolicyError(err error) (int, errorResponse) {
 	}
 	switch failure.Code {
 	case "invalid_request":
-		return http.StatusBadRequest, errorResponse{Code: "invalid_request", Message: "Network policy request is invalid"}
+		return http.StatusBadRequest, errorResponse{Code: apierror.InvalidRequest, Message: "Network policy request is invalid"}
 	case "resource_version_conflict":
 		return http.StatusConflict, errorResponse{Code: failure.Code, Message: "Network policy changed; reload before choosing a new update"}
 	case "policy_revision_conflict":
@@ -91,9 +92,9 @@ func publicNetworkPolicyError(err error) (int, errorResponse) {
 	case "cleanup_failed":
 		return http.StatusServiceUnavailable, errorResponse{Code: failure.Code, Message: "Network cleanup did not complete; traffic remains fenced", Retryable: true}
 	case "invalid_response":
-		return http.StatusBadGateway, errorResponse{Code: "dependency_invalid_response", Message: "Network policy outcome could not be confirmed", Retryable: true}
+		return http.StatusBadGateway, errorResponse{Code: apierror.DependencyInvalidResponse, Message: "Network policy outcome could not be confirmed", Retryable: true}
 	default:
-		return http.StatusServiceUnavailable, errorResponse{Code: "dependency_unavailable", Message: "Network policy outcome is unknown; retry the original versioned request", Retryable: true}
+		return http.StatusServiceUnavailable, errorResponse{Code: apierror.DependencyUnavailable, Message: "Network policy outcome is unknown; retry the original versioned request", Retryable: true}
 	}
 }
 

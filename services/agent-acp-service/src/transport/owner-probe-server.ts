@@ -9,6 +9,9 @@ import {
 } from "../application/owner-incarnation.js";
 import { fields, type ServiceAuthentication } from "../adapters/service-authentication.js";
 import { strictObject } from "../adapters/strict-json.js";
+import { ERROR_CODES } from "../errors.gen.js";
+import type { ApiError } from "../errors.gen.js";
+import { commonError } from "./public-error.js";
 
 const probePath = "/internal/acp-owner/incarnation/probe";
 const requestBytes = 4096;
@@ -100,14 +103,16 @@ export class OwnerProbeServer {
     this.server.on("checkExpectation", handler);
     this.server.on("clientError", (_error, socket) => {
       if (socket.destroyed || !socket.writable) return;
-      const body = errorBody("invalid_request");
+      const body = errorBody(ERROR_CODES.INVALID_REQUEST);
+      const raw = Buffer.from(JSON.stringify(body));
       socket.end(
-        `HTTP/1.1 400 Bad Request\r\nContent-Type: application/json\r\nCache-Control: no-store\r\nConnection: close\r\nContent-Length: ${body.byteLength}\r\n\r\n${body.toString("utf8")}`,
+        `HTTP/1.1 400 Bad Request\r\nContent-Type: application/json\r\nCache-Control: no-store\r\nX-Request-ID: ${body.request_id}\r\nConnection: close\r\nContent-Length: ${raw.byteLength}\r\n\r\n${raw.toString("utf8")}`,
       );
     });
     this.server.on("error", () => {
       this.cleanupErrors.push(new Error("Owner probe listener failed"));
-      for (const owner of this.active) owner.controller.abort(new ProbeFailure("internal_error"));
+      for (const owner of this.active)
+        owner.controller.abort(new ProbeFailure(ERROR_CODES.INTERNAL_ERROR));
       for (const socket of this.sockets.keys()) socket.destroy();
     });
   }
@@ -151,7 +156,7 @@ export class OwnerProbeServer {
     this.closed = true;
     this.incarnation.close();
     for (const owner of this.active)
-      owner.controller.abort(new ProbeFailure("acp_probe_intent_mismatch"));
+      owner.controller.abort(new ProbeFailure(ERROR_CODES.ACP_PROBE_INTENT_MISMATCH));
     void this.stop().then(receipt.resolve, receipt.reject);
     return receipt.promise;
   }
@@ -200,16 +205,16 @@ export class OwnerProbeServer {
       for (const request of this.active)
         if (request.request.socket === socket) request.controller.abort(new ProbeFailure(code));
     };
-    const onError = () => interrupt("invalid_request");
+    const onError = () => interrupt(ERROR_CODES.INVALID_REQUEST);
     const timer = setTimeout(() => {
-      interrupt("deadline_exceeded");
+      interrupt(ERROR_CODES.DEADLINE_EXCEEDED);
       socket.destroy();
     }, this.timeoutMs);
     timer.unref();
     socket.on("error", onError);
     socket.once("close", () => {
       clearTimeout(timer);
-      interrupt("invalid_request");
+      interrupt(ERROR_CODES.INVALID_REQUEST);
       socket.off("error", onError);
       this.sockets.delete(socket);
       receipt.resolve();
@@ -251,14 +256,14 @@ export class OwnerProbeServer {
 
   private async serve(owner: RequestOwner): Promise<void> {
     const { request, response, controller } = owner;
-    const onDisconnect = () => controller.abort(new ProbeFailure("invalid_request"));
+    const onDisconnect = () => controller.abort(new ProbeFailure(ERROR_CODES.INVALID_REQUEST));
     request.on("error", onDisconnect);
     response.on("error", onDisconnect);
     response.once("close", onDisconnect);
     const remaining = Math.max(0, owner.socket.deadline - performance.now());
     const reserve = Math.min(100, remaining / 10);
     const timer = setTimeout(
-      () => controller.abort(new ProbeFailure("deadline_exceeded")),
+      () => controller.abort(new ProbeFailure(ERROR_CODES.DEADLINE_EXCEEDED)),
       Math.max(0, remaining - reserve),
     );
     timer.unref();
@@ -268,18 +273,20 @@ export class OwnerProbeServer {
         if (authentication.www_authenticate !== null)
           response.setHeader("WWW-Authenticate", authentication.www_authenticate);
         throw new ProbeFailure(
-          authentication.code === "caller_not_allowed"
-            ? "caller_not_allowed"
-            : "service_unauthenticated",
+          authentication.code === ERROR_CODES.CALLER_NOT_ALLOWED
+            ? ERROR_CODES.CALLER_NOT_ALLOWED
+            : ERROR_CODES.SERVICE_UNAUTHENTICATED,
         );
       }
       if (request.url !== probePath)
         throw new ProbeFailure(
-          request.url?.startsWith(`${probePath}?`) === true ? "invalid_request" : "route_not_found",
+          request.url?.startsWith(`${probePath}?`) === true
+            ? ERROR_CODES.INVALID_REQUEST
+            : ERROR_CODES.ROUTE_NOT_FOUND,
         );
-      if (request.method !== "POST") throw new ProbeFailure("method_not_allowed");
-      if (this.closed) throw new ProbeFailure("acp_probe_intent_mismatch");
-      if (request.headers.expect !== undefined) throw new ProbeFailure("invalid_request");
+      if (request.method !== "POST") throw new ProbeFailure(ERROR_CODES.METHOD_NOT_ALLOWED);
+      if (this.closed) throw new ProbeFailure(ERROR_CODES.ACP_PROBE_INTENT_MISMATCH);
+      if (request.headers.expect !== undefined) throw new ProbeFailure(ERROR_CODES.INVALID_REQUEST);
       requireJson(request);
       const raw = await readBody(request, controller.signal);
       controller.signal.throwIfAborted();
@@ -287,27 +294,33 @@ export class OwnerProbeServer {
       try {
         input = parseOwnerProbeRequest(strictObject(raw));
       } catch {
-        throw new ProbeFailure("invalid_request");
+        throw new ProbeFailure(ERROR_CODES.INVALID_REQUEST);
       }
       const result = this.incarnation.probe(input);
       let output: OwnerProbeRequest;
       try {
         output = parseOwnerProbeRequest(result);
       } catch {
-        throw new ProbeFailure("internal_error");
+        throw new ProbeFailure(ERROR_CODES.INTERNAL_ERROR);
       }
       if (
         Object.keys(input).some(
           (field) => output[field as keyof typeof output] !== input[field as keyof typeof input],
         )
       )
-        throw new ProbeFailure("internal_error");
+        throw new ProbeFailure(ERROR_CODES.INTERNAL_ERROR);
       controller.signal.throwIfAborted();
       await writeReply(response, 200, Buffer.from(JSON.stringify(output)));
     } catch (error) {
       const code = failureCode(controller.signal.aborted ? controller.signal.reason : error);
-      if (code === "method_not_allowed") response.setHeader("Allow", "POST");
-      await writeReply(response, failures[code].status, errorBody(code));
+      if (code === ERROR_CODES.METHOD_NOT_ALLOWED) response.setHeader("Allow", "POST");
+      const body = errorBody(code);
+      await writeReply(
+        response,
+        failures[code].status,
+        Buffer.from(JSON.stringify(body)),
+        body.request_id,
+      );
     } finally {
       clearTimeout(timer);
       request.pause();
@@ -330,23 +343,17 @@ function failureCode(error: unknown): FailureCode {
   if (error instanceof ProbeFailure) return error.code;
   if (error instanceof OwnerIncarnationError) {
     if (
-      error.code === "invalid_request" ||
-      error.code === "acp_probe_intent_mismatch" ||
-      error.code === "deadline_exceeded"
+      error.code === ERROR_CODES.INVALID_REQUEST ||
+      error.code === ERROR_CODES.ACP_PROBE_INTENT_MISMATCH ||
+      error.code === ERROR_CODES.DEADLINE_EXCEEDED
     )
       return error.code;
   }
-  return "internal_error";
+  return ERROR_CODES.INTERNAL_ERROR;
 }
 
-function errorBody(code: FailureCode): Buffer {
-  return Buffer.from(
-    JSON.stringify({
-      code,
-      message: "ACP incarnation request did not complete",
-      retryable: failures[code].retryable,
-    }),
-  );
+function errorBody(code: FailureCode): ApiError {
+  return commonError(code, "ACP incarnation request did not complete", failures[code].retryable);
 }
 
 function requireJson(request: IncomingMessage): void {
@@ -361,12 +368,12 @@ function requireJson(request: IncomingMessage): void {
     encodings.length > 1 ||
     (encodings.length === 1 && encodings[0]!.value.toLowerCase() !== "identity")
   )
-    throw new ProbeFailure("unsupported_media_type");
+    throw new ProbeFailure(ERROR_CODES.UNSUPPORTED_MEDIA_TYPE);
 }
 
 function readBody(request: IncomingMessage, signal: AbortSignal): Promise<Buffer> {
   if (Number(request.headers["content-length"]) > requestBytes)
-    return Promise.reject(new ProbeFailure("request_too_large"));
+    return Promise.reject(new ProbeFailure(ERROR_CODES.REQUEST_TOO_LARGE));
   return new Promise<Buffer>((resolve, reject) => {
     const chunks: Buffer[] = [];
     let bytes = 0;
@@ -386,18 +393,18 @@ function readBody(request: IncomingMessage, signal: AbortSignal): Promise<Buffer
     };
     const onData = (chunk: unknown) => {
       if (!Buffer.isBuffer(chunk)) {
-        finish(new ProbeFailure("invalid_request"));
+        finish(new ProbeFailure(ERROR_CODES.INVALID_REQUEST));
         return;
       }
       bytes += chunk.byteLength;
       if (bytes > requestBytes) {
-        finish(new ProbeFailure("request_too_large"));
+        finish(new ProbeFailure(ERROR_CODES.REQUEST_TOO_LARGE));
         return;
       }
       chunks.push(chunk);
     };
     const onEnd = () => finish();
-    const onError = () => finish(new ProbeFailure("invalid_request"));
+    const onError = () => finish(new ProbeFailure(ERROR_CODES.INVALID_REQUEST));
     const onAbort = () => {
       const reason: unknown = signal.reason;
       finish(reason instanceof Error ? reason : new ProbeFailure(failureCode(reason)));
@@ -414,10 +421,17 @@ function readBody(request: IncomingMessage, signal: AbortSignal): Promise<Buffer
   });
 }
 
-function writeReply(response: ServerResponse, status: number, raw: Buffer): Promise<void> {
+function writeReply(
+  response: ServerResponse,
+  status: number,
+  raw: Buffer,
+  requestID?: string,
+): Promise<void> {
   if (raw.byteLength > responseBytes) {
-    status = failures.internal_error.status;
-    raw = errorBody("internal_error");
+    const body = errorBody(ERROR_CODES.INTERNAL_ERROR);
+    status = failures[ERROR_CODES.INTERNAL_ERROR].status;
+    raw = Buffer.from(JSON.stringify(body));
+    requestID = body.request_id;
   }
   return new Promise<void>((resolve) => {
     if (response.destroyed) {
@@ -438,6 +452,7 @@ function writeReply(response: ServerResponse, status: number, raw: Buffer): Prom
         "Cache-Control": "no-store",
         "Content-Length": raw.byteLength,
         Connection: "close",
+        ...(requestID === undefined ? {} : { "X-Request-ID": requestID }),
       });
       response.end(raw);
     } catch {

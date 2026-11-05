@@ -4,6 +4,7 @@ import { isDeepStrictEqual } from "node:util";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { SERVICE_AUTH_HEADER, SERVICES } from "../../src/adapters/service-authentication.js";
 import { DomainError } from "../../src/domain/errors.js";
+import { ERROR_METADATA } from "../../src/errors.gen.js";
 import type { AcpApplicationPort } from "../../src/ports/acp-application.js";
 import type { RuntimeBarrierReader, RuntimeBarrierState } from "../../src/ports/runtime-barrier.js";
 import { AgentAcpHttpServer } from "../../src/transport/http-server.js";
@@ -487,12 +488,36 @@ function post(
   });
 }
 
+const SAFE_REQUEST_ID = /^[A-Za-z0-9._:-]{1,128}$/;
+
+function expectedPublicErrorBody(
+  expected: unknown,
+  requestId: string | null,
+): Record<string, unknown> {
+  if (!isObject(expected) || typeof expected.code !== "string")
+    throw new Error("error expectation must carry a code");
+  const metadata = Object.hasOwn(ERROR_METADATA, expected.code)
+    ? ERROR_METADATA[expected.code]
+    : undefined;
+  if (metadata === undefined) throw new Error(`missing registry metadata for ${expected.code}`);
+  if (requestId === null || !SAFE_REQUEST_ID.test(requestId))
+    throw new Error("response missing a safe X-Request-ID");
+  return {
+    ...expected,
+    category: metadata.category,
+    request_id: requestId,
+  };
+}
+
 async function expectPublicResponse(response: Response, status: number, expected: unknown) {
   const body = await response.text();
   expect(response.status).toBe(status);
   expect(body.includes(canary)).toBe(false);
+  const requestId = response.headers.get("x-request-id");
+  const expectedBody = status >= 400 ? expectedPublicErrorBody(expected, requestId) : expected;
+  if (status >= 400) expect(response.headers.get("cache-control")).toBe("no-store");
   expect(
-    isDeepStrictEqual(parsePublicBody(body), expected),
+    isDeepStrictEqual(parsePublicBody(body), expectedBody),
     "HTTP response must match the public contract",
   ).toBe(true);
 }

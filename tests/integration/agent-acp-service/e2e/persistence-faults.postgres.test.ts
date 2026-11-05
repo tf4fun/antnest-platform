@@ -667,10 +667,22 @@ describe.skipIf(databaseUrl === undefined)(
               sessionId,
               prompt: [{ type: "text", text: "must-not-admit" }],
             });
+            const refusedError = refused.error as {
+              data: Record<string, unknown>;
+            };
+            expect(refusedError.data.request_id).toMatch(
+              /^[A-Za-z0-9._:-]{1,128}$/,
+            );
             expect(refused.error).toEqual({
               code: -32034,
               message: "Agent ACP Service is not accepting new Runs",
-              data: { code: "service_stopping", retryable: true },
+              data: {
+                code: "service_stopping",
+                category: "unavailable",
+                message: "Agent ACP Service is not accepting new Runs",
+                retryable: true,
+                request_id: refusedError.data.request_id,
+              },
             });
             expect(outcome).toHaveProperty(
               "frame.error.data.code",

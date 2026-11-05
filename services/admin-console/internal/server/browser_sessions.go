@@ -11,6 +11,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/tf4fun/antnest-platform/services/admin-console/internal/apierror"
 	"github.com/tf4fun/antnest-platform/services/admin-console/internal/principal"
 	"github.com/tf4fun/antnest-platform/services/admin-console/internal/upstream"
 )
@@ -25,7 +26,7 @@ func (h *handler) registerBrowserSessionRoutes() {
 func browserSessionTarget(response http.ResponseWriter, request *http.Request) (string, bool) {
 	id := request.PathValue("user_id")
 	if !browserSessionPublicID.MatchString(id) {
-		writeError(response, http.StatusBadRequest, "invalid_request", "User reference is invalid")
+		writeError(response, http.StatusBadRequest, apierror.InvalidRequest, "User reference is invalid")
 		return "", false
 	}
 	return id, true
@@ -40,7 +41,7 @@ func (h *handler) listOrganizationSessions(response http.ResponseWriter, request
 	if request.Body != nil {
 		body, err := io.ReadAll(io.LimitReader(request.Body, 1))
 		if err != nil || len(body) != 0 {
-			writeError(response, http.StatusBadRequest, "invalid_request", "Request body is not allowed")
+			writeError(response, http.StatusBadRequest, apierror.InvalidRequest, "Request body is not allowed")
 			return
 		}
 	}

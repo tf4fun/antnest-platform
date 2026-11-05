@@ -592,3 +592,14 @@ The mounts grow on demand and their actual usage shares the existing
 `resources.memory_bytes` limit with all Runtime processes. Configuring two equal
 mount limits neither reserves twice that RAM nor increases the container memory
 limit; insufficient memory can trigger OOM before the filesystem size limits.
+
+## Errors
+
+HTTP error bodies emit the [common error envelope](../../../contracts/common/error.schema.json)
+(`code`, `category`, `message`, `retryable`, `request_id`) with the
+[Runtime Controller slice](../../../contracts/common/slices/runtime-controller.json) of
+emitted codes. `acp_incarnation_error` composes the shared
+[owner-incarnation](../../../contracts/agent-acp/owner-incarnation.schema.json) error
+with the common envelope; the shared owner schema accepts the optional
+`category`/`request_id` pair and optional `details` so legacy
+three-field producers stay valid until the ACP producer batch.

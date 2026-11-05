@@ -10,7 +10,9 @@ and the [platform profile](../platform/service-authentication.md). It is not pub
 It records each RPC method, route, request field type, response shape, and the
 stable error codes callers may branch on. `$ref` values address definitions in
 the same JSON document. `error.http_status_by_code` records non-default HTTP
-status mappings; listed error codes without an entry use HTTP 500.
+status mappings; listed error codes without an entry use HTTP 500. Error
+envelopes follow the [common error schema](../common/error.schema.json) with the
+[Identity slice](../common/slices/identity-service.json) of emitted codes.
 
 Identity revision 18 implements the [SCIM lifecycle contract](scim-lifecycle.md):
 bounded token expiry, issuer metadata and authority-loss policy, overlap rotation,

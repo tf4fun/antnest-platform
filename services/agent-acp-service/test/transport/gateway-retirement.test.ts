@@ -241,12 +241,17 @@ it.each(routes)(
     }
     expect(received.status).toBe(403);
     const body: unknown = JSON.parse(received.text);
+    const requestId = received.headers["x-request-id"];
+    expect(requestId).toMatch(/^[A-Za-z0-9._:-]{1,128}$/);
+    expect(received.headers["cache-control"]).toBe("no-store");
     expect(body).toEqual({
       code: "caller_not_allowed",
+      category: "forbidden",
       message: "Service caller is not allowed",
       retryable: false,
+      request_id: requestId,
     });
-    expect((received.text.match(/"(?:[^"\\]|\\.)*"\s*:/g) ?? []).length).toBe(3);
+    expect((received.text.match(/"(?:[^"\\]|\\.)*"\s*:/g) ?? []).length).toBe(5);
     expect(received.headers.connection).toBe("close");
     for (const name of ["antnest-caller-context", "antnest-service-authorization", "set-cookie"])
       expect(received.headers[name]).toBeUndefined();

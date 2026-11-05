@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync, readdirSync } from "node:fs";
 import { createRequire } from "node:module";
 import { test } from "node:test";
+import { withCommonErrorSchema } from "../../support/common-error-schema.mjs";
 
 const require = createRequire(
   new URL("../../../services/agent-acp-service/package.json", import.meta.url),
@@ -15,9 +16,14 @@ const catalog = JSON.parse(
 const schema = JSON.parse(
   readFileSync(new URL("errors.schema.json", contractRoot), "utf8"),
 );
-const ajv = new Ajv2020({ strict: true, allErrors: true });
+const ajv = withCommonErrorSchema(
+  new Ajv2020({ strict: true, allErrors: true }),
+);
 ajv.addSchema(schema);
 const validateCatalog = ajv.compile({ $ref: schema.$id });
+const validateSkillSourceError = ajv.compile({
+  $ref: `${schema.$id}#/$defs/skillSourceError`,
+});
 const validateErrorData = ajv.compile({
   $ref: `${schema.$id}#/$defs/errorData`,
 });
@@ -625,5 +631,47 @@ test("error data uses the complete schema's referenced definition", async (conte
         `${name}: ${JSON.stringify(validateErrorData.errors)}`,
       );
     });
+  }
+});
+
+test("skill source error accepts N/N-1 shapes and rejects partial or private forms", () => {
+  const top = {
+    code: "content_changed",
+    category: "conflict",
+    message: "Skill source content changed; choose again",
+    retryable: false,
+    request_id: "req-1",
+  };
+  const alias = {
+    code: "content_changed",
+    message: "Skill source content changed; choose again",
+  };
+  const cases = [
+    ["legacy two-field alias", { error: alias }, true],
+    ["flat common body", { ...top }, true],
+    ["common body with exact alias", { ...top, error: alias }, true],
+    ["common body with details object", { ...top, details: {} }, true],
+    [
+      "partial metadata",
+      { code: "content_changed", category: "conflict" },
+      false,
+    ],
+    ["missing request_id", { ...top, request_id: undefined }, false],
+    ["null category", { ...top, category: null }, false],
+    ["unsafe request id", { ...top, request_id: "bad id!" }, false],
+    ["private extra", { ...top, cause: "private" }, false],
+    [
+      "alias with extra field",
+      { ...top, error: { ...alias, extra: "x" } },
+      false,
+    ],
+    ["empty body", {}, false],
+  ];
+  for (const [name, value, valid] of cases) {
+    assert.equal(
+      validateSkillSourceError(value),
+      valid,
+      `${name}: ${JSON.stringify(validateSkillSourceError.errors)}`,
+    );
   }
 });

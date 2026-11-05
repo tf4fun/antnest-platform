@@ -2,6 +2,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import { DomainError } from "../domain/errors.js";
 import { strictObject } from "../adapters/strict-json.js";
 import { fields } from "../adapters/service-authentication.js";
+import { errorHeaders } from "./public-error.js";
 
 export class RpcRequestError extends DomainError {
   public constructor(
@@ -64,6 +65,8 @@ export function requireJsonMedia(request: IncomingMessage): void {
 export function rpcJson(response: ServerResponse, status: number, body: unknown): void {
   if (response.destroyed) return;
   if (status === 405) response.setHeader("Allow", "POST");
-  response.writeHead(status, { "content-type": "application/json" });
+  const headers: Record<string, string> = { "content-type": "application/json" };
+  if (status >= 400) Object.assign(headers, errorHeaders(body));
+  response.writeHead(status, headers);
   response.end(JSON.stringify(body));
 }

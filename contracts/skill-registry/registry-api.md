@@ -84,10 +84,17 @@ atomically writes the version and frozen receipt. Identical replay returns the
 original 201 response even if the head has since moved; different input returns
 `request_conflict` 409. A wrong current head returns `revision_conflict` 409.
 
-Errors are JSON `{error:{code,message}}`. Codes and HTTP status are:
+Errors are top-level common error envelopes (`code`, `category`, `message`, `retryable`, `request_id`) with a legacy nested `error` member carrying the same fields for one-release consumers. Codes and HTTP status are:
 `invalid_request`/`invalid_package` 400, the authentication/scope/media-type outcomes in [service-authentication.md](service-authentication.md),
 `not_found` 404, `name_conflict`/`request_conflict`/`revision_conflict` 409,
 `limit_exceeded` 413, `busy` 429, `temporarily_unavailable` 503.
 Error messages must not contain ZIP contents or raw database secrets. Registry
 returns a bounded body on all paths. Client cancellation propagates to ZIP
 validation and database calls.
+
+### Error envelope
+
+HTTP failures use the [common error contract](../common/error.schema.json) five-field
+envelope at the top level **and** inside the legacy `error` member (one-release alias for
+old consumers) with the [Skill Registry slice](../common/slices/skill-registry.json) of
+emitted codes.

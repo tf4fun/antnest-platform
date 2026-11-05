@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"github.com/tf4fun/antnest-platform/services/skill-registry/internal/apierror"
 	"io"
 	"net/http"
 	"strconv"
@@ -56,7 +57,7 @@ func (h *Handler) status(w http.ResponseWriter, r *http.Request) {
 		ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
 		defer cancel()
 		if err := h.ready(ctx); err != nil {
-			writeError(w, failure("temporarily_unavailable", "Registry is not ready"))
+			writeError(w, failure(apierror.TemporarilyUnavailable, "Registry is not ready"))
 			return
 		}
 	}
@@ -68,7 +69,7 @@ func admission(slot chan struct{}, w http.ResponseWriter) (func(), bool) {
 	case slot <- struct{}{}:
 		return func() { <-slot }, true
 	default:
-		writeError(w, failure("busy", "Registry request capacity is exhausted"))
+		writeError(w, failure(apierror.Busy, "Registry request capacity is exhausted"))
 		return nil, false
 	}
 }
@@ -86,7 +87,7 @@ func readUpload(w http.ResponseWriter, r *http.Request) (publicationMetadata, []
 	r.Body = http.MaxBytesReader(w, r.Body, MaxArtifactBytes+(1<<20))
 	reader, err := r.MultipartReader()
 	if err != nil {
-		return publicationMetadata{}, nil, failure("invalid_request", "multipart upload required")
+		return publicationMetadata{}, nil, failure(apierror.InvalidRequest, "multipart upload required")
 	}
 	var metadata []byte
 	var archive []byte
@@ -97,38 +98,38 @@ func readUpload(w http.ResponseWriter, r *http.Request) (publicationMetadata, []
 			break
 		}
 		if err != nil {
-			return publicationMetadata{}, nil, failure("limit_exceeded", "upload exceeds transport limit or is malformed")
+			return publicationMetadata{}, nil, failure(apierror.LimitExceeded, "upload exceeds transport limit or is malformed")
 		}
 		parts++
 		if parts > 2 {
 			_ = part.Close()
-			return publicationMetadata{}, nil, failure("invalid_request", "unexpected upload part")
+			return publicationMetadata{}, nil, failure(apierror.InvalidRequest, "unexpected upload part")
 		}
 		var limit int64
 		switch part.FormName() {
 		case "metadata":
 			if metadata != nil || part.FileName() != "" {
 				_ = part.Close()
-				return publicationMetadata{}, nil, failure("invalid_request", "duplicate or invalid metadata part")
+				return publicationMetadata{}, nil, failure(apierror.InvalidRequest, "duplicate or invalid metadata part")
 			}
 			limit = 4 << 10
 		case "artifact":
 			if archive != nil {
 				_ = part.Close()
-				return publicationMetadata{}, nil, failure("invalid_request", "duplicate artifact part")
+				return publicationMetadata{}, nil, failure(apierror.InvalidRequest, "duplicate artifact part")
 			}
 			limit = MaxArtifactBytes
 		default:
 			_ = part.Close()
-			return publicationMetadata{}, nil, failure("invalid_request", "unexpected upload part")
+			return publicationMetadata{}, nil, failure(apierror.InvalidRequest, "unexpected upload part")
 		}
 		value, readErr := io.ReadAll(io.LimitReader(part, limit+1))
 		closeErr := part.Close()
 		if readErr != nil || closeErr != nil {
-			return publicationMetadata{}, nil, failure("invalid_request", "malformed upload part")
+			return publicationMetadata{}, nil, failure(apierror.InvalidRequest, "malformed upload part")
 		}
 		if int64(len(value)) > limit {
-			return publicationMetadata{}, nil, failure("limit_exceeded", "upload part exceeds size limit")
+			return publicationMetadata{}, nil, failure(apierror.LimitExceeded, "upload part exceeds size limit")
 		}
 		if part.FormName() == "metadata" {
 			metadata = value
@@ -137,11 +138,11 @@ func readUpload(w http.ResponseWriter, r *http.Request) (publicationMetadata, []
 		}
 	}
 	if len(metadata) == 0 || len(archive) == 0 {
-		return publicationMetadata{}, nil, failure("invalid_request", "metadata and artifact are required")
+		return publicationMetadata{}, nil, failure(apierror.InvalidRequest, "metadata and artifact are required")
 	}
 	var input publicationMetadata
 	if err := decodeOne(metadata, &input); err != nil {
-		return publicationMetadata{}, nil, failure("invalid_request", "invalid publication metadata")
+		return publicationMetadata{}, nil, failure(apierror.InvalidRequest, "invalid publication metadata")
 	}
 	return input, archive, nil
 }
@@ -158,7 +159,7 @@ func (h *Handler) publish(w http.ResponseWriter, r *http.Request, appendTo strin
 		return
 	}
 	if appendTo == "" && meta.ExpectedVersion != nil || appendTo != "" && meta.ExpectedVersion == nil {
-		writeError(w, failure("invalid_request", "expected_version is required only for append"))
+		writeError(w, failure(apierror.InvalidRequest, "expected_version is required only for append"))
 		return
 	}
 	if err := verifiedScope(r, &meta.OrganizationID, &meta.ActorID); err != nil {
@@ -191,7 +192,7 @@ func queryLimit(r *http.Request) (int, error) {
 	}
 	limit, err := strconv.Atoi(value)
 	if err != nil {
-		return 0, failure("invalid_request", "invalid page limit")
+		return 0, failure(apierror.InvalidRequest, "invalid page limit")
 	}
 	return limit, nil
 }
@@ -225,7 +226,7 @@ func (h *Handler) versions(w http.ResponseWriter, r *http.Request) {
 	if raw := r.URL.Query().Get("after_version"); raw != "" {
 		after, err = strconv.ParseInt(raw, 10, 64)
 		if err != nil {
-			writeError(w, failure("invalid_request", "invalid version cursor"))
+			writeError(w, failure(apierror.InvalidRequest, "invalid version cursor"))
 			return
 		}
 	}
@@ -246,7 +247,7 @@ func (h *Handler) resolve(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, 16<<10)
 	data, err := io.ReadAll(r.Body)
 	if err != nil {
-		writeError(w, failure("limit_exceeded", "resolve request exceeds limit"))
+		writeError(w, failure(apierror.LimitExceeded, "resolve request exceeds limit"))
 		return
 	}
 	var input struct {
@@ -254,7 +255,7 @@ func (h *Handler) resolve(w http.ResponseWriter, r *http.Request) {
 		Refs           []Reference `json:"refs"`
 	}
 	if err := decodeOne(data, &input); err != nil {
-		writeError(w, failure("invalid_request", "invalid resolve request"))
+		writeError(w, failure(apierror.InvalidRequest, "invalid resolve request"))
 		return
 	}
 	items, err := h.service.Resolve(r.Context(), input.OrganizationID, input.Refs)
@@ -273,7 +274,7 @@ func (h *Handler) artifact(w http.ResponseWriter, r *http.Request) {
 	defer release()
 	version, err := strconv.ParseInt(r.PathValue("version"), 10, 64)
 	if err != nil {
-		writeError(w, failure("invalid_request", "invalid Skill version"))
+		writeError(w, failure(apierror.InvalidRequest, "invalid Skill version"))
 		return
 	}
 	org := r.URL.Query().Get("organization_id")
@@ -301,24 +302,44 @@ func writeJSON(w http.ResponseWriter, status int, value any) {
 	_ = json.NewEncoder(w).Encode(value)
 }
 
+type registryErrorResponse struct {
+	Code      string         `json:"code"`
+	Category  string         `json:"category"`
+	Message   string         `json:"message"`
+	Retryable bool           `json:"retryable"`
+	RequestID string         `json:"request_id"`
+	Details   map[string]any `json:"details,omitempty"`
+	Error     apierror.Error `json:"error"`
+}
+
+func writeRegistryError(w http.ResponseWriter, status int, envelope apierror.Error) {
+	w.Header().Set("X-Request-ID", envelope.RequestID)
+	w.Header().Set("Cache-Control", "no-store")
+	writeJSON(w, status, registryErrorResponse{
+		Code: envelope.Code, Category: envelope.Category, Message: envelope.Message,
+		Retryable: envelope.Retryable, RequestID: envelope.RequestID,
+		Details: envelope.Details, Error: envelope,
+	})
+}
+
 func writeError(w http.ResponseWriter, err error) {
 	code := Code(err)
 	status := http.StatusServiceUnavailable
 	switch code {
-	case "organization_mismatch", "actor_mismatch":
+	case apierror.OrganizationMismatch, apierror.ActorMismatch:
 		writeBoundaryError(w, http.StatusForbidden, code, err.Error(), false)
 		return
-	case "invalid_request", "invalid_package":
+	case apierror.InvalidRequest, apierror.InvalidPackage:
 		status = http.StatusBadRequest
-	case "not_found":
+	case apierror.NotFound:
 		status = http.StatusNotFound
-	case "name_conflict", "request_conflict", "revision_conflict", "content_changed":
+	case apierror.NameConflict, apierror.RequestConflict, apierror.RevisionConflict, apierror.ContentChanged:
 		status = http.StatusConflict
-	case "limit_exceeded":
+	case apierror.LimitExceeded:
 		status = http.StatusRequestEntityTooLarge
-	case "busy":
+	case apierror.Busy:
 		status = http.StatusTooManyRequests
-	case "source_invalid":
+	case apierror.SourceInvalid:
 		status = http.StatusBadGateway
 	}
 	message := "Registry temporarily unavailable"
@@ -326,5 +347,5 @@ func writeError(w http.ResponseWriter, err error) {
 	if errors.As(err, &typed) {
 		message = typed.Text
 	}
-	writeJSON(w, status, map[string]any{"error": map[string]string{"code": code, "message": strings.TrimSpace(message)}})
+	writeRegistryError(w, status, apierror.New(code, strings.TrimSpace(message), w.Header().Get("X-Request-ID")))
 }

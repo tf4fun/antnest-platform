@@ -10,6 +10,7 @@ import (
 
 	"github.com/tf4fun/antnest-platform/modules/service-authentication/serviceauth"
 
+	"github.com/tf4fun/antnest-platform/services/admin-console/internal/apierror"
 	"github.com/tf4fun/antnest-platform/services/admin-console/internal/principal"
 	"github.com/tf4fun/antnest-platform/services/admin-console/internal/upstream"
 )
@@ -112,7 +113,7 @@ func (h *handler) getNetworkPolicy(w http.ResponseWriter, r *http.Request, actor
 func (h *handler) setNetworkPolicy(w http.ResponseWriter, r *http.Request, actor principal.Principal) {
 	w.Header().Set("Cache-Control", "no-store")
 	if !networkPrincipalMatches(r, actor) {
-		writeError(w, http.StatusConflict, "principal_changed", "Account changed. Reload this page before updating network policy.")
+		writeError(w, http.StatusConflict, apierror.PrincipalChanged, "Account changed. Reload this page before updating network policy.")
 		return
 	}
 	if _, ok := parseListQuery(w, r); !ok {
@@ -126,7 +127,7 @@ func (h *handler) setNetworkPolicy(w http.ResponseWriter, r *http.Request, actor
 	if err != nil ||
 		(input.Spec == nil && !networkActionValid(input.Action)) ||
 		!browserVersionValid(input.ExpectedResourceVersion) {
-		writeError(w, http.StatusBadRequest, "invalid_request", "Network policy selection is invalid")
+		writeError(w, http.StatusBadRequest, apierror.InvalidRequest, "Network policy selection is invalid")
 		return
 	}
 	requestID, ok := commandRequestID(w, r, actor.OrganizationID, "network-policy")
@@ -141,7 +142,7 @@ func (h *handler) setNetworkPolicy(w http.ResponseWriter, r *http.Request, actor
 		payload["spec"] = *input.Spec
 		derived, err := deriveNetworkPolicyID(actor.OrganizationID, agentID, *input.Spec)
 		if err != nil {
-			writeError(w, http.StatusBadRequest, "invalid_request", "Network policy selection is invalid")
+			writeError(w, http.StatusBadRequest, apierror.InvalidRequest, "Network policy selection is invalid")
 			return
 		}
 		policyID = derived
@@ -155,7 +156,7 @@ func (h *handler) setNetworkPolicy(w http.ResponseWriter, r *http.Request, actor
 	}
 	body, err := json.Marshal(payload)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "encoding_failed", "Request could not be encoded")
+		writeError(w, http.StatusInternalServerError, apierror.EncodingFailed, "Request could not be encoded")
 		return
 	}
 	result, ok := h.read(w, r, upstream.AgentController, http.MethodPut, "/internal/agents/"+url.PathEscape(agentID)+"/network-policy", "", body)
@@ -240,12 +241,12 @@ func (h *handler) writeNetworkPolicy(w http.ResponseWriter, r *http.Request, res
 		Code string `json:"code"`
 	}
 	if json.Unmarshal(result.body, &failure) != nil {
-		writeError(w, 502, "invalid_upstream_response", "Network policy outcome could not be confirmed")
+		writeError(w, 502, apierror.InvalidUpstreamResponse, "Network policy outcome could not be confirmed")
 		return
 	}
 	status, message := networkPolicyError(failure.Code)
 	if status != result.status || status == 0 {
-		writeError(w, 502, "invalid_upstream_response", "Network policy outcome could not be confirmed")
+		writeError(w, 502, apierror.InvalidUpstreamResponse, "Network policy outcome could not be confirmed")
 		return
 	}
 	writeError(w, status, failure.Code, message)

@@ -1,4 +1,6 @@
 import { readFileSync } from "node:fs";
+import { createRequire } from "node:module";
+import { ERROR_METADATA } from "../../../../services/agent-acp-service/src/errors.gen.js";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { AgentSettlement } from "../../../../services/agent-acp-service/src/application/agent-settlement.js";
 import { ExecutionAudits } from "../../../../services/agent-acp-service/src/application/execution-audit.js";
@@ -19,6 +21,47 @@ import {
   workloadHeaders,
 } from "../../../../services/agent-acp-service/test/support/auth-fixture.js";
 import { localExecution } from "../../../../services/agent-acp-service/test/support/local-execution.js";
+
+const serviceRequire = createRequire(
+  new URL(
+    "../../../../services/agent-acp-service/package.json",
+    import.meta.url,
+  ),
+);
+const { Ajv2020 } = serviceRequire("ajv/dist/2020.js") as {
+  Ajv2020: new (options?: Record<string, unknown>) => {
+    addSchema(schema: unknown): void;
+    compile(schema: unknown): (value: unknown) => boolean;
+  };
+};
+const contractSchema = JSON.parse(
+  readFileSync(
+    new URL(
+      "../../../../contracts/agent-acp/errors.schema.json",
+      import.meta.url,
+    ),
+    "utf8",
+  ),
+) as { $id: string };
+const schemaValidator = new Ajv2020({ strict: true, allErrors: true });
+schemaValidator.addSchema(
+  JSON.parse(
+    readFileSync(
+      new URL(
+        "../../../../contracts/common/error.schema.json",
+        import.meta.url,
+      ),
+      "utf8",
+    ),
+  ),
+);
+schemaValidator.addSchema(contractSchema);
+const validateErrorData = schemaValidator.compile({
+  $ref: `${contractSchema.$id}#/$defs/errorData`,
+});
+const validateSkillSourceError = schemaValidator.compile({
+  $ref: `${contractSchema.$id}#/$defs/skillSourceError`,
+});
 
 type CatalogEntry = {
   http_status: number;
@@ -126,10 +169,16 @@ function definition(code: string) {
 
 function expectedBody(code: string) {
   const value = definition(code);
+  const meta = Object.hasOwn(ERROR_METADATA, code)
+    ? ERROR_METADATA[code]
+    : undefined;
+  if (meta === undefined) throw new Error(`Missing registry metadata ${code}`);
   return {
     code,
+    category: meta.category,
     message: value.message,
     retryable: value.retryable,
+    request_id: expect.stringMatching(/^[A-Za-z0-9._:-]{1,128}$/) as unknown,
     ...(value.retry_after_ms === undefined
       ? {}
       : { retry_after_ms: value.retry_after_ms }),
@@ -142,7 +191,12 @@ function assertFailure(
 ) {
   expect(received.response.status).toBe(definition(code).http_status);
   expect(received.body).toEqual(expectedBody(code));
+  expect(validateErrorData(received.body)).toBe(true);
   expect(received.text).not.toContain(secret);
+  expect(received.response.headers.get("cache-control")).toBe("no-store");
+  expect(received.response.headers.get("x-request-id")).toBe(
+    (received.body as { request_id: string }).request_id,
+  );
 }
 
 function auditHeaders(role = "admin") {
@@ -527,11 +581,16 @@ describe("HTTP error catalog projection", () => {
     );
     expect(received.response.status).toBe(409);
     expect(received.body).toEqual({
+      ...expectedBody("content_changed"),
       error: {
         code: "content_changed",
         message: definition("content_changed").message,
       },
     });
+    expect(received.response.headers.get("x-request-id")).toBe(
+      (received.body as { request_id: string }).request_id,
+    );
+    expect(validateSkillSourceError(received.body)).toBe(true);
     expect(received.text).not.toContain(secret);
     expect(received.response.headers.get("cache-control")).toBe("no-store");
     expect(artifact).toHaveBeenCalledOnce();
@@ -580,10 +639,16 @@ describe("HTTP error catalog projection", () => {
       expect(response.status).toBe(200);
       expect(response.headers.get("content-type")).toBe("text/event-stream");
       expect(response.headers.get("cache-control")).toBe("no-store");
-      expect(text).toBe(
-        `event: workspace_state\ndata: ${JSON.stringify(state)}\n\n` +
-          `event: workspace_error\ndata: ${JSON.stringify(expectedBody(code))}\n\n`,
+      const [stateFrame, errorFrame] = text.split("\n\n");
+      expect(stateFrame).toBe(
+        `event: workspace_state\ndata: ${JSON.stringify(state)}`,
       );
+      expect(errorFrame?.startsWith("event: workspace_error\ndata: ")).toBe(
+        true,
+      );
+      expect(
+        JSON.parse(errorFrame!.slice("event: workspace_error\ndata: ".length)),
+      ).toEqual(expectedBody(code));
       expect(text).not.toContain(secret);
       expect(watch).toHaveBeenCalledOnce();
       expect(read).not.toHaveBeenCalled();

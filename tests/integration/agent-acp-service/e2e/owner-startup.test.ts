@@ -1001,12 +1001,16 @@ describe("owner incarnation production startup over real HTTP", () => {
             unknown
           >;
           expect(Object.keys(body).sort()).toEqual([
+            "category",
             "code",
             "message",
+            "request_id",
             "retryable",
           ]);
           expect(body.code).toBe("acp_probe_intent_mismatch");
+          expect(body.category).toBe("conflict");
           expect(body.retryable).toBe(false);
+          expect(body.request_id).toMatch(/^[A-Za-z0-9._:-]{1,128}$/u);
           expect(
             rejected.body
               .toString("utf8")

@@ -15,6 +15,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/tf4fun/antnest-platform/services/admin-console/internal/apierror"
 	"github.com/tf4fun/antnest-platform/services/admin-console/internal/principal"
 )
 
@@ -60,25 +61,25 @@ func (h *handler) registerSkillRoutes() {
 func skillQuery(w http.ResponseWriter, r *http.Request, cursor string) (url.Values, bool) {
 	query, err := url.ParseQuery(r.URL.RawQuery)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_request", "Skill query is invalid")
+		writeError(w, http.StatusBadRequest, apierror.InvalidRequest, "Skill query is invalid")
 		return nil, false
 	}
 	for key, values := range query {
 		if key != cursor && key != "limit" || len(values) != 1 || len(values[0]) > maximumListCursorBytes {
-			writeError(w, http.StatusBadRequest, "invalid_request", "Skill query is invalid")
+			writeError(w, http.StatusBadRequest, apierror.InvalidRequest, "Skill query is invalid")
 			return nil, false
 		}
 	}
 	if raw := query.Get("limit"); raw != "" {
 		limit, err := strconv.Atoi(raw)
 		if err != nil || limit < 1 || limit > 100 {
-			writeError(w, http.StatusBadRequest, "invalid_request", "Skill page size is invalid")
+			writeError(w, http.StatusBadRequest, apierror.InvalidRequest, "Skill page size is invalid")
 			return nil, false
 		}
 	}
 	if cursor == "after_version" && query.Has(cursor) {
 		if version, err := strconv.ParseInt(query.Get(cursor), 10, 64); err != nil || version < 1 {
-			writeError(w, http.StatusBadRequest, "invalid_request", "Skill version cursor is invalid")
+			writeError(w, http.StatusBadRequest, apierror.InvalidRequest, "Skill version cursor is invalid")
 			return nil, false
 		}
 	}
@@ -88,7 +89,7 @@ func skillQuery(w http.ResponseWriter, r *http.Request, cursor string) (url.Valu
 func validSkillPath(w http.ResponseWriter, r *http.Request) (string, bool) {
 	id := r.PathValue("skill_id")
 	if !skillIDPattern.MatchString(id) {
-		writeError(w, http.StatusBadRequest, "invalid_request", "Skill ID is invalid")
+		writeError(w, http.StatusBadRequest, apierror.InvalidRequest, "Skill ID is invalid")
 		return "", false
 	}
 	return id, true
@@ -109,12 +110,12 @@ func (h *handler) listSkills(w http.ResponseWriter, r *http.Request, actor princ
 		NextAfterID *string        `json:"next_after_id"`
 	}
 	if json.Unmarshal(result, &page) != nil || page.Items == nil {
-		writeError(w, http.StatusBadGateway, "invalid_upstream_response", "Skill inventory response is invalid")
+		writeError(w, http.StatusBadGateway, apierror.InvalidUpstreamResponse, "Skill inventory response is invalid")
 		return
 	}
 	for _, item := range page.Items {
 		if !skillIDPattern.MatchString(item.SkillID) || item.Name == "" || item.CurrentVersion < 1 || item.PackageRulesVersion < 1 {
-			writeError(w, http.StatusBadGateway, "invalid_upstream_response", "Skill inventory response is invalid")
+			writeError(w, http.StatusBadGateway, apierror.InvalidUpstreamResponse, "Skill inventory response is invalid")
 			return
 		}
 	}
@@ -143,12 +144,12 @@ func (h *handler) listSkillVersions(w http.ResponseWriter, r *http.Request, acto
 		NextAfterVersion *int64         `json:"next_after_version"`
 	}
 	if json.Unmarshal(result, &page) != nil || page.Items == nil {
-		writeError(w, http.StatusBadGateway, "invalid_upstream_response", "Skill version response is invalid")
+		writeError(w, http.StatusBadGateway, apierror.InvalidUpstreamResponse, "Skill version response is invalid")
 		return
 	}
 	for _, item := range page.Items {
 		if item.SkillID != id || item.Version < 1 || item.Name == "" || item.PackageRulesVersion < 1 {
-			writeError(w, http.StatusBadGateway, "invalid_upstream_response", "Skill version response is invalid")
+			writeError(w, http.StatusBadGateway, apierror.InvalidUpstreamResponse, "Skill version response is invalid")
 			return
 		}
 	}
@@ -179,7 +180,7 @@ func (h *handler) publishSkillTo(w http.ResponseWriter, r *http.Request, actor p
 	case h.skillUploads <- struct{}{}:
 		defer func() { <-h.skillUploads }()
 	default:
-		writeError(w, http.StatusTooManyRequests, "busy", "Skill upload capacity is exhausted")
+		writeError(w, http.StatusTooManyRequests, apierror.Busy, "Skill upload capacity is exhausted")
 		return
 	}
 	archive, expected, ok := browserSkillUpload(w, r, id != "")
@@ -206,7 +207,7 @@ func (h *handler) publishSkillTo(w http.ResponseWriter, r *http.Request, actor p
 		err = writer.Close()
 	}
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "encoding_failed", "Skill upload could not be encoded")
+		writeError(w, http.StatusInternalServerError, apierror.EncodingFailed, "Skill upload could not be encoded")
 		return
 	}
 	path := "/internal/skills"
@@ -219,7 +220,7 @@ func (h *handler) publishSkillTo(w http.ResponseWriter, r *http.Request, actor p
 	}
 	var version skillVersion
 	if json.Unmarshal(result, &version) != nil || !skillIDPattern.MatchString(version.SkillID) || id != "" && version.SkillID != id || version.Version < 1 || version.Name == "" || version.PackageRulesVersion < 1 {
-		writeError(w, http.StatusBadGateway, "invalid_upstream_response", "Skill publication response is invalid")
+		writeError(w, http.StatusBadGateway, apierror.InvalidUpstreamResponse, "Skill publication response is invalid")
 		return
 	}
 	writeJSON(w, http.StatusCreated, version)
@@ -229,7 +230,7 @@ func browserSkillUpload(w http.ResponseWriter, r *http.Request, revision bool) (
 	r.Body = http.MaxBytesReader(w, r.Body, maximumSkillUpload+(1<<20))
 	reader, err := r.MultipartReader()
 	if err != nil {
-		writeError(w, 400, "invalid_request", "Multipart Skill upload is required")
+		writeError(w, 400, apierror.InvalidRequest, "Multipart Skill upload is required")
 		return nil, 0, false
 	}
 	var archive []byte
@@ -241,40 +242,40 @@ func browserSkillUpload(w http.ResponseWriter, r *http.Request, revision bool) (
 			break
 		}
 		if err != nil || count >= 2 {
-			writeError(w, 400, "invalid_request", "Skill upload contains invalid parts")
+			writeError(w, 400, apierror.InvalidRequest, "Skill upload contains invalid parts")
 			return nil, 0, false
 		}
 		switch part.FormName() {
 		case "artifact":
 			if archive != nil || part.FileName() == "" {
-				writeError(w, 400, "invalid_request", "One ZIP artifact is required")
+				writeError(w, 400, apierror.InvalidRequest, "One ZIP artifact is required")
 				return nil, 0, false
 			}
 			archive, err = io.ReadAll(io.LimitReader(part, maximumSkillUpload+1))
 			if err != nil || len(archive) > maximumSkillUpload {
-				writeError(w, 413, "limit_exceeded", "Skill ZIP exceeds 8 MiB")
+				writeError(w, 413, apierror.LimitExceeded, "Skill ZIP exceeds 8 MiB")
 				return nil, 0, false
 			}
 		case "expected_version":
 			if !revision || seenVersion || part.FileName() != "" {
-				writeError(w, 400, "invalid_request", "Skill version field is invalid")
+				writeError(w, 400, apierror.InvalidRequest, "Skill version field is invalid")
 				return nil, 0, false
 			}
 			value, readErr := io.ReadAll(io.LimitReader(part, 32))
 			expected, err = strconv.ParseInt(string(value), 10, 64)
 			if readErr != nil || err != nil || expected < 1 {
-				writeError(w, 400, "invalid_request", "Expected version is invalid")
+				writeError(w, 400, apierror.InvalidRequest, "Expected version is invalid")
 				return nil, 0, false
 			}
 			seenVersion = true
 		default:
-			writeError(w, 400, "invalid_request", "Unexpected Skill upload field")
+			writeError(w, 400, apierror.InvalidRequest, "Unexpected Skill upload field")
 			return nil, 0, false
 		}
 		_ = part.Close()
 	}
 	if len(archive) == 0 || revision && !seenVersion {
-		writeError(w, 400, "invalid_request", "Skill ZIP and expected version are required")
+		writeError(w, 400, apierror.InvalidRequest, "Skill ZIP and expected version are required")
 		return nil, 0, false
 	}
 	return archive, expected, true
@@ -291,20 +292,20 @@ func (h *handler) skillCall(w http.ResponseWriter, r *http.Request, method, path
 
 func (h *handler) skillResponse(w http.ResponseWriter, r *http.Request, method, path, query, contentType string, body []byte, expectedStatus, maximum int) ([]byte, http.Header, bool) {
 	if h.registry == nil {
-		writeError(w, 503, "dependency_unavailable", "Skill Registry is not configured")
+		writeError(w, 503, apierror.DependencyUnavailable, "Skill Registry is not configured")
 		return nil, nil, false
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), h.requestTimeout)
 	defer cancel()
 	result, err := h.registry.Do(ctx, method, path, query, contentType, body)
 	if err != nil || result == nil || result.Body == nil {
-		writeError(w, 503, "dependency_unavailable", "Skill Registry is unavailable")
+		writeError(w, 503, apierror.DependencyUnavailable, "Skill Registry is unavailable")
 		return nil, nil, false
 	}
 	defer func() { _ = result.Body.Close() }()
 	data, err := io.ReadAll(io.LimitReader(result.Body, int64(maximum)+1))
 	if err != nil || len(data) > maximum {
-		writeError(w, 502, "invalid_upstream_response", "Skill Registry response is invalid")
+		writeError(w, 502, apierror.InvalidUpstreamResponse, "Skill Registry response is invalid")
 		return nil, nil, false
 	}
 	if result.StatusCode != expectedStatus {
@@ -315,11 +316,11 @@ func (h *handler) skillResponse(w http.ResponseWriter, r *http.Request, method, 
 			} `json:"error"`
 		}
 		if json.Unmarshal(data, &failure) != nil || failure.Error.Code == "" {
-			writeError(w, 502, "invalid_upstream_response", "Skill Registry response is invalid")
+			writeError(w, 502, apierror.InvalidUpstreamResponse, "Skill Registry response is invalid")
 			return nil, nil, false
 		}
 		if result.StatusCode == 401 {
-			writeError(w, 503, "dependency_unavailable", "Skill Registry authentication failed")
+			writeError(w, 503, apierror.DependencyUnavailable, "Skill Registry authentication failed")
 			return nil, nil, false
 		}
 		allowed := map[int]map[string]bool{
@@ -332,7 +333,7 @@ func (h *handler) skillResponse(w http.ResponseWriter, r *http.Request, method, 
 			503: {"temporarily_unavailable": true, "source_unavailable": true},
 		}
 		if !allowed[result.StatusCode][failure.Error.Code] || len(failure.Error.Message) > 512 || strings.ContainsAny(failure.Error.Message, "\r\n\x00") {
-			writeError(w, 502, "invalid_upstream_response", "Skill Registry response is invalid")
+			writeError(w, 502, apierror.InvalidUpstreamResponse, "Skill Registry response is invalid")
 			return nil, nil, false
 		}
 		writeError(w, result.StatusCode, failure.Error.Code, failure.Error.Message)
@@ -348,11 +349,11 @@ func (h *handler) downloadSkillVersion(w http.ResponseWriter, r *http.Request, a
 	}
 	version, err := strconv.ParseInt(r.PathValue("version"), 10, 64)
 	if err != nil || version < 1 || r.URL.RawQuery != "" {
-		writeError(w, 400, "invalid_request", "Skill version is invalid")
+		writeError(w, 400, apierror.InvalidRequest, "Skill version is invalid")
 		return
 	}
 	if h.registry == nil {
-		writeError(w, 503, "dependency_unavailable", "Skill Registry is not configured")
+		writeError(w, 503, apierror.DependencyUnavailable, "Skill Registry is not configured")
 		return
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), h.requestTimeout)
@@ -360,13 +361,13 @@ func (h *handler) downloadSkillVersion(w http.ResponseWriter, r *http.Request, a
 	query := url.Values{"organization_id": {actor.OrganizationID}}.Encode()
 	upstream, err := h.registry.Do(ctx, "GET", fmt.Sprintf("/internal/skills/%s/versions/%d/artifact", id, version), query, "", nil)
 	if err != nil || upstream == nil || upstream.Body == nil {
-		writeError(w, 503, "dependency_unavailable", "Skill Registry is unavailable")
+		writeError(w, 503, apierror.DependencyUnavailable, "Skill Registry is unavailable")
 		return
 	}
 	defer func() { _ = upstream.Body.Close() }()
 	data, err := io.ReadAll(io.LimitReader(upstream.Body, maximumSkillUpload+1))
 	if err != nil || len(data) > maximumSkillUpload {
-		writeError(w, 502, "invalid_upstream_response", "Skill artifact response is invalid")
+		writeError(w, 502, apierror.InvalidUpstreamResponse, "Skill artifact response is invalid")
 		return
 	}
 	if upstream.StatusCode != 200 {
@@ -377,20 +378,20 @@ func (h *handler) downloadSkillVersion(w http.ResponseWriter, r *http.Request, a
 			} `json:"error"`
 		}
 		if json.Unmarshal(data, &failure) != nil || failure.Error.Code == "" {
-			writeError(w, 502, "invalid_upstream_response", "Skill Registry response is invalid")
+			writeError(w, 502, apierror.InvalidUpstreamResponse, "Skill Registry response is invalid")
 			return
 		}
 		if upstream.StatusCode == 404 {
-			writeError(w, 404, "not_found", "Skill version was not found")
+			writeError(w, 404, apierror.NotFound, "Skill version was not found")
 			return
 		}
-		writeError(w, 503, "dependency_unavailable", "Skill Registry is unavailable")
+		writeError(w, 503, apierror.DependencyUnavailable, "Skill Registry is unavailable")
 		return
 	}
 	digest := upstream.Header.Get("X-Antnest-Artifact-Digest")
 	actual := sha256.Sum256(data)
 	if digest != "sha256:"+hex.EncodeToString(actual[:]) || len(data) == 0 || !strings.HasPrefix(upstream.Header.Get("Content-Type"), "application/zip") {
-		writeError(w, 502, "invalid_upstream_response", "Skill artifact response is invalid")
+		writeError(w, 502, apierror.InvalidUpstreamResponse, "Skill artifact response is invalid")
 		return
 	}
 	w.Header().Set("Content-Type", "application/zip")

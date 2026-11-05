@@ -605,8 +605,10 @@ it("returns a typed reconnectable 503 for an original-handle DELETE after the re
   expect(response.status).toBe(503);
   expect(await response.json()).toEqual({
     code: "acp_http_peer_disconnected",
+    category: "unavailable",
     message: "Original ACP HTTP peer disconnected",
     retryable: true,
+    request_id: expect.stringMatching(/^[A-Za-z0-9._:-]{1,128}$/) as unknown,
   });
   expect(f.appA.createSession).not.toHaveBeenCalled();
   expect(f.appB.createSession).not.toHaveBeenCalled();
@@ -852,8 +854,12 @@ it.each([false, true])(
       } else
         expect(JSON.parse(body)).toEqual({
           code: "acp_http_peer_disconnected",
+          category: "unavailable",
           message: "Original ACP HTTP peer disconnected",
           retryable: true,
+          request_id: expect.stringMatching(
+            /^[A-Za-z0-9._:-]{1,128}$/,
+          ) as unknown,
         });
       expect(cleanupJoined).toBe(true);
       expect(originalBody.locked).toBe(false);

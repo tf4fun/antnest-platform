@@ -35,11 +35,31 @@ async fn error(response: axum::response::Response, status: StatusCode, code: &st
             "Bearer realm=\"antnest-service\""
         );
     }
+    let x_request_id = response
+        .headers()
+        .get("x-request-id")
+        .and_then(|v| v.to_str().ok())
+        .map(|v| v.to_owned());
+    assert_eq!(response.headers().get("cache-control").unwrap(), "no-store");
     let bytes = to_bytes(response.into_body(), 4096).await.unwrap();
     let document: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
     assert_eq!(document["code"], code);
+    assert_eq!(
+        document["category"],
+        antnest_runtime_egress::api_errors_gen::metadata(code)
+            .expect("registered control code")
+            .category
+    );
     assert_eq!(document["retryable"], false);
-    assert_eq!(document.as_object().unwrap().len(), 3);
+    assert_eq!(document.as_object().unwrap().len(), 5);
+    let request_id = document["request_id"].as_str().expect("request_id");
+    assert!(!request_id.is_empty() && request_id.len() <= 128);
+    assert!(request_id.chars().all(|c| c.is_ascii_alphanumeric()
+        || c == '.'
+        || c == '_'
+        || c == ':'
+        || c == '-'));
+    assert_eq!(x_request_id.as_deref(), Some(request_id));
     assert!(
         !String::from_utf8(bytes.to_vec())
             .unwrap()

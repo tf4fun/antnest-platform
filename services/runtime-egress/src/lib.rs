@@ -6,6 +6,7 @@
 //! another service must not add a Rust path dependency on these modules.
 
 pub mod allocator;
+pub mod api_errors_gen;
 pub mod application;
 pub mod config;
 pub mod control;

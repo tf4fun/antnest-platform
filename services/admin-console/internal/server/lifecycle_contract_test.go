@@ -128,7 +128,7 @@ func TestOperationReadPreservesAuthorityAndFailureEvidence(t *testing.T) {
 			if call.Query != "organization_id=org-1" || call.Path != "/internal/agent-operations/request-1" {
 				t.Fatalf("operation scope changed: %+v", call)
 			}
-			backend.enqueue(http.StatusNotFound, `{"code":"operation_not_found"}`)
+			backend.enqueue(http.StatusNotFound, `{"code":"operation_not_found","message":"Operation was not found"}`)
 			response = httptest.NewRecorder()
 			handler.ServeHTTP(response, scopedLifecycleRequest(http.MethodGet, "/api/admin/operations/request-1", "", "org-2"))
 			if response.Code != http.StatusNotFound || backend.calls[1].Query != "organization_id=org-2" {

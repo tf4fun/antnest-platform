@@ -634,3 +634,13 @@ semantics. Duplicate or other `learningStatus` values are invalid. Ordinary
 View reads, SSE refreshes and runtime sweeps do not query learning status.
 The browser requests it once when the user opens learning results, cancels its
 read on close/Agent switch, and never adds a timer or automatic retry loop.
+
+### Error envelope migration
+
+Workspace HTTP error bodies now emit the five-field common envelope (`code`,
+`category`, `message`, `retryable`, `request_id`) matching
+`../common/error.schema.json`, alongside the legacy `requestId`/`recovery`
+aliases for one release. `workspace-api.json` declares `error_envelope`.
+The consumer-side DTO/parser accepts common metadata (all-or-none, safe
+`request_id` equal to `requestId`, registered `category`); producers may emit
+metadata only after the decoder ships (consumer-first deployment).

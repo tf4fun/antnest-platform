@@ -13,7 +13,9 @@ import type { ConnectionBinding } from "../domain/types.js";
 import { context } from "@opentelemetry/api";
 import { observeHttpRequest, startHttpBoundary, activeHttpSpan } from "../telemetry/http.js";
 import { recordBoundaryError } from "../telemetry/diagnostics.js";
-import { httpFailure } from "./public-error.js";
+import { ERROR_CODES } from "../errors.gen.js";
+import { resolveErrorDefinition } from "../domain/error-catalog.js";
+import { commonError, errorHeaders, httpFailure } from "./public-error.js";
 import { WebSocketServer, type WebSocket } from "ws";
 
 import type { AcpApplicationPort } from "../ports/acp-application.js";
@@ -465,7 +467,10 @@ export class AgentAcpHttpServer {
         !(request.method === "GET" && request.url === "/status"))
     ) {
       response.setHeader("Connection", "close");
-      json(response, 404, { status: "not_found" });
+      json(response, 404, {
+        ...commonError(ERROR_CODES.ROUTE_NOT_FOUND, "ACP route was not found", false),
+        status: "not_found",
+      });
       return;
     }
     const admission = await this.options.authentication.admit(request);
@@ -485,7 +490,7 @@ export class AgentAcpHttpServer {
       request.method !== "DELETE" &&
       this.accessRevoked(identity, accessRevision)
     ) {
-      const failure = httpFailure("access_denied");
+      const failure = httpFailure(ERROR_CODES.ACCESS_DENIED);
       json(response, failure.status, failure.body);
       return;
     }
@@ -634,16 +639,31 @@ export class AgentAcpHttpServer {
       return;
     }
     if (request.method !== "GET" || request.url !== "/status") {
-      json(response, 404, { status: "not_found" });
+      json(response, 404, {
+        ...commonError(ERROR_CODES.ROUTE_NOT_FOUND, "ACP route was not found", false),
+        status: "not_found",
+      });
       return;
     }
     try {
       const ready = await this.options.ready();
-      json(response, ready ? 200 : 503, { status: ready ? "ready" : "not_ready" });
+      json(
+        response,
+        ready ? 200 : 503,
+        ready
+          ? { status: "ready" }
+          : {
+              ...commonError(ERROR_CODES.AGENT_UNAVAILABLE, "ACP service is not ready", true),
+              status: "not_ready",
+            },
+      );
     } catch (error) {
       const span = activeHttpSpan();
       if (span !== undefined) recordBoundaryError(span, error, "readiness");
-      json(response, 503, { status: "not_ready" });
+      json(response, 503, {
+        ...commonError(ERROR_CODES.AGENT_UNAVAILABLE, "ACP service is not ready", true),
+        status: "not_ready",
+      });
     }
   }
 
@@ -1292,13 +1312,43 @@ function acpProtocol(url: string | undefined): "v1" | "v2" | null {
 }
 
 function json(response: ServerResponse, status: number, body: unknown): void {
+  if (status >= 400) {
+    for (const [key, value] of Object.entries(errorHeaders(body))) response.setHeader(key, value);
+  }
   response.writeHead(status, { "content-type": "application/json" });
   response.end(JSON.stringify(body));
 }
 
+function upgradeEnvelope(status: number) {
+  switch (status) {
+    case 401:
+      return commonError(
+        ERROR_CODES.SERVICE_UNAUTHENTICATED,
+        resolveErrorDefinition(ERROR_CODES.SERVICE_UNAUTHENTICATED, "http").message,
+        false,
+      );
+    case 403:
+      return commonError(
+        ERROR_CODES.ACCESS_DENIED,
+        resolveErrorDefinition(ERROR_CODES.ACCESS_DENIED, "http").message,
+        false,
+      );
+    case 404:
+      return commonError(ERROR_CODES.ROUTE_NOT_FOUND, "ACP route was not found", false);
+    case 503:
+      return commonError(ERROR_CODES.AGENT_UNAVAILABLE, "ACP service is unavailable", true);
+    default:
+      return commonError(ERROR_CODES.INTERNAL, "Internal service error", false);
+  }
+}
+
 function rejectUpgrade(socket: Duplex, status: number, reason: string): number {
   if (!socket.destroyed) {
-    socket.end(`HTTP/1.1 ${status} ${reason}\r\nConnection: close\r\n\r\n`);
+    const envelope = upgradeEnvelope(status);
+    const body = JSON.stringify(envelope);
+    socket.end(
+      `HTTP/1.1 ${status} ${reason}\r\nContent-Type: application/json\r\nCache-Control: no-store\r\nX-Request-ID: ${envelope.request_id}\r\nContent-Length: ${Buffer.byteLength(body)}\r\nConnection: close\r\n\r\n${body}`,
+    );
   }
   return status;
 }
@@ -1308,7 +1358,7 @@ function rejectQuotaUpgrade(socket: Duplex, code: string): number {
   if (!socket.destroyed) {
     const body = JSON.stringify(failure.body);
     socket.end(
-      `HTTP/1.1 ${failure.status} Too Many Requests\r\nContent-Type: application/json\r\nCache-Control: no-store\r\nRetry-After: 1\r\nContent-Length: ${Buffer.byteLength(body)}\r\nConnection: close\r\n\r\n${body}`,
+      `HTTP/1.1 ${failure.status} Too Many Requests\r\nContent-Type: application/json\r\nCache-Control: no-store\r\nX-Request-ID: ${failure.body.request_id}\r\nRetry-After: 1\r\nContent-Length: ${Buffer.byteLength(body)}\r\nConnection: close\r\n\r\n${body}`,
     );
   }
   return failure.status;
@@ -1316,11 +1366,12 @@ function rejectQuotaUpgrade(socket: Duplex, code: string): number {
 
 function rejectAuthenticatedUpgrade(socket: Duplex, failure: AuthenticationFailure): number {
   if (!socket.destroyed) {
-    const body = JSON.stringify(httpFailure(failure.code).body);
+    const envelope = httpFailure(failure.code).body;
+    const body = JSON.stringify(envelope);
     const challenge =
       failure.challenge === undefined ? "" : `WWW-Authenticate: ${failure.challenge}\r\n`;
     socket.end(
-      `HTTP/1.1 ${failure.status} Authentication Failed\r\n${challenge}Content-Type: application/json\r\nContent-Length: ${Buffer.byteLength(body)}\r\nConnection: close\r\n\r\n${body}`,
+      `HTTP/1.1 ${failure.status} Authentication Failed\r\n${challenge}Content-Type: application/json\r\nCache-Control: no-store\r\nX-Request-ID: ${envelope.request_id}\r\nContent-Length: ${Buffer.byteLength(body)}\r\nConnection: close\r\n\r\n${body}`,
     );
   }
   return failure.status;

@@ -12,6 +12,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/tf4fun/antnest-platform/modules/service-authentication/serviceauth"
+	"github.com/tf4fun/antnest-platform/services/admin-console/internal/apierror"
 )
 
 var runtimeRecoveryIdentifier = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,199}$`)
@@ -48,13 +49,13 @@ func decodeRuntimeRecoveryRequest(response http.ResponseWriter, request *http.Re
 	err := serviceauth.DecodeObject(raw, &wire)
 	barrier, barrierErr := parseRuntimeRecoveryBarrier(wire.BarrierID)
 	if err != nil || barrierErr != nil || !runtimeRecoveryIdentifier.MatchString(wire.ExpectedRuntimeRevision) {
-		writeError(response, http.StatusBadRequest, "invalid_request", "Runtime recovery request is invalid")
+		writeError(response, http.StatusBadRequest, apierror.InvalidRequest, "Runtime recovery request is invalid")
 		return recovery, "", false
 	}
 	recovery = runtimeRecoveryRequest{BarrierID: barrier, ExpectedRuntimeRevision: wire.ExpectedRuntimeRevision}
 	keys := request.Header.Values("Idempotency-Key")
 	if len(keys) != 1 || !runtimeRecoveryIdentifier.MatchString(keys[0]) {
-		writeError(response, http.StatusBadRequest, "invalid_idempotency_key", "The original recovery request ID is required")
+		writeError(response, http.StatusBadRequest, apierror.InvalidIdempotencyKey, "The original recovery request ID is required")
 		return recovery, "", false
 	}
 	// Controller validates the stable ID against the trusted organization,

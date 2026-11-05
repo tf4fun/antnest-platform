@@ -1,0 +1,24 @@
+{
+  "service": "edge-gateway",
+  "codes": [
+    "invalid_request",
+    "unauthenticated",
+    "forbidden",
+    "not_found",
+    "internal",
+    "method_not_allowed",
+    "request_too_large",
+    "principal_changed",
+    "csrf_failed",
+    "identity_unavailable",
+    "console_unavailable",
+    "workspace_unavailable",
+    "agent_unavailable",
+    "login_method_unavailable",
+    "login_rate_limited",
+    "invalid_current_password",
+    "external_identity_last_method",
+    "credential_busy",
+    "credential_rate_limited"
+  ]
+}

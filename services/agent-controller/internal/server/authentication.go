@@ -14,6 +14,7 @@ import (
 
 	"github.com/tf4fun/antnest-platform/modules/service-authentication/callercontext"
 	"github.com/tf4fun/antnest-platform/modules/service-authentication/serviceauth"
+	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/apierror"
 )
 
 // Security is mandatory for every production handler, including composed
@@ -80,24 +81,24 @@ func (security Security) guardRoute(pattern string, next http.Handler) http.Hand
 			allowed = []string{"agent-ui"}
 		}
 		if !slices.Contains(allowed, caller) {
-			writeError(w, http.StatusForbidden, "caller_not_allowed", "Caller cannot use this route", false)
+			writeError(w, http.StatusForbidden, apierror.CallerNotAllowed, "Caller cannot use this route", false)
 			return
 		}
 		query, err := url.ParseQuery(r.URL.RawQuery)
 		if err != nil {
-			writeError(w, http.StatusBadRequest, "invalid_request", "Request query is invalid", false)
+			writeError(w, http.StatusBadRequest, apierror.InvalidRequest, "Request query is invalid", false)
 			return
 		}
 		for _, values := range query {
 			if len(values) != 1 {
-				writeError(w, http.StatusBadRequest, "invalid_request", "Repeated query fields are invalid", false)
+				writeError(w, http.StatusBadRequest, apierror.InvalidRequest, "Repeated query fields are invalid", false)
 				return
 			}
 		}
 		var object map[string]json.RawMessage
 		if r.Method == http.MethodPost || r.Method == http.MethodPut {
 			if r.URL.RawQuery != "" {
-				writeError(w, http.StatusBadRequest, "invalid_request", "JSON mutations do not accept query fields", false)
+				writeError(w, http.StatusBadRequest, apierror.InvalidRequest, "JSON mutations do not accept query fields", false)
 				return
 			}
 			var ok bool
@@ -133,14 +134,14 @@ func (security Security) guardRoute(pattern string, next http.Handler) http.Hand
 		claims, err := security.CallerContext.Verify(r.Context(), tokens[0], callercontext.Expected{Consumer: "agent-controller", Agent: agent, Tolerance: 30})
 		if err != nil {
 			if errors.Is(err, callercontext.ErrDependency) {
-				writeError(w, http.StatusServiceUnavailable, "identity_dependency_unavailable", "Identity authorization dependency is unavailable", true)
+				writeError(w, http.StatusServiceUnavailable, apierror.IdentityDependencyUnavailable, "Identity authorization dependency is unavailable", true)
 			} else {
-				writeError(w, http.StatusUnauthorized, "caller_context_invalid", "Caller context verification failed", false)
+				writeError(w, http.StatusUnauthorized, apierror.CallerContextInvalid, "Caller context verification failed", false)
 			}
 			return
 		}
 		if caller == "admin-console" && claims.SystemRole != "admin" && claims.OrganizationRole != "admin" {
-			writeError(w, http.StatusForbidden, "forbidden", "Administrator access is required", false)
+			writeError(w, http.StatusForbidden, apierror.Forbidden, "Administrator access is required", false)
 			return
 		}
 		for _, key := range []string{"organization_id", "actor_principal_id", "principal_id"} {
@@ -150,7 +151,7 @@ func (security Security) guardRoute(pattern string, next http.Handler) http.Hand
 			}
 			if actual, ok := objectString(object, key); ok && actual != expected {
 				if actual == "" || strings.TrimSpace(actual) != actual {
-					writeError(w, http.StatusBadRequest, "invalid_request", "Request scope is malformed", false)
+					writeError(w, http.StatusBadRequest, apierror.InvalidRequest, "Request scope is malformed", false)
 					return
 				}
 				writeError(w, http.StatusForbidden, code, "Request scope differs from verified caller", false)
@@ -158,7 +159,7 @@ func (security Security) guardRoute(pattern string, next http.Handler) http.Hand
 			}
 			for _, actual := range query[key] {
 				if actual == "" || strings.TrimSpace(actual) != actual {
-					writeError(w, http.StatusBadRequest, "invalid_request", "Request scope is malformed", false)
+					writeError(w, http.StatusBadRequest, apierror.InvalidRequest, "Request scope is malformed", false)
 					return
 				}
 				if actual != expected {
@@ -198,28 +199,28 @@ func authenticationBody(w http.ResponseWriter, r *http.Request) (map[string]json
 	media := headerValues(r.Header, "Content-Type")
 	encodings := headerValues(r.Header, "Content-Encoding")
 	if len(media) != 1 || len(encodings) > 1 || len(encodings) == 1 && encodings[0] != "identity" {
-		writeError(w, http.StatusUnsupportedMediaType, "unsupported_media_type", "UTF-8 application/json is required", false)
+		writeError(w, http.StatusUnsupportedMediaType, apierror.UnsupportedMediaType, "UTF-8 application/json is required", false)
 		return nil, false
 	}
 	typeName, parameters, err := mime.ParseMediaType(media[0])
 	if err != nil || typeName != "application/json" || len(parameters) > 1 ||
 		len(parameters) == 1 && !strings.EqualFold(parameters["charset"], "utf-8") {
-		writeError(w, http.StatusUnsupportedMediaType, "unsupported_media_type", "UTF-8 application/json is required", false)
+		writeError(w, http.StatusUnsupportedMediaType, apierror.UnsupportedMediaType, "UTF-8 application/json is required", false)
 		return nil, false
 	}
 	raw, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maximumRequestBytes))
 	if err != nil {
 		var maximum *http.MaxBytesError
 		if errors.As(err, &maximum) {
-			writeError(w, http.StatusRequestEntityTooLarge, "request_too_large", "Request exceeds the body limit", false)
+			writeError(w, http.StatusRequestEntityTooLarge, apierror.RequestTooLarge, "Request exceeds the body limit", false)
 		} else {
-			writeError(w, http.StatusBadRequest, "invalid_request", "Request body is invalid", false)
+			writeError(w, http.StatusBadRequest, apierror.InvalidRequest, "Request body is invalid", false)
 		}
 		return nil, false
 	}
 	var object map[string]json.RawMessage
 	if serviceauth.DecodeObject(raw, &object) != nil {
-		writeError(w, http.StatusBadRequest, "invalid_request", "Request body is invalid", false)
+		writeError(w, http.StatusBadRequest, apierror.InvalidRequest, "Request body is invalid", false)
 		return nil, false
 	}
 	r.Body = io.NopCloser(bytes.NewReader(raw))

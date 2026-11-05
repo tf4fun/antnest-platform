@@ -1,3 +1,4 @@
+import { ERROR_METADATA } from "../errors.gen.ts";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { RequestError } from "@agentclientprotocol/sdk/unstable";
@@ -234,12 +235,18 @@ const errorData = z.strictObject({
   retryable: z.boolean(),
   retry_after_ms: retryDelay.optional(),
   details: z.strictObject({}).optional(),
+  category: z.enum(["invalid_request", "unauthenticated", "forbidden", "not_found", "conflict", "precondition_failed", "rate_limited", "unavailable", "internal"]).optional(),
+  message: publicMessage.optional(),
+  request_id: z.string().regex(/^[A-Za-z0-9._:-]{1,128}$/).optional(),
 });
 const errorDataKeys = new Set([
   "code",
   "retryable",
   "retry_after_ms",
   "details",
+  "category",
+  "message",
+  "request_id",
 ]);
 const terminalDefinitions = Object.values(catalog.terminal_outcomes);
 
@@ -308,6 +315,20 @@ export function classifyAcpError(
     const data = parsed.data;
     const hasDelay = Object.hasOwn(response.data, "retry_after_ms");
     if (hasDelay && data.retry_after_ms === undefined) return unknown();
+    const data0 = response.data;
+    const metaKeys = ["category", "message", "request_id"].filter((key) =>
+      Object.hasOwn(data0, key),
+    );
+    if (metaKeys.length !== 0) {
+      if (metaKeys.length !== 3) return unknown();
+      if (data.category === undefined || data.message === undefined || data.request_id === undefined)
+        return unknown();
+      if (data.message !== response.message) return unknown();
+      const meta = Object.hasOwn(ERROR_METADATA, data.code)
+        ? ERROR_METADATA[data.code as keyof typeof ERROR_METADATA]
+        : undefined;
+      if (meta === undefined || meta.category !== data.category) return unknown();
+    }
     if (Object.hasOwn(response.data, "details")) {
       const details = response.data.details;
       if (!isRecord(details) || Reflect.ownKeys(details).length !== 0)

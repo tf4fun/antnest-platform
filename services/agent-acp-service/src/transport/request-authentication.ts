@@ -7,6 +7,7 @@ import {
   type CallerClaims,
 } from "../adapters/caller-context.js";
 import { bindAuthenticatedRequest } from "./trusted-identity.js";
+import { ERROR_CODES } from "../errors.gen.js";
 
 const workspace = ["agent-ui"];
 const operationPaths = new Map([
@@ -43,7 +44,7 @@ export class RequestAuthentication {
         code: admitted.code,
         ...(admitted.www_authenticate === null ? {} : { challenge: admitted.www_authenticate }),
       };
-    if (admitted.caller === null) return { status: 401, code: "service_unauthenticated" };
+    if (admitted.caller === null) return { status: 401, code: ERROR_CODES.SERVICE_UNAUTHENTICATED };
     return this.admitCaller(request, admitted.caller, upgrade);
   }
 
@@ -58,7 +59,8 @@ export class RequestAuthentication {
     upgrade: boolean,
   ): Promise<{ claims?: CallerClaims } | AuthenticationFailure> {
     const policy = routePolicy(request, upgrade);
-    if (!policy.callers.includes(caller)) return { status: 403, code: "caller_not_allowed" };
+    if (!policy.callers.includes(caller))
+      return { status: 403, code: ERROR_CODES.CALLER_NOT_ALLOWED };
     if (!policy.context) {
       bindAuthenticatedRequest(request, caller);
       return {};
@@ -66,8 +68,8 @@ export class RequestAuthentication {
     const tokens = fields(request).filter(
       (field) => field.name.toLowerCase() === CALLER_CONTEXT_HEADER.toLowerCase(),
     );
-    if (tokens.length === 0) return { status: 401, code: "caller_context_required" };
-    if (tokens.length !== 1) return { status: 401, code: "caller_context_invalid" };
+    if (tokens.length === 0) return { status: 401, code: ERROR_CODES.CALLER_CONTEXT_REQUIRED };
+    if (tokens.length !== 1) return { status: 401, code: ERROR_CODES.CALLER_CONTEXT_INVALID };
     try {
       const claims = await this.verifier.verify(
         tokens[0]!.value,
@@ -80,7 +82,7 @@ export class RequestAuthentication {
     } catch (error) {
       if (error instanceof CallerContextError && error.code === "identity_dependency_unavailable")
         return { status: 503, code: error.code };
-      return { status: 401, code: "caller_context_invalid" };
+      return { status: 401, code: ERROR_CODES.CALLER_CONTEXT_INVALID };
     }
   }
 }

@@ -118,3 +118,19 @@ Docker E2E targets in the [Makefile](../Makefile) validate combined data
 paths: `make e2e-stage1` covers the Runtime-to-Egress path, and targets such as
 `make e2e-stage3` and `make e2e-skill-deployment` cover the control plane and
 Skill workflows.
+
+## Common error model
+
+[`common/error.schema.json`](common/error.schema.json) defines the shared
+draft 2020-12 API error envelope for #67: `code`, `category`, `message`,
+`retryable` and `request_id` are required, `details` is an optional object,
+and additional properties stay permitted for expand-migrate changes. The
+platform-owned version-1 registry in [`common/errors.json`](common/errors.json)
+lists the nine categories and canonical codes plus deprecated alias codes
+that keep their old wire values. Each service declares the codes it emits in
+a `common/slices/<service>.json` file; `scripts/generate-api-errors.mjs`
+renders the checked-in Go, TypeScript and Rust constant sets from those
+slices, and `--check` keeps the generated files fresh in CI. Rendering runs
+the source through `gofmt`, so generation and `--check` require the Go
+toolchain on `PATH` (installed in CI). Service error envelope migrations
+remain per-service batches under the same issue.
