@@ -28,18 +28,20 @@ const schema = JSON.parse(
 ) as { $id: string };
 const ajv = new Ajv2020({ strict: true });
 const serviceRequire = createRequire(
-  new URL("../../../../services/agent-acp-service/package.json", import.meta.url),
-);
-ajv.addMetaSchema(serviceRequire("ajv/dist/refs/json-schema-draft-07.json"));
-const commonSchema = JSON.parse(
-  readFileSync(
-    new URL(
-      "../../../../contracts/common/error.schema.json",
-      import.meta.url,
-    ),
-    "utf8",
+  new URL(
+    "../../../../services/agent-acp-service/package.json",
+    import.meta.url,
   ),
 );
+ajv.addMetaSchema(
+  serviceRequire("ajv/dist/refs/json-schema-draft-07.json") as object,
+);
+const commonSchema = JSON.parse(
+  readFileSync(
+    new URL("../../../../contracts/common/error.schema.json", import.meta.url),
+    "utf8",
+  ),
+) as Record<string, unknown>;
 ajv.addSchema(commonSchema);
 ajv.addSchema(schema);
 const common = {
@@ -62,6 +64,23 @@ const installed = {
 describe("ACP consumer of shared Runtime temporary wire contract", () => {
   it("agrees with shared receipt schemas for bounds, unknown fields and effects", () => {
     const error = {
+      code: "outcome_unknown",
+      category: "internal",
+      message: "Temporary Skill request did not complete",
+      retryable: true,
+      request_id: "request_1",
+      error: {
+        code: "outcome_unknown",
+        category: "internal",
+        message: "Temporary Skill request did not complete",
+        retryable: true,
+        request_id: "request_1",
+        effect_state: "unknown",
+        runtime_call_stopped: false,
+      },
+      details: { effect_state: "unknown", runtime_call_stopped: false },
+    };
+    const legacyError = {
       error: {
         code: "body_timed_out",
         message: "Temporary Skill request did not complete",
@@ -70,6 +89,7 @@ describe("ACP consumer of shared Runtime temporary wire contract", () => {
         runtime_call_stopped: true,
       },
     };
+    expect(temporaryErrorSchema.safeParse(legacyError).success).toBe(true);
     const released = {
       ...common,
       action: "temporary_release",
