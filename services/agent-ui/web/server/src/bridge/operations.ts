@@ -1,3 +1,4 @@
+import { workspaceError } from "../protocol/api-error.ts";
 import { createHash, randomUUID } from "node:crypto";
 import { setImmediate as nextTurn } from "node:timers/promises";
 import type { ContentBlock } from "@agentclientprotocol/sdk/unstable";
@@ -432,14 +433,14 @@ export class OperationCoordinator {
           ...entry.operation,
           acceptance: "unknown",
           phase: "uncertain",
-          ...(classification === undefined ? {} : { error: {
-            code: classification.code,
-            message: classification.message,
-            requestId: randomUUID(),
-            operationId: input.intentId,
-            retryable: false,
-            recovery: "query_operation" as const,
-          } }),
+          ...(classification === undefined ? {} : { error: workspaceError(
+            classification.code,
+            classification.message,
+            "query_operation",
+            randomUUID(),
+            false,
+            input.intentId,
+          ) }),
         });
         this.dependencies.changed?.(input.sessionId);
         // A successful transport ACK without a durable receipt is also an

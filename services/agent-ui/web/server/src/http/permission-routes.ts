@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { ERROR_CODES } from "../errors.gen.ts";
 import { ReplayCapacityError } from "../bridge/replay-load-gate.ts";
 import { PermissionDecisionError } from "../bridge/permission-inbox.ts";
 import { OperationReconciliationTimeoutError } from "../bridge/operations.ts";
@@ -34,7 +35,7 @@ export function createPermissionHandler(dependencies: {
     if (raw.length !== 4 || raw[1] !== "permissions" || raw[3] !== "decision")
       return null;
     if (request.method !== "POST")
-      return error(405, "method_not_allowed", "Method is not allowed", "none");
+      return error(405, ERROR_CODES.METHOD_NOT_ALLOWED, "Method is not allowed", "none");
     let agentId: string;
     let permissionId: string;
     try {
@@ -46,7 +47,7 @@ export function createPermissionHandler(dependencies: {
     } catch {
       return error(
         422,
-        "invalid_request",
+        ERROR_CODES.INVALID_REQUEST,
         "Permission path is invalid",
         "none",
       );
@@ -55,12 +56,12 @@ export function createPermissionHandler(dependencies: {
     if (scope === null)
       return error(
         401,
-        "unauthenticated",
+        ERROR_CODES.UNAUTHENTICATED,
         "Trusted identity is missing",
         "login",
       );
     if (scope.agentId !== agentId)
-      return error(403, "access_denied", "Agent access denied", "none");
+      return error(403, ERROR_CODES.ACCESS_DENIED, "Agent access denied", "none");
     try {
       const body = decision.parse(await readBody(request, 8192));
       return json(
@@ -75,18 +76,18 @@ export function createPermissionHandler(dependencies: {
       const capacity = bridgeCapacityResponse(cause);
       if (capacity !== null) return capacity;
       if (cause instanceof OperationReconciliationTimeoutError)
-        return error(504, "workspace_deadline_exceeded", "Operation reconciliation timed out", "retry_read");
+        return error(504, ERROR_CODES.WORKSPACE_DEADLINE_EXCEEDED, "Operation reconciliation timed out", "retry_read");
       if (cause instanceof BodyTooLargeError)
         return error(
           413,
-          "request_too_large",
+          ERROR_CODES.REQUEST_TOO_LARGE,
           "Permission request exceeds the limit",
           "none",
         );
       if (cause instanceof z.ZodError || cause instanceof SyntaxError)
         return error(
           422,
-          "invalid_request",
+          ERROR_CODES.INVALID_REQUEST,
           "Permission request is invalid",
           "none",
         );
@@ -100,13 +101,13 @@ export function createPermissionHandler(dependencies: {
       if (cause instanceof ReplayCapacityError)
         return error(
           429,
-          "replay_capacity_exceeded",
+          ERROR_CODES.REPLAY_CAPACITY_EXCEEDED,
           "Concurrent replay queue is full",
           "retry_read",
         );
       return error(
         503,
-        "upstream_unavailable",
+        ERROR_CODES.UPSTREAM_UNAVAILABLE,
         "Permission decision is unavailable",
         "retry_read",
       );

@@ -288,6 +288,7 @@ function consumerReadinessValidator(file, definition, useDefaults = false) {
     useDefaults,
     validateFormats: false,
   });
+  ajv.addSchema(read("common/error.schema.json"));
   if (definition === undefined) return ajv.compile(document);
   ajv.addSchema(document);
   return ajv.compile({ $ref: document.$id + "#/$defs/" + definition });

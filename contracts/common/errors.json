@@ -1561,6 +1561,518 @@
       "http_status": 503,
       "owner": "runtime-egress",
       "description": "Service not ready"
+    },
+    {
+      "code": "bridge_capacity_exceeded",
+      "category": "rate_limited",
+      "retryable": true,
+      "http_status": 429,
+      "owner": "agent-ui",
+      "description": "Bridge capacity exceeded"
+    },
+    {
+      "code": "replay_capacity_exceeded",
+      "category": "rate_limited",
+      "retryable": true,
+      "http_status": 429,
+      "owner": "agent-ui",
+      "description": "Replay capacity exceeded"
+    },
+    {
+      "code": "stream_capacity_exceeded",
+      "category": "rate_limited",
+      "retryable": true,
+      "http_status": 429,
+      "owner": "agent-ui",
+      "description": "Stream capacity exceeded"
+    },
+    {
+      "code": "upload_capacity_exceeded",
+      "category": "rate_limited",
+      "retryable": true,
+      "http_status": 429,
+      "owner": "agent-ui",
+      "description": "Upload capacity exceeded"
+    },
+    {
+      "code": "connection_quota_exceeded",
+      "category": "rate_limited",
+      "retryable": true,
+      "http_status": 429,
+      "owner": "agent-acp-service",
+      "description": "Connection quota exceeded"
+    },
+    {
+      "code": "history_condition_required",
+      "category": "precondition_failed",
+      "retryable": false,
+      "http_status": 428,
+      "owner": "agent-ui",
+      "description": "History condition required"
+    },
+    {
+      "code": "intent_key_mismatch",
+      "category": "conflict",
+      "retryable": false,
+      "http_status": 409,
+      "owner": "agent-ui",
+      "description": "Intent key mismatch"
+    },
+    {
+      "code": "operation_conflict",
+      "category": "conflict",
+      "retryable": false,
+      "http_status": 409,
+      "owner": "agent-ui",
+      "description": "Operation conflict"
+    },
+    {
+      "code": "stale_cursor",
+      "category": "conflict",
+      "retryable": false,
+      "http_status": 409,
+      "owner": "agent-ui",
+      "description": "Stale cursor"
+    },
+    {
+      "code": "stale_history",
+      "category": "conflict",
+      "retryable": false,
+      "http_status": 409,
+      "owner": "agent-ui",
+      "description": "Stale history"
+    },
+    {
+      "code": "permission_conflict",
+      "category": "conflict",
+      "retryable": false,
+      "http_status": 409,
+      "owner": "agent-ui",
+      "description": "Permission conflict"
+    },
+    {
+      "code": "invalid_command_result",
+      "category": "internal",
+      "retryable": false,
+      "http_status": 502,
+      "owner": "agent-ui",
+      "description": "Invalid command result"
+    },
+    {
+      "code": "history_unavailable",
+      "category": "unavailable",
+      "retryable": true,
+      "http_status": 503,
+      "owner": "agent-ui",
+      "description": "History unavailable"
+    },
+    {
+      "code": "upstream_unavailable",
+      "category": "unavailable",
+      "retryable": true,
+      "http_status": 503,
+      "owner": "agent-ui",
+      "description": "Upstream unavailable"
+    },
+    {
+      "code": "workspace_deadline_exceeded",
+      "category": "unavailable",
+      "retryable": true,
+      "http_status": 504,
+      "owner": "agent-ui",
+      "description": "Workspace deadline exceeded"
+    },
+    {
+      "code": "session_access_denied",
+      "category": "forbidden",
+      "retryable": false,
+      "http_status": 403,
+      "owner": "agent-acp-service",
+      "description": "Session access denied"
+    },
+    {
+      "code": "client_mcp_not_allowed",
+      "category": "forbidden",
+      "retryable": false,
+      "http_status": 403,
+      "owner": "agent-acp-service",
+      "description": "Client mcp not allowed"
+    },
+    {
+      "code": "agent_busy",
+      "category": "conflict",
+      "retryable": true,
+      "http_status": 409,
+      "owner": "agent-acp-service",
+      "description": "Agent busy"
+    },
+    {
+      "code": "session_busy",
+      "category": "conflict",
+      "retryable": true,
+      "http_status": 409,
+      "owner": "agent-acp-service",
+      "description": "Session busy"
+    },
+    {
+      "code": "runtime_barrier_required",
+      "category": "conflict",
+      "retryable": true,
+      "http_status": 409,
+      "owner": "agent-acp-service",
+      "description": "Runtime barrier required"
+    },
+    {
+      "code": "configuration_not_ready",
+      "category": "unavailable",
+      "retryable": true,
+      "http_status": 503,
+      "owner": "agent-acp-service",
+      "description": "Configuration not ready"
+    },
+    {
+      "code": "agent_preparing",
+      "category": "unavailable",
+      "retryable": true,
+      "http_status": 503,
+      "owner": "agent-acp-service",
+      "description": "Agent preparing"
+    },
+    {
+      "code": "recovery_pending",
+      "category": "unavailable",
+      "retryable": true,
+      "http_status": 503,
+      "owner": "agent-acp-service",
+      "description": "Recovery pending"
+    },
+    {
+      "code": "configuration_unavailable",
+      "category": "unavailable",
+      "retryable": true,
+      "http_status": 503,
+      "owner": "agent-acp-service",
+      "description": "Configuration unavailable"
+    },
+    {
+      "code": "settlement_unavailable",
+      "category": "unavailable",
+      "retryable": true,
+      "http_status": 503,
+      "owner": "agent-acp-service",
+      "description": "Settlement unavailable"
+    },
+    {
+      "code": "execution_state_unavailable",
+      "category": "unavailable",
+      "retryable": true,
+      "http_status": 503,
+      "owner": "agent-acp-service",
+      "description": "Execution state unavailable"
+    },
+    {
+      "code": "workspace_observation_unavailable",
+      "category": "unavailable",
+      "retryable": true,
+      "http_status": 503,
+      "owner": "agent-acp-service",
+      "description": "Workspace observation unavailable"
+    },
+    {
+      "code": "learning_changes_unavailable",
+      "category": "unavailable",
+      "retryable": true,
+      "http_status": 503,
+      "owner": "agent-acp-service",
+      "description": "Learning changes unavailable"
+    },
+    {
+      "code": "learning_status_unavailable",
+      "category": "unavailable",
+      "retryable": true,
+      "http_status": 503,
+      "owner": "agent-acp-service",
+      "description": "Learning status unavailable"
+    },
+    {
+      "code": "acp_http_peer_disconnected",
+      "category": "unavailable",
+      "retryable": true,
+      "http_status": 503,
+      "owner": "agent-acp-service",
+      "description": "Acp http peer disconnected"
+    },
+    {
+      "code": "acp_http_unavailable",
+      "category": "unavailable",
+      "retryable": true,
+      "http_status": 503,
+      "owner": "agent-acp-service",
+      "description": "Acp http unavailable"
+    },
+    {
+      "code": "permission_timeout",
+      "category": "unavailable",
+      "retryable": true,
+      "http_status": 408,
+      "owner": "agent-acp-service",
+      "description": "Permission timeout"
+    },
+    {
+      "code": "model_unavailable",
+      "category": "conflict",
+      "retryable": false,
+      "http_status": 409,
+      "owner": "agent-acp-service",
+      "description": "Model unavailable"
+    },
+    {
+      "code": "provider_unavailable",
+      "category": "conflict",
+      "retryable": false,
+      "http_status": 409,
+      "owner": "agent-acp-service",
+      "description": "Provider unavailable"
+    },
+    {
+      "code": "skill_unavailable",
+      "category": "conflict",
+      "retryable": false,
+      "http_status": 409,
+      "owner": "agent-acp-service",
+      "description": "Skill unavailable"
+    },
+    {
+      "code": "agent_operation_conflict",
+      "category": "conflict",
+      "retryable": false,
+      "http_status": 409,
+      "owner": "agent-acp-service",
+      "description": "Agent operation conflict"
+    },
+    {
+      "code": "intent_already_recorded",
+      "category": "conflict",
+      "retryable": false,
+      "http_status": 409,
+      "owner": "agent-acp-service",
+      "description": "Intent already recorded"
+    },
+    {
+      "code": "session_append_conflict",
+      "category": "conflict",
+      "retryable": false,
+      "http_status": 409,
+      "owner": "agent-acp-service",
+      "description": "Session append conflict"
+    },
+    {
+      "code": "session_not_active",
+      "category": "conflict",
+      "retryable": false,
+      "http_status": 409,
+      "owner": "agent-acp-service",
+      "description": "Session not active"
+    },
+    {
+      "code": "session_workspace_mismatch",
+      "category": "conflict",
+      "retryable": false,
+      "http_status": 409,
+      "owner": "agent-acp-service",
+      "description": "Session workspace mismatch"
+    },
+    {
+      "code": "permission_stale",
+      "category": "conflict",
+      "retryable": false,
+      "http_status": 409,
+      "owner": "agent-acp-service",
+      "description": "Permission stale"
+    },
+    {
+      "code": "permission_connection_changed",
+      "category": "conflict",
+      "retryable": false,
+      "http_status": 409,
+      "owner": "agent-acp-service",
+      "description": "Permission connection changed"
+    },
+    {
+      "code": "cursor_expired",
+      "category": "conflict",
+      "retryable": false,
+      "http_status": 409,
+      "owner": "agent-acp-service",
+      "description": "Cursor expired"
+    },
+    {
+      "code": "run_cancelled",
+      "category": "conflict",
+      "retryable": false,
+      "http_status": 409,
+      "owner": "agent-acp-service",
+      "description": "Run cancelled"
+    },
+    {
+      "code": "configuration_base_mismatch",
+      "category": "conflict",
+      "retryable": false,
+      "http_status": 409,
+      "owner": "agent-acp-service",
+      "description": "Configuration base mismatch"
+    },
+    {
+      "code": "invalid_configuration",
+      "category": "invalid_request",
+      "retryable": false,
+      "http_status": 400,
+      "owner": "agent-acp-service",
+      "description": "Invalid configuration"
+    },
+    {
+      "code": "invalid_execution_configuration",
+      "category": "invalid_request",
+      "retryable": false,
+      "http_status": 400,
+      "owner": "agent-acp-service",
+      "description": "Invalid execution configuration"
+    },
+    {
+      "code": "invalid_context_budget",
+      "category": "invalid_request",
+      "retryable": false,
+      "http_status": 400,
+      "owner": "agent-acp-service",
+      "description": "Invalid context budget"
+    },
+    {
+      "code": "tool_name_collision",
+      "category": "invalid_request",
+      "retryable": false,
+      "http_status": 400,
+      "owner": "agent-acp-service",
+      "description": "Tool name collision"
+    },
+    {
+      "code": "invalid_directory_filter",
+      "category": "invalid_request",
+      "retryable": false,
+      "http_status": 400,
+      "owner": "agent-acp-service",
+      "description": "Invalid directory filter"
+    },
+    {
+      "code": "invalid_agent_settlement",
+      "category": "invalid_request",
+      "retryable": false,
+      "http_status": 400,
+      "owner": "agent-acp-service",
+      "description": "Invalid agent settlement"
+    },
+    {
+      "code": "unsupported_workspace",
+      "category": "invalid_request",
+      "retryable": false,
+      "http_status": 400,
+      "owner": "agent-acp-service",
+      "description": "Unsupported workspace"
+    },
+    {
+      "code": "unsupported_audio_content",
+      "category": "invalid_request",
+      "retryable": false,
+      "http_status": 400,
+      "owner": "agent-acp-service",
+      "description": "Unsupported audio content"
+    },
+    {
+      "code": "unsupported_resource_content",
+      "category": "invalid_request",
+      "retryable": false,
+      "http_status": 400,
+      "owner": "agent-acp-service",
+      "description": "Unsupported resource content"
+    },
+    {
+      "code": "invalid_json",
+      "category": "invalid_request",
+      "retryable": false,
+      "http_status": 400,
+      "owner": "agent-acp-service",
+      "description": "Invalid json"
+    },
+    {
+      "code": "context_budget_exhausted",
+      "category": "invalid_request",
+      "retryable": false,
+      "http_status": 422,
+      "owner": "agent-acp-service",
+      "description": "Context budget exhausted"
+    },
+    {
+      "code": "budget_exceeded",
+      "category": "invalid_request",
+      "retryable": false,
+      "http_status": 422,
+      "owner": "agent-acp-service",
+      "description": "Budget exceeded"
+    },
+    {
+      "code": "context_compaction_failed",
+      "category": "internal",
+      "retryable": false,
+      "http_status": 500,
+      "owner": "agent-acp-service",
+      "description": "Context compaction failed"
+    },
+    {
+      "code": "provider_handle_released",
+      "category": "internal",
+      "retryable": false,
+      "http_status": 500,
+      "owner": "agent-acp-service",
+      "description": "Provider handle released"
+    },
+    {
+      "code": "database_error",
+      "category": "internal",
+      "retryable": false,
+      "http_status": 500,
+      "owner": "agent-acp-service",
+      "description": "Database error"
+    },
+    {
+      "code": "session_not_found",
+      "category": "not_found",
+      "retryable": false,
+      "http_status": 404,
+      "owner": "agent-acp-service",
+      "description": "Session not found"
+    },
+    {
+      "code": "intent_unknown",
+      "category": "not_found",
+      "retryable": false,
+      "http_status": 404,
+      "owner": "agent-acp-service",
+      "description": "Intent unknown"
+    },
+    {
+      "code": "invalid_runtime_information",
+      "category": "internal",
+      "retryable": false,
+      "http_status": 502,
+      "owner": "agent-acp-service",
+      "description": "Invalid runtime information"
+    },
+    {
+      "code": "configuration_too_large",
+      "category": "invalid_request",
+      "retryable": false,
+      "http_status": 413,
+      "owner": "agent-acp-service",
+      "description": "Configuration too large"
     }
   ]
 }

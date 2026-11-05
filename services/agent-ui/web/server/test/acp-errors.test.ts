@@ -419,3 +419,39 @@ for (const [outcome, terminal] of Object.entries(catalog.terminal_outcomes)) {
     );
   }
 }
+
+test("common_error ACP classifier accepts common metadata on known codes", () => {
+  const admission = classify(receipt("agent_busy", {
+    category: "conflict",
+    message: catalog.errors["agent_busy"].message,
+    request_id: "req-1",
+  }));
+  assert.deepEqual(admission, classify(receipt("agent_busy")));
+  const terminalOutcome = catalog.terminal_outcomes["failed"];
+  const terminal = classify(new RequestError(terminalOutcome.json_rpc_code, terminalOutcome.message, {
+    code: "internal_error",
+    retryable: false,
+    category: "internal",
+    message: terminalOutcome.message,
+    request_id: "req-1",
+  }));
+  assert.equal(terminal.kind, "terminal");
+  assert.equal(terminal.retryable, false);
+  assert.equal(terminal.requiresRunQuery, true);
+  for (const mutation of [
+    { category: "conflict" },
+    { category: "not_a_category", request_id: "req-1" },
+    { category: "conflict", request_id: "bad id with spaces" },
+    { category: "conflict", message: "private-canary mismatch", request_id: "req-1" },
+    { category: "conflict", request_id: "req-1", cause: "private-canary" },
+    { category: undefined, message: catalog.errors["agent_busy"].message, request_id: "req-1" },
+    { category: "conflict", message: undefined, request_id: "req-1" },
+    { category: "conflict", message: catalog.errors["agent_busy"].message, request_id: undefined },
+  ]) {
+    assert.deepEqual(
+      classify(receipt("agent_busy", mutation)),
+      unknown(),
+      `mutation must stay unknown: ${JSON.stringify(mutation)}`,
+    );
+  }
+});

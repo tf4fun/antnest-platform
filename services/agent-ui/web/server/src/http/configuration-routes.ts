@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { ERROR_CODES } from "../errors.gen.ts";
 import { ReplayCapacityError } from "../bridge/replay-load-gate.ts";
 import { ConfigurationConflictError } from "../bridge/configuration-token.ts";
 import { OperationReconciliationTimeoutError } from "../bridge/operations.ts";
@@ -36,17 +37,17 @@ export function createConfigurationHandler(dependencies: {
     const [agentId, sessionId, resource, extra] = parts;
     if (resource !== "configuration" || extra !== undefined) return null;
     if (request.method !== "POST")
-      return error(405, "method_not_allowed", "Method is not allowed", "none");
+      return error(405, ERROR_CODES.METHOD_NOT_ALLOWED, "Method is not allowed", "none");
     const scope = trustedScope(request);
     if (scope === null)
       return error(
         401,
-        "unauthenticated",
+        ERROR_CODES.UNAUTHENTICATED,
         "Trusted identity is missing",
         "login",
       );
     if (scope.agentId !== agentId)
-      return error(403, "access_denied", "Agent access denied", "none");
+      return error(403, ERROR_CODES.ACCESS_DENIED, "Agent access denied", "none");
     try {
       const body = schema.parse(await readBody(request, 8192));
       return json(
@@ -64,38 +65,38 @@ export function createConfigurationHandler(dependencies: {
       const missing = missingSessionResponse(cause);
       if (missing !== null) return missing;
       if (cause instanceof OperationReconciliationTimeoutError)
-        return error(504, "workspace_deadline_exceeded", "Operation reconciliation timed out", "retry_read");
+        return error(504, ERROR_CODES.WORKSPACE_DEADLINE_EXCEEDED, "Operation reconciliation timed out", "retry_read");
       if (cause instanceof BodyTooLargeError)
         return error(
           413,
-          "request_too_large",
+          ERROR_CODES.REQUEST_TOO_LARGE,
           "Configuration request exceeds the limit",
           "none",
         );
       if (cause instanceof z.ZodError || cause instanceof SyntaxError)
         return error(
           422,
-          "invalid_request",
+          ERROR_CODES.INVALID_REQUEST,
           "Configuration request is invalid",
           "none",
         );
       if (cause instanceof ConfigurationConflictError)
         return error(
           409,
-          "configuration_conflict",
+          ERROR_CODES.CONFIGURATION_CONFLICT,
           "Configuration choice is stale",
           "refresh",
         );
       if (cause instanceof ReplayCapacityError)
         return error(
           429,
-          "replay_capacity_exceeded",
+          ERROR_CODES.REPLAY_CAPACITY_EXCEEDED,
           "Concurrent replay queue is full",
           "retry_read",
         );
       return error(
         503,
-        "upstream_unavailable",
+        ERROR_CODES.UPSTREAM_UNAVAILABLE,
         "Configuration is unavailable",
         "retry_read",
       );
