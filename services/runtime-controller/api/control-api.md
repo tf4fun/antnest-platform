@@ -33,7 +33,13 @@ verification continue to protect lifecycle operations.
 Runtime Controller returns an opaque `runtime_revision`. Callers store and
 compare this value but never construct, increment, parse, or attach business
 meaning to it. Update, Disable, Enable, and Delete carry the current revision as
-`expected_revision`; a stale request returns `runtime_revision_conflict`.
+`expected_revision`; a stale request returns `runtime_revision_conflict`. The
+optimistic-concurrency precondition is canonical `expected_version` — an
+opaque string carrying the same `rtv_` token — or exactly one strong `If-Match`
+quoted token in place of the body field; both forms are permanent. For one
+release the `expected_revision` string remains accepted as a deprecated input
+alias, and a request carrying more than one form is rejected even when the
+values agree.
 
 An operation reports `target_revision`, which is fixed before execution and is
 stable across retries. It becomes the Environment's current
@@ -302,7 +308,8 @@ Initializing an existing or deleted Agent identity returns
 
 `POST /internal/runtimes/{agent_id}/update`
 
-The request carries `expected_revision` and a complete new configuration.
+The request carries the precondition (`expected_version` or one-release
+`expected_revision` alias, or `If-Match`) and a complete new configuration.
 Update is valid from `provisioned`, including starting or unhealthy resources.
 It removes the current compute resource, retains the workspace, allocates a new
 private generation, creates/starts the replacement and returns a new revision. Agent Controller blocks new
@@ -333,7 +340,7 @@ have a portable Kubernetes equivalent and would not release compute resources.
 
 `POST /internal/runtimes/{agent_id}/enable`
 
-Enable is valid only from `disabled`. It carries `expected_revision` plus the
+Enable is valid only from `disabled`. It carries the precondition plus the
 latest complete Runtime configuration, allocates a new private generation, and
 creates compute over the retained workspace. Configuration changes made while
 the Agent was disabled therefore require no Runtime Controller desired-state

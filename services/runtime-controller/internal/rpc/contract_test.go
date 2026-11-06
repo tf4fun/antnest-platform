@@ -1,6 +1,7 @@
 package rpc
 
 import (
+	"bytes"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -12,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/santhosh-tekuri/jsonschema/v6"
 	"github.com/tf4fun/antnest-platform/services/runtime-controller/internal/control"
 	"github.com/tf4fun/antnest-platform/services/runtime-controller/internal/deployment"
 	repositoryport "github.com/tf4fun/antnest-platform/services/runtime-controller/internal/repository"
@@ -269,9 +271,18 @@ func TestMachineSchemaMatchesGoWireTypes(t *testing.T) {
 	assertRequiredFields(t, schema, "image_resolution", imageResolutionResponse{
 		Reference: "antnest/runtime:local", ImageRef: "sha256:" + strings.Repeat("a", 64),
 	})
-	assertRequiredFields(t, schema, "revision_request", revisionRequest{ExpectedRevision: testRuntimeRevision})
-	assertRequiredFields(t, schema, "revision_configuration_request", revisionConfigurationRequest{
-		ExpectedRevision: testRuntimeRevision, Configuration: configurationDTO{},
+	assertRevisionRequestSchema(t, "revision_request", revisionRequest{ExpectedRevision: testRuntimeRevision})
+	assertRevisionRequestSchema(t, "revision_configuration_request", revisionConfigurationRequest{
+		ExpectedRevision: testRuntimeRevision, Configuration: configurationDTO{
+			ImageRef: "sha256:" + strings.Repeat("a", 64),
+			Network: networkDTO{
+				PacketContractRevision: 2,
+				EgressEndpoint:         ipv4EndpointDTO{IPv4: "10.20.0.8", Port: 8092},
+				TunnelIPv4:             "100.64.0.2",
+				ResolverIPv4:           "10.20.0.1",
+			},
+			Resources: resourceLimitsDTO{MemoryBytes: 134217728, PidsLimit: 256, TmpfsBytes: 16777216},
+		},
 	})
 	assertRequiredFields(t, schema, "readiness", readinessFromDomain("ready", control.Readiness{
 		DatabaseReady: true, PlatformReady: true, ObservationReady: true, MonitorReady: true,
@@ -382,6 +393,72 @@ func assertKnownSchemaReference(t *testing.T, schema controlSchema, reference st
 	if reference != "runtime-deployment.schema.json" {
 		t.Fatalf("unknown schema reference %s", reference)
 	}
+}
+
+func assertRevisionRequestSchema(t *testing.T, name string, value any) {
+	t.Helper()
+	root := serviceRoot(t)
+	compiler := jsonschema.NewCompiler()
+	compiler.AssertFormat()
+	for id, rel := range map[string]string{
+		"https://schemas.antnest.dev/runtime-controller/control-api.schema.json":        "api/control-api.schema.json",
+		"https://schemas.antnest.dev/runtime-controller/runtime-deployment.schema.json": "api/runtime-deployment.schema.json",
+		"https://schemas.antnest.dev/common/precondition.schema.json":                   "../../contracts/common/precondition.schema.json",
+		"https://schemas.antnest.dev/skill-registry/runtime-delivery.schema.json":       "../../contracts/skill-registry/runtime-delivery.schema.json",
+		"https://schemas.antnest.dev/runtime/managed-mcp.schema.json":                   "../../contracts/runtime/managed-mcp.schema.json",
+		"https://schemas.antnest.dev/runtime/runtime-spec.schema.json":                  "../../contracts/runtime/runtime-spec.schema.json",
+		"https://schemas.antnest.dev/runtime/instance-connection.schema.json":           "../../contracts/runtime/instance-connection.schema.json",
+		"https://schemas.antnest.dev/runtime/tunnel-bootstrap.schema.json":              "../../contracts/runtime/tunnel-bootstrap.schema.json",
+	} {
+		data, err := os.ReadFile(filepath.Join(root, rel))
+		if err != nil {
+			t.Fatal(err)
+		}
+		document, err := jsonschema.UnmarshalJSON(bytes.NewReader(data))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := compiler.AddResource(id, document); err != nil {
+			t.Fatalf("load %s: %v", rel, err)
+		}
+	}
+	shape, err := compiler.Compile("https://schemas.antnest.dev/runtime-controller/control-api.schema.json#/$defs/" + name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacy, err := json.Marshal(value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	validate := func(label string, body []byte) {
+		document, err := jsonschema.UnmarshalJSON(bytes.NewReader(body))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := shape.Validate(document); err != nil {
+			t.Fatalf("%s %s wire shape violates schema: %v\n%s", name, label, err, body)
+		}
+	}
+	validate("legacy", legacy)
+	var object map[string]json.RawMessage
+	if err := json.Unmarshal(legacy, &object); err != nil {
+		t.Fatal(err)
+	}
+	var revision string
+	if err := json.Unmarshal(object["expected_revision"], &revision); err != nil {
+		t.Fatal(err)
+	}
+	delete(object, "expected_revision")
+	canonical, err := json.Marshal(revision)
+	if err != nil {
+		t.Fatal(err)
+	}
+	object["expected_version"] = canonical
+	encoded, err := json.Marshal(object)
+	if err != nil {
+		t.Fatal(err)
+	}
+	validate("canonical", encoded)
 }
 
 func assertRequiredFields(t *testing.T, schema controlSchema, name string, value any) {

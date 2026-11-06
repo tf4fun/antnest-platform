@@ -536,6 +536,10 @@ func nextSequence(after uint64, values []deployment.Observation) uint64 {
 func decodeJSON(response http.ResponseWriter, request *http.Request, target any) error {
 	request.Body = http.MaxBytesReader(response, request.Body, maxRequestBytes)
 	raw, err := io.ReadAll(request.Body)
+	if err != nil {
+		return control.ErrInvalidRequest
+	}
+	raw, err = normalizeRuntimePrecondition(raw, request, target)
 	if err != nil || serviceauth.DecodeObject(raw, target) != nil {
 		return control.ErrInvalidRequest
 	}
