@@ -3,6 +3,7 @@ import { checkPrivateACPConnection } from "../../support/private-acp-recorder.mj
 import {
   admissionErrorReceipt,
   assertAdmissionError,
+  assertAdmissionErrorData,
 } from "../../support/acp-errors.mjs";
 const clone = (value) => structuredClone(value);
 const text = (value) => assert(typeof value === "string" && value.length > 0);
@@ -209,7 +210,7 @@ export function indexCloseoutAccessRequests({
         assert.equal(purpose === "denied-agent", rejection === "access_denied");
         const expected = admissionErrorReceipt(rejection);
         assert.equal(row.failureCode, expected.code);
-        assert.deepEqual(row.failureData, expected.data);
+        assertAdmissionErrorData(row.failureData, rejection);
         assert.deepEqual(row.rejectionReceipt, {
           rpcCode: expected.code,
           code: rejection,

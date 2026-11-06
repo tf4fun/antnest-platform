@@ -243,9 +243,9 @@ export function inspectProgressBarrierTrace(
   );
   assert.equal(expected.inputSessionID, expected.sessionId);
   assert.deepEqual(expected.rejectionReceipt, {
-    rpcCode: -32020,
+    rpcCode: -32036,
     code: "runtime_barrier_required",
-    retryable: false,
+    retryable: true,
   });
   assert.deepEqual(requests, [], "barrier rejection reached Provider");
   const { tree, request } = requestBoundary(trace, expected, secrets);
@@ -289,11 +289,11 @@ export function inspectProgressBarrierTrace(
   });
   const rpcTags = removeFields(request.tags, {
     "error.type": "RequestError",
-    "error.code": "-32020",
-    "antnest.error.code": "-32020",
+    "error.code": "-32036",
+    "antnest.error.code": "-32036",
     "antnest.outcome": "rejected",
     "antnest.operation.phase": "acp.dispatch",
-    "rpc.response.status_code": -32020,
+    "rpc.response.status_code": -32036,
     "antnest.error.origin_trace_id": trace.traceID,
     "antnest.error.origin_span_id": app.spanID,
   });

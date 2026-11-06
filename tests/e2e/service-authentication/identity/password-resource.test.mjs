@@ -38,13 +38,17 @@ function fixture() {
     body:
       i < 60
         ? {
+            category: "unavailable",
             code: "credential_busy",
             message: "Password verification is busy",
+            request_id: `request-${i}`,
             retryable: true,
           }
         : {
+            category: "unauthenticated",
             code: "unauthenticated",
             message: "Authentication failed",
+            request_id: `request-${i}`,
             retryable: false,
           },
     retry_after: i < 60 ? "1" : null,

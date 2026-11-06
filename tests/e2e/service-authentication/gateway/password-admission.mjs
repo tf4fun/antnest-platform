@@ -1,18 +1,24 @@
 import assert from "node:assert/strict";
 
 const busy = {
+  category: "unavailable",
   code: "credential_busy",
   message: "Password verification is busy",
+  request_id: "fixture-password-busy",
   retryable: true,
 };
 const rate = {
+  category: "rate_limited",
   code: "credential_rate_limited",
   message: "Too many password attempts",
+  request_id: "fixture-password-rate",
   retryable: true,
 };
 const unavailable = {
+  category: "unavailable",
   code: "identity_unavailable",
   message: "Identity Service is unavailable",
+  retryable: true,
 };
 
 export const passwordFailures = [
@@ -108,7 +114,15 @@ export async function passwordAdmissionChecks({
         body,
         status: row.expected ? row.status : 503,
       });
-      assert.deepEqual(value, row.expected ?? unavailable);
+      assert.deepEqual(value, {
+        ...(row.expected ?? unavailable),
+        request_id: value?.request_id,
+      });
+      assert.match(
+        value?.request_id ?? "",
+        /^[A-Za-z0-9._:-]{1,128}$/u,
+        "unsafe Gateway admission request_id",
+      );
       assert.equal(response.headers.get("Retry-After"), row.retryAfter ?? null);
       const after = await readEvidence();
       assert.equal(after.calls[rpc] - before.calls[rpc], 1);

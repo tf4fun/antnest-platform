@@ -103,8 +103,10 @@ async function fixture(t, options = {}) {
           status: unavailable ? 503 : 200,
           rawBody: unavailable
             ? JSON.stringify({
+                category: "unavailable",
                 code: "execution_state_unavailable",
                 message: "Agent execution state is unavailable",
+                request_id: "container-fixture-state",
                 retryable: true,
               })
             : rawBody,

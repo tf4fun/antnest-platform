@@ -181,12 +181,24 @@ export function assertPasswordRejection(response, code) {
   const busy = code === "credential_busy";
   assert.equal(response.status, busy ? 503 : 429);
   assert.deepEqual(response.body, {
+    category: busy ? "unavailable" : "rate_limited",
     code,
     message: busy
       ? "Password verification is busy"
       : "Too many password attempts",
+    request_id: response.body?.request_id,
     retryable: true,
   });
+  assert.match(
+    response.body.request_id ?? "",
+    /^[A-Za-z0-9._:-]{1,128}$/u,
+    "unsafe password rejection request_id",
+  );
+  assert.equal(
+    response.body.request_id,
+    response.headers.get("x-request-id"),
+    "password rejection request_id differs from X-Request-ID",
+  );
   const retry = response.headers.get("retry-after");
   if (busy) assert.equal(retry, "1");
   else assert.match(retry ?? "", /^(?:[1-9]|[1-9][0-9]|[1-8][0-9]{2}|900)$/u);

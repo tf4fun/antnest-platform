@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { admissionErrorReceipt } from "../../support/acp-errors.mjs";
 import { inspectRuntimeInformationRead } from "../observability/runtime-information-read.mjs";
 import {
   assertPrivateACPApplicationJoined,
@@ -158,6 +159,12 @@ export function inspectPrivateACPUpgrade(expected, secrets = []) {
   return { raw, tree, client, server, processIdentity };
 }
 
+function denialRPCCode(expected) {
+  const code =
+    expected.denial ?? expected.rejection ?? expected.rejectionReceipt?.code;
+  return code === undefined ? undefined : admissionErrorReceipt(code).code;
+}
+
 function privateRequestMatches(trace, span, expected) {
   return (
     trace.processes?.[span.processID]?.serviceName === "agent-acp-service" &&
@@ -169,8 +176,8 @@ function privateRequestMatches(trace, span, expected) {
     (expected.method !== "session/new" ||
       expected.sessionId !== undefined ||
       (tag(span, "antnest.outcome") === "rejected" &&
-        tag(span, "rpc.response.status_code") === -32020 &&
-        tag(span, "antnest.error.code") === "-32020")) &&
+        tag(span, "rpc.response.status_code") === denialRPCCode(expected) &&
+        tag(span, "antnest.error.code") === String(denialRPCCode(expected)))) &&
     tag(span, "antnest.protocol.version") === `v${expected.protocolVersion}` &&
     span.references?.some(
       (ref) =>
@@ -504,7 +511,7 @@ export function inspectSessionRequestTrace(
   if (expected.denial) {
     assert.equal(
       tag(request, "rpc.response.status_code"),
-      -32020,
+      denialRPCCode(expected),
       "denial response missing",
     );
     assert.equal(tag(request, "antnest.outcome"), "rejected");
@@ -563,7 +570,10 @@ export function inspectSessionRequestTrace(
     );
     assert(tree.chain(span).includes(request), "error outside denied request");
     if (span === request)
-      assert.equal(tag(span, "antnest.error.code"), "-32020");
+      assert.equal(
+        tag(span, "antnest.error.code"),
+        String(denialRPCCode(expected)),
+      );
     else {
       const operation = {
         "session/load": "resume",

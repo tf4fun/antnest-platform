@@ -214,8 +214,20 @@ for (const version of [1, 2])
     }
   });
 
-test("Session denial cannot smuggle history in its error or notifications", () => {
+function deniedSessionError() {
   const error = admissionErrorReceipt("session_access_denied");
+  error.data = {
+    category: "forbidden",
+    code: "session_access_denied",
+    message: error.message,
+    request_id: "fixture-session-denial",
+    retryable: false,
+  };
+  return error;
+}
+
+test("Session denial cannot smuggle history in its error or notifications", () => {
+  const error = deniedSessionError();
   evidence.assertDeniedSessionError(error);
   for (const invalid of [
     { ...error, message: "Private history v1-b" },
@@ -238,7 +250,7 @@ test("Session denial cannot smuggle history in its error or notifications", () =
 });
 
 test("cross-Agent denial uses the canonical Session error and keeps error data private", () => {
-  const error = admissionErrorReceipt("session_access_denied");
+  const error = deniedSessionError();
   evidence.assertDeniedSessionError(error, "Agent");
   assert.throws(() =>
     evidence.assertDeniedSessionError(

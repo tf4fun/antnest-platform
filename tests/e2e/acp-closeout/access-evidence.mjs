@@ -1,8 +1,5 @@
 import assert from "node:assert/strict";
-import {
-  admissionErrorReceipt,
-  assertAdmissionError,
-} from "../../support/acp-errors.mjs";
+import { assertAdmissionError } from "../../support/acp-errors.mjs";
 
 export function assertExecutionBinding(result, expected) {
   assert(
@@ -20,11 +17,6 @@ export function assertExecutionBinding(result, expected) {
 export function assertScopeDenial(error, scope) {
   assert(["principal", "Agent"].includes(scope));
   assertAdmissionError(error, "session_access_denied");
-  assert.deepEqual(
-    error.data,
-    admissionErrorReceipt("session_access_denied").data,
-    "Session denial leaked extra data",
-  );
 }
 
 export function assertReplayMetadata(updates, session) {

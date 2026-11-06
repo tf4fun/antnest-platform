@@ -1,3 +1,4 @@
+import { admissionErrorReceipt } from "../../support/acp-errors.mjs";
 import { requestFixture } from "./trace-fixture.mjs";
 import { privateBoundaryFixture } from "./private-boundary.fixture.mjs";
 import { addCompletedRead } from "../edge-gateway/resolve-cache-completed-read-fixtures.mjs";
@@ -43,10 +44,11 @@ export function privatePlanRequestFixture({
     f.field(f.request, "antnest.session.id", f.expected.sessionId);
   }
   if (denial) {
+    const receipt = admissionErrorReceipt(denial);
     f.expected.rejectionReceipt = {
-      rpcCode: -32020,
+      rpcCode: receipt.code,
       code: denial,
-      retryable: false,
+      retryable: receipt.data.retryable,
     };
     const code = denial === "access_denied" ? denial : undefined;
     const message = code
@@ -80,9 +82,9 @@ export function privatePlanRequestFixture({
       "error.type": "RequestError",
       "antnest.outcome": "rejected",
       "antnest.operation.phase": "acp.dispatch",
-      "error.code": "-32020",
-      "antnest.error.code": "-32020",
-      "rpc.response.status_code": -32020,
+      "error.code": String(receipt.code),
+      "antnest.error.code": String(receipt.code),
+      "rpc.response.status_code": receipt.code,
       "antnest.error.origin_trace_id": f.trace.traceID,
       "antnest.error.origin_span_id": application.spanID,
     }))

@@ -3,6 +3,7 @@ import { captureAcpCloseTrace, type AcpCloseTrigger } from "../telemetry.ts";
 import { OwnedHttpResponse } from "./owned-http-response.ts";
 import { AcpCloseFailures, type AcpCloseFailureStage } from "./acp-close-diagnostics.ts";
 import { strictObject } from "./strict-json.ts";
+import { ERROR_METADATA } from "../errors.gen.ts";
 
 type HttpStream = ReturnType<typeof createHttpStream>;
 
@@ -276,6 +277,22 @@ export class AcpTransportLifecycle {
   }
 }
 
+const ERROR_REQUEST_ID = /^[A-Za-z0-9._:-]{1,128}$/u;
+
+// The previous public error body carries exactly code, message and retryable;
+// the current envelope adds only category and request_id, together or not at
+// all. Category must match the generated contract metadata for the declared
+// code, and request_id must be a bounded identifier.
+function hasErrorEnvelopeShape(body: Record<string, unknown>, code: string): boolean {
+  const keys = new Set(Object.keys(body));
+  if (!keys.has("code") || !keys.has("message") || !keys.has("retryable"))
+    return false;
+  if (keys.size === 3) return true;
+  return keys.size === 5 && keys.has("category") && keys.has("request_id") &&
+    body.category === ERROR_METADATA[code]?.category &&
+    typeof body.request_id === "string" && ERROR_REQUEST_ID.test(body.request_id);
+}
+
 async function readInitializationDenial(response: Response, signal: AbortSignal): Promise<boolean> {
   const reader = response.body?.getReader();
   if (!reader) return false;
@@ -293,7 +310,7 @@ async function readInitializationDenial(response: Response, signal: AbortSignal)
     }
     if (signal.aborted) return false;
     const body = strictObject(Buffer.concat(chunks, size));
-    return Object.keys(body).length === 3 && body.code === "access_denied" &&
+    return hasErrorEnvelopeShape(body, "access_denied") && body.code === "access_denied" &&
       body.retryable === false && typeof body.message === "string" &&
       body.message.length > 0 && body.message.length <= 300;
   } catch {
@@ -356,7 +373,8 @@ async function readCleanupBody(response: Response, signal: AbortSignal): Promise
       "application/json") return false;
   try {
     const body = strictObject(Buffer.concat(chunks, bytes));
-    return Object.keys(body).length === 3 && body.code === "acp_http_peer_disconnected" &&
+    return hasErrorEnvelopeShape(body, "acp_http_peer_disconnected") &&
+      body.code === "acp_http_peer_disconnected" &&
       body.message === "Original ACP HTTP peer disconnected" && body.retryable === true;
   } catch {
     // Malformed or ambiguous remote bodies never authorize replacement, and

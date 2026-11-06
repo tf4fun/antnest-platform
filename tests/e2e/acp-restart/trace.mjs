@@ -82,9 +82,9 @@ export function inspectBarrierTrace(trace, expected, secrets = []) {
     secrets,
   );
   assert.equal(expected.rejection, "runtime_barrier_required");
-  assert.equal(tag(request, "rpc.response.status_code"), -32020);
+  assert.equal(tag(request, "rpc.response.status_code"), -32036);
   assert.equal(tag(request, "antnest.outcome"), "rejected");
-  assert.equal(tag(request, "antnest.error.code"), "-32020");
+  assert.equal(tag(request, "antnest.error.code"), "-32036");
   const prompts = trace.spans.filter(
     (s) =>
       tree.service(s) === "agent-acp-service" &&

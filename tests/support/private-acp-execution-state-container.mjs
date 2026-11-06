@@ -16,6 +16,7 @@ import { durablePath } from "./storage.mjs";
 import { PrivateACPExecutionStateUnavailableError } from "./private-acp-execution-state-error.mjs";
 
 const unavailable = {
+  category: "unavailable",
   code: "execution_state_unavailable",
   message: "Agent execution state is unavailable",
   retryable: true,
@@ -177,7 +178,16 @@ export async function readContainerPrivateExecutionState({
     assert.equal(response.path, "/rpc/agent-acp/get-agent-execution-state");
     if (receipt.outcome === "unavailable") {
       assert.equal(response.status, 503);
-      assert.deepEqual(JSON.parse(response.rawBody), unavailable);
+      const body = JSON.parse(response.rawBody);
+      assert.deepEqual(body, {
+        ...unavailable,
+        request_id: body?.request_id,
+      });
+      assert.match(
+        body.request_id ?? "",
+        /^[A-Za-z0-9._:-]{1,128}$/u,
+        "unsafe private state request_id",
+      );
       throw new PrivateACPExecutionStateUnavailableError();
     }
     assert.equal(receipt.outcome, "passed");

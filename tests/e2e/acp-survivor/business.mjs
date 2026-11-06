@@ -224,6 +224,7 @@ export async function runSurvivorBusiness(
     },
     async (browser) => {
       report.browser_receipts = browser.receipts;
+      report.browser_blocked = browser.blocked;
       const pageA = await browser.openAgent(agentA.id);
       const pageB = await browser.openAgent(agentB.id);
       for (const [agent, page, registration, phase] of [

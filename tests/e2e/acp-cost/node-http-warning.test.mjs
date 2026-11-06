@@ -1,3 +1,4 @@
+import "../identity-closeout/acp-client-dependencies.fixture.mjs";
 import assert from "node:assert/strict";
 import test from "node:test";
 import { readFileSync } from "node:fs";
@@ -9,10 +10,8 @@ import {
   collectPrivateCostTrace,
   privateCostStrictOutcome,
 } from "./collector.mjs";
-import {
-  collectPrivateProgressTrace,
-  privateProgressStrictOutcome,
-} from "../acp-progress/collector.mjs";
+const { collectPrivateProgressTrace, privateProgressStrictOutcome } =
+  await import("../acp-progress/collector.mjs");
 
 const warning =
   "clock skew adjustment disabled; not applying calculated delta of -4.722397ms";

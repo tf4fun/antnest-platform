@@ -58,6 +58,14 @@ const registry = new Map(
 const SAFE_REQUEST_ID = /^[A-Za-z0-9._:-]{1,128}$/;
 const COMMON_METADATA_KEYS = ["category", "message", "request_id"];
 
+export function commonErrorEntry(code) {
+  const entry = registry.get(code);
+  assert(entry !== undefined, `Common error code is not registered: ${code}`);
+  return entry;
+}
+
+export { SAFE_REQUEST_ID };
+
 export function assertErrorCapability(initializeResult) {
   assert(isRecord(initializeResult), "ACP initialize result is required");
   const meta = initializeResult._meta;
@@ -117,21 +125,9 @@ export function admissionErrorReceipt(expectedCode) {
   };
 }
 
-export function assertAdmissionError(actual, expectedCode) {
+export function assertAdmissionErrorData(data, expectedCode, message) {
   const expected = admissionErrorReceipt(expectedCode);
-  assert(isRecord(actual), "ACP admission error receipt is required");
-  assert.equal(
-    actual.code,
-    expected.code,
-    "Unexpected ACP JSON-RPC error code",
-  );
-  assert.equal(
-    actual.message,
-    expected.message,
-    "Unexpected ACP public error message",
-  );
-  assert(isRecord(actual.data), "ACP admission error data is required");
-  const data = actual.data;
+  assert(isRecord(data), "ACP admission error data is required");
   const expectedData = { ...expected.data };
   const allowed = new Set([
     ...Object.keys(expectedData),
@@ -162,7 +158,7 @@ export function assertAdmissionError(actual, expectedCode) {
     );
     assert.equal(
       data.message,
-      actual.message,
+      message ?? expected.message,
       "ACP common error data message must equal the public message",
     );
     assert(
@@ -188,4 +184,20 @@ export function assertAdmissionError(actual, expectedCode) {
         `Unexpected ACP admission error data ${key}`,
       );
   }
+}
+
+export function assertAdmissionError(actual, expectedCode) {
+  const expected = admissionErrorReceipt(expectedCode);
+  assert(isRecord(actual), "ACP admission error receipt is required");
+  assert.equal(
+    actual.code,
+    expected.code,
+    "Unexpected ACP JSON-RPC error code",
+  );
+  assert.equal(
+    actual.message,
+    expected.message,
+    "Unexpected ACP public error message",
+  );
+  assertAdmissionErrorData(actual.data, expectedCode, actual.message);
 }

@@ -18,8 +18,10 @@ const principal = { organization_id: "organization", user_id: "owner" };
 const token = "original-private-session",
   context = "original-private-context";
 const denied = {
+  category: "unauthenticated",
   code: "unauthenticated",
   message: "Authentication failed",
+  request_id: "workspace-test-denied",
   retryable: false,
 };
 const contains = (error, original) =>

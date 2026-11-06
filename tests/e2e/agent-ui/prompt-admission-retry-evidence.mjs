@@ -12,8 +12,16 @@ export function assertCanonicalBusy(error, definition) {
     assert.deepEqual(data.details, {});
     delete data.details;
   }
+  assert.match(
+    data.request_id ?? "",
+    /^[A-Za-z0-9._:-]{1,128}$/u,
+    "unsafe Agent busy request_id",
+  );
   assert.deepEqual(data, {
+    category: "conflict",
     code: "agent_busy",
+    message: definition.message,
+    request_id: data.request_id,
     retryable: definition.retryable,
     retry_after_ms: definition.retry_after_ms,
   });

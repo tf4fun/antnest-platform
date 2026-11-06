@@ -81,9 +81,9 @@ export function barrierTraceFixture(version = 1) {
     outcome: "rejected",
     rejection: "runtime_barrier_required",
     rejectionReceipt: {
-      rpcCode: -32020,
+      rpcCode: -32036,
       code: "runtime_barrier_required",
-      retryable: false,
+      retryable: true,
     },
   });
   Object.assign(f.request, { startTime: 2000, duration: 14000, logs: [] });
@@ -119,9 +119,9 @@ export function barrierTraceFixture(version = 1) {
     "error.type": "RequestError",
     "antnest.outcome": "rejected",
     "antnest.operation.phase": "acp.dispatch",
-    "error.code": "-32020",
-    "antnest.error.code": "-32020",
-    "rpc.response.status_code": -32020,
+    "error.code": "-32036",
+    "antnest.error.code": "-32036",
+    "rpc.response.status_code": -32036,
     "antnest.error.origin_trace_id": f.trace.traceID,
     "antnest.error.origin_span_id": f.application.spanID,
   }))

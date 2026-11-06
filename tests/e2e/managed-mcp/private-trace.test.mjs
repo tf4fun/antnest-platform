@@ -123,8 +123,8 @@ for (const version of [1, 2]) {
       (f) => (f.expected.rejectionReceipt.code = "access_denied"),
     ],
     [
-      "retryable rejection",
-      (f) => (f.expected.rejectionReceipt.retryable = true),
+      "non-retryable rejection",
+      (f) => (f.expected.rejectionReceipt.retryable = false),
     ],
     [
       "foreign original cause",

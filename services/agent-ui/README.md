@@ -185,6 +185,16 @@ promise and ERROR trace still report failure. Concurrent observations share one
 replacement initialized with the current request's delegation; no View request
 or Prompt is replayed.
 
+Both the access-denial 403 and the forwarded peer-loss 503 accept two public
+error body shapes. The previous body carries exactly `code`, `message` and
+`retryable`; the current envelope additionally carries `category` and
+`request_id`, always together or not at all. `category` must equal the
+generated contract category for the declared `code`, and `request_id` must be
+a 1-128 character identifier from `[A-Za-z0-9._:-]`. Unknown, extra, partial or
+mistyped metadata and duplicate keys remain malformed and never qualify. This
+widens only envelope acceptance: body limits, content-type and header guards,
+cleanup joining, close rejection and replacement policy are unchanged.
+
 An unqualified failed retirement retains its registry slot and capacity charge.
 Later observations and sweeps continue to report that failure instead of
 bypassing cleanup. A complete service drain joins those retirements, reports

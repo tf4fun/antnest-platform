@@ -4,6 +4,10 @@ import { constants } from "node:fs";
 import { lstat, mkdir, open } from "node:fs/promises";
 import { join } from "node:path";
 import { durablePath, shellStoragePreflight } from "../../support/storage.mjs";
+import {
+  commonErrorEntry,
+  SAFE_REQUEST_ID,
+} from "../../support/acp-errors.mjs";
 import { cases, caseFor } from "./model.mjs";
 
 const sha256 = (bytes) => createHash("sha256").update(bytes).digest("hex");
@@ -130,11 +134,34 @@ export function fileStateExpectations(agents, requests, executions) {
     assert.equal(executions[index].protocolVersion, version);
     assert.match(executions[index].toolCallId ?? "", /^[a-f0-9]{64}$/u);
     assert.equal(first.tool_result, undefined);
-    assert.deepEqual(final.tool_result, {
-      tool_call_id: executions[index].toolCallId,
-      tool: item.tool,
-      result: item.result,
-    });
+    // Runtime tool failures carry the common error envelope on top of the
+    // legacy effect fields; request_id is generated per call.
+    let actualResult = final.tool_result?.result,
+      expectedResult = item.result;
+    if (item.error === true) {
+      const entry = commonErrorEntry(item.result.error_code),
+        { request_id, ...rest } = actualResult ?? {};
+      assert.match(
+        request_id ?? "",
+        SAFE_REQUEST_ID,
+        "Tool error request_id is unsafe",
+      );
+      actualResult = rest;
+      expectedResult = {
+        ...item.result,
+        code: item.result.error_code,
+        category: entry.category,
+        retryable: entry.retryable,
+        details: {
+          effect_state: item.result.effect_state,
+          effect_source: item.result.effect_source,
+        },
+      };
+    }
+    exactKeys(final.tool_result, ["tool_call_id", "tool", "result"]);
+    assert.equal(final.tool_result.tool_call_id, executions[index].toolCallId);
+    assert.equal(final.tool_result.tool, item.tool);
+    assert.deepEqual(actualResult, expectedResult);
   }
   const files = agents.map((agent_id, index) => {
     const version = index + 1;

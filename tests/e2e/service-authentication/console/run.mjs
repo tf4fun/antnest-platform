@@ -299,18 +299,36 @@ export async function runConsoleAcceptance({
             role: "member",
           }),
         });
+        const admissionBody = JSON.parse(result.text);
         assert.deepEqual(
-          JSON.parse(result.text),
-          scenario.valid
-            ? {
-                code: "credential_busy",
-                message: "Password verification is busy",
-                retryable: true,
-              }
-            : {
-                code: "identity_unavailable",
-                message: "Identity Service is unavailable",
-              },
+          admissionBody,
+          {
+            ...(scenario.valid
+              ? {
+                  category: "unavailable",
+                  code: "credential_busy",
+                  message: "Password verification is busy",
+                  retryable: true,
+                }
+              : {
+                  category: "unavailable",
+                  code: "identity_unavailable",
+                  message: "Identity Service is unavailable",
+                  retryable: true,
+                }),
+            request_id: admissionBody.request_id,
+          },
+          "password admission error envelope changed",
+        );
+        assert.match(
+          admissionBody.request_id ?? "",
+          /^[A-Za-z0-9._:-]{1,128}$/u,
+          "unsafe Console password request_id",
+        );
+        assert.equal(
+          admissionBody.request_id,
+          result.response.headers.get("x-request-id"),
+          "Console password request_id differs from X-Request-ID",
         );
         assert.equal(
           result.response.headers.get("retry-after"),

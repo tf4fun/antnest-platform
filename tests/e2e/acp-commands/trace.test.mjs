@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { admissionErrorReceipt } from "../../support/acp-errors.mjs";
 import * as commandTraces from "./trace.mjs";
 import {
   fixture,
@@ -793,10 +794,11 @@ test("rejections require precise scoped ACP diagnostics with zero execution", ()
       const f = fixture("request", http);
       f.expected.rejection = rejection;
       assert.throws(() => inspect(f));
+      const rpcCode = admissionErrorReceipt(rejection).code;
       f.trace.spans[2].tags.push(
         { key: "antnest.outcome", value: "rejected" },
-        { key: "rpc.response.status_code", value: -32020 },
-        { key: "antnest.error.code", value: "-32020" },
+        { key: "rpc.response.status_code", value: rpcCode },
+        { key: "antnest.error.code", value: String(rpcCode) },
       );
       assert.equal(inspect(f).rejection, rejection);
       f.add(

@@ -85,10 +85,17 @@ test("source exhaustion records a cookie-preserving canonical refusal without di
           : response(
               429,
               {
+                category: "rate_limited",
                 code: "login_rate_limited",
                 message: "Too many login attempts",
+                request_id: "fixture-login-rate-limited",
+                retryable: true,
               },
-              { "retry-after": "600", "x-private": secret },
+              {
+                "retry-after": "600",
+                "x-request-id": "fixture-login-rate-limited",
+                "x-private": secret,
+              },
             ),
     },
   );

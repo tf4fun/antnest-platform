@@ -13,6 +13,7 @@ import {
   freeLoopbackPort,
   installRuntimeReceiver,
 } from "../../support/runtime-receiver-fixture.mjs";
+import { withCommonErrorSchema } from "../../support/common-error-schema.mjs";
 
 const prefix = `antnest-temporary-${randomUUID().slice(0, 8)}`;
 const build = process.argv.includes("--build");
@@ -52,8 +53,11 @@ const key = generateKeyPairSync("ed25519"),
 const require = createRequire(
   new URL("../../../services/agent-acp-service/package.json", import.meta.url),
 );
-const Ajv = require("ajv");
-const validateWire = new Ajv({ strict: true }).compile(
+const Ajv2020 = require("ajv/dist/2020").default;
+const draft7 = require("ajv/dist/refs/json-schema-draft-07.json");
+const ajv = withCommonErrorSchema(new Ajv2020({ strict: true }));
+ajv.addMetaSchema(draft7);
+const validateWire = ajv.compile(
   JSON.parse(
     readFileSync(
       new URL(

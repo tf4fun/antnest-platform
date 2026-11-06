@@ -1,11 +1,13 @@
+import "../identity-closeout/acp-client-dependencies.fixture.mjs";
 import assert from "node:assert/strict";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setImmediate as immediate } from "node:timers/promises";
 import test from "node:test";
-import { withPrivateCommandResources } from "../acp-commands/connection.mjs";
 
+const { withPrivateCommandResources } =
+  await import("../acp-commands/connection.mjs");
 const url = new URL("./diagnostics.mjs", import.meta.url);
 const { collectProgressTraceDiagnostics } = await import(url).catch((error) => {
   if (error.code === "ERR_MODULE_NOT_FOUND" && error.url === url.href)

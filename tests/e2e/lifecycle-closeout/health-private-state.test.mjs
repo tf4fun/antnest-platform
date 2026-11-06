@@ -204,7 +204,7 @@ for (const [name, mutate, expected] of [
 for (const options of [
   {
     status: 503,
-    raw: '{"code":"execution_state_unavailable","message":"Agent execution state is unavailable","retryable":true}',
+    raw: '{"code":"execution_state_unavailable","category":"unavailable","message":"Agent execution state is unavailable","request_id":"test-request","retryable":true}',
   },
   { raw: "invalid-private-json" },
 ])

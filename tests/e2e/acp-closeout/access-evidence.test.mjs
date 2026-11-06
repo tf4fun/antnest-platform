@@ -8,9 +8,22 @@ import {
 } from "./access-evidence.mjs";
 
 for (const scope of ["principal", "Agent"]) {
-  const denial = () => admissionErrorReceipt("session_access_denied");
+  const denial = () => {
+    const receipt = admissionErrorReceipt("session_access_denied");
+    return {
+      ...receipt,
+      data: {
+        ...receipt.data,
+        category: "forbidden",
+        message: receipt.message,
+        request_id: "req-scope-denial-1",
+      },
+    };
+  };
   test(`same-organization ${scope} denial requires exact error and no private data`, () => {
     assertScopeDenial(denial(), scope);
+    const compact = admissionErrorReceipt("session_access_denied");
+    assertScopeDenial(compact, scope);
     for (const mutate of [
       (e) => {
         e.message = "Session belongs to another organization";

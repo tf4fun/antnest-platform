@@ -137,11 +137,20 @@ export function inspectRebuildPreparationBusiness(
     assert(!body.error_code && !body.error_detail, "failed Rebuild receipt");
   };
   if (p.command.status === 202) identity(p.command.body);
-  else
+  else {
+    assert.match(
+      p.command.body?.request_id ?? "",
+      /^[A-Za-z0-9._:-]{1,128}$/u,
+      "Rebuild 503 must carry a safe request_id",
+    );
     assert.deepEqual(p.command.body, {
+      category: "unavailable",
       code: "console_unavailable",
       message: "Admin Console is unavailable",
+      request_id: p.command.body.request_id,
+      retryable: true,
     });
+  }
   for (const row of actual) {
     if (row.label === "recovery-rebuild-preparation") {
       assert.equal(
@@ -171,12 +180,20 @@ export function inspectRebuildPreparationBusiness(
       if (row.status === 200) {
         identity(row.body);
         assert(["running", "completed"].includes(row.body.state));
-      } else
+      } else {
+        assert.match(
+          row.body?.request_id ?? "",
+          /^[A-Za-z0-9._:-]{1,128}$/u,
+          "Rebuild operation 404 must carry a safe request_id",
+        );
         assert.deepEqual(row.body, {
+          category: "not_found",
           code: "operation_not_found",
           message: "lifecycle operation was not found",
+          request_id: row.body.request_id,
           retryable: false,
         });
+      }
     }
   }
   assert.equal(p.receipt.label, "recovery-rebuild-preparation");

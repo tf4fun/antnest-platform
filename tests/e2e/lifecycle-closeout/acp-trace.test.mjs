@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import test from "node:test";
+import { admissionErrorReceipt } from "../../support/acp-errors.mjs";
 import * as lifecycle from "./acp.mjs";
 import { fixture as commandFixture } from "../acp-commands/trace-fixtures.mjs";
 import { inspectCommandTrace } from "../acp-commands/trace.mjs";
@@ -62,10 +63,11 @@ function fixture(t, source = "shared", kind = "request") {
   }
   if (rejection) {
     const request = f.trace.spans.find((span) => span.spanID === "request");
+    const rpcCode = admissionErrorReceipt(rejection).code;
     for (const [key, value] of Object.entries({
-      "rpc.response.status_code": -32020,
+      "rpc.response.status_code": rpcCode,
       "antnest.outcome": "rejected",
-      "antnest.error.code": "-32020",
+      "antnest.error.code": String(rpcCode),
       error: true,
     }))
       setTag(request, key, value);

@@ -297,9 +297,9 @@ test("closed-Agent prompt is rejected at the actual request without any executio
     f.trace.spans[2].tags.push(
       ...Object.entries({
         "antnest.request.id": "2",
-        "rpc.response.status_code": -32020,
+        "rpc.response.status_code": -32035,
         "antnest.outcome": "rejected",
-        "antnest.error.code": "-32020",
+        "antnest.error.code": "-32035",
       }).map(([key, value]) => ({ key, value })),
     );
     f.add("denied", "request", "acp.session.prompt", undefined, 3, {

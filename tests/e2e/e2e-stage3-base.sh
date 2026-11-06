@@ -132,6 +132,7 @@ docker_cmd create --name "$client" $service_hosts --label "com.docker.compose.pr
   -v "$root/contracts/agent-ui/workspace-api.schema.json:/app/contracts/agent-ui/workspace-api.schema.json:ro" \
   -v "$root/services/agent-ui/web/src/lib:/app/services/agent-ui/web/src/lib:ro" \
   -v "$root/services/agent-ui/web/server/src/protocol:/app/services/agent-ui/web/server/src/protocol:ro" \
+  -v "$root/services/agent-ui/web/server/src/errors.gen.ts:/app/services/agent-ui/web/server/src/errors.gen.ts:ro" \
   -v "$evidence:/evidence" \
   -e ANTNEST_STAGE3_EVIDENCE_DIR=/evidence \
   -e "TEST_RUNTIME_IMAGE=$image" \

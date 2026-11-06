@@ -60,8 +60,10 @@ export async function stage2ConnectionFixture(t, options = {}) {
     unavailable_reason: "access_denied",
   };
   const unavailable = {
+    category: "unavailable",
     code: "execution_state_unavailable",
     message: "Agent execution state is unavailable",
+    request_id: "stage2-fixture-state",
     retryable: true,
   };
   const peer = new AcpServer({
@@ -185,8 +187,10 @@ export async function stage2ConnectionFixture(t, options = {}) {
         }
         result = revoked
           ? {
+              category: "unauthenticated",
               code: "unauthenticated",
               message: "Authentication failed",
+              request_id: "stage2-fixture-revoked",
               retryable: false,
             }
           : { caller_context: issuedContext, principal };

@@ -230,8 +230,11 @@ function fixture() {
           status === 202
             ? structuredClone(operation)
             : {
+                category: "unavailable",
                 code: "console_unavailable",
                 message: "Admin Console is unavailable",
+                request_id: "fixture-rebuild-http-unavailable",
+                retryable: true,
               };
       } else if (path.endsWith("/by-idempotency-key")) {
         status = controls.receiptStatus;
@@ -242,8 +245,10 @@ function fixture() {
         body =
           status === 404
             ? {
+                category: "not_found",
                 code: "operation_not_found",
                 message: "lifecycle operation was not found",
+                request_id: "fixture-rebuild-operation-absent",
                 retryable: false,
               }
             : structuredClone(controls.operation);

@@ -48,7 +48,10 @@ test("Loss refusal binds original wire, private connection and exact registered 
 
 for (const [name, mutate] of [
   ["missing wire refusal", (f) => delete f.expected.rejectionReceipt],
-  ["retryable refusal", (f) => (f.expected.rejectionReceipt.retryable = true)],
+  [
+    "non-retryable refusal",
+    (f) => (f.expected.rejectionReceipt.retryable = false),
+  ],
   ["busy refusal", (f) => (f.expected.rejection = "agent_busy")],
   ["foreign Session", (f) => (f.expected.sessionId = "other")],
   ["foreign request", (f) => (f.expected.requestId = "other")],

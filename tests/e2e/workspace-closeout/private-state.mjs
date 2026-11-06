@@ -12,6 +12,7 @@ const { Ajv2020 } = require("ajv/dist/2020.js");
 const validateState = new Ajv2020({ strict: false }).compile(schema);
 const path = "/rpc/agent-acp/get-agent-execution-state";
 const unavailable = {
+  category: "unavailable",
   code: "execution_state_unavailable",
   message: "Agent execution state is unavailable",
   retryable: true,
@@ -149,10 +150,12 @@ export async function readWorkspacePrivateState(agentId, browser, options) {
         state &&
         typeof state === "object" &&
         !Array.isArray(state) &&
-        Object.keys(state).length === Object.keys(unavailable).length &&
+        Object.keys(state).length === Object.keys(unavailable).length + 1 &&
         Object.entries(unavailable).every(
           ([key, value]) => state[key] === value,
-        )
+        ) &&
+        typeof state.request_id === "string" &&
+        /^[A-Za-z0-9._:-]{1,128}$/u.test(state.request_id)
       )
         throw new PrivateACPExecutionStateUnavailableError();
       throw new Error("Workspace state HTTP response rejected");

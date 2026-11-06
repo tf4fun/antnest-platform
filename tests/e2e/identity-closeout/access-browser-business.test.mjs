@@ -86,11 +86,14 @@ function original(kind, status = 401) {
       ...(status === 403
         ? {
             body: {
+              category: "forbidden",
               code: "access_denied",
+              details: { recovery: "none" },
               message: "Agent access denied",
               retryable: false,
               recovery: "none",
               requestId: "original-request",
+              request_id: "original-request",
             },
           }
         : {}),

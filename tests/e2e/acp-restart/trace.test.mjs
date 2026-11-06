@@ -19,8 +19,8 @@ function fixture() {
     ...Object.entries({
       "antnest.request.id": "2",
       "antnest.outcome": "rejected",
-      "antnest.error.code": "-32020",
-      "rpc.response.status_code": -32020,
+      "antnest.error.code": "-32036",
+      "rpc.response.status_code": -32036,
     }).map(([key, value]) => ({ key, value })),
   );
   f.add("prompt", "request", "acp.session.prompt", undefined, 3, {

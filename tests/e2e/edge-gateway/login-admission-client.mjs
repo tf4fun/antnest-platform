@@ -223,9 +223,14 @@ export async function runAdmissionClient(
     if (expected === 429) {
       const payload = json(response.text);
       assert(
-        Object.keys(payload).sort().join(",") === "code,message" &&
+        Object.keys(payload).sort().join(",") ===
+          "category,code,message,request_id,retryable" &&
           payload.code === "login_rate_limited" &&
-          payload.message === "Too many login attempts",
+          payload.category === "rate_limited" &&
+          payload.retryable === true &&
+          payload.message === "Too many login attempts" &&
+          /^[A-Za-z0-9._:-]{1,128}$/u.test(payload.request_id ?? "") &&
+          payload.request_id === response.headers["x-request-id"],
       );
       assert.equal(receipt.retry_after, config.retryAfter);
       assert.equal(receipt.set_cookie_count, 0);

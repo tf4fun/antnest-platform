@@ -72,7 +72,7 @@ for (const version of [1, 2]) {
     [
       "wrong original receipt",
       (f) => {
-        f.expected.rejectionReceipt.retryable = true;
+        f.expected.rejectionReceipt.retryable = false;
       },
     ],
     [

@@ -274,6 +274,15 @@ test("the Session client mounts the real Bridge observer import tree read-only",
     join(app, "node_modules"),
     "dir",
   );
+  // Reproduce the image-owned contract copies under /app/dist/contracts.
+  for (const name of ["agent-acp", "common"]) {
+    const target = join(app, "dist/contracts", name);
+    await mkdir(target, { recursive: true });
+    await cp(
+      join(root, "contracts", name, "errors.json"),
+      join(target, "errors.json"),
+    );
+  }
   const resolved = createRequire(
     pathToFileURL(
       join(

@@ -35,8 +35,11 @@ export function c4RevocationTraceFixture({ feed = false } = {}) {
   f.collection.archivedTraceIDs.add(f.login.trace.traceID);
   expected.cause.rawBody = JSON.stringify(expected.cause.body);
   expected.denial.body = {
+    category: "unauthenticated",
     code: "unauthenticated",
     message: "Session is invalid or expired",
+    request_id: "fixture-denial-request",
+    retryable: false,
   };
   expected.denial.rawBody = JSON.stringify(expected.denial.body);
   expected.login = {

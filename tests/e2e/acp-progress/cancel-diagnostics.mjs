@@ -60,7 +60,7 @@ const enums = {
     "canceled",
     "protocol_failed",
     "runtime_barrier_required",
-    "-32020",
+    "-32036",
   ],
   "antnest.error.type": ["DomainError", "AbortError", "TimeoutError", "Error"],
   "error.type": ["DomainError", "AbortError", "TimeoutError", "Error"],

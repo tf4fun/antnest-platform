@@ -67,6 +67,7 @@ docker_cmd create --name "$client" $service_hosts --label "com.docker.compose.pr
   -v "$root/contracts/agent-ui/workspace-api.schema.json:/app/contracts/agent-ui/workspace-api.schema.json:ro" \
   -v "$root/services/agent-ui/web/src/lib:/app/services/agent-ui/web/src/lib:ro" \
   -v "$root/services/agent-ui/web/server/src/protocol:/app/services/agent-ui/web/server/src/protocol:ro" \
+  -v "$root/services/agent-ui/web/server/src/errors.gen.ts:/app/services/agent-ui/web/server/src/errors.gen.ts:ro" \
   "$acp_image" node /app/tests/e2e/managed-mcp/client.mjs >/dev/null
 client_created=true
 docker_cmd start "$client" >/dev/null

@@ -245,8 +245,10 @@ for (const [label, response] of [
     {
       status: 503,
       body: JSON.stringify({
+        category: "unavailable",
         code: "execution_state_unavailable",
         message: "Agent execution state is unavailable",
+        request_id: "fixture-private-state-unavailable",
         retryable: true,
       }),
     },

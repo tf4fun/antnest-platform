@@ -249,9 +249,12 @@ export function recoveryFixture() {
         "/api/app/workspace/v1/agents/agent/view",
         start + 60,
         {
+          category: "forbidden",
           code: "access_denied",
+          details: { recovery: "none" },
           message: "Agent access denied",
           requestId: "00000000-0000-4000-8000-000000000001",
+          request_id: "00000000-0000-4000-8000-000000000001",
           retryable: false,
           recovery: "none",
         },

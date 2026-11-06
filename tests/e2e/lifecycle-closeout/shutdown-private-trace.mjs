@@ -95,10 +95,17 @@ export function assertShutdownPrivateWatchReceipt(
     } else {
       assert(events.length > 0, "terminal state without initial delivery");
       assert.deepEqual(value, {
+        category: "unavailable",
         code: "execution_state_unavailable",
         message: "Agent execution state is unavailable",
+        request_id: value.request_id,
         retryable: true,
       });
+      assert.match(
+        value.request_id ?? "",
+        /^[A-Za-z0-9._:-]{1,128}$/u,
+        "invalid terminal state request_id",
+      );
       terminal.push(value);
     }
   }

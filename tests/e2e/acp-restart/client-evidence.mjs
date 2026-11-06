@@ -7,6 +7,7 @@ import { replayRequest } from "../managed-mcp/protocol.mjs";
 import {
   admissionErrorReceipt,
   assertAdmissionError,
+  assertAdmissionErrorData,
 } from "../../support/acp-errors.mjs";
 
 export { preservePrivateACPFailure as preserveRestartFailure } from "../../support/private-acp-recorder.mjs";
@@ -165,7 +166,7 @@ export function indexRestartRequests({
           if (rejection) {
             const expected = admissionErrorReceipt(rejection);
             assert.equal(row.failureCode, expected.code);
-            assert.deepEqual(row.failureData, expected.data);
+            assertAdmissionErrorData(row.failureData, rejection);
             assert.deepEqual(row.rejectionReceipt, {
               rpcCode: expected.code,
               code: rejection,

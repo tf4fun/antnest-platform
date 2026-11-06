@@ -277,6 +277,7 @@ export function assertWorkspaceResolveDenied(
   );
   const body = decode(receipt),
     denial = {
+      category: "unauthenticated",
       code: "unauthenticated",
       message: "Authentication failed",
       retryable: false,
@@ -285,8 +286,10 @@ export function assertWorkspaceResolveDenied(
     body &&
       typeof body === "object" &&
       !Array.isArray(body) &&
-      Object.keys(body).length === Object.keys(denial).length &&
-      Object.entries(denial).every(([key, value]) => body[key] === value),
+      Object.keys(body).length === Object.keys(denial).length + 1 &&
+      Object.entries(denial).every(([key, value]) => body[key] === value) &&
+      typeof body.request_id === "string" &&
+      /^[A-Za-z0-9._:-]{1,128}$/u.test(body.request_id),
     "Workspace Identity response is not the original unauthenticated denial",
   );
   return receipt;

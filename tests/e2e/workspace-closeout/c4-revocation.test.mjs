@@ -324,15 +324,21 @@ async function httpFixture(t, options = {}) {
             options.body ??
               (code === 403
                 ? {
+                    category: "forbidden",
                     code: "access_denied",
+                    details: { recovery: "none" },
                     message: "Agent access denied",
                     retryable: false,
                     recovery: "none",
                     requestId: "request-1",
+                    request_id: "request-1",
                   }
                 : {
+                    category: "unauthenticated",
                     code: "unauthenticated",
                     message: "Session is invalid or expired",
+                    request_id: "request-1",
+                    retryable: false,
                   }),
           ),
       );

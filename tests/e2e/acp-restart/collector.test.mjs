@@ -39,10 +39,13 @@ function recorded(f) {
   if (expected.rejection) {
     expected.outcome = "failed";
     expected.failure = "original Runtime barrier refusal";
-    expected.failureCode = -32020;
+    expected.failureCode = -32036;
     expected.failureData = {
+      category: "conflict",
       code: "runtime_barrier_required",
-      retryable: false,
+      message: "Previous Runtime execution requires recovery before new work",
+      request_id: "fixture-barrier-request",
+      retryable: true,
     };
     expected.requestParams = {
       sessionId: expected.sessionId,

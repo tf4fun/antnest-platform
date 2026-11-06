@@ -94,13 +94,13 @@ export function assertRejection(status, headers, body, method, expected = 404) {
     "retired response was not a public error object",
   );
   assert(
-    Object.keys(value).sort().join(",") === "code,message",
+    Object.keys(value).sort().join(",") ===
+      "category,code,message,request_id,retryable",
     "retired response included unexpected fields",
   );
-  assert(
-    value.code === (expected === 404 ? "not_found" : "forbidden"),
-    "retired response error code changed",
-  );
+  const code = expected === 404 ? "not_found" : "forbidden";
+  assert(value.code === code, "retired response error code changed");
+  assert(value.category === code, "retired response error category changed");
   assert(
     value.message ===
       (expected === 404
@@ -108,10 +108,21 @@ export function assertRejection(status, headers, body, method, expected = 404) {
         : "Request origin is not allowed"),
     "retired response public message changed",
   );
+  assert(value.retryable === false, "retired response retryable changed");
+  assert(
+    typeof value.request_id === "string" &&
+      /^[A-Za-z0-9._:-]{1,128}$/u.test(value.request_id),
+    "retired response request_id is unsafe",
+  );
+  assert.equal(
+    value.request_id,
+    headers["x-request-id"],
+    "retired response request_id differs from X-Request-ID",
+  );
   // Both allowed values are fixed plain strings. Counting JSON member-name
   // tokens also rejects duplicates that JSON.parse would otherwise overwrite.
   assert(
-    (body.match(/"(?:[^"\\]|\\.)*"\s*:/g) ?? []).length === 2,
+    (body.match(/"(?:[^"\\]|\\.)*"\s*:/g) ?? []).length === 5,
     "retired response included duplicate fields",
   );
 }

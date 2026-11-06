@@ -121,6 +121,43 @@ export async function withSurvivorBrowser(
         return page;
       });
 
+    // Bounded public evidence for a blocked Prompt admission: only fixed
+    // product strings and booleans, never free text, URLs or bodies.
+    const promptHints = new Set([
+      "",
+      "Connection unavailable",
+      "Synchronizing Agent status",
+      "Agent is offline",
+      "Agent is working",
+      "Agent is working. Commands remain available.",
+      "Agent is finishing another operation",
+      "Conversation history unavailable",
+      "Conversation not yet synchronized",
+      "Remove attachments before running a command",
+    ]);
+    const blocked = [];
+    const recordBlocked = (page, agentId, phase) =>
+      scope.capture(async () => {
+        const hint = (
+          (await page.locator(".composer-hint").innerText()) ?? ""
+        ).trim();
+        blocked.push({
+          agentId,
+          phase,
+          hint: promptHints.has(hint) ? hint : "unrecognized",
+          submit_enabled: await page
+            .getByRole("button", { name: "Send message", exact: true })
+            .isEnabled(),
+          composer_enabled: await composer(page).isEnabled(),
+          agent_preparing: await page
+            .locator('[aria-label="Agent preparing"]')
+            .isVisible(),
+          workspace_recovery: await page
+            .locator('[aria-label="Workspace recovery"]')
+            .isVisible(),
+        });
+      });
+
     const prompt = (page, agentId, phase, { complete = true } = {}) =>
       scope.track(async () => {
         signal?.throwIfAborted();
@@ -141,13 +178,19 @@ export async function withSurvivorBrowser(
             path[1] === encodeURIComponent(agentId)
           );
         };
-        const response = await sendBrowserPrompt({
-          page,
-          composer: composer(page),
-          phase,
-          matchesResponse,
-          poll,
-        });
+        let response;
+        try {
+          response = await sendBrowserPrompt({
+            page,
+            composer: composer(page),
+            phase,
+            matchesResponse,
+            poll,
+          });
+        } catch (error) {
+          await recordBlocked(page, agentId, phase);
+          throw error;
+        }
         await onPhase("prompt-body");
         const receipt = await readSurvivorPromptReceipt({
           response,
@@ -178,7 +221,7 @@ export async function withSurvivorBrowser(
       });
 
     return await scope.track(() =>
-      work({ openAgent, prompt, closePage, receipts }),
+      work({ openAgent, prompt, closePage, receipts, blocked }),
     );
   });
 }

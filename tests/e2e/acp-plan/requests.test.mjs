@@ -367,8 +367,8 @@ test("denial permits only its exact rejected ACP boundary and matching domain op
   const boundary = f.trace.spans[2];
   boundary.tags.push(
     { key: "antnest.outcome", value: "rejected" },
-    { key: "rpc.response.status_code", value: -32020 },
-    { key: "antnest.error.code", value: "-32020" },
+    { key: "rpc.response.status_code", value: -32011 },
+    { key: "antnest.error.code", value: "-32011" },
   );
   boundary.logs = [{ fields: [{ key: "event", value: "antnest.error" }] }];
   f.add("domain", "request", "acp.session.resume", undefined, 3, {
@@ -407,7 +407,16 @@ test("denial permits only its exact rejected ACP boundary and matching domain op
   foreign.trace.spans[2].tags = foreign.trace.spans[2].tags.filter(
     (t) => t.key !== "antnest.session.id",
   );
-  foreign.trace.spans[2].tags.push(...boundary.tags.slice(-3));
+  foreign.trace.spans[2].tags.push(
+    ...boundary.tags.slice(-3).map((tag) =>
+      ["rpc.response.status_code", "antnest.error.code"].includes(tag.key)
+        ? {
+            key: tag.key,
+            value: tag.key === "rpc.response.status_code" ? -32010 : "-32010",
+          }
+        : tag,
+    ),
+  );
   assert.equal(
     inspectPlanRequestTrace(foreign.trace, foreign.expected).denial,
     "access_denied",
@@ -463,8 +472,8 @@ test("replays may refresh the Skill catalog but never call executable Runtime me
   denied.expected.denial = "session_access_denied";
   denied.trace.spans[2].tags.push(
     { key: "antnest.outcome", value: "rejected" },
-    { key: "rpc.response.status_code", value: -32020 },
-    { key: "antnest.error.code", value: "-32020" },
+    { key: "rpc.response.status_code", value: -32011 },
+    { key: "antnest.error.code", value: "-32011" },
   );
   denied.trace.spans[2].logs = [
     { fields: [{ key: "event", value: "antnest.error" }] },

@@ -27,8 +27,10 @@ const contains = (error, original) =>
   error === original ||
   (error?.errors ?? []).some((item) => contains(item, original));
 const unauthorized = {
+  category: "unauthenticated",
   code: "unauthenticated",
   message: "Authentication failed",
+  request_id: "workspace-test-denied",
   retryable: false,
 };
 
