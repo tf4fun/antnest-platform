@@ -267,3 +267,16 @@ operations that are running or quarantined:
   non-running Runtime proof; operators fix the root cause first. Clearing
   leaves the Agent not-ready. Both controls require organization-admin
   access through the signed caller context.
+
+### Golden examples and N-1 rollout
+
+Browser response projectors are verified against six real producer captures:
+`contracts/agent-controller/examples/{get-agent,list-agents,list-events}.ready.json`
+and `contracts/agent-acp/examples/execution-events.{current,permissions,n-1}.json`
+(the N-1 baseline is frozen and never regenerated). Agent event rows require
+`schema_version` 1 or 2; execution audit envelopes and rows accept the marker
+absent (legacy) or 1 only. Additive structured members are ignored by the
+projection while existing declared-field type/enum/required checks stay
+unchanged; opaque `payload` and `request` user data passes through verbatim and is never
+interpreted as protocol markers. Deploy consumers before producers evolve the
+wire further; no synthetic N-1 fixture is invented.
