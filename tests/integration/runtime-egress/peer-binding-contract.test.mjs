@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { isIP } from "node:net";
 import { test } from "node:test";
+import { withCommonErrorSchema } from "../../support/common-error-schema.mjs";
 
 const requireAcp = createRequire(
   new URL("../../../services/agent-acp-service/package.json", import.meta.url),
@@ -12,14 +13,16 @@ const read = (path) =>
   JSON.parse(
     readFileSync(new URL("../../../" + path, import.meta.url), "utf8"),
   );
-const ajv = new Ajv2020({
-  strict: true,
-  formats: {
-    ipv4: (value) => isIP(value) === 4,
-    uri: true,
-    "date-time": true,
-  },
-});
+const ajv = withCommonErrorSchema(
+  new Ajv2020({
+    strict: true,
+    formats: {
+      ipv4: (value) => isIP(value) === 4,
+      uri: true,
+      "date-time": true,
+    },
+  }),
+);
 
 const attachmentSchema = read(
   "contracts/egress/attachment-state-request.schema.json",
