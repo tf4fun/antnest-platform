@@ -80,7 +80,7 @@
       ]
     },
     "runtimes/antnest-runtime/src/skill_temporary_http.rs": {
-      "sha256": "7733d110e5b84aaf360743232b74691e4a3d635ffb64d026ab1d6905008bd1cd",
+      "sha256": "14dbabf46586d4ed5a12b7b5e4404ab2649c87051051ca53b21c0a5100d2cbd2",
       "routes": ["POST /internal/skill-temporary/{action}"]
     }
   }
