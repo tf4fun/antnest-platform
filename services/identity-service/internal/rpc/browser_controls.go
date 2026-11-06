@@ -25,22 +25,26 @@ func (h *Handler) listUserSessions(response http.ResponseWriter, request *http.R
 		UserID           string          `json:"user_id"`
 		Scope            string          `json:"scope"`
 		Limit            *int            `json:"limit"`
+		Cursor           json.RawMessage `json:"cursor"`
 		AfterID          json.RawMessage `json:"after_id"`
 	}
 	if !decodeRequest(response, request, &body) || !requireIDs(response, body.ActorPrincipalID, body.UserID) || !require(response, body.Scope) {
 		return
 	}
-	if body.Limit == nil {
-		writeError(response, domain.InvalidArgument("limit is required"))
-		return
-	}
-	var afterID string
-	if body.AfterID != nil && (json.Unmarshal(body.AfterID, &afterID) != nil || !domain.ValidID(afterID)) {
-		writeError(response, domain.InvalidArgument("after_id must be a public reference"))
+	afterID, cursorErr := pageCursor(body.Limit, body.Cursor, body.AfterID)
+	if cursorErr != nil {
+		writeError(response, cursorErr)
 		return
 	}
 	page, err := h.dependencies.BrowserSessions.List(request.Context(), browsersessions.ListInput{ActorPrincipalID: body.ActorPrincipalID, UserID: body.UserID, Scope: body.Scope, Limit: *body.Limit, AfterID: afterID})
-	writeResult(response, page, err)
+	out := struct {
+		Items      []browsersessions.Session `json:"items"`
+		NextCursor *string                   `json:"next_cursor"`
+	}{Items: page.Sessions}
+	if page.NextAfterID != "" {
+		out.NextCursor = &page.NextAfterID
+	}
+	writeResult(response, out, err)
 }
 
 func (h *Handler) revokeUserSessions(response http.ResponseWriter, request *http.Request) {

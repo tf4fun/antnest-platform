@@ -847,20 +847,20 @@
   },
   {
     "file": "identity/identity-contract.json",
-    "pointer": "/definitions/external_identity_organization_list/properties/next_after_id",
-    "field": "next_after_id",
-    "replacement": "next_cursor",
-    "kind": "pending_migration",
-    "reason": "identity owner migration tracked by issue #68; legacy wire shape remains until its service batch.",
+    "pointer": "/methods/list_external_identities/request/not/properties/after_id",
+    "field": "after_id",
+    "replacement": "cursor",
+    "reason": "Identity accepts only as a one-release input alias for cursor; rejects multiple forms.",
+    "kind": "deprecated_alias",
     "remove_after": "next_release"
   },
   {
     "file": "identity/identity-contract.json",
-    "pointer": "/definitions/external_identity_self_list/properties/next_after_id",
-    "field": "next_after_id",
-    "replacement": "next_cursor",
-    "kind": "pending_migration",
-    "reason": "identity owner migration tracked by issue #68; legacy wire shape remains until its service batch.",
+    "pointer": "/methods/list_external_identities/request/not/required/1",
+    "field": "after_id",
+    "replacement": "cursor",
+    "reason": "Identity accepts only as a one-release input alias for cursor; rejects multiple forms.",
+    "kind": "deprecated_alias",
     "remove_after": "next_release"
   },
   {
@@ -868,8 +868,26 @@
     "pointer": "/methods/list_external_identities/request/properties/after_id",
     "field": "after_id",
     "replacement": "cursor",
-    "kind": "pending_migration",
-    "reason": "identity owner migration tracked by issue #68; legacy wire shape remains until its service batch.",
+    "kind": "deprecated_alias",
+    "reason": "Identity accepts only as a one-release input alias for cursor; rejects multiple forms.",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "identity/identity-contract.json",
+    "pointer": "/methods/list_external_identity_providers/request/not/properties/after_id",
+    "field": "after_id",
+    "replacement": "cursor",
+    "reason": "Identity accepts only as a one-release input alias for cursor; rejects multiple forms.",
+    "kind": "deprecated_alias",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "identity/identity-contract.json",
+    "pointer": "/methods/list_external_identity_providers/request/not/required/1",
+    "field": "after_id",
+    "replacement": "cursor",
+    "reason": "Identity accepts only as a one-release input alias for cursor; rejects multiple forms.",
+    "kind": "deprecated_alias",
     "remove_after": "next_release"
   },
   {
@@ -877,17 +895,26 @@
     "pointer": "/methods/list_external_identity_providers/request/properties/after_id",
     "field": "after_id",
     "replacement": "cursor",
-    "kind": "pending_migration",
-    "reason": "identity owner migration tracked by issue #68; legacy wire shape remains until its service batch.",
+    "kind": "deprecated_alias",
+    "reason": "Identity accepts only as a one-release input alias for cursor; rejects multiple forms.",
     "remove_after": "next_release"
   },
   {
     "file": "identity/identity-contract.json",
-    "pointer": "/methods/list_external_identity_providers/response/properties/next_after_id",
-    "field": "next_after_id",
-    "replacement": "next_cursor",
-    "kind": "pending_migration",
-    "reason": "identity owner migration tracked by issue #68; legacy wire shape remains until its service batch.",
+    "pointer": "/methods/list_user_sessions/request/not/properties/after_id",
+    "field": "after_id",
+    "replacement": "cursor",
+    "reason": "Identity accepts only as a one-release input alias for cursor; rejects multiple forms.",
+    "kind": "deprecated_alias",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "identity/identity-contract.json",
+    "pointer": "/methods/list_user_sessions/request/not/required/1",
+    "field": "after_id",
+    "replacement": "cursor",
+    "reason": "Identity accepts only as a one-release input alias for cursor; rejects multiple forms.",
+    "kind": "deprecated_alias",
     "remove_after": "next_release"
   },
   {
@@ -895,17 +922,8 @@
     "pointer": "/methods/list_user_sessions/request/properties/after_id",
     "field": "after_id",
     "replacement": "cursor",
-    "kind": "pending_migration",
-    "reason": "identity owner migration tracked by issue #68; legacy wire shape remains until its service batch.",
-    "remove_after": "next_release"
-  },
-  {
-    "file": "identity/identity-contract.json",
-    "pointer": "/methods/list_user_sessions/response/properties/next_after_id",
-    "field": "next_after_id",
-    "replacement": "next_cursor",
-    "kind": "pending_migration",
-    "reason": "identity owner migration tracked by issue #68; legacy wire shape remains until its service batch.",
+    "kind": "deprecated_alias",
+    "reason": "Identity accepts only as a one-release input alias for cursor; rejects multiple forms.",
     "remove_after": "next_release"
   },
   {

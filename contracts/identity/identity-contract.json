@@ -859,9 +859,9 @@
     "external_identity_self_list": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["bindings", "notices"],
+      "required": ["items", "notices", "next_cursor"],
       "properties": {
-        "bindings": {
+        "items": {
           "type": "array",
           "maxItems": 100,
           "items": {
@@ -875,8 +875,12 @@
             "$ref": "#/definitions/external_identity_notice"
           }
         },
-        "next_after_id": {
-          "$ref": "#/definitions/id"
+        "next_cursor": {
+          "allOf": [
+            {
+              "$ref": "../common/pagination.schema.json#/$defs/nullable_cursor"
+            }
+          ]
         },
         "next_notice_after_id": {
           "$ref": "#/definitions/id"
@@ -886,17 +890,21 @@
     "external_identity_organization_list": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["bindings"],
+      "required": ["items", "next_cursor"],
       "properties": {
-        "bindings": {
+        "items": {
           "type": "array",
           "maxItems": 100,
           "items": {
             "$ref": "#/definitions/external_identity"
           }
         },
-        "next_after_id": {
-          "$ref": "#/definitions/id"
+        "next_cursor": {
+          "allOf": [
+            {
+              "$ref": "../common/pagination.schema.json#/$defs/nullable_cursor"
+            }
+          ]
         }
       }
     },
@@ -2177,26 +2185,35 @@
             "minimum": 1,
             "maximum": 100
           },
+          "cursor": {
+            "$ref": "../common/pagination.schema.json#/$defs/cursor"
+          },
           "after_id": {
-            "$ref": "#/definitions/id"
+            "$ref": "#/definitions/id",
+            "deprecated": true
           }
-        }
+        },
+        "not": {"required": ["cursor", "after_id"], "properties": {"cursor": true, "after_id": true}}
       },
       "response": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["sessions"],
+        "required": ["items", "next_cursor"],
         "properties": {
-          "sessions": {
+          "items": {
             "type": "array",
             "maxItems": 100,
             "items": {
               "$ref": "#/definitions/browser_session"
             }
           },
-          "next_after_id": {
-            "$ref": "#/definitions/id"
-          }
+          "next_cursor": {
+          "allOf": [
+            {
+              "$ref": "../common/pagination.schema.json#/$defs/nullable_cursor"
+            }
+          ]
+        }
         }
       }
     },
@@ -2357,8 +2374,12 @@
             "minimum": 1,
             "maximum": 100
           },
+          "cursor": {
+            "$ref": "../common/pagination.schema.json#/$defs/cursor"
+          },
           "after_id": {
-            "$ref": "#/definitions/id"
+            "$ref": "#/definitions/id",
+            "deprecated": true
           },
           "notice_after_id": {
             "$ref": "#/definitions/id"
@@ -2385,7 +2406,8 @@
               }
             }
           }
-        ]
+        ],
+        "not": {"required": ["cursor", "after_id"], "properties": {"cursor": true, "after_id": true}}
       },
       "response": {
         "oneOf": [
@@ -2609,26 +2631,35 @@
             "minimum": 1,
             "maximum": 100
           },
+          "cursor": {
+            "$ref": "../common/pagination.schema.json#/$defs/cursor"
+          },
           "after_id": {
-            "$ref": "#/definitions/id"
+            "$ref": "#/definitions/id",
+            "deprecated": true
           }
-        }
+        },
+        "not": {"required": ["cursor", "after_id"], "properties": {"cursor": true, "after_id": true}}
       },
       "response": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["providers"],
+        "required": ["items", "next_cursor"],
         "properties": {
-          "providers": {
+          "items": {
             "type": "array",
             "maxItems": 100,
             "items": {
               "$ref": "#/definitions/external_identity_provider"
             }
           },
-          "next_after_id": {
-            "$ref": "#/definitions/id"
-          }
+          "next_cursor": {
+          "allOf": [
+            {
+              "$ref": "../common/pagination.schema.json#/$defs/nullable_cursor"
+            }
+          ]
+        }
         }
       }
     }

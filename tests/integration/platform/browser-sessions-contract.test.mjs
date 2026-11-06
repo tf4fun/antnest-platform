@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import test from "node:test";
+import { withCommonErrorSchema } from "../../support/common-error-schema.mjs";
 
 const require = createRequire(
   new URL("../../../services/agent-acp-service/package.json", import.meta.url),
@@ -66,17 +67,25 @@ function compiler() {
       );
     },
   });
-  return ajv;
+  return withCommonErrorSchema(ajv);
 }
 
 function identityValidator(schema) {
   assert(schema, "Identity must publish the session schema");
-  return compiler().compile({ definitions: identity.definitions, ...schema });
+  return compiler().compile({
+    $id: "https://schemas.antnest.dev/identity/identity-contract.json",
+    definitions: identity.definitions,
+    ...schema,
+  });
 }
 
 function externalValidator(name) {
   assert(browser.$defs[name], `missing browser ${name} schema`);
-  return compiler().compile({ $defs: browser.$defs, $ref: `#/$defs/${name}` });
+  return compiler().compile({
+    $id: browser.$id,
+    $defs: browser.$defs,
+    $ref: `#/$defs/${name}`,
+  });
 }
 
 function rejectsInvalidRootsAndMissing(
@@ -173,7 +182,7 @@ test("session list pagination cannot carry caller-controlled organization or pri
       ...list,
       scope: "organization",
       user_id: "user-2",
-      after_id: session.id,
+      cursor: session.id,
     }),
   );
   for (const candidate of [
@@ -183,19 +192,32 @@ test("session list pagination cannot carry caller-controlled organization or pri
     { ...list, scope: "all" },
     { ...list, organization_id: "org-2" },
     { ...list, current_token_id: "private" },
-    { ...list, after_id: "" },
+    { ...list, cursor: "" },
+    { ...list, cursor: session.id, after_id: session.id },
     { ...list, actor_principal_id: " user-1 " },
   ])
     assert.equal(validate(candidate), false, JSON.stringify(candidate));
   const response = methodValidator("list_user_sessions", "response");
-  assert(response({ sessions: [session] }), JSON.stringify(response.errors));
-  rejectsInvalidRootsAndMissing(response, { sessions: [session] });
-  assert(response({ sessions: [session], next_after_id: session.id }));
-  assert(response({ sessions: [] }));
-  assert.equal(response({ sessions: [], next_after_id: "" }), false);
-  assert.equal(response({ sessions: Array(101).fill(session) }), false);
+  assert(validate({ ...list, after_id: session.id }));
+  const page = { items: [session], next_cursor: null };
+  assert(response(page), JSON.stringify(response.errors));
+  rejectsInvalidRootsAndMissing(response, page);
+  assert(response({ items: [session], next_cursor: session.id }));
+  assert(response({ items: [], next_cursor: null }));
+  assert.equal(response({ items: [], next_cursor: "" }), false);
   assert.equal(
-    response({ sessions: [{ ...session, token_id: "private" }] }),
+    response({ items: [], next_cursor: null, next_after_id: session.id }),
+    false,
+  );
+  assert.equal(
+    response({ items: Array(101).fill(session), next_cursor: null }),
+    false,
+  );
+  assert.equal(
+    response({
+      items: [{ ...session, token_id: "private" }],
+      next_cursor: null,
+    }),
     false,
   );
 });

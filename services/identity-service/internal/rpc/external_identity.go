@@ -56,6 +56,7 @@ func (h *Handler) listExternalIdentities(response http.ResponseWriter, request *
 		Scope            string          `json:"scope"`
 		MembershipID     json.RawMessage `json:"membership_id"`
 		Limit            *int            `json:"limit"`
+		Cursor           json.RawMessage `json:"cursor"`
 		AfterID          json.RawMessage `json:"after_id"`
 		NoticeAfterID    json.RawMessage `json:"notice_after_id"`
 	}
@@ -68,11 +69,29 @@ func (h *Handler) listExternalIdentities(response http.ResponseWriter, request *
 		return
 	}
 	input.Limit = *body.Limit
-	if !externalMembership(response, body.Scope, body.MembershipID, &input.MembershipID) || !externalOptionalID(response, body.AfterID, &input.AfterID) || !externalOptionalID(response, body.NoticeAfterID, &input.NoticeAfterID) {
+	afterID, cursorErr := pageCursor(body.Limit, body.Cursor, body.AfterID)
+	if cursorErr != nil {
+		writeError(response, cursorErr)
+		return
+	}
+	input.AfterID = afterID
+	if !externalMembership(response, body.Scope, body.MembershipID, &input.MembershipID) || !externalOptionalID(response, body.NoticeAfterID, &input.NoticeAfterID) {
 		return
 	}
 	result, err := h.dependencies.ExternalIdentities.List(request.Context(), input)
-	writeResult(response, result, err)
+	out := struct {
+		Items             []externalidentities.Binding `json:"items"`
+		NextCursor        *string                      `json:"next_cursor"`
+		Notices           *[]externalidentities.Notice `json:"notices,omitempty"`
+		NextNoticeAfterID *string                      `json:"next_notice_after_id,omitempty"`
+	}{Items: result.Bindings, Notices: result.Notices}
+	if result.NextAfterID != "" {
+		out.NextCursor = &result.NextAfterID
+	}
+	if result.NextNoticeAfterID != "" {
+		out.NextNoticeAfterID = &result.NextNoticeAfterID
+	}
+	writeResult(response, out, err)
 }
 
 func (h *Handler) bindExternalIdentity(response http.ResponseWriter, request *http.Request) {
@@ -138,19 +157,25 @@ func (h *Handler) listExternalIdentityProviders(response http.ResponseWriter, re
 	var body struct {
 		ActorPrincipalID string          `json:"actor_principal_id"`
 		Limit            *int            `json:"limit"`
+		Cursor           json.RawMessage `json:"cursor"`
 		AfterID          json.RawMessage `json:"after_id"`
 	}
 	if !decodeRequest(response, request, &body) {
 		return
 	}
-	if body.Limit == nil {
-		writeError(response, domain.InvalidArgument("limit is required"))
+	afterID, cursorErr := pageCursor(body.Limit, body.Cursor, body.AfterID)
+	if cursorErr != nil {
+		writeError(response, cursorErr)
 		return
 	}
-	input := externalidentities.ProvidersInput{ActorPrincipalID: body.ActorPrincipalID, Limit: *body.Limit}
-	if !externalOptionalID(response, body.AfterID, &input.AfterID) {
-		return
-	}
+	input := externalidentities.ProvidersInput{ActorPrincipalID: body.ActorPrincipalID, Limit: *body.Limit, AfterID: afterID}
 	result, err := h.dependencies.ExternalIdentities.ListProviders(request.Context(), input)
-	writeResult(response, result, err)
+	out := struct {
+		Items      []externalidentities.Provider `json:"items"`
+		NextCursor *string                       `json:"next_cursor"`
+	}{Items: result.Providers}
+	if result.NextAfterID != "" {
+		out.NextCursor = &result.NextAfterID
+	}
+	writeResult(response, out, err)
 }

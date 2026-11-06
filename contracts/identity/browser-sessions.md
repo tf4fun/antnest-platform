@@ -125,7 +125,9 @@ Missing hints become an empty string. The UI renders the hint as text, never
 markup; it grants no authorization and does not identify a trusted device.
 
 `list_user_sessions` requires explicit `scope`, `user_id`, actor echo and a
-limit from 1 to 100. Optional `after_id` and `next_after_id` are public references;
+limit from 1 to 100. `cursor` is the canonical optional page token (`after_id`
+remains accepted for one release as a deprecated input alias; a request
+carrying both is rejected) and `next_cursor` carries the public reference;
 ordering is ascending reference order. Missing, empty, malformed or unknown
 query fields reject. Only live, unrevoked browser sessions are listed.
 
@@ -167,7 +169,7 @@ Gateway owns these browser routes, all with `Cache-Control: no-store`:
 | `GET /api/session/account`          | No query/body.                                 | Current account metadata.                                                  |
 | `POST /api/session/password`        | Current and new password.                      | Public principal/deadlines/hint; new credential only in protected cookies. |
 | `POST /api/session/activity`        | Empty object.                                  | Both deadlines and activity interval.                                      |
-| `GET /api/session/sessions`         | `limit`, optional `after_id`; self scope only. | Public sessions and optional next cursor.                                  |
+| `GET /api/session/sessions`         | `limit`, optional `cursor` (`after_id` alias); self scope only. | Public sessions and optional `next_cursor`. |
 | `POST /api/session/sessions/revoke` | `mode` is `others` or `all`; self scope only.  | Counts/current flag.                                                       |
 
 All mutations require the existing Origin and CSRF admission. The Gateway
