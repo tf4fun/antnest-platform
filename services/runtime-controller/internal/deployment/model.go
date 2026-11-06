@@ -75,8 +75,9 @@ func (c Configuration) Resolve(agentID string, generation uint64) (Deployment, e
 	value := Deployment{
 		ImageRef: c.ImageRef,
 		RuntimeSpec: RuntimeSpec{
-			MCPServers: CloneMCPServers(c.MCPServers),
-			AgentID:    agentID, Generation: generation,
+			MCPServers:    CloneMCPServers(c.MCPServers),
+			SchemaVersion: 1,
+			AgentID:       agentID, Generation: generation,
 			Listen:     SocketAddress{Host: "0.0.0.0", Port: 8093},
 			Network:    c.Network,
 			Filesystem: FilesystemSpec{Workspace: "/workspace", SystemSkills: "/skills"},
@@ -121,6 +122,7 @@ func (c Configuration) Validate() error {
 }
 
 type RuntimeSpec struct {
+	SchemaVersion             int                    `json:"schema_version,omitempty"`
 	Authentication            *RuntimeAuthentication `json:"authentication,omitempty"`
 	MCPServers                []MCPServer            `json:"mcp_servers,omitempty"`
 	SkillMaintenanceVerifiers *MaintenanceVerifiers  `json:"skill_maintenance_verifiers,omitempty"`
@@ -205,6 +207,9 @@ func (d Deployment) ValidateFor(key Key) error {
 	}
 	if d.RuntimeSpec.AgentID != key.AgentID || d.RuntimeSpec.Generation != key.Generation {
 		return invalid("path identity and runtime_spec identity differ")
+	}
+	if d.RuntimeSpec.SchemaVersion != 0 && d.RuntimeSpec.SchemaVersion != 1 {
+		return invalid("runtime_spec schema_version is unsupported")
 	}
 	if auth := d.RuntimeSpec.Authentication; auth != nil {
 		if !instanceauth.ValidConnectionID(auth.ConnectionID) || auth.CallersFile != instanceauth.CallersFile || ValidateDigest(auth.ReceiverDigest) != nil || !instanceauth.ValidTunnelKeyID(auth.Tunnel.KeyID) || auth.Tunnel.KeysFile != instanceauth.TunnelFile || ValidateDigest(auth.Tunnel.KeysDigest) != nil {

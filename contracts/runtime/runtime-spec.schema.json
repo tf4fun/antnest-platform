@@ -25,6 +25,10 @@
       "minimum": 1,
       "maximum": 9223372036854775807
     },
+    "schema_version": {
+      "type": "integer",
+      "const": 1
+    },
     "listen": {
       "$ref": "#/$defs/socketAddress"
     },

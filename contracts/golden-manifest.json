@@ -48,6 +48,36 @@
     "consumers": ["admin-console"]
   },
   {
+    "file": "runtime/examples/rc-inspection.healthy.json",
+    "schema": "runtime-controller/control-api.schema.json#/$defs/runtime_inspection",
+    "producer": "runtime-controller",
+    "consumers": ["agent-controller"]
+  },
+  {
+    "file": "runtime/examples/rc-observations.current.json",
+    "schema": "runtime-controller/control-api.schema.json#/$defs/observation_list",
+    "producer": "runtime-controller",
+    "consumers": ["agent-controller"]
+  },
+  {
+    "file": "runtime/examples/rc-observations.n-1.json",
+    "schema": "runtime-controller/control-api.schema.json#/$defs/observation_list",
+    "producer": "runtime-controller",
+    "consumers": ["agent-controller"]
+  },
+  {
+    "file": "runtime/examples/runtime-spec.current.json",
+    "schema": "runtime/runtime-spec.schema.json",
+    "producer": "runtime-controller",
+    "consumers": ["antnest-runtime"]
+  },
+  {
+    "file": "runtime/examples/runtime-spec.n-1.json",
+    "schema": "runtime/runtime-spec.schema.json",
+    "producer": "runtime-controller",
+    "consumers": ["antnest-runtime"]
+  },
+  {
     "file": "skill-learning/examples/learning-policy.automatic.json",
     "schema": "skill-learning/learning-api.schema.json#/$defs/policy",
     "producer": "agent-controller",
