@@ -98,7 +98,7 @@ export async function exerciseExternalIdentities({
   const chooser = await organization("list-external-identity-providers", {
     limit: 100,
   });
-  const choice = chooser.providers.find((p) => p.id === provider.id);
+  const choice = chooser.items.find((p) => p.id === provider.id);
   assert.equal(choice.link_policy, "none");
   assert.deepEqual(choice.link_domains, []);
   assert.equal(choice.authoritative, false);

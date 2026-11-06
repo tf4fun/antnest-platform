@@ -177,7 +177,7 @@ for (const [service, port] of Object.entries(fixture.ports)) {
           const revoke = path.endsWith("revoke-user-sessions");
           const allowed = revoke
             ? ["actor_principal_id", "user_id", "scope", "mode", "request_id"]
-            : ["actor_principal_id", "user_id", "scope", "limit", "after_id"];
+            : ["actor_principal_id", "user_id", "scope", "limit", "cursor"];
           if (
             r.method !== "POST" ||
             body.scope !== "organization" ||
@@ -239,15 +239,11 @@ for (const [service, port] of Object.entries(fixture.ports)) {
               sid: "private-session-canary",
             });
           }
-          const scanned = visible.filter(
-            (row) => row.id > (body.after_id ?? ""),
-          );
+          const scanned = visible.filter((row) => row.id > (body.cursor ?? ""));
           const page = scanned.slice(0, body.limit);
           return json(w, {
-            sessions: page,
-            ...(scanned.length > body.limit
-              ? { next_after_id: page.at(-1).id }
-              : {}),
+            items: page,
+            next_cursor: scanned.length > body.limit ? page.at(-1).id : null,
             token: "private-token-canary",
           });
         }
@@ -429,7 +425,7 @@ for (const [service, port] of Object.entries(fixture.ports)) {
         return json(w, { items: [], next_cursor: null });
       if (service === "skill-registry") {
         if (path === "/internal/skills")
-          return json(w, { items: [], next_after_id: null });
+          return json(w, { items: [], next_cursor: null });
         if (path === "/internal/skill-discovery/search")
           return json(w, { items: [] });
       }
