@@ -121,7 +121,7 @@ function fixtures() {
       method === "POST" &&
       path === "/api/admin/model-profiles/model-1/revisions"
     ) {
-      assert.equal(body.expected_version, 1);
+      assert.equal(body.expected_version, "1");
       assert.equal(body.model.max_output_tokens, 4096);
       assert.deepEqual(Object.keys(body).sort(), [
         "display_name",

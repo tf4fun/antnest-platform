@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { DomainError } from "../domain/errors.js";
 import {
   auditCursor,
@@ -32,7 +33,7 @@ export class ExecutionAudits implements ExecutionAuditPort {
       ...filters,
     });
     const after = readAuditCursor(cursor, scope);
-    if (after?.kind === "sequence")
+    if (after !== undefined && after.kind !== "time")
       throw new DomainError("invalid_cursor", "Expected a Run cursor");
     const rows = await this.repository.list(
       {
@@ -65,7 +66,7 @@ export class ExecutionAudits implements ExecutionAuditPort {
     const after = readAuditCursor(cursor, scope);
     const query = { organizationId: principal.organizationId, runId, limit: limit + 1 };
     if (stream === "execution") {
-      if (after?.kind === "time")
+      if (after !== undefined && after.kind !== "sequence")
         throw new DomainError("invalid_cursor", "Expected an execution cursor");
       const rows = present(
         await this.repository.events(
@@ -88,11 +89,17 @@ export class ExecutionAudits implements ExecutionAuditPort {
     );
     return {
       stream,
-      ...page(rows, limit, scope, (row) => ({
-        kind: "time",
-        at: row.created_at,
-        id: row.tool_call_id,
-      })),
+      ...page(rows, limit, scope, (row) => {
+        const position = { kind: "time" as const, at: row.created_at, id: row.tool_call_id };
+        if (Buffer.byteLength(auditCursor(scope, position), "utf8") <= 4096) return position;
+        // Preserve provider IDs and ordering; resolve a bounded, run-scoped anchor
+        // from the immutable permission row when its external ID cannot fit.
+        return {
+          kind: "permission_hash" as const,
+          at: row.created_at,
+          id: createHash("sha256").update(row.tool_call_id, "utf8").digest("hex"),
+        };
+      }),
     };
   }
 }

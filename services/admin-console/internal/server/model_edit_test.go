@@ -28,7 +28,7 @@ func TestModelEditForwardsStaleVersionAndConflictWithoutRetry(t *testing.T) {
 	call := backend.singleCall(t)
 	var payload map[string]any
 	decodeBytes(t, call.Body, &payload)
-	if payload["expected_version"] != float64(3) || call.Method != http.MethodPost {
+	if payload["expected_version"] != "3" || call.Method != http.MethodPost {
 		t.Fatalf("BFF replaced the caller version: %v", payload)
 	}
 }

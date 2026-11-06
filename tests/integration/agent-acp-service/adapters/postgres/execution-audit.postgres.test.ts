@@ -307,7 +307,7 @@ describe.skipIf(url === undefined)(
       ]);
       const otherRequest = {
         ...request,
-        call: { ...request.call, id: "call+外部=" },
+        call: { ...request.call, id: "call+外部=" + "x".repeat(4000) },
       };
       await permission.open(otherRequest);
       await pool.query(
@@ -318,6 +318,7 @@ describe.skipIf(url === undefined)(
       const first = auditEventsSchema.parse(
         await queries.events(admin, filter, signal),
       );
+      expect(Buffer.byteLength(first.next_cursor!)).toBeLessThanOrEqual(4096);
       const second = auditEventsSchema.parse(
         await queries.events(
           admin,

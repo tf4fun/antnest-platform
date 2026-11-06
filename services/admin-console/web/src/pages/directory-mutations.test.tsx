@@ -14,8 +14,8 @@ const member: DirectoryMember = {
 it.each(["desktop", "mobile"])("opens Membership external login controls for SCIM people on %s", async layout => {
   const requests = vi.fn(async (path: string) => {
     if (path === "/api/admin/directory") return Response.json({ users: [{ ...member, membership: { ...member.membership, source: "scim" } }], groups: [] });
-    if (path === "/api/admin/directory/memberships/membership-alex/external-identities?limit=50") return Response.json({ bindings: [] });
-    if (path === "/api/admin/directory/identity-providers?limit=50") return Response.json({ providers: [] });
+    if (path === "/api/admin/directory/memberships/membership-alex/external-identities?limit=50") return Response.json({ items: [], next_cursor: null });
+    if (path === "/api/admin/directory/identity-providers?limit=50") return Response.json({ items: [], next_cursor: null });
     throw new Error(`Unexpected request ${path}`);
   }); vi.stubGlobal("fetch", requests);
   render(<DirectoryPage currentUserID="administrator" organizationName="Example" systemAdministrator={false} />);
@@ -32,7 +32,7 @@ it.each(["desktop", "mobile"])("offers organization session controls for SCIM me
   const external = { ...member, membership: { ...member.membership, source: "scim" } };
   const request = vi.fn(async (path: string, init: RequestInit) => {
     if (path === "/api/admin/directory") return Response.json({ users: [external], groups: [] });
-    if (path === "/api/admin/directory/users/user-alex/sessions?limit=50") return Response.json({ sessions: [] });
+    if (path === "/api/admin/directory/users/user-alex/sessions?limit=50") return Response.json({ items: [], next_cursor: null });
     if (path === "/api/admin/directory/users/user-alex/sessions/revoke") {
       expect(init.method).toBe("POST");
       expect(JSON.parse(String(init.body))).toEqual({});

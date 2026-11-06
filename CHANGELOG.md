@@ -339,6 +339,10 @@ native Runtime retains its separate per-instance token profile.
 
 ### Fixed
 
+Permission audit pages retain full provider Tool IDs while keeping continuation
+tokens within the 4096-byte limit; oversized positions use a Run-scoped digest
+anchor resolved against the retained permission row (#68).
+
 Managed MCP and RPC response-loss E2E admit the public Model Profile revision
 introduced by #46, validate positive safe-integer revisions against the audit,
 and retain legacy snapshot compatibility and unknown-field rejection.

@@ -7,6 +7,7 @@ import type {
   AuditPrincipal,
   AuditSummary,
   AuditTimePosition,
+  AuditPermissionPosition,
 } from "../domain/execution-audit.js";
 
 export type AuditListQuery = AuditFilters & {
@@ -24,7 +25,7 @@ export type AuditPermissionQuery = {
   organizationId: string;
   runId: string;
   limit: number;
-  after?: AuditTimePosition;
+  after?: AuditPermissionPosition;
 };
 
 export interface ExecutionAuditRepository {
