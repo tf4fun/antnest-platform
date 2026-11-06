@@ -21,6 +21,14 @@ Skill authorization, ownership and content lifecycle remain Registry-owned.
 
 Startup rejects published PostgreSQL passwords under the [development secret policy](../../contracts/platform/development-secrets.md). The exact `ANTNEST_ALLOW_PUBLIC_DEV_SECRETS=true` opt-in emits variable-only WARNs. Retired API/source bearers remain rejected even with the opt-in.
 
+The internal HTTP boundary follows the shared contract conventions in
+[`contracts/CONVENTIONS.md`](../../contracts/CONVENTIONS.md): paginated lists
+accept `cursor` (plus one-release `after_id`/`after_version` aliases) and emit
+`next_cursor`; preconditioned mutations accept canonical `expected_version` or
+a single strong `If-Match` token — permanent forms — while the numeric
+`expected_version` remains accepted for one release as a deprecated input
+alias, and a request carrying more than one form is rejected.
+
 ## Responsibilities
 
 - Own a private PostgreSQL schema and its embedded, checksum-checked migrations.

@@ -140,6 +140,9 @@ func readUpload(w http.ResponseWriter, r *http.Request) (publicationMetadata, []
 	if len(metadata) == 0 || len(archive) == 0 {
 		return publicationMetadata{}, nil, failure(apierror.InvalidRequest, "metadata and artifact are required")
 	}
+	if metadata, err = normalizeExpectedVersion(metadata, r); err != nil {
+		return publicationMetadata{}, nil, failure(apierror.InvalidRequest, "invalid publication metadata")
+	}
 	var input publicationMetadata
 	if err := decodeOne(metadata, &input); err != nil {
 		return publicationMetadata{}, nil, failure(apierror.InvalidRequest, "invalid publication metadata")
@@ -185,52 +188,87 @@ func (h *Handler) appendVersion(w http.ResponseWriter, r *http.Request) {
 	h.publish(w, r, r.PathValue("skill_id"))
 }
 
-func queryLimit(r *http.Request) (int, error) {
-	value := r.URL.Query().Get("limit")
+func parsePageLimit(value string) (int, error) {
 	if value == "" {
 		return 0, nil
 	}
 	limit, err := strconv.Atoi(value)
-	if err != nil {
+	if err != nil || limit == 0 {
 		return 0, failure(apierror.InvalidRequest, "invalid page limit")
 	}
 	return limit, nil
 }
 
 func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
-	limit, err := queryLimit(r)
+	query, err := strictPageQuery(r, "after_id")
 	if err != nil {
 		writeError(w, err)
 		return
 	}
-	org := r.URL.Query().Get("organization_id")
+	limit, err := parsePageLimit(query.Get("limit"))
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	org := query.Get("organization_id")
 	if err := verifiedScope(r, &org, nil); err != nil {
 		writeError(w, err)
 		return
 	}
-	page, err := h.service.List(r.Context(), org, r.URL.Query().Get("after_id"), limit)
+	cursor := query.Get("cursor")
+	if cursor == "" {
+		cursor = query.Get("after_id")
+	}
+	if len(cursor) > 4096 {
+		writeError(w, failure(apierror.InvalidRequest, "cursor exceeds bound"))
+		return
+	}
+	page, err := h.service.List(r.Context(), org, cursor, limit)
 	if err != nil {
 		writeError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, page)
+	out := struct {
+		Items      []Skill `json:"items"`
+		NextCursor *string `json:"next_cursor"`
+	}{Items: page.Items}
+	if page.NextAfterID != "" {
+		out.NextCursor = &page.NextAfterID
+	}
+	writeJSON(w, http.StatusOK, out)
 }
 
 func (h *Handler) versions(w http.ResponseWriter, r *http.Request) {
-	limit, err := queryLimit(r)
+	query, err := strictPageQuery(r, "after_version")
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	limit, err := parsePageLimit(query.Get("limit"))
 	if err != nil {
 		writeError(w, err)
 		return
 	}
 	var after int64
-	if raw := r.URL.Query().Get("after_version"); raw != "" {
+	if raw := query.Get("cursor"); raw != "" {
+		if !positiveDecimal.MatchString(raw) {
+			writeError(w, failure(apierror.InvalidRequest, "invalid version cursor"))
+			return
+		}
 		after, err = strconv.ParseInt(raw, 10, 64)
 		if err != nil {
 			writeError(w, failure(apierror.InvalidRequest, "invalid version cursor"))
 			return
 		}
+	} else if raw := query.Get("after_version"); raw != "" {
+		if parsed, parseErr := strconv.ParseInt(raw, 10, 64); parseErr != nil || parsed < 0 {
+			writeError(w, failure(apierror.InvalidRequest, "invalid version cursor"))
+			return
+		} else {
+			after = parsed
+		}
 	}
-	org := r.URL.Query().Get("organization_id")
+	org := query.Get("organization_id")
 	if err := verifiedScope(r, &org, nil); err != nil {
 		writeError(w, err)
 		return
@@ -240,7 +278,15 @@ func (h *Handler) versions(w http.ResponseWriter, r *http.Request) {
 		writeError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, page)
+	out := struct {
+		Items      []Version `json:"items"`
+		NextCursor *string   `json:"next_cursor"`
+	}{Items: page.Items}
+	if page.NextAfterVersion != 0 {
+		cursor := strconv.FormatInt(page.NextAfterVersion, 10)
+		out.NextCursor = &cursor
+	}
+	writeJSON(w, http.StatusOK, out)
 }
 
 func (h *Handler) resolve(w http.ResponseWriter, r *http.Request) {
