@@ -40,7 +40,7 @@ export async function fulfillConsoleActivity(route) {
   ) {
     await route.fulfill({
       status: 200,
-      json: { bindings: [], notices: [] },
+      json: { items: [], notices: [], next_cursor: null },
       headers: { "cache-control": "no-store" },
     });
     return true;

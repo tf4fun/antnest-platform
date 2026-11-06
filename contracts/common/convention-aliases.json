@@ -346,8 +346,8 @@
     "pointer": "/invalid/24/value/expected_revision",
     "field": "expected_revision",
     "replacement": "expected_version",
-    "kind": "pending_migration",
-    "reason": "agent-controller owner migration tracked by issue #68; legacy wire shape remains until its service batch.",
+    "kind": "deprecated_alias",
+    "reason": "One-release legacy request alias retained in compatibility fixtures; canonical producer output is unchanged.",
     "remove_after": "next_release"
   },
   {
@@ -355,8 +355,8 @@
     "pointer": "/invalid/25/value/expected_revision",
     "field": "expected_revision",
     "replacement": "expected_version",
-    "kind": "pending_migration",
-    "reason": "agent-controller owner migration tracked by issue #68; legacy wire shape remains until its service batch.",
+    "kind": "deprecated_alias",
+    "reason": "One-release legacy request alias retained in compatibility fixtures; canonical producer output is unchanged.",
     "remove_after": "next_release"
   },
   {
@@ -364,8 +364,8 @@
     "pointer": "/valid/9/value/expected_revision",
     "field": "expected_revision",
     "replacement": "expected_version",
-    "kind": "pending_migration",
-    "reason": "agent-controller owner migration tracked by issue #68; legacy wire shape remains until its service batch.",
+    "kind": "deprecated_alias",
+    "reason": "One-release legacy request alias retained in compatibility fixtures; canonical producer output is unchanged.",
     "remove_after": "next_release"
   },
   {
@@ -418,8 +418,8 @@
     "pointer": "/schema_vectors/10/value/expected_revision",
     "field": "expected_revision",
     "replacement": "expected_version",
-    "kind": "pending_migration",
-    "reason": "agent-controller owner migration tracked by issue #68; legacy wire shape remains until its service batch.",
+    "kind": "deprecated_alias",
+    "reason": "One-release legacy request alias retained in compatibility fixtures; canonical producer output is unchanged.",
     "remove_after": "next_release"
   },
   {
@@ -427,8 +427,8 @@
     "pointer": "/schema_vectors/2/value/expected_revision",
     "field": "expected_revision",
     "replacement": "expected_version",
-    "kind": "pending_migration",
-    "reason": "agent-controller owner migration tracked by issue #68; legacy wire shape remains until its service batch.",
+    "kind": "deprecated_alias",
+    "reason": "One-release legacy request alias retained in compatibility fixtures; canonical producer output is unchanged.",
     "remove_after": "next_release"
   },
   {
@@ -436,8 +436,8 @@
     "pointer": "/schema_vectors/4/value/expected_revision",
     "field": "expected_revision",
     "replacement": "expected_version",
-    "kind": "pending_migration",
-    "reason": "agent-controller owner migration tracked by issue #68; legacy wire shape remains until its service batch.",
+    "kind": "deprecated_alias",
+    "reason": "One-release legacy request alias retained in compatibility fixtures; canonical producer output is unchanged.",
     "remove_after": "next_release"
   },
   {
@@ -445,8 +445,8 @@
     "pointer": "/schema_vectors/5/value/expected_revision",
     "field": "expected_revision",
     "replacement": "expected_version",
-    "kind": "pending_migration",
-    "reason": "agent-controller owner migration tracked by issue #68; legacy wire shape remains until its service batch.",
+    "kind": "deprecated_alias",
+    "reason": "One-release legacy request alias retained in compatibility fixtures; canonical producer output is unchanged.",
     "remove_after": "next_release"
   },
   {
@@ -454,8 +454,8 @@
     "pointer": "/schema_vectors/6/value/expected_revision",
     "field": "expected_revision",
     "replacement": "expected_version",
-    "kind": "pending_migration",
-    "reason": "agent-controller owner migration tracked by issue #68; legacy wire shape remains until its service batch.",
+    "kind": "deprecated_alias",
+    "reason": "One-release legacy request alias retained in compatibility fixtures; canonical producer output is unchanged.",
     "remove_after": "next_release"
   },
   {
@@ -463,8 +463,8 @@
     "pointer": "/schema_vectors/7/value/expected_revision",
     "field": "expected_revision",
     "replacement": "expected_version",
-    "kind": "pending_migration",
-    "reason": "agent-controller owner migration tracked by issue #68; legacy wire shape remains until its service batch.",
+    "kind": "deprecated_alias",
+    "reason": "One-release legacy request alias retained in compatibility fixtures; canonical producer output is unchanged.",
     "remove_after": "next_release"
   },
   {
@@ -472,8 +472,8 @@
     "pointer": "/schema_vectors/9/value/expected_revision",
     "field": "expected_revision",
     "replacement": "expected_version",
-    "kind": "pending_migration",
-    "reason": "agent-controller owner migration tracked by issue #68; legacy wire shape remains until its service batch.",
+    "kind": "deprecated_alias",
+    "reason": "One-release legacy request alias retained in compatibility fixtures; canonical producer output is unchanged.",
     "remove_after": "next_release"
   },
   {
@@ -1020,64 +1020,64 @@
     "file": "skill-learning/learning-api.schema.json",
     "pointer": "/$defs/change_page",
     "field": "$pagination",
-    "replacement": "next_cursor",
-    "kind": "pending_migration",
-    "reason": "skill-learning owner migration tracked by issue #68; legacy wire shape remains until its service batch.",
-    "remove_after": "next_release"
+    "replacement": "sealed_history_feed",
+    "kind": "protocol_exception",
+    "reason": "ACP/Workspace sealed bidirectional change history; cursor names are protocol fields, not request aliases.",
+    "remove_after": "protocol"
   },
   {
     "file": "skill-learning/learning-api.schema.json",
     "pointer": "/$defs/change_page/properties/nextCursor",
     "field": "nextCursor",
     "replacement": "next_cursor",
-    "kind": "deprecated_alias",
-    "reason": "Controller accepts only as a one-release input alias for expected_version/cursor; rejects multiple forms.",
-    "remove_after": "next_release"
+    "kind": "protocol_exception",
+    "reason": "ACP/Workspace sealed bidirectional change history; cursor names are protocol fields, not request aliases.",
+    "remove_after": "protocol"
   },
   {
     "file": "skill-learning/learning-api.schema.json",
     "pointer": "/$defs/change_page/properties/olderCursor",
     "field": "olderCursor",
     "replacement": "older_cursor",
-    "kind": "deprecated_alias",
-    "reason": "Controller accepts only as a one-release input alias for expected_version/cursor; rejects multiple forms.",
-    "remove_after": "next_release"
+    "kind": "protocol_exception",
+    "reason": "ACP/Workspace sealed bidirectional change history; cursor names are protocol fields, not request aliases.",
+    "remove_after": "protocol"
   },
   {
     "file": "skill-learning/learning-api.schema.json",
     "pointer": "/$defs/change_page/properties/sealedCursor",
     "field": "sealedCursor",
     "replacement": "sealed_cursor",
-    "kind": "deprecated_alias",
-    "reason": "Controller accepts only as a one-release input alias for expected_version/cursor; rejects multiple forms.",
-    "remove_after": "next_release"
+    "kind": "protocol_exception",
+    "reason": "ACP/Workspace sealed bidirectional change history; cursor names are protocol fields, not request aliases.",
+    "remove_after": "protocol"
   },
   {
     "file": "skill-learning/learning-api.schema.json",
     "pointer": "/$defs/change_page/required/1",
     "field": "nextCursor",
     "replacement": "next_cursor",
-    "kind": "deprecated_alias",
-    "reason": "Controller accepts only as a one-release input alias for expected_version/cursor; rejects multiple forms.",
-    "remove_after": "next_release"
+    "kind": "protocol_exception",
+    "reason": "ACP/Workspace sealed bidirectional change history; cursor names are protocol fields, not request aliases.",
+    "remove_after": "protocol"
   },
   {
     "file": "skill-learning/learning-api.schema.json",
     "pointer": "/$defs/change_page/required/2",
     "field": "olderCursor",
     "replacement": "older_cursor",
-    "kind": "deprecated_alias",
-    "reason": "Controller accepts only as a one-release input alias for expected_version/cursor; rejects multiple forms.",
-    "remove_after": "next_release"
+    "kind": "protocol_exception",
+    "reason": "ACP/Workspace sealed bidirectional change history; cursor names are protocol fields, not request aliases.",
+    "remove_after": "protocol"
   },
   {
     "file": "skill-learning/learning-api.schema.json",
     "pointer": "/$defs/change_page/required/3",
     "field": "sealedCursor",
     "replacement": "sealed_cursor",
-    "kind": "deprecated_alias",
-    "reason": "Controller accepts only as a one-release input alias for expected_version/cursor; rejects multiple forms.",
-    "remove_after": "next_release"
+    "kind": "protocol_exception",
+    "reason": "ACP/Workspace sealed bidirectional change history; cursor names are protocol fields, not request aliases.",
+    "remove_after": "protocol"
   },
   {
     "file": "skill-learning/learning-api.schema.json",

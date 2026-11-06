@@ -232,12 +232,12 @@ export async function verifyExternalIdentitiesBrowser({
               },
             });
           if (url.pathname === "/api/session/sessions")
-            return reply({ sessions: [] });
+            return reply({ items: [], next_cursor: null });
           if (url.pathname === path && request.method() === "GET") {
             state.reads.push(url.pathname + url.search);
             assert.equal(url.searchParams.get("limit"), "50");
             assert.equal(
-              url.searchParams.has("after_id") &&
+              url.searchParams.has("cursor") &&
                 url.searchParams.has("notice_after_id"),
               false,
             );
@@ -251,7 +251,7 @@ export async function verifyExternalIdentitiesBrowser({
                 503,
               );
             }
-            const bindingPage = url.searchParams.get("after_id"),
+            const bindingPage = url.searchParams.get("cursor"),
               noticePage = url.searchParams.get("notice_after_id");
             const allBindings = [
               {
@@ -283,9 +283,9 @@ export async function verifyExternalIdentitiesBrowser({
             const bindings = pageOf(allBindings, bindingPage),
               notices = pageOf(allNotices, noticePage);
             return reply({
-              bindings: bindings.rows,
+              items: bindings.rows,
               notices: notices.rows,
-              ...(bindings.next ? { next_after_id: bindings.next } : {}),
+              next_cursor: bindings.next ?? null,
               ...(notices.next ? { next_notice_after_id: notices.next } : {}),
             });
           }

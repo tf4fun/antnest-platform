@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import test from "node:test";
+import { withCommonErrorSchema } from "../../support/common-error-schema.mjs";
 
 const require = createRequire(
   new URL("../../../services/agent-acp-service/package.json", import.meta.url),
@@ -66,17 +67,25 @@ function compiler() {
       );
     },
   });
-  return ajv;
+  return withCommonErrorSchema(ajv);
 }
 
 function identityValidator(schema) {
   assert(schema, "Identity must publish the session schema");
-  return compiler().compile({ definitions: identity.definitions, ...schema });
+  return compiler().compile({
+    $id: "https://schemas.antnest.dev/identity/identity-contract.json",
+    definitions: identity.definitions,
+    ...schema,
+  });
 }
 
 function externalValidator(name) {
   assert(browser.$defs[name], `missing browser ${name} schema`);
-  return compiler().compile({ $defs: browser.$defs, $ref: `#/$defs/${name}` });
+  return compiler().compile({
+    $id: browser.$id,
+    $defs: browser.$defs,
+    $ref: `#/$defs/${name}`,
+  });
 }
 
 function rejectsInvalidRootsAndMissing(
@@ -173,7 +182,7 @@ test("session list pagination cannot carry caller-controlled organization or pri
       ...list,
       scope: "organization",
       user_id: "user-2",
-      after_id: session.id,
+      cursor: session.id,
     }),
   );
   for (const candidate of [
@@ -183,19 +192,32 @@ test("session list pagination cannot carry caller-controlled organization or pri
     { ...list, scope: "all" },
     { ...list, organization_id: "org-2" },
     { ...list, current_token_id: "private" },
-    { ...list, after_id: "" },
+    { ...list, cursor: "" },
+    { ...list, cursor: session.id, after_id: session.id },
     { ...list, actor_principal_id: " user-1 " },
   ])
     assert.equal(validate(candidate), false, JSON.stringify(candidate));
   const response = methodValidator("list_user_sessions", "response");
-  assert(response({ sessions: [session] }), JSON.stringify(response.errors));
-  rejectsInvalidRootsAndMissing(response, { sessions: [session] });
-  assert(response({ sessions: [session], next_after_id: session.id }));
-  assert(response({ sessions: [] }));
-  assert.equal(response({ sessions: [], next_after_id: "" }), false);
-  assert.equal(response({ sessions: Array(101).fill(session) }), false);
+  assert(validate({ ...list, after_id: session.id }));
+  const page = { items: [session], next_cursor: null };
+  assert(response(page), JSON.stringify(response.errors));
+  rejectsInvalidRootsAndMissing(response, page);
+  assert(response({ items: [session], next_cursor: session.id }));
+  assert(response({ items: [], next_cursor: null }));
+  assert.equal(response({ items: [], next_cursor: "" }), false);
   assert.equal(
-    response({ sessions: [{ ...session, token_id: "private" }] }),
+    response({ items: [], next_cursor: null, next_after_id: session.id }),
+    false,
+  );
+  assert.equal(
+    response({ items: Array(101).fill(session), next_cursor: null }),
+    false,
+  );
+  assert.equal(
+    response({
+      items: [{ ...session, token_id: "private" }],
+      next_cursor: null,
+    }),
     false,
   );
 });
@@ -686,7 +708,12 @@ test("public response schemas declare no private credential fields or secret-mar
     "new_password",
   ]);
   const visited = new Set();
-  function inspect(value, path = "browser") {
+  const documents = new Map([[browser.$id, browser]]);
+  for (const name of ["error", "pagination", "precondition", "idempotency"]) {
+    const document = read(`common/${name}.schema.json`);
+    documents.set(document.$id, document);
+  }
+  function inspect(value, path = "browser", base = browser.$id) {
     if (!value || typeof value !== "object") return;
     if (visited.has(value)) return;
     visited.add(value);
@@ -694,23 +721,24 @@ test("public response schemas declare no private credential fields or secret-mar
     for (const key of Object.keys(value.properties ?? {}))
       assert.equal(forbidden.has(key), false, `${path}.${key}`);
     if (value.$ref) {
-      assert.match(
-        value.$ref,
-        /^#\//u,
-        `${path}: public schema reference must be resolvable`,
+      const absolute = new URL(value.$ref, base);
+      const documentID = absolute.href.split("#")[0];
+      let referenced = documents.get(documentID);
+      assert.notEqual(referenced, undefined, `${path}: missing ${documentID}`);
+      const pointer = decodeURIComponent(absolute.hash.slice(1));
+      assert(
+        pointer === "" || pointer.startsWith("/"),
+        `${path}: invalid pointer`,
       );
-      let referenced = browser;
-      for (const part of value.$ref.slice(2).split("/"))
+      for (const part of pointer.split("/").slice(1))
         referenced =
-          referenced?.[
-            decodeURIComponent(part).replaceAll("~1", "/").replaceAll("~0", "~")
-          ];
+          referenced?.[part.replaceAll("~1", "/").replaceAll("~0", "~")];
       assert.notEqual(referenced, undefined, `${path}: missing ${value.$ref}`);
-      inspect(referenced, `${path}->${value.$ref}`);
+      inspect(referenced, `${path}->${value.$ref}`, documentID);
     }
     for (const [key, child] of Object.entries(value))
       if (key !== "$defs" && key !== "definitions")
-        inspect(child, `${path}.${key}`);
+        inspect(child, `${path}.${key}`, base);
   }
   for (const name of [
     "login",
@@ -914,6 +942,7 @@ test("Gateway self-service bodies cannot choose the actor, Organization or priva
     false,
   );
   const query = externalValidator("list_sessions_query");
+  assert(query({ limit: 50, cursor: session.id }));
   assert(query({ limit: 50, after_id: session.id }));
   rejectsInvalidRootsAndMissing(query, { limit: 50 });
   for (const invalid of [
@@ -921,6 +950,8 @@ test("Gateway self-service bodies cannot choose the actor, Organization or priva
     { limit: 101 },
     { limit: 1.5 },
     { limit: 1, after_id: "" },
+    { limit: 1, cursor: "" },
+    { limit: 1, cursor: session.id, after_id: session.id },
     { limit: 1, organization_id: "org-2" },
   ])
     assert.equal(query(invalid), false);
@@ -938,7 +969,7 @@ test("Gateway account and session inventory responses exclude nested private fie
   };
   for (const [name, value] of [
     ["account", { account }],
-    ["session_list", { sessions: [session] }],
+    ["session_list", { items: [session], next_cursor: null }],
     ["session_revocation", { revoked_count: 1, current_revoked: false }],
   ]) {
     const validate = externalValidator(name);
@@ -992,12 +1023,16 @@ test("Gateway account and session inventory responses exclude nested private fie
   );
   assert.equal(
     externalValidator("session_list")({
-      sessions: [{ ...session, token_hash: "a".repeat(64) }],
+      items: [{ ...session, token_hash: "a".repeat(64) }],
+      next_cursor: null,
     }),
     false,
   );
   assert.equal(
-    externalValidator("session_list")({ sessions: Array(101).fill(session) }),
+    externalValidator("session_list")({
+      items: Array(101).fill(session),
+      next_cursor: null,
+    }),
     false,
   );
   assert.equal(

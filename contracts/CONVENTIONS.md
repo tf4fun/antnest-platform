@@ -54,9 +54,15 @@ recovery history feed uses `(occurred_at, history_id)` — recorded as a
 `protocol_exception` (`ordered_feed_cursor`) because it is a durable part of
 that protocol, not a pending rename.
 
+ACP/Workspace learning change history is another protocol exception: its
+sealed, bidirectional feed retains `nextCursor`, `olderCursor` and
+`sealedCursor`. These are response protocol fields, not deprecated request
+aliases; they must not be collapsed into a forward-only page.
+
 Cursors are opaque and bounded at 4096 bytes at runtime. The schema
-`maxLength` is a character bound, which is not sufficient for UTF-8; cursor
-tokens are ASCII and services validate that on the wire. `limit` is a
+`maxLength` is a character bound, which is not sufficient for UTF-8; services
+also enforce the byte bound before decoding or repository access. Narrower
+protocol-specific public-ID or ASCII constraints remain in force. `limit` is a
 positive integer; each service names its own maximum.
 
 ## Optimistic concurrency
@@ -97,7 +103,10 @@ Timestamps are UTC RFC3339. Resource identifier shapes follow
 envelopes follow [common/error.schema.json](common/error.schema.json) and
 issue #67.
 
-Deployment wiring lands consumers before producers; the source PR stack is
-not a deployment ordering. Pending per-service migrations are tracked in
-TODO.md as they are scheduled, and Docker E2E evidence stays with its own
-workflow rather than this contract batch.
+The source PR stack is not a deployment ordering or proof of mixed-version
+compatibility. Deprecated request aliases preserve old inputs, not old
+response consumers. Canonical-only consumers require their producer batch;
+deploy a coordinated version set unless a boundary explicitly provides both
+request and response compatibility. Do not infer a safe rolling upgrade from
+an accepted alias. Delivery and exact-head remote admission are recorded in
+[`TODO.md`](../TODO.md); Docker E2E evidence stays with its dedicated workflow.
