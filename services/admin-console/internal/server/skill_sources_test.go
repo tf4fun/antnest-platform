@@ -268,3 +268,28 @@ func TestSkillSourceRequestsAreBoundedAndPromotionHasNoAutomaticRetry(t *testing
 		}
 	}
 }
+
+func TestSkillSourcePromotionIfMatchPrecondition(t *testing.T) {
+	body := strings.TrimSuffix(sourceSelection(sourceDigest), "}") + `,"skill_id":"` + sourceTarget + `"}`
+	for _, header := range []string{`"2"`, `W/"2"`, `*`, `"2", "3"`} {
+		t.Run(header, func(t *testing.T) {
+			stub := &skillStub{status: 201, body: `{"skill_id":"` + sourceTarget + `","version":3,"name":"code-review","description":"Review code","artifact_digest":"` + sourceDigest + `","content_digest":"` + sourceDigest + `","artifact_size":100,"unpacked_size":200,"package_rules_version":1}`}
+			request := skillRequest("POST", "/api/admin/skill-sources/promote", strings.NewReader(body), "application/json", "source-attempt-0001")
+			request.Header.Set("If-Match", header)
+			response := httptest.NewRecorder()
+			skillHandler(t, stub).ServeHTTP(response, request)
+			if header == `"2"` {
+				if response.Code != 201 || len(stub.calls) != 1 {
+					t.Fatalf("status=%d calls=%d body=%s", response.Code, len(stub.calls), response.Body.String())
+				}
+				var sent map[string]any
+				decodeBytes(t, stub.calls[0].body, &sent)
+				if sent["expected_version"] != "2" {
+					t.Fatalf("forwarded version=%v", sent["expected_version"])
+				}
+			} else if response.Code != 400 || len(stub.calls) != 0 {
+				t.Fatalf("status=%d calls=%d", response.Code, len(stub.calls))
+			}
+		})
+	}
+}
