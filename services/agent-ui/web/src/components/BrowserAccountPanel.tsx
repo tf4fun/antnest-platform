@@ -9,7 +9,7 @@ export function BrowserAccountPanel({ client, external, fallbackFocus, onClose }
   const [binding] = useState(() => client.capture(true));
   const request = useRef<AbortController | undefined>(undefined);
   const [account, setAccount] = useState<BrowserAccount>();
-  const [inventory, setInventory] = useState<SessionInventory>({ sessions: [] });
+  const [inventory, setInventory] = useState<SessionInventory>({ items: [], next_cursor: null });
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const flight = useRef(false);
@@ -57,8 +57,8 @@ export function BrowserAccountPanel({ client, external, fallbackFocus, onClose }
       }
       const page = await client.sessions(after, request.current!.signal);
       if (!live() || !client.responseCurrent(page)) return;
-      setInventory(current => ({ ...page, sessions: after
-        ? [...current.sessions, ...page.sessions.filter(row => !current.sessions.some(old => old.id === row.id))] : page.sessions }));
+      setInventory(current => ({ ...page, items: after
+        ? [...current.items, ...page.items.filter(row => !current.items.some(old => old.id === row.id))] : page.items }));
     } catch (cause) { failure(cause); }
     finally { flight.current = false; if (live()) setLoading(false); }
   }
@@ -118,7 +118,7 @@ export function BrowserAccountPanel({ client, external, fallbackFocus, onClose }
         </button><button type="button" disabled={busy} onClick={() => setConfirmation(null)}>Cancel</button></div>
       </section> : null}
       <ul className="browser-session-list">
-        {inventory.sessions.map(row => <li key={row.id}>
+        {inventory.items.map(row => <li key={row.id}>
           <strong>{row.current ? "This browser" : "Other browser"} · {row.organization_name}</strong>
           <p className="session-agent-hint">{row.user_agent_hint || "Browser information unavailable"}</p>
           <dl><dt>Signed in</dt><dd>{date(row.created_at)}</dd>
@@ -128,7 +128,7 @@ export function BrowserAccountPanel({ client, external, fallbackFocus, onClose }
         </li>)}
       </ul>
       {loading ? <p role="status">Loading sessions…</p> : null}
-      {inventory.next_after_id ? <button type="button" disabled={loading || busy} onClick={() => { void load(inventory.next_after_id); }}>Load more sessions</button> : null}
+      {inventory.next_cursor ? <button type="button" disabled={loading || busy} onClick={() => { void load(inventory.next_cursor ?? undefined); }}>Load more sessions</button> : null}
     </section>
     {account?.local_password_available ? <section aria-labelledby="account-password-title">
       <h2 id="account-password-title">Change password</h2>

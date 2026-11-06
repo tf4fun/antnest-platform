@@ -7,9 +7,9 @@ const session = () => ({
   expires_at: "2026-10-12T00:00:00Z", idle_expires_at: "2026-10-11T12:30:00Z", activity_interval_ms: 1666,
 });
 const page = {
-  bindings: [{ id: "binding-1", provider_id: "provider-1", provider_name: "workforce", provider_display_name: "Workforce", organization_id: "other-org", organization_slug: "other", organization_name: "Other organization", membership_id: "other-member", subject: "  <opaque> é 😀  ", method: "scim", provider_enabled: false, created_at: "2026-10-11T00:00:00Z", bound_at: "2026-10-11T01:00:00Z", revoked_at: null }],
+  items: [{ id: "binding-1", provider_id: "provider-1", provider_name: "workforce", provider_display_name: "Workforce", organization_id: "other-org", organization_slug: "other", organization_name: "Other organization", membership_id: "other-member", subject: "  <opaque> é 😀  ", method: "scim", provider_enabled: false, created_at: "2026-10-11T00:00:00Z", bound_at: "2026-10-11T01:00:00Z", revoked_at: null }],
   notices: [{ id: "notice-1", binding_id: "historical-binding", provider_id: "old-provider", provider_name: "old", provider_display_name: "Old provider", organization_id: "historical-org", organization_slug: "historical", organization_name: "Historical organization", membership_id: "old-member", subject: "historical subject", method: "auto", created_at: "2026-10-10T00:00:00Z" }],
-  next_after_id: "binding-1", next_notice_after_id: "notice-1",
+  next_cursor: "binding-1", next_notice_after_id: "notice-1",
 };
 const base = "/api/session/external-identities";
 const deferred = <T>() => { let resolve!: (value: T) => void; const promise = new Promise<T>(done => { resolve = done; }); return { promise, resolve }; };
@@ -24,7 +24,7 @@ test("external inventories retain cross-organization snapshots and use independe
   const result = await client.externalIdentities({ afterID: "binding /2", noticeAfterID: "notice +2" });
   assert.deepEqual(result, page);
   assert.equal(client.responseCurrent(result), true);
-  assert.equal(calls[1]!.path, base + "?limit=50&after_id=binding%20%2F2&notice_after_id=notice%20%2B2");
+  assert.equal(calls[1]!.path, base + "?limit=50&cursor=binding%20%2F2&notice_after_id=notice%20%2B2");
   assert.equal(calls[1]!.init.method, "GET");
   assert.equal(calls[1]!.init.credentials, "same-origin");
   assert.equal(calls[1]!.init.cache, "no-store");

@@ -27,7 +27,7 @@ test("SSR bootstrap does not start private requests before fresh browser validat
     const path = String(input); calls.push(path);
     if (path === "/api/session") return response.promise;
     if (path.endsWith("/bootstrap")) return Response.json(bootstrap);
-    if (path === "/api/session/external-identities?limit=50") return Response.json({ bindings: [], notices: [] });
+    if (path === "/api/session/external-identities?limit=50") return Response.json({ items: [], notices: [], next_cursor: null });
     throw new Error(`Unexpected ${path}`);
   }));
   const source = vi.fn(); vi.stubGlobal("EventSource", source);
@@ -46,7 +46,7 @@ test("StrictMode validates without publishing aborted setup or sharing private s
     const path = String(input); calls.push({ path, signal: init?.signal });
     if (path === "/api/session") return Response.json(session);
     if (path.endsWith("/bootstrap")) return Response.json(bootstrap);
-    if (path === "/api/session/external-identities?limit=50") return Response.json({ bindings: [], notices: [] });
+    if (path === "/api/session/external-identities?limit=50") return Response.json({ items: [], notices: [], next_cursor: null });
     throw new Error(`Unexpected ${path}`);
   }));
   render(<StrictMode><BridgeApp /></StrictMode>);
@@ -65,7 +65,7 @@ test("a transient validation failure offers an explicit retry without an activit
     const path = String(input); calls.push(path);
     if (path === "/api/session") return Response.json(status === 200 ? session : { code: "unavailable", message: "Identity is temporarily unavailable." }, { status });
     if (path.endsWith("/bootstrap")) return Response.json(bootstrap);
-    if (path === "/api/session/external-identities?limit=50") return Response.json({ bindings: [], notices: [] });
+    if (path === "/api/session/external-identities?limit=50") return Response.json({ items: [], notices: [], next_cursor: null });
     throw new Error(`Unexpected ${path}`);
   }));
   render(<BridgeApp />);
@@ -84,7 +84,7 @@ test.each([false, true])("account controls are reachable before selecting an Age
     if (String(input) === "/api/session") return Response.json(session);
     if (String(input).endsWith("/bootstrap")) return Response.json({ ...bootstrap,
       agents: hasAgents ? [{ agentId: "agent-1", name: "Agent", lifecycle: "created", activation: "enabled", runtime: "available" }] : [] });
-    if (String(input) === "/api/session/external-identities?limit=50") return Response.json({ bindings: [], notices: [] });
+    if (String(input) === "/api/session/external-identities?limit=50") return Response.json({ items: [], notices: [], next_cursor: null });
     throw new Error(`Unexpected ${input}`);
   }));
   render(<BridgeApp />);
@@ -128,7 +128,7 @@ test("same user and Agent replacement rebuilds observation and releases private 
           finalResponse: [{ type: "text", text: reads === 1 ? "Old private answer" : "Fresh private answer" }],
           contentCursor: null, contentSection: null, processVersion: 0, processCount: 0 }], olderTurnsCursor: null },
     });
-    if (path === "/api/session/external-identities?limit=50") return Response.json({ bindings: [], notices: [] });
+    if (path === "/api/session/external-identities?limit=50") return Response.json({ items: [], notices: [], next_cursor: null });
     throw new Error(`Unexpected ${path}`);
   }));
   render(<BridgeApp />);

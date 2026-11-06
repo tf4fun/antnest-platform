@@ -2687,7 +2687,7 @@ test(
         url.pathname === "/api/session/external-identities" &&
         request.method === "GET"
       ) {
-        writeJSON(response, { bindings: [], notices: [] });
+        writeJSON(response, { items: [], notices: [], next_cursor: null });
         return;
       }
       if (

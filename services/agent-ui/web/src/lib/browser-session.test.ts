@@ -197,13 +197,13 @@ test("session inventory and revoke carry only public cursor, mode and fresh inte
     calls.push({ path: String(path), init: init! });
     if (String(path) === "/api/session") return Response.json(session());
     if (String(path).endsWith("/revoke")) return Response.json({ revoked_count: 2, current_revoked: false });
-    return Response.json({ sessions: [], next_after_id: "next" });
+    return Response.json({ items: [], next_cursor: "next" });
   } });
   await client.read();
   await client.sessions("public /id");
   await client.revoke("others");
   await client.revoke("others");
-  assert.equal(calls[1]!.path, "/api/session/sessions?limit=50&after_id=public%20%2Fid");
+  assert.equal(calls[1]!.path, "/api/session/sessions?limit=50&cursor=public%20%2Fid");
   assert.deepEqual(JSON.parse(String(calls[2]!.init.body)), { mode: "others" });
   const firstHeaders = new Headers(calls[2]!.init.headers);
   assert.equal(firstHeaders.get("X-Antnest-CSRF-Token"), "csrf");

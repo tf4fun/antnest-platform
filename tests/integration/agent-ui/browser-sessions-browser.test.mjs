@@ -171,7 +171,7 @@ async function withWorkspace(viewport, exercise) {
         path === "/api/session/external-identities" &&
         request.method() === "GET"
       )
-        return reply({ bindings: [], notices: [] });
+        return reply({ items: [], notices: [], next_cursor: null });
       if (path === "/api/session/sessions") {
         assert.equal(url.searchParams.get("limit"), "50");
         const gate = state.refreshGate;
@@ -180,19 +180,25 @@ async function withWorkspace(viewport, exercise) {
           gate.entered.resolve();
           try {
             await gate.resume.promise;
-            await reply({ sessions: [row("public-current", "org-1", true)] });
+            await reply({
+              items: [row("public-current", "org-1", true)],
+              next_cursor: null,
+            });
           } finally {
             gate.finished.resolve();
           }
           return;
         }
-        if (url.searchParams.has("after_id")) {
-          assert.equal(url.searchParams.get("after_id"), "public-current");
-          return reply({ sessions: [row("public-other", "org-2", false)] });
+        if (url.searchParams.has("cursor")) {
+          assert.equal(url.searchParams.get("cursor"), "public-current");
+          return reply({
+            items: [row("public-other", "org-2", false)],
+            next_cursor: null,
+          });
         }
         return reply({
-          sessions: [row("public-current", "org-1", true)],
-          ...(state.othersRevoked ? {} : { next_after_id: "public-current" }),
+          items: [row("public-current", "org-1", true)],
+          next_cursor: state.othersRevoked ? null : "public-current",
         });
       }
       if (path === "/api/session/sessions/revoke") {

@@ -11,7 +11,7 @@ const session = { principal: { user_id: "user-1", organization_id: "org-1", memb
 const base = "/api/session/external-identities";
 const binding: ExternalIdentity = { id: "binding-1", provider_id: "provider-1", provider_name: "workforce", provider_display_name: "Workforce", organization_id: "org-2", organization_slug: "research", organization_name: "Research", membership_id: "member-2", subject: "  <img src=x onerror=alert(1)> é 😀  ", method: "scim", provider_enabled: false, created_at: "2026-10-10T00:00:00Z", bound_at: "2026-10-11T01:00:00Z", revoked_at: null };
 const notice: ExternalIdentityNotice = { id: "notice-1", binding_id: "historical-binding", provider_id: "old-provider", provider_name: "old", provider_display_name: "Old provider", organization_id: "old-org", organization_slug: "historical", organization_name: "Historical organization", membership_id: "old-member", subject: "historical subject", method: "auto", created_at: "2026-10-10T00:00:00Z" };
-const inventory = { bindings: [binding], notices: [notice] };
+const inventory = { items: [binding], notices: [notice], next_cursor: null };
 const deferred = <T,>() => { let resolve!: (value: T) => void; const promise = new Promise<T>(done => { resolve = done; }); return { promise, resolve }; };
 async function clientFor(fetcher: (path: string, init: RequestInit) => Response | Promise<Response>) {
   const client = new BrowserSessionClient({ csrf: () => "csrf", fetch: async (input, init) => String(input) === "/api/session" ? Response.json(session) : fetcher(String(input), init!) });
@@ -46,9 +46,9 @@ test("binding and notice paging preserve the other stream's rows and cursor", as
   const paths: string[] = [];
   const client = await clientFor(path => {
     paths.push(path);
-    if (path.includes("notice_after_id=")) return Response.json({ bindings: [], notices: [{ ...notice, id: "notice-2", subject: "second notice" }] });
-    if (path.includes("after_id=")) return Response.json({ bindings: [{ ...binding, id: "binding-2", subject: "second binding" }], notices: [] });
-    return Response.json({ ...inventory, next_after_id: "binding-1", next_notice_after_id: "notice-1" });
+    if (path.includes("notice_after_id=")) return Response.json({ items: [], notices: [{ ...notice, id: "notice-2", subject: "second notice" }], next_cursor: null });
+    if (path.includes("cursor=")) return Response.json({ items: [{ ...binding, id: "binding-2", subject: "second binding" }], notices: [], next_cursor: null });
+    return Response.json({ ...inventory, next_cursor: "binding-1", next_notice_after_id: "notice-1" });
   });
   render(<Harness client={client} initialOpen />);
   fireEvent.click(await screen.findByRole("button", { name: "Load more bindings" }));
@@ -57,7 +57,7 @@ test("binding and notice paging preserve the other stream's rows and cursor", as
   fireEvent.click(screen.getByRole("button", { name: "Load more notices" }));
   await screen.findByText("second notice");
   expect(screen.getByText("second binding")).toBeTruthy();
-  expect(paths).toEqual([base + "?limit=50", base + "?limit=50&after_id=binding-1", base + "?limit=50&notice_after_id=notice-1"]);
+  expect(paths).toEqual([base + "?limit=50", base + "?limit=50&cursor=binding-1", base + "?limit=50&notice_after_id=notice-1"]);
 });
 
 test("503 and duplicate clicks preserve notices without replay; an old ACK cannot clear a new notice", async () => {
@@ -65,7 +65,7 @@ test("503 and duplicate clicks preserve notices without replay; an old ACK canno
   let reads = 0;
   const client = await clientFor((_path, init) => {
     if (init.method === "POST") { sent.push(JSON.parse(String(init.body))); return sent.length === 1 ? response.promise : Response.json({ acknowledged_count: 0 }); }
-    return Response.json({ bindings: [binding], notices: [++reads > 1 ? { ...notice, id: "notice-2", subject: "new notice" } : notice] });
+    return Response.json({ items: [binding], notices: [++reads > 1 ? { ...notice, id: "notice-2", subject: "new notice" } : notice], next_cursor: null });
   });
   render(<Harness client={client} initialOpen />);
   const ack = await screen.findByRole("button", { name: "Acknowledge Old provider in Historical organization" });
@@ -127,7 +127,7 @@ test("StrictMode and a replaced client cannot install old private inventory", as
   const view = render(<StrictMode><Harness client={client} initialOpen /></StrictMode>);
   await waitFor(() => expect(pending).toHaveLength(2));
   expect(pending[0]!.signal.aborted).toBe(true);
-  const replacement = await clientFor(() => Response.json({ bindings: [], notices: [] }));
+  const replacement = await clientFor(() => Response.json({ items: [], notices: [], next_cursor: null }));
   view.rerender(<Harness key="replacement" client={replacement} initialOpen />);
   await screen.findByText("No external logins to display.");
   await act(async () => { for (const old of pending) old.response.resolve(Response.json(inventory)); });
@@ -165,7 +165,7 @@ test("a noncurrent unbind refreshes once, clears confirmation and renders a read
   let reads = 0, writes = 0;
   const client = await clientFor((_path, init) => {
     if (init.method === "DELETE") { writes++; return Response.json({ revoked_count: 1, current_revoked: false }); }
-    reads++; return Response.json({ ...inventory, bindings: [{ ...binding, revoked_at: writes ? "2026-10-11T02:00:00Z" : null }] });
+    reads++; return Response.json({ ...inventory, items: [{ ...binding, revoked_at: writes ? "2026-10-11T02:00:00Z" : null }] });
   });
   render(<Harness client={client} initialOpen />);
   fireEvent.click(await screen.findByRole("button", { name: "Unbind Workforce" }));
@@ -180,7 +180,7 @@ test("a noncurrent unbind refreshes once, clears confirmation and renders a read
 test("acknowledging the visible page keeps the banner while another notice page remains", async () => {
   const client = await clientFor((path, init) => {
     if (init.method === "POST") return Response.json({ acknowledged_count: 1 });
-    if (path.includes("notice_after_id=")) return Response.json({ bindings: [], notices: [{ ...notice, id: "notice-2", subject: "next unread notice" }] });
+    if (path.includes("notice_after_id=")) return Response.json({ items: [], notices: [{ ...notice, id: "notice-2", subject: "next unread notice" }], next_cursor: null });
     return Response.json({ ...inventory, next_notice_after_id: "notice-1" });
   });
   render(<Harness client={client} initialOpen />);
