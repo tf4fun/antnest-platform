@@ -253,13 +253,22 @@ describe("signed Runtime temporary client", () => {
     { artifact_digest: `sha256:${"b".repeat(64)}` },
     { effect_state: "none" },
     { runtime_call_stopped: false },
-    { extra: "body" },
   ])("rejects uncertain/mismatched install receipts: %j", async (patch) => {
     const f = fixture();
     f.fetchFn.mockImplementation((_url, init) => Promise.resolve(installReply(init, patch)));
     await expect(
       f.client.install(scope, loaded, new AbortController().signal),
     ).rejects.toMatchObject({ effectState: "unknown", runtimeCallStopped: false });
+  });
+  it("tolerates additive response extensions beside every declared field", async () => {
+    const f = fixture();
+    f.fetchFn.mockImplementation((_url, init) =>
+      Promise.resolve(installReply(init, { extra: "body", nested: { future: true } })),
+    );
+    await expect(f.client.install(scope, loaded, new AbortController().signal)).resolves.toEqual({
+      path,
+      unpacked_size: 80,
+    });
   });
   it("preserves a proved pre-dispatch refusal and sanitizes transport failures", async () => {
     const f = fixture();

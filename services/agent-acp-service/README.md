@@ -433,6 +433,19 @@ UPDATE_GOLDEN=1 npx vitest run test/contracts/producer-golden.test.ts
 
 Focused cases cover the current output, the legacy unversioned snapshot, and the frozen `contracts/agent-acp/examples/execution-events.n-1.json` N-1 baseline, which is never recomputed.
 
+### Temporary Skill response consumption
+
+`RuntimeSkillTemporaryClient` consumes the three real Runtime producer
+captures in `contracts/runtime/examples/` — `temporary-install.installed`,
+`temporary-release.released`, and `temporary-operation.disabled` (schema
+`runtime/temporary-skills.schema.json` `$defs`). `projectResponse` ignores
+additive members on the wire replies while every declared-field check —
+request/job/execution IDs, digests, temporary path suffix, effect state and
+`runtime_call_stopped`, no-store/content-type policy, signed-action authority —
+stays unchanged; malformed or mismatched responses still fail closed as
+`unknown`/uncleaned. The strict domain schemas and request signing are
+unchanged, so consumers can deploy ahead of any additive producer change.
+
 ### Data retention and erasure
 
 Deleted Session content is purged under a bounded, fenced retention worker and
