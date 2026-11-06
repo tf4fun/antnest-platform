@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { isIP } from "node:net";
 import { test } from "node:test";
 import Ajv from "../../../services/agent-acp-service/node_modules/ajv/dist/2020.js";
+import { withCommonErrorSchema } from "../../support/common-error-schema.mjs";
 
 const read = (path) =>
   JSON.parse(
@@ -29,7 +30,7 @@ test("revision 2 delegates encryption, nonces and replay to the fixed WireGuard 
 
 test("key registration is private, generation-scoped and does not carry the Runtime private key", () => {
   const schema = read("contracts/egress/tunnel-key-request.schema.json");
-  const ajv = new Ajv({ strict: true });
+  const ajv = withCommonErrorSchema(new Ajv({ strict: true }));
   ajv.addFormat("ipv4", {
     validate: (value) => isIP(value) === 4,
   });
@@ -54,7 +55,7 @@ test("key registration is private, generation-scoped and does not carry the Runt
 
 test("open requires a current key while close clears peer identity", () => {
   const schema = read("contracts/egress/attachment-state-request.schema.json");
-  const ajv = new Ajv({ strict: true });
+  const ajv = withCommonErrorSchema(new Ajv({ strict: true }));
   ajv.addFormat("ipv4", {
     validate: (value) => isIP(value) === 4,
   });
