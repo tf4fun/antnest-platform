@@ -353,3 +353,36 @@ function sequentialIds(): () => string {
   let next = 0;
   return () => `id-${++next}`;
 }
+
+describe("contract conventions", () => {
+  it("forwards a valid opaque cursor to the repository with the existing limit", async () => {
+    const repository = createRepository();
+    repository.list.mockResolvedValue({ sessions: [], nextCursor: "continuation" });
+    const service = createService(repository.port);
+    await expect(
+      service.listSessions({ binding, cwd: "/workspace", cursor: "opaque-page" }),
+    ).resolves.toEqual({ sessions: [], nextCursor: "continuation" });
+    expect(repository.list).toHaveBeenCalledWith(
+      expect.objectContaining({
+        cursor: "opaque-page",
+        limit: 50,
+        organizationId: binding.organizationId,
+        principalId: binding.principalId,
+        agentId: binding.agentId,
+      }),
+    );
+  });
+
+  it.each([
+    ["empty", ""],
+    ["4097 ASCII bytes", "x".repeat(4097)],
+    ["over 4096 UTF-8 bytes", "ü".repeat(2049)],
+  ])("rejects %s cursor without calling the repository", async (_name, cursor) => {
+    const repository = createRepository();
+    const service = createService(repository.port);
+    await expect(
+      service.listSessions({ binding, cwd: "/workspace", cursor }),
+    ).rejects.toMatchObject({ code: "invalid_cursor" });
+    expect(repository.list).not.toHaveBeenCalled();
+  });
+});

@@ -20,6 +20,8 @@ Issue 状态最后核对于 2026-10-28：141 个 issue，87 个已关闭，54 �
 
 ## 当前批次
 
+- **#68 ACP 批次（2026-11-06，依赖 Identity PR #552）**：审计请求／响应与 ACP Session 列表在解码或 repository 调用前 enforcing 1..4096 UTF-8 byte opaque cursors；共享 schema 同步字符界限，非 ASCII byte 界限保留 runtime 检查。协议 sessions／nextCursor、prompt idempotency、learning 双向 feed 和 owner-history structured cursor 例外不变。协调者先确认 8 项 RED，后 37 项定向 GREEN，契约生成 --check 与 lint clean（`artifacts/verification/issue-68-acp/`）；远程完整准入待确认，继续 Console。
+
 - **#68 Identity 批次（2026-11-06，依赖 Skill Registry PR #551）**：session／external binding／provider 三类 RPC 列表支持 cursor／一版 after_id 输入别名与 items／必有 nullable next_cursor 输出；双 cursor／无效 limit 在依赖调用前拒绝。self notices 保留独立流，不合并游标；domain 查询／签名 caller scope／request_id receipts／有序撤销 feed 未改。先 RED 后实现，协调者定向 RPC 与真实输出 schema GREEN，修复离线编译器忽略注册错误与旧 ID（`artifacts/verification/issue-68-identity/`）。Gateway／Console 消费方接线待各自批次；远程完整准入待确认，继续下一服务。
 
 - **#68 Skill Registry 批次（2026-11-06，依赖 Runtime Controller PR #550）**：tests-only RED 后，将 Skill／Version 列表统一为 `cursor`／`limit` 和 `items`／nullable-string `next_cursor`，旧 after_id／after_version 仅作输入别名；append multipart metadata 与 promote 支持 canonical string expected_version／旧 integer／独占单强 If-Match，原 request_id fingerprint 与回放行为保留。分页、输入歧义拒绝、追加后版本不变、promotion、幂等重放及离线 schema 定向 GREEN（`artifacts/verification/issue-68-skill-registry/`），lint clean；远程完整准入待确认。后续委派仅编辑，协调者串行执行验证及 Git／网络操作。

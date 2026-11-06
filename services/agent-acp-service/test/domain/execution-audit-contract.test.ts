@@ -2,12 +2,14 @@ import { readFileSync } from "node:fs";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import { describe, expect, it } from "vitest";
 import {
+  auditCursor,
   auditDetailSchema,
   auditEventsSchema,
   auditListSchema,
   getAuditSchema,
   listAuditEventsSchema,
   listAuditsSchema,
+  readAuditCursor,
 } from "../../src/domain/execution-audit.js";
 
 function validator(name: string) {
@@ -140,4 +142,39 @@ it("preserves exact optional budget facts in the shared audit contract", () => {
     expect(shared(value)).toBe(false);
     expect(auditDetailSchema.safeParse(value).success).toBe(false);
   }
+});
+
+describe("contract conventions", () => {
+  const oversizedUnicode = "ü".repeat(2049);
+
+  it.each([
+    ["allows a 4096-byte audit cursor", { limit: 10, cursor: "x".repeat(4096) }, true],
+    ["rejects an empty audit cursor", { limit: 10, cursor: "" }, false],
+    ["rejects a 4097-byte audit cursor", { limit: 10, cursor: "x".repeat(4097) }, false],
+    ["rejects a cursor over 4096 UTF-8 bytes", { limit: 10, cursor: oversizedUnicode }, false],
+  ])("%s", (_name, value, allowed) => {
+    expect(listAuditsSchema.safeParse(value).success).toBe(allowed);
+    expect(listAuditEventsSchema.safeParse({ ...value, run_id: "run-1" }).success).toBe(allowed);
+  });
+
+  it.each([
+    ["null continuation", { items: [], next_cursor: null }, true],
+    ["opaque continuation", { items: [], next_cursor: "cursor-token" }, true],
+    ["empty continuation", { items: [], next_cursor: "" }, false],
+    ["4097-byte continuation", { items: [], next_cursor: "x".repeat(4097) }, false],
+  ])("auditList %s", (_name, value, allowed) => {
+    expect(auditListSchema.safeParse(value).success).toBe(allowed);
+  });
+
+  it("readAuditCursor rejects an overlong token before decoding", () => {
+    const scope = "list-audits";
+    const position = { kind: "sequence", sequence: 1 } as const;
+    const valid = auditCursor(scope, position);
+    expect(readAuditCursor(valid, scope)).toEqual(position);
+    const wideScope = "s".repeat(4096);
+    const oversized = auditCursor(wideScope, position);
+    expect(() => readAuditCursor(oversized, wideScope)).toThrowError(
+      expect.objectContaining({ code: "invalid_cursor" }),
+    );
+  });
 });
