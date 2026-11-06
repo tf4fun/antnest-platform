@@ -20,7 +20,7 @@ func TestExecutionProjectionConformsToSharedACPContract(t *testing.T) {
 	require.NoError(t, err)
 	compiler := jsonschema.NewCompiler()
 	compiler.AssertFormat()
-	identifier := "https://antnest.local/contracts/agent-acp/execution-snapshot.schema.json"
+	identifier := "https://schemas.antnest.dev/agent-acp/execution-snapshot.schema.json"
 	require.NoError(t, compiler.AddResource(identifier, document))
 	definition, err := compiler.Compile(identifier)
 	require.NoError(t, err)
@@ -61,7 +61,7 @@ func TestExecutionModelPolicyDefaultsAndExplicitValuesConformToSharedACPContract
 	require.NoError(t, err)
 	compiler := jsonschema.NewCompiler()
 	compiler.AssertFormat()
-	identifier := "https://antnest.local/contracts/agent-acp/execution-snapshot.schema.json"
+	identifier := "https://schemas.antnest.dev/agent-acp/execution-snapshot.schema.json"
 	require.NoError(t, compiler.AddResource(identifier, document))
 	definition, err := compiler.Compile(identifier)
 	require.NoError(t, err)
@@ -134,7 +134,7 @@ func TestExecutionProviderObservationsConformToSharedACPContract(t *testing.T) {
 	require.NoError(t, err)
 	compiler := jsonschema.NewCompiler()
 	compiler.AssertFormat()
-	identifier := "https://antnest.local/contracts/agent-acp/execution-snapshot.schema.json"
+	identifier := "https://schemas.antnest.dev/agent-acp/execution-snapshot.schema.json"
 	require.NoError(t, compiler.AddResource(identifier, document))
 	definition, err := compiler.Compile(identifier)
 	require.NoError(t, err)

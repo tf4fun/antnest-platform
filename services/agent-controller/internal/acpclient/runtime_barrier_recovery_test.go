@@ -49,7 +49,7 @@ func assertRuntimeBarrierDefinition(t *testing.T, definition string, payload []b
 	compiler := jsonschema.NewCompiler()
 	compiler.DefaultDraft(jsonschema.Draft2020)
 	compiler.AssertFormat()
-	const identifier = "https://antnest.local/contracts/agent-acp/runtime-barrier-recovery.schema.json"
+	const identifier = "https://schemas.antnest.dev/agent-acp/runtime-barrier-recovery.schema.json"
 	require.NoError(t, compiler.AddResource(identifier, document))
 	// The document root is a result; request validation must select request.
 	schema, err := compiler.Compile(identifier + "#/$defs/" + definition)

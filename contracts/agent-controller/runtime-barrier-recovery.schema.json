@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://antnest.local/agent-controller/runtime-barrier-recovery.schema.json",
+  "$id": "https://schemas.antnest.dev/agent-controller/runtime-barrier-recovery.schema.json",
   "title": "Controller runtime barrier recovery management wire",
   "description": "Control revision 42 includes policy routes; revision 43 includes optional recovery projections, manual requests and v1 notifications. Wire conformance does not prove service authorization, persistence, delivery or recovery; remaining consumers require owning-service implementation.",
   "$ref": "#/$defs/policy",

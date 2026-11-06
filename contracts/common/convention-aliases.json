@@ -1,0 +1,1019 @@
+[
+  {
+    "file": "admin-console/admin-contract.json",
+    "pointer": "/response_policy/agent_network_policy/input/2",
+    "field": "expected_resource_version",
+    "replacement": "expected_version",
+    "kind": "pending_migration",
+    "reason": "admin-console owner migration tracked by issue #68; legacy wire shape remains until its service batch.",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "admin-console/admin-contract.json",
+    "pointer": "/routes/list_model_profiles/query/cursor_response",
+    "field": "next_after_id",
+    "replacement": "next_cursor",
+    "kind": "pending_migration",
+    "reason": "admin-console owner migration tracked by issue #68; legacy wire shape remains until its service batch.",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "admin-console/admin-contract.json",
+    "pointer": "/routes/list_model_profiles/query/optional/0",
+    "field": "after_id",
+    "replacement": "cursor",
+    "kind": "pending_migration",
+    "reason": "admin-console owner migration tracked by issue #68; legacy wire shape remains until its service batch.",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "admin-console/admin-contract.json",
+    "pointer": "/routes/list_organization_sessions/query/cursor_response",
+    "field": "next_after_id",
+    "replacement": "next_cursor",
+    "kind": "pending_migration",
+    "reason": "admin-console owner migration tracked by issue #68; legacy wire shape remains until its service batch.",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "admin-console/admin-contract.json",
+    "pointer": "/routes/list_organization_sessions/query/optional/0",
+    "field": "after_id",
+    "replacement": "cursor",
+    "kind": "pending_migration",
+    "reason": "admin-console owner migration tracked by issue #68; legacy wire shape remains until its service batch.",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "admin-console/admin-contract.json",
+    "pointer": "/routes/list_provider_connections/query/cursor_response",
+    "field": "next_after_id",
+    "replacement": "next_cursor",
+    "kind": "pending_migration",
+    "reason": "admin-console owner migration tracked by issue #68; legacy wire shape remains until its service batch.",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "admin-console/admin-contract.json",
+    "pointer": "/routes/list_provider_connections/query/optional/0",
+    "field": "after_id",
+    "replacement": "cursor",
+    "kind": "pending_migration",
+    "reason": "admin-console owner migration tracked by issue #68; legacy wire shape remains until its service batch.",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "admin-console/admin-contract.json",
+    "pointer": "/routes/list_skill_versions/query/cursor_response",
+    "field": "next_after_version",
+    "replacement": "next_cursor",
+    "kind": "pending_migration",
+    "reason": "admin-console owner migration tracked by issue #68; legacy wire shape remains until its service batch.",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "admin-console/admin-contract.json",
+    "pointer": "/routes/list_skill_versions/query/optional/0",
+    "field": "after_version",
+    "replacement": "cursor",
+    "kind": "pending_migration",
+    "reason": "admin-console owner migration tracked by issue #68; legacy wire shape remains until its service batch.",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "admin-console/admin-contract.json",
+    "pointer": "/routes/list_skills/query/cursor_response",
+    "field": "next_after_id",
+    "replacement": "next_cursor",
+    "kind": "pending_migration",
+    "reason": "admin-console owner migration tracked by issue #68; legacy wire shape remains until its service batch.",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "admin-console/admin-contract.json",
+    "pointer": "/routes/list_skills/query/optional/0",
+    "field": "after_id",
+    "replacement": "cursor",
+    "kind": "pending_migration",
+    "reason": "admin-console owner migration tracked by issue #68; legacy wire shape remains until its service batch.",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "admin-console/admin-contract.json",
+    "pointer": "/routes/list_templates/query/cursor_response",
+    "field": "next_after_id",
+    "replacement": "next_cursor",
+    "kind": "pending_migration",
+    "reason": "admin-console owner migration tracked by issue #68; legacy wire shape remains until its service batch.",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "admin-console/admin-contract.json",
+    "pointer": "/routes/list_templates/query/optional/0",
+    "field": "after_id",
+    "replacement": "cursor",
+    "kind": "pending_migration",
+    "reason": "admin-console owner migration tracked by issue #68; legacy wire shape remains until its service batch.",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "admin-console/model-call-policy.schema.json",
+    "pointer": "/$defs/set_model_call_policy_request/properties/expected_revision",
+    "field": "expected_revision",
+    "replacement": "expected_version",
+    "kind": "pending_migration",
+    "reason": "admin-console owner migration tracked by issue #68; legacy wire shape remains until its service batch.",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "admin-console/model-call-policy.schema.json",
+    "pointer": "/$defs/set_model_call_policy_request/required/0",
+    "field": "expected_revision",
+    "replacement": "expected_version",
+    "kind": "pending_migration",
+    "reason": "admin-console owner migration tracked by issue #68; legacy wire shape remains until its service batch.",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "admin-console/oidc-linking.schema.json",
+    "pointer": "/$defs/binding_list/properties/next_after_id",
+    "field": "next_after_id",
+    "replacement": "next_cursor",
+    "kind": "pending_migration",
+    "reason": "admin-console owner migration tracked by issue #68; legacy wire shape remains until its service batch.",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "admin-console/oidc-linking.schema.json",
+    "pointer": "/$defs/external_identity_organization_list/properties/next_after_id",
+    "field": "next_after_id",
+    "replacement": "next_cursor",
+    "kind": "pending_migration",
+    "reason": "admin-console owner migration tracked by issue #68; legacy wire shape remains until its service batch.",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "admin-console/oidc-linking.schema.json",
+    "pointer": "/$defs/list_query/properties/after_id",
+    "field": "after_id",
+    "replacement": "cursor",
+    "kind": "pending_migration",
+    "reason": "admin-console owner migration tracked by issue #68; legacy wire shape remains until its service batch.",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "admin-console/oidc-linking.schema.json",
+    "pointer": "/$defs/provider_list/properties/next_after_id",
+    "field": "next_after_id",
+    "replacement": "next_cursor",
+    "kind": "pending_migration",
+    "reason": "admin-console owner migration tracked by issue #68; legacy wire shape remains until its service batch.",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "admin-console/skill-discovery.schema.json",
+    "pointer": "/$defs/search_response",
+    "field": "$pagination",
+    "replacement": "bounded_items",
+    "kind": "protocol_exception",
+    "reason": "Finite bounded discovery/resolution result, not a continuation list.",
+    "remove_after": "protocol"
+  },
+  {
+    "file": "agent-acp/owner-incarnation-history.schema.json",
+    "pointer": "/$defs/request/properties/cursor",
+    "field": "$cursor",
+    "replacement": "ordered_feed_cursor",
+    "kind": "protocol_exception",
+    "reason": "Recovery history is an ordered, epoch-fenced feed with typed (occurred_at,history_id) keyset cursor, not an ordinary opaque page.",
+    "remove_after": "protocol"
+  },
+  {
+    "file": "agent-acp/owner-incarnation-history.schema.json",
+    "pointer": "/$defs/response/properties/next_cursor",
+    "field": "$cursor",
+    "replacement": "ordered_feed_cursor",
+    "kind": "protocol_exception",
+    "reason": "Recovery history is an ordered, epoch-fenced feed with typed (occurred_at,history_id) keyset cursor, not an ordinary opaque page.",
+    "remove_after": "protocol"
+  },
+  {
+    "file": "agent-acp/workspace-bridge.schema.json",
+    "pointer": "/$defs/promptIntent/properties/expectedAppendVersion",
+    "field": "expectedAppendVersion",
+    "replacement": "expectedAppendVersion",
+    "kind": "protocol_exception",
+    "reason": "ACP and Agent UI retain their specified camelCase protocol; the server adapter translates service calls.",
+    "remove_after": "protocol"
+  },
+  {
+    "file": "agent-acp/workspace-bridge.schema.json",
+    "pointer": "/$defs/promptIntent/required/1",
+    "field": "expectedAppendVersion",
+    "replacement": "expectedAppendVersion",
+    "kind": "protocol_exception",
+    "reason": "ACP and Agent UI retain their specified camelCase protocol; the server adapter translates service calls.",
+    "remove_after": "protocol"
+  },
+  {
+    "file": "agent-controller/control-api.schema.json",
+    "pointer": "/$defs/agent_template_list",
+    "field": "$pagination",
+    "replacement": "next_cursor",
+    "kind": "pending_migration",
+    "reason": "agent-controller owner migration tracked by issue #68; legacy wire shape remains until its service batch.",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "agent-controller/control-api.schema.json",
+    "pointer": "/$defs/agent_template_list/properties/next_after_id",
+    "field": "next_after_id",
+    "replacement": "next_cursor",
+    "kind": "pending_migration",
+    "reason": "agent-controller owner migration tracked by issue #68; legacy wire shape remains until its service batch.",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "agent-controller/control-api.schema.json",
+    "pointer": "/$defs/agent_template_list/required/1",
+    "field": "next_after_id",
+    "replacement": "next_cursor",
+    "kind": "pending_migration",
+    "reason": "agent-controller owner migration tracked by issue #68; legacy wire shape remains until its service batch.",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "agent-controller/control-api.schema.json",
+    "pointer": "/$defs/model_profile_event_list",
+    "field": "$pagination",
+    "replacement": "next_after_revision",
+    "kind": "protocol_exception",
+    "reason": "Model revision journal is an ordered revision feed, not an ordinary page.",
+    "remove_after": "protocol"
+  },
+  {
+    "file": "agent-controller/control-api.schema.json",
+    "pointer": "/$defs/model_profile_list",
+    "field": "$pagination",
+    "replacement": "next_cursor",
+    "kind": "pending_migration",
+    "reason": "agent-controller owner migration tracked by issue #68; legacy wire shape remains until its service batch.",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "agent-controller/control-api.schema.json",
+    "pointer": "/$defs/model_profile_list/properties/next_after_id",
+    "field": "next_after_id",
+    "replacement": "next_cursor",
+    "kind": "pending_migration",
+    "reason": "agent-controller owner migration tracked by issue #68; legacy wire shape remains until its service batch.",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "agent-controller/control-api.schema.json",
+    "pointer": "/$defs/model_profile_list/required/1",
+    "field": "next_after_id",
+    "replacement": "next_cursor",
+    "kind": "pending_migration",
+    "reason": "agent-controller owner migration tracked by issue #68; legacy wire shape remains until its service batch.",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "agent-controller/control-api.schema.json",
+    "pointer": "/$defs/provider_connection_list",
+    "field": "$pagination",
+    "replacement": "next_cursor",
+    "kind": "pending_migration",
+    "reason": "agent-controller owner migration tracked by issue #68; legacy wire shape remains until its service batch.",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "agent-controller/control-api.schema.json",
+    "pointer": "/$defs/provider_connection_list/properties/next_after_id",
+    "field": "next_after_id",
+    "replacement": "next_cursor",
+    "kind": "pending_migration",
+    "reason": "agent-controller owner migration tracked by issue #68; legacy wire shape remains until its service batch.",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "agent-controller/control-api.schema.json",
+    "pointer": "/$defs/set_agent_network_policy_request/properties/expected_resource_version",
+    "field": "expected_resource_version",
+    "replacement": "expected_version",
+    "kind": "pending_migration",
+    "reason": "agent-controller owner migration tracked by issue #68; legacy wire shape remains until its service batch.",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "agent-controller/control-api.schema.json",
+    "pointer": "/$defs/set_agent_network_policy_request/required/3",
+    "field": "expected_resource_version",
+    "replacement": "expected_version",
+    "kind": "pending_migration",
+    "reason": "agent-controller owner migration tracked by issue #68; legacy wire shape remains until its service batch.",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "agent-controller/control-api.schema.json",
+    "pointer": "/$defs/set_model_call_policy_request/properties/expected_revision",
+    "field": "expected_revision",
+    "replacement": "expected_version",
+    "kind": "pending_migration",
+    "reason": "agent-controller owner migration tracked by issue #68; legacy wire shape remains until its service batch.",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "agent-controller/control-api.schema.json",
+    "pointer": "/$defs/set_model_call_policy_request/required/3",
+    "field": "expected_revision",
+    "replacement": "expected_version",
+    "kind": "pending_migration",
+    "reason": "agent-controller owner migration tracked by issue #68; legacy wire shape remains until its service batch.",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "agent-controller/control-contract.json",
+    "pointer": "/resources/agent_templates/list/query/1",
+    "field": "after_id",
+    "replacement": "cursor",
+    "kind": "pending_migration",
+    "reason": "agent-controller owner migration tracked by issue #68; legacy wire shape remains until its service batch.",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "agent-controller/control-contract.json",
+    "pointer": "/resources/model_profiles/list/query/1",
+    "field": "after_id",
+    "replacement": "cursor",
+    "kind": "pending_migration",
+    "reason": "agent-controller owner migration tracked by issue #68; legacy wire shape remains until its service batch.",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "agent-controller/control-contract.json",
+    "pointer": "/resources/provider_connections/list/query/1",
+    "field": "after_id",
+    "replacement": "cursor",
+    "kind": "pending_migration",
+    "reason": "agent-controller owner migration tracked by issue #68; legacy wire shape remains until its service batch.",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "agent-controller/model-call-policy-fixtures.json",
+    "pointer": "/invalid/24/value/expected_revision",
+    "field": "expected_revision",
+    "replacement": "expected_version",
+    "kind": "pending_migration",
+    "reason": "agent-controller owner migration tracked by issue #68; legacy wire shape remains until its service batch.",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "agent-controller/model-call-policy-fixtures.json",
+    "pointer": "/invalid/25/value/expected_revision",
+    "field": "expected_revision",
+    "replacement": "expected_version",
+    "kind": "pending_migration",
+    "reason": "agent-controller owner migration tracked by issue #68; legacy wire shape remains until its service batch.",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "agent-controller/model-call-policy-fixtures.json",
+    "pointer": "/valid/9/value/expected_revision",
+    "field": "expected_revision",
+    "replacement": "expected_version",
+    "kind": "pending_migration",
+    "reason": "agent-controller owner migration tracked by issue #68; legacy wire shape remains until its service batch.",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "agent-controller/model-call-policy.schema.json",
+    "pointer": "/$defs/policy_update_request/properties/expected_revision",
+    "field": "expected_revision",
+    "replacement": "expected_version",
+    "kind": "pending_migration",
+    "reason": "agent-controller owner migration tracked by issue #68; legacy wire shape remains until its service batch.",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "agent-controller/model-call-policy.schema.json",
+    "pointer": "/$defs/policy_update_request/required/3",
+    "field": "expected_revision",
+    "replacement": "expected_version",
+    "kind": "pending_migration",
+    "reason": "agent-controller owner migration tracked by issue #68; legacy wire shape remains until its service batch.",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "agent-controller/runtime-barrier-recovery-fixtures.json",
+    "pointer": "/schema_vectors/10/value/expected_revision",
+    "field": "expected_revision",
+    "replacement": "expected_version",
+    "kind": "pending_migration",
+    "reason": "agent-controller owner migration tracked by issue #68; legacy wire shape remains until its service batch.",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "agent-controller/runtime-barrier-recovery-fixtures.json",
+    "pointer": "/schema_vectors/2/value/expected_revision",
+    "field": "expected_revision",
+    "replacement": "expected_version",
+    "kind": "pending_migration",
+    "reason": "agent-controller owner migration tracked by issue #68; legacy wire shape remains until its service batch.",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "agent-controller/runtime-barrier-recovery-fixtures.json",
+    "pointer": "/schema_vectors/4/value/expected_revision",
+    "field": "expected_revision",
+    "replacement": "expected_version",
+    "kind": "pending_migration",
+    "reason": "agent-controller owner migration tracked by issue #68; legacy wire shape remains until its service batch.",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "agent-controller/runtime-barrier-recovery-fixtures.json",
+    "pointer": "/schema_vectors/5/value/expected_revision",
+    "field": "expected_revision",
+    "replacement": "expected_version",
+    "kind": "pending_migration",
+    "reason": "agent-controller owner migration tracked by issue #68; legacy wire shape remains until its service batch.",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "agent-controller/runtime-barrier-recovery-fixtures.json",
+    "pointer": "/schema_vectors/6/value/expected_revision",
+    "field": "expected_revision",
+    "replacement": "expected_version",
+    "kind": "pending_migration",
+    "reason": "agent-controller owner migration tracked by issue #68; legacy wire shape remains until its service batch.",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "agent-controller/runtime-barrier-recovery-fixtures.json",
+    "pointer": "/schema_vectors/7/value/expected_revision",
+    "field": "expected_revision",
+    "replacement": "expected_version",
+    "kind": "pending_migration",
+    "reason": "agent-controller owner migration tracked by issue #68; legacy wire shape remains until its service batch.",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "agent-controller/runtime-barrier-recovery-fixtures.json",
+    "pointer": "/schema_vectors/9/value/expected_revision",
+    "field": "expected_revision",
+    "replacement": "expected_version",
+    "kind": "pending_migration",
+    "reason": "agent-controller owner migration tracked by issue #68; legacy wire shape remains until its service batch.",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "agent-controller/runtime-barrier-recovery.schema.json",
+    "pointer": "/$defs/policy_update_request/properties/expected_revision",
+    "field": "expected_revision",
+    "replacement": "expected_version",
+    "kind": "pending_migration",
+    "reason": "agent-controller owner migration tracked by issue #68; legacy wire shape remains until its service batch.",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "agent-controller/runtime-barrier-recovery.schema.json",
+    "pointer": "/$defs/policy_update_request/required/3",
+    "field": "expected_revision",
+    "replacement": "expected_version",
+    "kind": "pending_migration",
+    "reason": "agent-controller owner migration tracked by issue #68; legacy wire shape remains until its service batch.",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "agent-ui/workspace-api.json",
+    "pointer": "/prompt_admission_backoff/preserve/1",
+    "field": "expectedAppendVersion",
+    "replacement": "expectedAppendVersion",
+    "kind": "protocol_exception",
+    "reason": "ACP and Agent UI retain their specified camelCase protocol; the server adapter translates service calls.",
+    "remove_after": "protocol"
+  },
+  {
+    "file": "agent-ui/workspace-api.json",
+    "pointer": "/prompt_retry/preserve/1",
+    "field": "expectedAppendVersion",
+    "replacement": "expectedAppendVersion",
+    "kind": "protocol_exception",
+    "reason": "ACP and Agent UI retain their specified camelCase protocol; the server adapter translates service calls.",
+    "remove_after": "protocol"
+  },
+  {
+    "file": "agent-ui/workspace-api.schema.json",
+    "pointer": "/$defs/contentPage",
+    "field": "$pagination",
+    "replacement": "nextCursor",
+    "kind": "protocol_exception",
+    "reason": "ACP and Agent UI retain their specified camelCase protocol; the server adapter translates service calls.",
+    "remove_after": "protocol"
+  },
+  {
+    "file": "agent-ui/workspace-api.schema.json",
+    "pointer": "/$defs/contentPage/properties/nextCursor",
+    "field": "nextCursor",
+    "replacement": "nextCursor",
+    "kind": "protocol_exception",
+    "reason": "ACP and Agent UI retain their specified camelCase protocol; the server adapter translates service calls.",
+    "remove_after": "protocol"
+  },
+  {
+    "file": "agent-ui/workspace-api.schema.json",
+    "pointer": "/$defs/contentPage/required/2",
+    "field": "nextCursor",
+    "replacement": "nextCursor",
+    "kind": "protocol_exception",
+    "reason": "ACP and Agent UI retain their specified camelCase protocol; the server adapter translates service calls.",
+    "remove_after": "protocol"
+  },
+  {
+    "file": "agent-ui/workspace-api.schema.json",
+    "pointer": "/$defs/processContentPage",
+    "field": "$pagination",
+    "replacement": "nextCursor",
+    "kind": "protocol_exception",
+    "reason": "ACP and Agent UI retain their specified camelCase protocol; the server adapter translates service calls.",
+    "remove_after": "protocol"
+  },
+  {
+    "file": "agent-ui/workspace-api.schema.json",
+    "pointer": "/$defs/processContentPage/properties/nextCursor",
+    "field": "nextCursor",
+    "replacement": "nextCursor",
+    "kind": "protocol_exception",
+    "reason": "ACP and Agent UI retain their specified camelCase protocol; the server adapter translates service calls.",
+    "remove_after": "protocol"
+  },
+  {
+    "file": "agent-ui/workspace-api.schema.json",
+    "pointer": "/$defs/processContentPage/required/3",
+    "field": "nextCursor",
+    "replacement": "nextCursor",
+    "kind": "protocol_exception",
+    "reason": "ACP and Agent UI retain their specified camelCase protocol; the server adapter translates service calls.",
+    "remove_after": "protocol"
+  },
+  {
+    "file": "agent-ui/workspace-api.schema.json",
+    "pointer": "/$defs/processPage",
+    "field": "$pagination",
+    "replacement": "nextCursor",
+    "kind": "protocol_exception",
+    "reason": "ACP and Agent UI retain their specified camelCase protocol; the server adapter translates service calls.",
+    "remove_after": "protocol"
+  },
+  {
+    "file": "agent-ui/workspace-api.schema.json",
+    "pointer": "/$defs/processPage/properties/nextCursor",
+    "field": "nextCursor",
+    "replacement": "nextCursor",
+    "kind": "protocol_exception",
+    "reason": "ACP and Agent UI retain their specified camelCase protocol; the server adapter translates service calls.",
+    "remove_after": "protocol"
+  },
+  {
+    "file": "agent-ui/workspace-api.schema.json",
+    "pointer": "/$defs/processPage/required/3",
+    "field": "nextCursor",
+    "replacement": "nextCursor",
+    "kind": "protocol_exception",
+    "reason": "ACP and Agent UI retain their specified camelCase protocol; the server adapter translates service calls.",
+    "remove_after": "protocol"
+  },
+  {
+    "file": "agent-ui/workspace-api.schema.json",
+    "pointer": "/$defs/promptRequest/properties/expectedAppendVersion",
+    "field": "expectedAppendVersion",
+    "replacement": "expectedAppendVersion",
+    "kind": "protocol_exception",
+    "reason": "ACP and Agent UI retain their specified camelCase protocol; the server adapter translates service calls.",
+    "remove_after": "protocol"
+  },
+  {
+    "file": "agent-ui/workspace-api.schema.json",
+    "pointer": "/$defs/promptRequest/required/1",
+    "field": "expectedAppendVersion",
+    "replacement": "expectedAppendVersion",
+    "kind": "protocol_exception",
+    "reason": "ACP and Agent UI retain their specified camelCase protocol; the server adapter translates service calls.",
+    "remove_after": "protocol"
+  },
+  {
+    "file": "agent-ui/workspace-api.schema.json",
+    "pointer": "/$defs/sessionPage",
+    "field": "$pagination",
+    "replacement": "nextCursor",
+    "kind": "protocol_exception",
+    "reason": "ACP and Agent UI retain their specified camelCase protocol; the server adapter translates service calls.",
+    "remove_after": "protocol"
+  },
+  {
+    "file": "agent-ui/workspace-api.schema.json",
+    "pointer": "/$defs/sessionPage/properties/nextCursor",
+    "field": "nextCursor",
+    "replacement": "nextCursor",
+    "kind": "protocol_exception",
+    "reason": "ACP and Agent UI retain their specified camelCase protocol; the server adapter translates service calls.",
+    "remove_after": "protocol"
+  },
+  {
+    "file": "agent-ui/workspace-api.schema.json",
+    "pointer": "/$defs/sessionPage/required/1",
+    "field": "nextCursor",
+    "replacement": "nextCursor",
+    "kind": "protocol_exception",
+    "reason": "ACP and Agent UI retain their specified camelCase protocol; the server adapter translates service calls.",
+    "remove_after": "protocol"
+  },
+  {
+    "file": "agent-ui/workspace-api.schema.json",
+    "pointer": "/$defs/turn/properties/liveProcessDelta",
+    "field": "$pagination",
+    "replacement": "processVersion",
+    "kind": "protocol_exception",
+    "reason": "Bounded process delta stream, not a continuation page.",
+    "remove_after": "protocol"
+  },
+  {
+    "file": "agent-ui/workspace-api.schema.json",
+    "pointer": "/$defs/turnPage",
+    "field": "$pagination",
+    "replacement": "nextCursor",
+    "kind": "protocol_exception",
+    "reason": "ACP and Agent UI retain their specified camelCase protocol; the server adapter translates service calls.",
+    "remove_after": "protocol"
+  },
+  {
+    "file": "agent-ui/workspace-api.schema.json",
+    "pointer": "/$defs/turnPage/properties/nextCursor",
+    "field": "nextCursor",
+    "replacement": "nextCursor",
+    "kind": "protocol_exception",
+    "reason": "ACP and Agent UI retain their specified camelCase protocol; the server adapter translates service calls.",
+    "remove_after": "protocol"
+  },
+  {
+    "file": "agent-ui/workspace-api.schema.json",
+    "pointer": "/$defs/turnPage/required/1",
+    "field": "nextCursor",
+    "replacement": "nextCursor",
+    "kind": "protocol_exception",
+    "reason": "ACP and Agent UI retain their specified camelCase protocol; the server adapter translates service calls.",
+    "remove_after": "protocol"
+  },
+  {
+    "file": "edge-gateway/session-response.schema.json",
+    "pointer": "/$defs/external_identity_list/properties/next_after_id",
+    "field": "next_after_id",
+    "replacement": "next_cursor",
+    "kind": "pending_migration",
+    "reason": "edge-gateway owner migration tracked by issue #68; legacy wire shape remains until its service batch.",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "edge-gateway/session-response.schema.json",
+    "pointer": "/$defs/external_identity_list_query/properties/after_id",
+    "field": "after_id",
+    "replacement": "cursor",
+    "kind": "pending_migration",
+    "reason": "edge-gateway owner migration tracked by issue #68; legacy wire shape remains until its service batch.",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "edge-gateway/session-response.schema.json",
+    "pointer": "/$defs/external_identity_organization_list/properties/next_after_id",
+    "field": "next_after_id",
+    "replacement": "next_cursor",
+    "kind": "pending_migration",
+    "reason": "edge-gateway owner migration tracked by issue #68; legacy wire shape remains until its service batch.",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "edge-gateway/session-response.schema.json",
+    "pointer": "/$defs/external_identity_self_list/properties/next_after_id",
+    "field": "next_after_id",
+    "replacement": "next_cursor",
+    "kind": "pending_migration",
+    "reason": "edge-gateway owner migration tracked by issue #68; legacy wire shape remains until its service batch.",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "edge-gateway/session-response.schema.json",
+    "pointer": "/$defs/list_sessions_query/properties/after_id",
+    "field": "after_id",
+    "replacement": "cursor",
+    "kind": "pending_migration",
+    "reason": "edge-gateway owner migration tracked by issue #68; legacy wire shape remains until its service batch.",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "edge-gateway/session-response.schema.json",
+    "pointer": "/$defs/session_list/properties/next_after_id",
+    "field": "next_after_id",
+    "replacement": "next_cursor",
+    "kind": "pending_migration",
+    "reason": "edge-gateway owner migration tracked by issue #68; legacy wire shape remains until its service batch.",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "egress/attachment-state-request.schema.json",
+    "pointer": "/properties/expected_resource_version",
+    "field": "expected_resource_version",
+    "replacement": "expected_version",
+    "kind": "pending_migration",
+    "reason": "egress owner migration tracked by issue #68; legacy wire shape remains until its service batch.",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "egress/attachment-state-request.schema.json",
+    "pointer": "/required/1",
+    "field": "expected_resource_version",
+    "replacement": "expected_version",
+    "kind": "pending_migration",
+    "reason": "egress owner migration tracked by issue #68; legacy wire shape remains until its service batch.",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "egress/resource-version-request.schema.json",
+    "pointer": "/properties/expected_resource_version",
+    "field": "expected_resource_version",
+    "replacement": "expected_version",
+    "kind": "pending_migration",
+    "reason": "egress owner migration tracked by issue #68; legacy wire shape remains until its service batch.",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "egress/resource-version-request.schema.json",
+    "pointer": "/required/0",
+    "field": "expected_resource_version",
+    "replacement": "expected_version",
+    "kind": "pending_migration",
+    "reason": "egress owner migration tracked by issue #68; legacy wire shape remains until its service batch.",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "identity/identity-contract.json",
+    "pointer": "/definitions/external_identity_organization_list/properties/next_after_id",
+    "field": "next_after_id",
+    "replacement": "next_cursor",
+    "kind": "pending_migration",
+    "reason": "identity owner migration tracked by issue #68; legacy wire shape remains until its service batch.",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "identity/identity-contract.json",
+    "pointer": "/definitions/external_identity_self_list/properties/next_after_id",
+    "field": "next_after_id",
+    "replacement": "next_cursor",
+    "kind": "pending_migration",
+    "reason": "identity owner migration tracked by issue #68; legacy wire shape remains until its service batch.",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "identity/identity-contract.json",
+    "pointer": "/methods/list_external_identities/request/properties/after_id",
+    "field": "after_id",
+    "replacement": "cursor",
+    "kind": "pending_migration",
+    "reason": "identity owner migration tracked by issue #68; legacy wire shape remains until its service batch.",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "identity/identity-contract.json",
+    "pointer": "/methods/list_external_identity_providers/request/properties/after_id",
+    "field": "after_id",
+    "replacement": "cursor",
+    "kind": "pending_migration",
+    "reason": "identity owner migration tracked by issue #68; legacy wire shape remains until its service batch.",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "identity/identity-contract.json",
+    "pointer": "/methods/list_external_identity_providers/response/properties/next_after_id",
+    "field": "next_after_id",
+    "replacement": "next_cursor",
+    "kind": "pending_migration",
+    "reason": "identity owner migration tracked by issue #68; legacy wire shape remains until its service batch.",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "identity/identity-contract.json",
+    "pointer": "/methods/list_user_sessions/request/properties/after_id",
+    "field": "after_id",
+    "replacement": "cursor",
+    "kind": "pending_migration",
+    "reason": "identity owner migration tracked by issue #68; legacy wire shape remains until its service batch.",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "identity/identity-contract.json",
+    "pointer": "/methods/list_user_sessions/response/properties/next_after_id",
+    "field": "next_after_id",
+    "replacement": "next_cursor",
+    "kind": "pending_migration",
+    "reason": "identity owner migration tracked by issue #68; legacy wire shape remains until its service batch.",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "runtime-controller/control-api.schema.json",
+    "pointer": "/$defs/revision_configuration_request/properties/expected_revision",
+    "field": "expected_revision",
+    "replacement": "expected_version",
+    "kind": "pending_migration",
+    "reason": "runtime-controller owner migration tracked by issue #68; legacy wire shape remains until its service batch.",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "runtime-controller/control-api.schema.json",
+    "pointer": "/$defs/revision_configuration_request/required/0",
+    "field": "expected_revision",
+    "replacement": "expected_version",
+    "kind": "pending_migration",
+    "reason": "runtime-controller owner migration tracked by issue #68; legacy wire shape remains until its service batch.",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "runtime-controller/control-api.schema.json",
+    "pointer": "/$defs/revision_request/properties/expected_revision",
+    "field": "expected_revision",
+    "replacement": "expected_version",
+    "kind": "pending_migration",
+    "reason": "runtime-controller owner migration tracked by issue #68; legacy wire shape remains until its service batch.",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "runtime-controller/control-api.schema.json",
+    "pointer": "/$defs/revision_request/required/0",
+    "field": "expected_revision",
+    "replacement": "expected_version",
+    "kind": "pending_migration",
+    "reason": "runtime-controller owner migration tracked by issue #68; legacy wire shape remains until its service batch.",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "skill-learning/learning-api.schema.json",
+    "pointer": "/$defs/change_page",
+    "field": "$pagination",
+    "replacement": "next_cursor",
+    "kind": "pending_migration",
+    "reason": "skill-learning owner migration tracked by issue #68; legacy wire shape remains until its service batch.",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "skill-learning/learning-api.schema.json",
+    "pointer": "/$defs/change_page/properties/nextCursor",
+    "field": "nextCursor",
+    "replacement": "next_cursor",
+    "kind": "pending_migration",
+    "reason": "skill-learning owner migration tracked by issue #68; legacy wire shape remains until its service batch.",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "skill-learning/learning-api.schema.json",
+    "pointer": "/$defs/change_page/properties/olderCursor",
+    "field": "olderCursor",
+    "replacement": "older_cursor",
+    "kind": "pending_migration",
+    "reason": "skill-learning owner migration tracked by issue #68; legacy wire shape remains until its service batch.",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "skill-learning/learning-api.schema.json",
+    "pointer": "/$defs/change_page/properties/sealedCursor",
+    "field": "sealedCursor",
+    "replacement": "sealed_cursor",
+    "kind": "pending_migration",
+    "reason": "skill-learning owner migration tracked by issue #68; legacy wire shape remains until its service batch.",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "skill-learning/learning-api.schema.json",
+    "pointer": "/$defs/change_page/required/1",
+    "field": "nextCursor",
+    "replacement": "next_cursor",
+    "kind": "pending_migration",
+    "reason": "skill-learning owner migration tracked by issue #68; legacy wire shape remains until its service batch.",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "skill-learning/learning-api.schema.json",
+    "pointer": "/$defs/change_page/required/2",
+    "field": "olderCursor",
+    "replacement": "older_cursor",
+    "kind": "pending_migration",
+    "reason": "skill-learning owner migration tracked by issue #68; legacy wire shape remains until its service batch.",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "skill-learning/learning-api.schema.json",
+    "pointer": "/$defs/change_page/required/3",
+    "field": "sealedCursor",
+    "replacement": "sealed_cursor",
+    "kind": "pending_migration",
+    "reason": "skill-learning owner migration tracked by issue #68; legacy wire shape remains until its service batch.",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "skill-learning/learning-api.schema.json",
+    "pointer": "/$defs/policy_mutation_request/properties/expected_revision",
+    "field": "expected_revision",
+    "replacement": "expected_version",
+    "kind": "pending_migration",
+    "reason": "skill-learning owner migration tracked by issue #68; legacy wire shape remains until its service batch.",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "skill-learning/learning-api.schema.json",
+    "pointer": "/$defs/policy_mutation_request/required/3",
+    "field": "expected_revision",
+    "replacement": "expected_version",
+    "kind": "pending_migration",
+    "reason": "skill-learning owner migration tracked by issue #68; legacy wire shape remains until its service batch.",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "skill-registry/discovery-api.schema.json",
+    "pointer": "/$defs/inspect_response",
+    "field": "$pagination",
+    "replacement": "bounded_items",
+    "kind": "protocol_exception",
+    "reason": "Finite bounded discovery/resolution result, not a continuation list.",
+    "remove_after": "protocol"
+  },
+  {
+    "file": "skill-registry/discovery-api.schema.json",
+    "pointer": "/$defs/search_response",
+    "field": "$pagination",
+    "replacement": "bounded_items",
+    "kind": "protocol_exception",
+    "reason": "Finite bounded discovery/resolution result, not a continuation list.",
+    "remove_after": "protocol"
+  },
+  {
+    "file": "skill-registry/registry-api.schema.json",
+    "pointer": "/$defs/resolve_response",
+    "field": "$pagination",
+    "replacement": "bounded_items",
+    "kind": "protocol_exception",
+    "reason": "Finite bounded discovery/resolution result, not a continuation list.",
+    "remove_after": "protocol"
+  },
+  {
+    "file": "skill-registry/registry-api.schema.json",
+    "pointer": "/$defs/skill_page",
+    "field": "$pagination",
+    "replacement": "next_cursor",
+    "kind": "pending_migration",
+    "reason": "skill-registry owner migration tracked by issue #68; legacy wire shape remains until its service batch.",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "skill-registry/registry-api.schema.json",
+    "pointer": "/$defs/skill_page/properties/next_after_id",
+    "field": "next_after_id",
+    "replacement": "next_cursor",
+    "kind": "pending_migration",
+    "reason": "skill-registry owner migration tracked by issue #68; legacy wire shape remains until its service batch.",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "skill-registry/registry-api.schema.json",
+    "pointer": "/$defs/skill_page/required/1",
+    "field": "next_after_id",
+    "replacement": "next_cursor",
+    "kind": "pending_migration",
+    "reason": "skill-registry owner migration tracked by issue #68; legacy wire shape remains until its service batch.",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "skill-registry/registry-api.schema.json",
+    "pointer": "/$defs/version_page",
+    "field": "$pagination",
+    "replacement": "next_cursor",
+    "kind": "pending_migration",
+    "reason": "skill-registry owner migration tracked by issue #68; legacy wire shape remains until its service batch.",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "skill-registry/registry-api.schema.json",
+    "pointer": "/$defs/version_page/properties/next_after_version",
+    "field": "next_after_version",
+    "replacement": "next_cursor",
+    "kind": "pending_migration",
+    "reason": "skill-registry owner migration tracked by issue #68; legacy wire shape remains until its service batch.",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "skill-registry/registry-api.schema.json",
+    "pointer": "/$defs/version_page/required/1",
+    "field": "next_after_version",
+    "replacement": "next_cursor",
+    "kind": "pending_migration",
+    "reason": "skill-registry owner migration tracked by issue #68; legacy wire shape remains until its service batch.",
+    "remove_after": "next_release"
+  }
+]

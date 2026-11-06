@@ -2,6 +2,11 @@
   "contract": "antnest.admin-console.bff",
   "version": 60,
   "scim_lifecycle_policy": "../identity/scim-lifecycle-policy.json",
+  "conventions": {
+    "pagination": "../common/pagination.schema.json",
+    "precondition": "../common/precondition.schema.json",
+    "idempotency": "../common/idempotency.schema.json"
+  },
   "base_path": "/api/admin",
   "authentication_contract": "service-authentication.md",
   "authenticated_actor": "identity_signed_cct_verified_by_console",

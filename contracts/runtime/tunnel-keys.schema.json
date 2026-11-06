@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://antnest.local/contracts/runtime/tunnel-keys.schema.json",
+  "$id": "https://schemas.antnest.dev/runtime/tunnel-keys.schema.json",
   "title": "Private Runtime tunnel keys, revision 1",
   "type": "object",
   "additionalProperties": false,

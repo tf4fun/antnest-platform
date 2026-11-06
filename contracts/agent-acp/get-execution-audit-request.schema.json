@@ -12,7 +12,7 @@
     "run_id"
   ],
   "additionalProperties": false,
-  "$id": "https://antnest.local/contracts/agent-acp/get-execution-audit-request.schema.json",
+  "$id": "https://schemas.antnest.dev/agent-acp/get-execution-audit-request.schema.json",
   "title": "Administrative audit detail request",
   "description": "Selects one Run within the verified administrator organization."
 }

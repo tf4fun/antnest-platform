@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://antnest.local/contracts/identity/scim-lifecycle.schema.json",
+  "$id": "https://schemas.antnest.dev/identity/scim-lifecycle.schema.json",
   "title": "SCIM lifecycle extension fields and server resource versions",
   "description": "Planned extension-field projections, not complete RPC request or response schemas. Owning catalogs activate them with their service implementations.",
   "$defs": {

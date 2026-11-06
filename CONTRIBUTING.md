@@ -41,7 +41,8 @@ npm --prefix services/agent-ui/web ci
   component each, with its own `README.md`, `docs/architecture.md`, unit tests
   and `Dockerfile`.
 - `contracts/`: language-neutral contracts between services. A service never
-  imports another service's code.
+  imports another service's code. Shared field and protocol conventions are
+  documented in [contracts/CONVENTIONS.md](contracts/CONVENTIONS.md).
 - `docs/`: cross-service architecture, deployment and operations.
 - `tests/integration/`, `tests/e2e/`, `tests/support/`: cross-service
   integration tests, deployed acceptance tests and shared test tooling. See

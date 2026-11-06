@@ -11,6 +11,11 @@
   "schemas": {
     "messages": "control-api.schema.json"
   },
+  "conventions": {
+    "pagination": "../common/pagination.schema.json",
+    "precondition": "../common/precondition.schema.json",
+    "idempotency": "../common/idempotency.schema.json"
+  },
   "status": {
     "method": "GET",
     "path": "/status",

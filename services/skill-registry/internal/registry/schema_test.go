@@ -13,7 +13,7 @@ import (
 )
 
 func TestHTTPResponsesMatchRegistryContract(t *testing.T) {
-	const schemaID = "https://antnest.local/contracts/skill-registry/registry-api.schema.json"
+	const schemaID = "https://schemas.antnest.dev/skill-registry/registry-api.schema.json"
 	data, err := os.ReadFile("../../../../contracts/skill-registry/registry-api.schema.json")
 	if err != nil {
 		t.Fatal(err)
@@ -31,7 +31,7 @@ func TestHTTPResponsesMatchRegistryContract(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := compiler.AddResource("https://antnest.local/contracts/common/error.schema.json", commonDoc); err != nil {
+	if err := compiler.AddResource("https://schemas.antnest.dev/common/error.schema.json", commonDoc); err != nil {
 		t.Fatal(err)
 	}
 	if err := compiler.AddResource(schemaID, document); err != nil {

@@ -35,18 +35,28 @@
       ]
     },
     "limit": {
+      "allOf": [
+        {
+          "$ref": "../common/pagination.schema.json#/$defs/limit"
+        }
+      ],
       "default": 50,
       "type": "integer",
       "minimum": 1,
       "maximum": 100
     },
     "cursor": {
+      "allOf": [
+        {
+          "$ref": "../common/pagination.schema.json#/$defs/cursor"
+        }
+      ],
       "type": "string",
       "minLength": 1
     }
   },
   "additionalProperties": false,
-  "$id": "https://antnest.local/contracts/agent-acp/list-execution-audits-request.schema.json",
+  "$id": "https://schemas.antnest.dev/agent-acp/list-execution-audits-request.schema.json",
   "title": "Administrative audit list request",
   "description": "Organization and role derive from verified Identity-signed caller context and Console workload, never from this body."
 }

@@ -19,7 +19,16 @@ function validator(name: string) {
   );
   if (typeof schema !== "object" || schema === null || Array.isArray(schema))
     throw new Error("Invalid schema");
-  return new Ajv2020({ strict: true, validateFormats: false }).compile(schema);
+  const ajv = new Ajv2020({ strict: true, validateFormats: false });
+  ajv.addSchema(
+    JSON.parse(
+      readFileSync(
+        new URL("../../../../contracts/common/pagination.schema.json", import.meta.url),
+        "utf8",
+      ),
+    ) as object,
+  );
+  return ajv.compile(schema);
 }
 
 describe("administrative audit shared contract", () => {

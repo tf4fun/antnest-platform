@@ -81,7 +81,7 @@ function proposalValidators() {
   const ajv = new Ajv2020({ strict: false, allErrors: true });
   ajv.addFormat("date-time", { type: "string", validate: utcTimestamp });
   const $id =
-    "https://antnest.local/agent-controller/live-model-semantics-proposal.schema.json";
+    "https://schemas.antnest.dev/agent-controller/live-model-semantics-proposal.schema.json";
   ajv.addSchema({
     $id,
     $defs: {
@@ -117,6 +117,7 @@ function controlApiValidators() {
     new URL("../runtime/managed-mcp.schema.json", schema.$id).href,
   );
   ajv.addSchema(read("agent-controller/runtime-barrier-recovery.schema.json"));
+  ajv.addSchema(read("common/pagination.schema.json"));
   ajv.addSchema(schema);
   return {
     agent: ajv.compile({ $ref: `${schema.$id}#/$defs/agent` }),

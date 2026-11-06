@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://antnest.local/contracts/skill-registry/runtime-delivery.schema.json",
+  "$id": "https://schemas.antnest.dev/skill-registry/runtime-delivery.schema.json",
   "$defs": {
     "digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
     "frozen_skill": {

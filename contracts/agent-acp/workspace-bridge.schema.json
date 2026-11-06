@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://antnest.dev/contracts/agent-acp/workspace-bridge.schema.json",
+  "$id": "https://schemas.antnest.dev/agent-acp/workspace-bridge.schema.json",
   "title": "Proposed ACP workspace Bridge extension values",
   "$defs": {
     "id": { "type": "string", "minLength": 1, "maxLength": 200 },

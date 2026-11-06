@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://antnest.dev/contracts/agent-acp/owner-incarnation-history.schema.json",
+  "$id": "https://schemas.antnest.dev/agent-acp/owner-incarnation-history.schema.json",
   "title": "Private ACP member registration history",
   "$comment": "Canonical decimal grammar only; producer and consumer additionally enforce signed-bigint range, contiguous pages, exact identity/cursor echoes and completion. History is neither stop proof nor an activation barrier.",
   "$defs": {
@@ -43,7 +43,7 @@
       },
       "allOf": [
         {
-          "$ref": "https://antnest.dev/contracts/agent-acp/owner-incarnation.schema.json#/$defs/registration"
+          "$ref": "https://schemas.antnest.dev/agent-acp/owner-incarnation.schema.json#/$defs/registration"
         }
       ]
     },
@@ -140,7 +140,7 @@
       }
     },
     "error": {
-      "$ref": "https://antnest.dev/contracts/agent-acp/owner-incarnation.schema.json#/$defs/error"
+      "$ref": "https://schemas.antnest.dev/agent-acp/owner-incarnation.schema.json#/$defs/error"
     }
   }
 }

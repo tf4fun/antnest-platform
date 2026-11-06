@@ -62,7 +62,7 @@ func TestNetworkPolicyHandlerUsesScopedWireContract(t *testing.T) {
 		if err := json.Unmarshal(response.Body.Bytes(), &value); err != nil {
 			t.Fatal(err)
 		}
-		schema, err := compiler.Compile("https://antnest.local/agent-controller/control-api.schema.json#/$defs/" + scenario.schema)
+		schema, err := compiler.Compile("https://schemas.antnest.dev/agent-controller/control-api.schema.json#/$defs/" + scenario.schema)
 		if err != nil {
 			t.Fatal(err)
 		}

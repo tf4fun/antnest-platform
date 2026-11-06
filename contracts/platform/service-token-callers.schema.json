@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://antnest.local/contracts/platform/service-token-callers.schema.json",
+  "$id": "https://schemas.antnest.dev/platform/service-token-callers.schema.json",
   "title": "Token-mode receiver caller hashes",
   "$comment": "Also reject duplicate decoded JSON member names, hashes shared across callers, and the receiver's own identity unless its route catalog explicitly grants it. These checks require more than JSON Schema.",
   "type": "object",

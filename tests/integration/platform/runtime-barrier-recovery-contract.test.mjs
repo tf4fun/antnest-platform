@@ -8,7 +8,7 @@ const require = createRequire(
 );
 const { Ajv2020 } = require("ajv/dist/2020.js");
 const schemaID =
-  "https://antnest.local/contracts/agent-acp/runtime-barrier-recovery.schema.json";
+  "https://schemas.antnest.dev/agent-acp/runtime-barrier-recovery.schema.json";
 const schemaURL = new URL(
   "../../../contracts/agent-acp/runtime-barrier-recovery.schema.json",
   import.meta.url,

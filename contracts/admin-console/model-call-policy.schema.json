@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://antnest.local/contracts/admin-console/model-call-policy.schema.json",
+  "$id": "https://schemas.antnest.dev/admin-console/model-call-policy.schema.json",
   "title": "Console model call policy",
   "description": "Browser wire for the organization model-call budget and the optional Template model policy. The signed caller context is the only authority; expected_principal is a stale-account precondition, never authorization.",
   "$defs": {

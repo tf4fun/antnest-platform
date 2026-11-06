@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://antnest.dev/contracts/agent-acp/permission-resolution.schema.json",
+  "$id": "https://schemas.antnest.dev/agent-acp/permission-resolution.schema.json",
   "title": "ACP permission resolution notice payload",
   "description": "Versioned correlation payload published in a live permission resolution notice; it identifies the resolved request and is neither an approval nor a tool completion.",
   "type": "object",

@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://antnest.dev/contracts/admin-console/oidc-linking.schema.json",
+  "$id": "https://schemas.antnest.dev/admin-console/oidc-linking.schema.json",
   "title": "Admin Console external identity binding requests and responses, revision 52",
   "$defs": {
     "id": {

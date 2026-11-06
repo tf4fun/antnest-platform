@@ -135,9 +135,26 @@ for (const contract of contracts) {
     target: "draft-2020-12",
     io: contract.name.endsWith("-request") ? "input" : "output",
   });
-  schema.$id = `https://antnest.local/contracts/agent-acp/${contract.name}.schema.json`;
+  schema.$id = `https://schemas.antnest.dev/agent-acp/${contract.name}.schema.json`;
   schema.title = contract.title;
   schema.description = contract.description;
+  const withSharedPagination = (properties, field, fragment) => {
+    properties[field] = {
+      allOf: [{ $ref: `../common/pagination.schema.json#/$defs/${fragment}` }],
+      ...properties[field],
+    };
+  };
+  if (contract.name === "list-execution-audits-request") {
+    withSharedPagination(schema.properties, "cursor", "cursor");
+    withSharedPagination(schema.properties, "limit", "limit");
+  }
+  if (contract.name === "execution-audit-list")
+    withSharedPagination(schema.properties, "next_cursor", "nullable_cursor");
+  if (contract.name === "execution-audit-events")
+    for (const branch of schema.oneOf)
+      withSharedPagination(branch.properties, "next_cursor", "nullable_cursor");
+  if (contract.name === "list-execution-events-request")
+    withSharedPagination(schema.properties, "cursor", "cursor");
   if (contract.name === "execution-snapshot") {
     schema.$defs = { ...schema.$defs, provider_token_limits: inlineProviderLimits(providerLimits) };
     schema.properties.models.items.properties.provider_token_limits = {

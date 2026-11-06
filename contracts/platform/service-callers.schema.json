@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://antnest.local/contracts/platform/service-callers.schema.json",
+  "$id": "https://schemas.antnest.dev/platform/service-callers.schema.json",
   "title": "Per-route caller policy",
   "type": "object",
   "additionalProperties": false,

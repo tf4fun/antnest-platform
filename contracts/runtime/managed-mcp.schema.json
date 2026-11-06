@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://antnest.local/contracts/runtime/managed-mcp.schema.json",
+  "$id": "https://schemas.antnest.dev/runtime/managed-mcp.schema.json",
   "title": "Managed MCP write and read boundary",
   "$defs": {
     "secret_write": {

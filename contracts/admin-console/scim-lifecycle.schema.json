@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://antnest.local/contracts/admin-console/scim-lifecycle.schema.json",
+  "$id": "https://schemas.antnest.dev/admin-console/scim-lifecycle.schema.json",
   "title": "Console 54 SCIM issuance and public token inventory",
   "$defs": {
     "id": { "$ref": "../identity/scim-lifecycle.schema.json#/$defs/id" },

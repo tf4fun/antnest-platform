@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://antnest.local/contracts/skill-registry/registry-api.schema.json",
+  "$id": "https://schemas.antnest.dev/skill-registry/registry-api.schema.json",
   "title": "Skill Registry internal API v1 JSON payloads",
   "$defs": {
     "organization_id": {
@@ -255,7 +255,7 @@
       }
     },
     "error": {
-      "$ref": "https://antnest.local/contracts/common/error.schema.json",
+      "$ref": "https://schemas.antnest.dev/common/error.schema.json",
       "type": "object",
       "additionalProperties": false,
       "required": ["code", "category", "message", "retryable", "request_id", "error"],
@@ -270,7 +270,7 @@
         "request_id": {"type": "string", "pattern": "^[A-Za-z0-9._:-]{1,128}$"},
         "details": {"type": "object"},
         "error": {
-          "$ref": "https://antnest.local/contracts/common/error.schema.json",
+          "$ref": "https://schemas.antnest.dev/common/error.schema.json",
           "type": "object",
           "additionalProperties": false,
           "required": ["code", "category", "message", "retryable", "request_id"],

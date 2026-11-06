@@ -20,7 +20,7 @@ for (const path of [
   );
 }
 const id =
-  "https://antnest.local/contracts/admin-console/skill-discovery.schema.json";
+  "https://schemas.antnest.dev/admin-console/skill-discovery.schema.json";
 const accepts = (type, value) => ajv.getSchema(`${id}#/$defs/${type}`)(value);
 const ref = {
   kind: "agent",

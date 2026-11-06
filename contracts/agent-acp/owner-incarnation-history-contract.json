@@ -50,6 +50,11 @@
     "last_cursor": null,
     "retry": "same cursor returns the same original registration identities; stop inspection is separate"
   },
+  "conventions": {
+    "pagination": "../common/pagination.schema.json",
+    "precondition": "../common/precondition.schema.json",
+    "idempotency": "../common/idempotency.schema.json"
+  },
   "authority": {
     "history_is_stop_proof": false,
     "history_is_admission_barrier": false,

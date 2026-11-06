@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://antnest.local/contracts/skill-learning/learning-api.schema.json",
+  "$id": "https://schemas.antnest.dev/skill-learning/learning-api.schema.json",
   "title": "Skill learning L0 shared values",
   "$defs": {
     "learning_status": {

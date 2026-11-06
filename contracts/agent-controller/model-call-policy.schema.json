@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://antnest.local/contracts/agent-controller/model-call-policy.schema.json",
+  "$id": "https://schemas.antnest.dev/agent-controller/model-call-policy.schema.json",
   "title": "Model call policy",
   "description": "Shared contract. Controller implements the organization policy GET/PUT routes; Template policy and execution publication share these definitions.",
   "$ref": "#/$defs/policy",

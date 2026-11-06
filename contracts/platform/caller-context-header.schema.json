@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://antnest.local/contracts/platform/caller-context-header.schema.json",
+  "$id": "https://schemas.antnest.dev/platform/caller-context-header.schema.json",
   "title": "Antnest CCT protected JWS header",
   "type": "object",
   "additionalProperties": false,

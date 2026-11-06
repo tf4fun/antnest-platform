@@ -44,13 +44,14 @@ const snapshotSchema = read("agent-acp/execution-snapshot.schema.json");
 
 const ajv = new Ajv2020({ strict: false, allErrors: true });
 ajv.addSchema({
-  $id: "https://antnest.local/contracts/admin-console/live-model-semantics.schema.json",
+  $id: "https://schemas.antnest.dev/admin-console/live-model-semantics.schema.json",
   $defs: consoleDefs.$defs,
 });
+ajv.addSchema(read("common/pagination.schema.json"));
 const controllerUsage = ajv.compile(controlApi.$defs.model_profile_usage);
 const browserUsage = ajv.compile(consoleDefs.$defs.model_profile_usage);
 const effectiveModels = ajv.compile({
-  $ref: "https://antnest.local/contracts/admin-console/live-model-semantics.schema.json#/$defs/effective_models",
+  $ref: "https://schemas.antnest.dev/admin-console/live-model-semantics.schema.json#/$defs/effective_models",
 });
 const auditRevision = ajv.compile(
   auditSchema.properties.model_profile_revision,

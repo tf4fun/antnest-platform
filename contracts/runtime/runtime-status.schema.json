@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://antnest.local/contracts/runtime/runtime-status.schema.json",
+  "$id": "https://schemas.antnest.dev/runtime/runtime-status.schema.json",
   "title": "Antnest Runtime Status",
   "type": "object",
   "additionalProperties": false,

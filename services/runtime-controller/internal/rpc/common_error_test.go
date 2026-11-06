@@ -234,8 +234,8 @@ func TestCommonErrorActualResponsesMatchContracts(t *testing.T) {
 	compiler := jsonschema.NewCompiler()
 	compiler.AssertFormat()
 	for id, rel := range map[string]string{
-		"https://antnest.local/contracts/common/error.schema.json":              "contracts/common/error.schema.json",
-		"https://antnest.dev/contracts/agent-acp/owner-incarnation.schema.json": "contracts/agent-acp/owner-incarnation.schema.json",
+		"https://schemas.antnest.dev/common/error.schema.json":                "contracts/common/error.schema.json",
+		"https://schemas.antnest.dev/agent-acp/owner-incarnation.schema.json": "contracts/agent-acp/owner-incarnation.schema.json",
 	} {
 		if err := compiler.AddResource(id, readFile(rel)); err != nil {
 			t.Fatalf("load %s: %v", rel, err)
@@ -298,7 +298,7 @@ func TestCommonErrorActualResponsesMatchContracts(t *testing.T) {
 			t.Fatalf("mutated error body %q must violate the error schema", name)
 		}
 	}
-	owner, err := compiler.Compile("https://antnest.dev/contracts/agent-acp/owner-incarnation.schema.json#/$defs/error")
+	owner, err := compiler.Compile("https://schemas.antnest.dev/agent-acp/owner-incarnation.schema.json#/$defs/error")
 	if err != nil {
 		t.Fatal(err)
 	}

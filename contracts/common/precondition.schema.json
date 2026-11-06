@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.antnest.dev/common/precondition.schema.json",
+  "title": "Shared optimistic-concurrency precondition conventions",
+  "$defs": {
+    "expected_version": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "request": {
+      "type": "object",
+      "required": ["expected_version"],
+      "properties": {
+        "expected_version": { "$ref": "#/$defs/expected_version" }
+      }
+    },
+    "if_match": {
+      "type": "string",
+      "pattern": "^\"[^\"\\\\\r\n]{1,128}\"$"
+    }
+  }
+}
