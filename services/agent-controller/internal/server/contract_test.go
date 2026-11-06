@@ -36,6 +36,11 @@ type machineControlContract struct {
 	Schemas struct {
 		Messages string `json:"messages"`
 	} `json:"schemas"`
+	Conventions struct {
+		Pagination   string `json:"pagination"`
+		Precondition string `json:"precondition"`
+		Idempotency  string `json:"idempotency"`
+	} `json:"conventions"`
 	Status    controlContractRoute                       `json:"status"`
 	Resources map[string]map[string]controlContractRoute `json:"resources"`
 	Enums     map[string][]string                        `json:"enums"`
@@ -72,17 +77,18 @@ type machineControlContract struct {
 }
 
 type controlContractRoute struct {
-	Method        string   `json:"method"`
-	Path          string   `json:"path"`
-	Request       string   `json:"request"`
-	Response      string   `json:"response"`
-	Query         []string `json:"query"`
-	Headers       []string `json:"headers"`
-	SuccessStatus int      `json:"success_status"`
-	ContentType   string   `json:"content_type"`
-	Event         string   `json:"event"`
-	EventID       string   `json:"event_id"`
-	Data          string   `json:"data"`
+	Method          string   `json:"method"`
+	Path            string   `json:"path"`
+	Request         string   `json:"request"`
+	Response        string   `json:"response"`
+	Query           []string `json:"query"`
+	DeprecatedQuery []string `json:"deprecated_query"`
+	Headers         []string `json:"headers"`
+	SuccessStatus   int      `json:"success_status"`
+	ContentType     string   `json:"content_type"`
+	Event           string   `json:"event"`
+	EventID         string   `json:"event_id"`
+	Data            string   `json:"data"`
 }
 
 type machineControlSchema struct {
@@ -107,6 +113,11 @@ func TestMachineControlContractMatchesRegisteredBoundary(t *testing.T) {
 		contract.MediaTypes.Response != "application/json" {
 		t.Fatalf("control contract media types = %+v", contract.MediaTypes)
 	}
+	if contract.Conventions.Pagination != "../common/pagination.schema.json" ||
+		contract.Conventions.Precondition != "../common/precondition.schema.json" ||
+		contract.Conventions.Idempotency != "../common/idempotency.schema.json" {
+		t.Fatalf("control contract conventions = %+v", contract.Conventions)
+	}
 
 	endpoint, err := newBusinessHandler(t,
 		&catalogServiceStub{}, &lifecycleServiceStub{}, &agentConfigurationServiceStub{},
@@ -126,6 +137,11 @@ func TestMachineControlContractMatchesRegisteredBoundary(t *testing.T) {
 			expected[route.pattern] = struct{}{}
 		}
 	}
+	deprecatedQueryRoutes := map[string][]string{
+		"GET /internal/provider-connections": {"after_id"},
+		"GET /internal/model-profiles":       {"after_id"},
+		"GET /internal/agent-templates":      {"after_id"},
+	}
 	seen := make(map[string]struct{}, len(expected))
 	for resource, operations := range contract.Resources {
 		for operation, route := range operations {
@@ -139,6 +155,9 @@ func TestMachineControlContractMatchesRegisteredBoundary(t *testing.T) {
 			seen[key] = struct{}{}
 			if route.SuccessStatus < 200 || route.SuccessStatus >= 300 {
 				t.Fatalf("route %s success status = %d", key, route.SuccessStatus)
+			}
+			if want := deprecatedQueryRoutes[key]; !slices.Equal(route.DeprecatedQuery, want) {
+				t.Fatalf("route %s deprecated_query = %v, want %v", key, route.DeprecatedQuery, want)
 			}
 			for _, reference := range []string{route.Request, route.Response, route.Data} {
 				if reference != "" {
