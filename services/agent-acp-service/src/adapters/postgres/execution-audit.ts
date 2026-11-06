@@ -136,7 +136,12 @@ export class PostgresExecutionAudits implements ExecutionAuditRepository {
            to_char(p.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS created_at,
            to_char(p.decided_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS decided_at
          FROM tool_permissions p WHERE p.run_id = r.id
-           AND ($3::timestamptz IS NULL OR (p.created_at, p.tool_call_id) > ($3, $4::text))
+           AND ($3::timestamptz IS NULL OR (p.created_at, p.tool_call_id) > ($3,
+             CASE WHEN $6::text IS NULL THEN $4::text ELSE
+               (SELECT anchor.tool_call_id FROM tool_permissions anchor
+                WHERE anchor.run_id = r.id AND anchor.created_at = $3::timestamptz
+                  AND encode(sha256(convert_to(anchor.tool_call_id, 'UTF8')), 'hex') = $6::text)
+             END))
          ORDER BY p.created_at, p.tool_call_id LIMIT $5
        ) page), '[]'::jsonb) AS items
        FROM runs r JOIN acp_sessions s ON s.id = r.session_id
@@ -145,8 +150,9 @@ export class PostgresExecutionAudits implements ExecutionAuditRepository {
         query.organizationId,
         query.runId,
         query.after?.at ?? null,
-        query.after?.id ?? null,
+        query.after?.kind === "time" ? query.after.id : null,
         query.limit,
+        query.after?.kind === "permission_hash" ? query.after.id : null,
       ],
       signal,
     );

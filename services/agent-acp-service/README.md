@@ -48,7 +48,10 @@ protocol exception: the Agent Client Protocol session surface keeps camelCase
 `cursor`/`next_cursor`; audit and ACP Session page tokens are opaque strings bounded at 4096
 UTF-8 bytes (enforced at the service boundary, stricter than the shared JSON
 Schema for non-ASCII input). Internal request identity/idempotency and the
-prompt protocol are unchanged.
+prompt protocol are unchanged. Permission audit continuation uses a Run-scoped
+SHA-256 anchor when the provider Tool ID would make the token exceed this bound;
+the stored ID and timestamp/ID ordering are preserved, and shorter legacy cursors
+remain accepted.
 
 ## Responsibilities
 
