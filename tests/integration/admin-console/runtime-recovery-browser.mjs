@@ -308,7 +308,7 @@ export async function exerciseRuntimeRecovery(
           },
           "/api/admin/templates": {
             items: [latestTemplate],
-            next_after_id: null,
+            next_cursor: null,
           },
           "/api/admin/directory": directory,
         };
