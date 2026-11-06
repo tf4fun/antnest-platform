@@ -8,7 +8,7 @@ const session = {
 };
 const bootstrap = { principal: { organizationSlug: "engineering", organizationName: "Engineering", userId: "user-1", organizationId: "org-1", administrator: false }, agents: [], renderedAt: "2026-10-11T12:00:00Z", bridgeEpoch: "epoch-1" };
 const details = { provider_id: "provider-2", provider_name: "workforce", provider_display_name: "Workforce", organization_id: "org-2", organization_slug: "research", organization_name: "Research", membership_id: "member-2", subject: "  <script>private subject</script>  ", method: "admin", created_at: "2026-10-10T00:00:00Z" };
-const inventory = { bindings: [{ ...details, id: "binding-2", bound_at: "2026-10-11T00:00:00Z", revoked_at: null, provider_enabled: true }], notices: [{ ...details, id: "notice-2", binding_id: "binding-2" }] };
+const inventory = { items: [{ ...details, id: "binding-2", bound_at: "2026-10-11T00:00:00Z", revoked_at: null, provider_enabled: true }], notices: [{ ...details, id: "notice-2", binding_id: "binding-2" }], next_cursor: null };
 const base = "/api/session/external-identities";
 const deferred = <T,>() => { let resolve!: (value: T) => void; const promise = new Promise<T>(done => { resolve = done; }); return { promise, resolve }; };
 beforeEach(() => {
@@ -32,7 +32,7 @@ test.each([200, 503])("ordinary members can review external notices without an A
     if (path.endsWith("/bootstrap")) return Response.json(status === 200 ? bootstrap : { code: "unavailable", message: "Workspace unavailable" }, { status });
     if (path.startsWith(base)) return Response.json(inventory);
     if (path === "/api/session/account") return Response.json({ account: { user_id: session.principal.user_id, organization_id: session.principal.organization_id, membership_id: session.principal.membership_id, email: "member@example.test", display_name: "Member", source: "scim", local_password_available: false } });
-    if (path.startsWith("/api/session/sessions")) return Response.json({ sessions: [] });
+    if (path.startsWith("/api/session/sessions")) return Response.json({ items: [], next_cursor: null });
     throw new Error(`Unexpected ${path}`);
   }));
   render(<BridgeApp />);

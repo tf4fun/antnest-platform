@@ -38,7 +38,7 @@ test.each(["antnest_csrf", "__Host-antnest_csrf"])("Bridge page uses HTTP/SSE an
         organization_slug: "engineering", organization_name: "Engineering", system_role: "user", organization_role: "member", active: true },
       expires_at: "2026-10-12T00:00:00Z", idle_expires_at: "2026-10-11T12:30:00Z", activity_interval_ms: 1666,
     });
-    if (url === "/api/session/external-identities?limit=50") return Response.json({ bindings: [], notices: [] });
+    if (url === "/api/session/external-identities?limit=50") return Response.json({ items: [], notices: [], next_cursor: null });
     if (url.endsWith("/bootstrap")) return Response.json({
       principal: { organizationSlug: "engineering", organizationName: "Engineering", userId: "user-1", organizationId: "org-1", administrator: false },
       agents: [{ agentId: "agent-1", name: "Agent", lifecycle: "created",
@@ -220,7 +220,7 @@ test("Bridge page explicitly retries the original Prompt with its attachment aft
           organization_role: "member", active: true },
         expires_at: "2026-10-12T00:00:00Z", idle_expires_at: "2026-10-11T12:30:00Z", activity_interval_ms: 1666,
       });
-      if (path === "/api/session/external-identities?limit=50") return Response.json({ bindings: [], notices: [] });
+      if (path === "/api/session/external-identities?limit=50") return Response.json({ items: [], notices: [], next_cursor: null });
       if (path.endsWith("/bootstrap")) return Response.json({
         principal: { organizationSlug: "engineering", organizationName: "Engineering", userId: "user-1",
           organizationId: "org-1", administrator: false },
@@ -404,7 +404,7 @@ function promptNavigationFixture(holdPrompt = false) {
         organization_role: "member", active: true },
       expires_at: "2026-10-12T00:00:00Z", idle_expires_at: "2026-10-11T12:30:00Z", activity_interval_ms: 1666,
     });
-    if (url === "/api/session/external-identities?limit=50") return Response.json({ bindings: [], notices: [] });
+    if (url === "/api/session/external-identities?limit=50") return Response.json({ items: [], notices: [], next_cursor: null });
     if (url.endsWith("/bootstrap")) return Response.json({
       principal: { organizationSlug: "engineering", organizationName: "Engineering", userId: "user-1",
         organizationId: "org-1", administrator: false },
