@@ -708,7 +708,12 @@ test("public response schemas declare no private credential fields or secret-mar
     "new_password",
   ]);
   const visited = new Set();
-  function inspect(value, path = "browser") {
+  const documents = new Map([[browser.$id, browser]]);
+  for (const name of ["error", "pagination", "precondition", "idempotency"]) {
+    const document = read(`common/${name}.schema.json`);
+    documents.set(document.$id, document);
+  }
+  function inspect(value, path = "browser", base = browser.$id) {
     if (!value || typeof value !== "object") return;
     if (visited.has(value)) return;
     visited.add(value);
@@ -716,23 +721,24 @@ test("public response schemas declare no private credential fields or secret-mar
     for (const key of Object.keys(value.properties ?? {}))
       assert.equal(forbidden.has(key), false, `${path}.${key}`);
     if (value.$ref) {
-      assert.match(
-        value.$ref,
-        /^#\//u,
-        `${path}: public schema reference must be resolvable`,
+      const absolute = new URL(value.$ref, base);
+      const documentID = absolute.href.split("#")[0];
+      let referenced = documents.get(documentID);
+      assert.notEqual(referenced, undefined, `${path}: missing ${documentID}`);
+      const pointer = decodeURIComponent(absolute.hash.slice(1));
+      assert(
+        pointer === "" || pointer.startsWith("/"),
+        `${path}: invalid pointer`,
       );
-      let referenced = browser;
-      for (const part of value.$ref.slice(2).split("/"))
+      for (const part of pointer.split("/").slice(1))
         referenced =
-          referenced?.[
-            decodeURIComponent(part).replaceAll("~1", "/").replaceAll("~0", "~")
-          ];
+          referenced?.[part.replaceAll("~1", "/").replaceAll("~0", "~")];
       assert.notEqual(referenced, undefined, `${path}: missing ${value.$ref}`);
-      inspect(referenced, `${path}->${value.$ref}`);
+      inspect(referenced, `${path}->${value.$ref}`, documentID);
     }
     for (const [key, child] of Object.entries(value))
       if (key !== "$defs" && key !== "definitions")
-        inspect(child, `${path}.${key}`);
+        inspect(child, `${path}.${key}`, base);
   }
   for (const name of [
     "login",
@@ -936,6 +942,7 @@ test("Gateway self-service bodies cannot choose the actor, Organization or priva
     false,
   );
   const query = externalValidator("list_sessions_query");
+  assert(query({ limit: 50, cursor: session.id }));
   assert(query({ limit: 50, after_id: session.id }));
   rejectsInvalidRootsAndMissing(query, { limit: 50 });
   for (const invalid of [
@@ -943,6 +950,8 @@ test("Gateway self-service bodies cannot choose the actor, Organization or priva
     { limit: 101 },
     { limit: 1.5 },
     { limit: 1, after_id: "" },
+    { limit: 1, cursor: "" },
+    { limit: 1, cursor: session.id, after_id: session.id },
     { limit: 1, organization_id: "org-2" },
   ])
     assert.equal(query(invalid), false);
@@ -960,7 +969,7 @@ test("Gateway account and session inventory responses exclude nested private fie
   };
   for (const [name, value] of [
     ["account", { account }],
-    ["session_list", { sessions: [session] }],
+    ["session_list", { items: [session], next_cursor: null }],
     ["session_revocation", { revoked_count: 1, current_revoked: false }],
   ]) {
     const validate = externalValidator(name);
@@ -1014,12 +1023,16 @@ test("Gateway account and session inventory responses exclude nested private fie
   );
   assert.equal(
     externalValidator("session_list")({
-      sessions: [{ ...session, token_hash: "a".repeat(64) }],
+      items: [{ ...session, token_hash: "a".repeat(64) }],
+      next_cursor: null,
     }),
     false,
   );
   assert.equal(
-    externalValidator("session_list")({ sessions: Array(101).fill(session) }),
+    externalValidator("session_list")({
+      items: Array(101).fill(session),
+      next_cursor: null,
+    }),
     false,
   );
   assert.equal(
