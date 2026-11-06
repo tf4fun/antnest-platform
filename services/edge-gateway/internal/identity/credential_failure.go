@@ -83,7 +83,7 @@ func decodePasswordFailure(status int, header http.Header, payload []byte) error
 		RequestID json.RawMessage `json:"request_id"`
 		Details   json.RawMessage `json:"details"`
 	}
-	if serviceauth.DecodeObject(payload, &wire) != nil {
+	if decodeResponseObject(payload, &wire) != nil {
 		return invalidPasswordFailure()
 	}
 	var category string

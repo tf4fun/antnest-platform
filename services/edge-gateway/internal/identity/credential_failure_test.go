@@ -88,7 +88,6 @@ func TestPasswordAdmissionClientRejectsMalformedMetadata(t *testing.T) {
 		{"null-message", 503, strings.Replace(credentialBusyBody, `"Password verification is busy"`, "null", 1), []string{"1"}},
 		{"private-message", 503, strings.Replace(credentialBusyBody, "Password verification is busy", "private-password-canary", 1), []string{"1"}},
 		{"private-code", 503, strings.Replace(credentialBusyBody, "credential_busy", "private-password-canary", 1), []string{"1"}},
-		{"unknown-member", 503, strings.TrimSuffix(credentialBusyBody, "}") + `,"private-password-canary":true}`, []string{"1"}},
 		{"duplicate-code", 401, strings.TrimSuffix(credentialBusyBody, "}") + `,"code":"unauthenticated"}`, []string{"1"}},
 		{"escaped-duplicate", 503, strings.TrimSuffix(credentialBusyBody, "}") + `,"\u0063ode":"credential_busy"}`, []string{"1"}},
 		{"case-alias", 503, strings.Replace(credentialBusyBody, `"code"`, `"Code"`, 1), []string{"1"}},
@@ -128,6 +127,31 @@ func TestPasswordAdmissionClientRejectsMalformedMetadata(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+func TestPasswordAdmissionClientToleratesExtensionMembers(t *testing.T) {
+	body := strings.TrimSuffix(credentialBusyBody, "}") +
+		`,"private-password-canary":true,"nested":{"private-password-canary":1}}`
+	for _, route := range []string{"local-login", "change-local-password"} {
+		t.Run(route, func(t *testing.T) {
+			response := jsonResponse(503, body)
+			response.Header.Set("Retry-After", "1")
+			err := callPasswordRPC(t, route, response)
+			failure, ok := PasswordAdmissionFailure(err)
+			if !ok {
+				t.Fatalf("busy admission did not surface: %v", err)
+			}
+			if failure.Code != "credential_busy" ||
+				failure.Message != "Password verification is busy" ||
+				failure.RetryAfter != "1" || failure.StatusCode != 503 {
+				t.Fatalf("failure=%+v", failure)
+			}
+			if strings.Contains(err.Error(), "private-password-canary") ||
+				strings.Contains(failure.Message, "private-password-canary") {
+				t.Fatalf("extension member leaked: %+v", failure)
+			}
+		})
 	}
 }
 
@@ -269,7 +293,6 @@ func TestPasswordFailureDecoderRejectsPartialMetadata(t *testing.T) {
 		{"long-id", strings.TrimSuffix(credentialBusyBody, "}") + `,"category":"unavailable","request_id":"` + strings.Repeat("a", 129) + `"}`},
 		{"details-scalar", strings.TrimSuffix(credentialBusyBody, "}") + `,"category":"unavailable","request_id":"identity-req-1","details":1}`},
 		{"details-array", strings.TrimSuffix(credentialBusyBody, "}") + `,"category":"unavailable","request_id":"identity-req-1","details":[1]}`},
-		{"canary-member", strings.TrimSuffix(credentialBusyBody, "}") + `,"private-token-canary":true}`},
 	} {
 		t.Run(row.name, func(t *testing.T) {
 			response := jsonResponse(503, row.body)
