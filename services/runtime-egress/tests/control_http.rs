@@ -655,3 +655,350 @@ async fn common_error_actual_route_envelope() {
     assert_eq!(body["request_id"], serde_json::json!(request_id));
     assert!(!body.to_string().contains(support::workload_token()));
 }
+
+async fn conventions_app(agent: &str) -> axum::Router {
+    let application = app().await;
+    application
+        .clone()
+        .oneshot(
+            Request::put(format!("/internal/agent-networks/{agent}"))
+                .header("antnest-service-authorization", support::workload_header())
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    application
+}
+
+fn conventions_request(
+    method: axum::http::Method,
+    path: &str,
+    body: String,
+    if_match: Option<&str>,
+) -> Request<Body> {
+    let mut builder = Request::builder()
+        .method(method)
+        .uri(path)
+        .header("content-type", "application/json")
+        .header("antnest-service-authorization", support::workload_header());
+    if let Some(tag) = if_match {
+        builder = builder.header("if-match", tag);
+    }
+    builder.body(Body::from(body)).unwrap()
+}
+
+async fn attachment_version(application: axum::Router, agent: &str) -> u64 {
+    let response = application
+        .oneshot(
+            Request::get(format!("/internal/agent-networks/{agent}"))
+                .header("antnest-service-authorization", support::workload_header())
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let body = to_bytes(response.into_body(), 8192).await.unwrap();
+    let document: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    document["attachment_resource_version"].as_u64().unwrap()
+}
+
+#[tokio::test]
+async fn contract_conventions_precondition_forms() {
+    for (case, body, tag) in [
+        (
+            "canonical",
+            r#"{"state":"pending","expected_version":"1"}"#,
+            None,
+        ),
+        (
+            "legacy",
+            r#"{"state":"pending","expected_resource_version":1}"#,
+            None,
+        ),
+        ("if-match", r#"{"state":"pending"}"#, Some("\"1\"")),
+    ] {
+        let agent = format!("agent-{case}");
+        let application = conventions_app(&agent).await;
+        let response = application
+            .clone()
+            .oneshot(conventions_request(
+                axum::http::Method::PUT,
+                &format!("/internal/agent-network-attachments/{agent}"),
+                body.to_owned(),
+                tag,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK, "{case}");
+        assert_eq!(attachment_version(application, &agent).await, 2, "{case}");
+    }
+}
+
+#[tokio::test]
+async fn contract_conventions_release_and_assignment_forms() {
+    for case in ["canonical", "legacy", "ifmatch"] {
+        let agent = format!("agent-release-{case}");
+        let application = conventions_app(&agent).await;
+        let release = match case {
+            "canonical" => conventions_request(
+                axum::http::Method::POST,
+                &format!("/internal/agent-networks/{agent}/release"),
+                r#"{"expected_version":"1"}"#.to_owned(),
+                None,
+            ),
+            "ifmatch" => conventions_request(
+                axum::http::Method::POST,
+                &format!("/internal/agent-networks/{agent}/release"),
+                r#"{}"#.to_owned(),
+                Some("\"1\""),
+            ),
+            _ => conventions_request(
+                axum::http::Method::POST,
+                &format!("/internal/agent-networks/{agent}/release"),
+                r#"{"expected_resource_version":1}"#.to_owned(),
+                None,
+            ),
+        };
+        let response = application.oneshot(release).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK, "release {case}");
+    }
+
+    for (case, body, tag) in [
+        (
+            "canonical",
+            r#"{"policy_id":"builtin/allow-all","revision":1,"expected_version":"1"}"#,
+            None,
+        ),
+        (
+            "legacy",
+            r#"{"policy_id":"builtin/allow-all","revision":1,"expected_resource_version":1}"#,
+            None,
+        ),
+        (
+            "ifmatch",
+            r#"{"policy_id":"builtin/allow-all","revision":1}"#,
+            Some("\"1\""),
+        ),
+    ] {
+        let agent = format!("agent-assign-{case}");
+        let application = conventions_app(&agent).await;
+        let response = application
+            .oneshot(conventions_request(
+                axum::http::Method::PUT,
+                &format!("/internal/agent-policy-assignments/{agent}"),
+                body.to_owned(),
+                tag,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK, "assign {case}");
+    }
+}
+
+#[tokio::test]
+async fn contract_conventions_precondition_rejections() {
+    let invalid_bodies: &[&str] = &[
+        r#"{"state":"pending"}"#,
+        r#"{"state":"pending","expected_version":null,"expected_resource_version":1}"#,
+        r#"{"state":"pending","expected_version":null}"#,
+        r#"{"state":"pending","expected_version":"1","expected_resource_version":1}"#,
+        r#"{"state":"pending","expected_version":"2","expected_resource_version":1}"#,
+        r#"{"state":"pending","expected_version":"0"}"#,
+        r#"{"state":"pending","expected_version":"-1"}"#,
+        r#"{"state":"pending","expected_version":"01"}"#,
+        r#"{"state":"pending","expected_version":"1.5"}"#,
+        r#"{"state":"pending","expected_version":"1e2"}"#,
+        r#"{"state":"pending","expected_version":"18446744073709551616"}"#,
+        r#"{"state":"pending","expected_version":1}"#,
+        r#"{"state":"pending","expected_version":"abc"}"#,
+        r#"{"state":"pending","expected_version":"1","unknown_field":1}"#,
+        r#"{"state":"pending","expected_version":"1","expected_version":"1"}"#,
+        r#"{"state":"pending","expected_resource_version":0}"#,
+        r#"{"state":"pending","expected_resource_version":null,"expected_version":"1"}"#,
+    ];
+    for body in invalid_bodies {
+        let agent = format!("agent-bad-{}", body.len() + body.matches('"').count());
+        let application = conventions_app(&agent).await;
+        let response = application
+            .clone()
+            .oneshot(conventions_request(
+                axum::http::Method::PUT,
+                &format!("/internal/agent-network-attachments/{agent}"),
+                (*body).to_owned(),
+                None,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST, "{body}");
+        assert_eq!(
+            attachment_version(application.clone(), &agent).await,
+            1,
+            "{body}"
+        );
+    }
+    for tag in [
+        "W/\"1\"",
+        "*",
+        "\"1\",\"2\"",
+        "\"\"",
+        "\"a\\b\"",
+        "1",
+        "\"1x\"",
+        "\"-1\"",
+        "\"01\"",
+        "\"\"",
+    ] {
+        let agent = format!("agent-hdr-{}", tag.len() * 7 + 1);
+        let application = conventions_app(&agent).await;
+        let response = application
+            .clone()
+            .oneshot(conventions_request(
+                axum::http::Method::PUT,
+                &format!("/internal/agent-network-attachments/{agent}"),
+                r#"{"state":"pending"}"#.to_owned(),
+                Some(tag),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST, "header {tag}");
+        assert_eq!(
+            attachment_version(application, &agent).await,
+            1,
+            "header {tag}"
+        );
+    }
+    let agent = "agent-hdr-repeat";
+    let application = conventions_app(agent).await;
+    let request = Request::builder()
+        .method(axum::http::Method::PUT)
+        .uri(format!("/internal/agent-network-attachments/{agent}"))
+        .header("content-type", "application/json")
+        .header("antnest-service-authorization", support::workload_header())
+        .header("if-match", "\"1\"")
+        .header("if-match", "\"1\"")
+        .body(Body::from(r#"{"state":"pending"}"#))
+        .unwrap();
+    let response = application.oneshot(request).await.unwrap();
+    assert_eq!(
+        response.status(),
+        StatusCode::BAD_REQUEST,
+        "repeated if-match"
+    );
+    let agent = "agent-null-hdr";
+    let application = conventions_app(agent).await;
+    let response = application
+        .oneshot(conventions_request(
+            axum::http::Method::PUT,
+            &format!("/internal/agent-network-attachments/{agent}"),
+            r#"{"state":"pending","expected_version":null}"#.to_owned(),
+            Some("\"1\""),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(
+        response.status(),
+        StatusCode::BAD_REQUEST,
+        "null + if-match"
+    );
+    let agent = "agent-hdr-body";
+    let application = conventions_app(agent).await;
+    let response = application
+        .oneshot(conventions_request(
+            axum::http::Method::PUT,
+            &format!("/internal/agent-network-attachments/{agent}"),
+            r#"{"state":"pending","expected_version":"1"}"#.to_owned(),
+            Some("\"1\""),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    let agent = "agent-rel-bad";
+    let application = conventions_app(agent).await;
+    let response = application
+        .oneshot(conventions_request(
+            axum::http::Method::POST,
+            &format!("/internal/agent-networks/{agent}/release"),
+            r#"{"expected_version":"1","expected_resource_version":1}"#.to_owned(),
+            None,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+
+    let invalid_versions: &[&str] = &[
+        r#"{"expected_version":"1","expected_resource_version":1}"#,
+        r#"{"expected_version":"0"}"#,
+        r#"{"expected_version":"-1"}"#,
+        r#"{"expected_version":"01"}"#,
+        r#"{"expected_version":"1.5"}"#,
+        r#"{"expected_version":1}"#,
+        r#"{"expected_version":null}"#,
+        r#"{"expected_version":"18446744073709551616"}"#,
+        r#"{}"#,
+    ];
+    for body in invalid_versions {
+        let agent = format!("agent-rel-bad-{}", body.len() * 3);
+        let application = conventions_app(&agent).await;
+        let response = application
+            .clone()
+            .oneshot(conventions_request(
+                axum::http::Method::POST,
+                &format!("/internal/agent-networks/{agent}/release"),
+                (*body).to_owned(),
+                None,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST, "release {body}");
+        assert_eq!(
+            attachment_version(application, &agent).await,
+            1,
+            "release {body}"
+        );
+    }
+    for body in invalid_versions {
+        let payload = if *body == "{}" {
+            r#"{"policy_id":"builtin/allow-all","revision":1}"#.to_owned()
+        } else {
+            body.replacen("{", r#"{"policy_id":"builtin/allow-all","revision":1,"#, 1)
+        };
+        let agent = format!("agent-assign-bad-{}", body.len() * 5);
+        let application = conventions_app(&agent).await;
+        let before = application
+            .clone()
+            .oneshot(
+                Request::get(format!("/internal/agent-policy-assignments/{agent}"))
+                    .header("antnest-service-authorization", support::workload_header())
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let before_status = before.status();
+        let before_document = to_bytes(before.into_body(), 8192).await.unwrap();
+        let response = application
+            .clone()
+            .oneshot(conventions_request(
+                axum::http::Method::PUT,
+                &format!("/internal/agent-policy-assignments/{agent}"),
+                payload,
+                None,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST, "assign {body}");
+        let assignment = application
+            .oneshot(
+                Request::get(format!("/internal/agent-policy-assignments/{agent}"))
+                    .header("antnest-service-authorization", support::workload_header())
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(assignment.status(), before_status, "assign {body}");
+        let after_document = to_bytes(assignment.into_body(), 8192).await.unwrap();
+        assert_eq!(after_document, before_document, "assign {body}");
+    }
+}

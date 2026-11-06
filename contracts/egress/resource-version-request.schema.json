@@ -4,11 +4,33 @@
   "title": "Runtime Egress Resource Version Request",
   "type": "object",
   "additionalProperties": false,
-  "required": ["expected_resource_version"],
   "properties": {
     "expected_resource_version": {
       "type": "integer",
-      "minimum": 1
+      "minimum": 1,
+      "deprecated": true
+    },
+    "expected_version": {
+      "allOf": [
+        {"$ref": "../common/precondition.schema.json#/$defs/expected_version"},
+        {"type": "string", "pattern": "^[1-9][0-9]*$", "maxLength": 20}
+      ]
     }
-  }
+  },
+  "allOf": [
+    {
+      "oneOf": [
+        {
+          "required": ["expected_version"],
+          "properties": {"expected_version": true},
+          "not": {"required": ["expected_resource_version"], "properties": {"expected_resource_version": true}}
+        },
+        {
+          "required": ["expected_resource_version"],
+          "properties": {"expected_resource_version": true},
+          "not": {"required": ["expected_version"], "properties": {"expected_version": true}}
+        }
+      ]
+    }
+  ]
 }

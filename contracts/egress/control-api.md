@@ -118,7 +118,7 @@ have aggregate counters without Agent labels. See the
 `PUT /internal/agent-network-attachments/{agent_id}`
 
 ```json
-{ "state": "open", "expected_resource_version": 7, "runtime_endpoint": "10.243.1.20", "tunnel_key_id": "rtk_0123456789abcdef0123456789abcdef" }
+{ "state": "open", "expected_version": "7", "runtime_endpoint": "10.243.1.20", "tunnel_key_id": "rtk_0123456789abcdef0123456789abcdef" }
 ```
 
 Attachment state is `closed`, `pending`, or `open` and has its own monotonic resource
@@ -186,7 +186,7 @@ The response is the complete Agent network document shown above.
 `POST /internal/agent-networks/{agent_id}/release`
 
 ```json
-{ "expected_resource_version": 8 }
+{ "expected_version": "8" }
 ```
 
 Release requires the current **network** resource version and a closed
@@ -304,7 +304,7 @@ metadata-only shape.
 {
   "policy_id": "internet-enabled",
   "revision": 3,
-  "expected_resource_version": 1
+  "expected_version": "1"
 }
 ```
 
@@ -342,7 +342,13 @@ an identical PUT reconciles the packet gate before acknowledging success.
 `200` on PUT means the barrier and snapshot are settled. With a closed attachment
 it means the desired policy is saved for the next lifecycle open, not that
 traffic has opened. Version conflicts require a fresh read and explicit user
-decision, never silently replacing `expected_resource_version` and retrying.
+decision, never silently replacing `expected_resource_version` and retrying. The optimistic-concurrency
+precondition is canonical `expected_version`, an unsigned decimal string, or
+exactly one strong `If-Match` quoted decimal token in place of the body field —
+both permanent forms. For one release the numeric `expected_resource_version`
+also remains accepted as a deprecated input alias; a request carrying more than
+one form is rejected even when the values agree. Consumers must send the
+canonical form before the alias is removed.
 
 Ensure may restore an already-open attachment's route, but must complete flow
 and conntrack cleanup before removing a hard fence. Explicit attachment open

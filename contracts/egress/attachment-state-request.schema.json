@@ -4,10 +4,16 @@
   "title": "Runtime Egress attachment state request",
   "type": "object",
   "additionalProperties": false,
-  "required": ["state", "expected_resource_version"],
+  "required": ["state"],
   "properties": {
     "state": {"enum": ["closed", "pending", "open"]},
-    "expected_resource_version": {"type": "integer", "minimum": 1},
+    "expected_resource_version": {"type": "integer", "minimum": 1, "deprecated": true},
+    "expected_version": {
+      "allOf": [
+        {"$ref": "../common/precondition.schema.json#/$defs/expected_version"},
+        {"type": "string", "pattern": "^[1-9][0-9]*$", "maxLength": 20}
+      ]
+    },
     "runtime_endpoint": {"type": ["string", "null"], "format": "ipv4"},
     "tunnel_key_id": {"type": ["string", "null"], "pattern": "^rtk_[0-9a-f]{32}$"}
   },
@@ -19,6 +25,20 @@
         "properties": {"runtime_endpoint": {"type": "string"}, "tunnel_key_id": {"type": "string"}}
       },
       "else": {"properties": {"runtime_endpoint": {"type": "null"}, "tunnel_key_id": {"type": "null"}}}
+    },
+    {
+      "oneOf": [
+        {
+          "required": ["expected_version"],
+          "properties": {"expected_version": true},
+          "not": {"required": ["expected_resource_version"], "properties": {"expected_resource_version": true}}
+        },
+        {
+          "required": ["expected_resource_version"],
+          "properties": {"expected_resource_version": true},
+          "not": {"required": ["expected_version"], "properties": {"expected_version": true}}
+        }
+      ]
     }
   ]
 }
