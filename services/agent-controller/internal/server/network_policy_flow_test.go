@@ -209,11 +209,13 @@ func TestNetworkPolicyFlowConflictNeverRebasesVersion(t *testing.T) {
 	if response.Code != 409 || len(requests) != 1 {
 		t.Fatalf("conflict=%d calls=%d", response.Code, len(requests))
 	}
-	var mutation ports.SetNetworkPolicy
+	var mutation struct {
+		ExpectedVersion string `json:"expected_version"`
+	}
 	if err := json.Unmarshal([]byte((<-requests).body), &mutation); err != nil {
 		t.Fatal(err)
 	}
-	if mutation.ExpectedResourceVersion != 7 {
+	if mutation.ExpectedVersion != "7" {
 		t.Fatalf("rebased version: %+v", mutation)
 	}
 }
