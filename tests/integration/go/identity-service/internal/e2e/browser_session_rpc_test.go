@@ -98,8 +98,23 @@ func TestBrowserSessionRPCUsesRealAuthorityApplicationAndPostgres(t *testing.T) 
 	list := map[string]any{"actor_principal_id": f.user.User.ID, "user_id": f.user.User.ID, "scope": "self", "limit": 100}
 	call("list_user_sessions", list, "edge-gateway", "", 401, nil)
 	call("list_session_revocations", map[string]any{"after_sequence": 0, "limit": 500}, "admin-console", consoleCCT, 403, nil)
-	var page browsersessions.Page
+	var page struct {
+		Sessions   []browsersessions.Session `json:"items"`
+		NextCursor *string                   `json:"next_cursor"`
+	}
 	raw := call("list_user_sessions", list, "edge-gateway", cct, 200, &page)
+	var pageWire map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &pageWire); err != nil {
+		t.Fatal(err)
+	}
+	if cursor, present := pageWire["next_cursor"]; !present || string(cursor) != "null" {
+		t.Fatalf("next_cursor = %s", cursor)
+	}
+	for _, banned := range []string{"sessions", "next_after_id"} {
+		if _, present := pageWire[banned]; present {
+			t.Fatalf("legacy field %s emitted: %s", banned, raw)
+		}
+	}
 	if len(page.Sessions) != 2 || page.Sessions[0].Current == page.Sessions[1].Current {
 		t.Fatal("real inventory lost signed current-session identity")
 	}
