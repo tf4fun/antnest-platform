@@ -54,7 +54,6 @@ pub(crate) enum AdmissionError {
 pub(crate) struct ConfigError;
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
 pub(crate) struct BootstrapDescriptor {
     pub(crate) tunnel: crate::tunnel_auth::Descriptor,
     pub(crate) connection_id: String,

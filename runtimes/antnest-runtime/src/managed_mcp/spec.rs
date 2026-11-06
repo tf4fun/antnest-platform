@@ -6,7 +6,6 @@ use thiserror::Error;
 pub(crate) const MAX_SERVERS: usize = 8;
 
 #[derive(Clone, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
 pub(crate) struct ServerInput {
     pub(crate) id: String,
     pub(crate) command: String,
@@ -19,7 +18,6 @@ pub(crate) struct ServerInput {
 }
 
 #[derive(Clone, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
 pub(crate) struct SecretDescriptor {
     #[serde(deserialize_with = "true_only")]
     pub(crate) set: bool,
