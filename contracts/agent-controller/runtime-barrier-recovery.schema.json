@@ -67,7 +67,6 @@
         "request_id",
         "organization_id",
         "actor_principal_id",
-        "expected_revision",
         "mode",
         "cooldown_ms"
       ],
@@ -82,7 +81,20 @@
           "$ref": "#/$defs/id"
         },
         "expected_revision": {
-          "$ref": "#/$defs/revision"
+          "$ref": "#/$defs/revision",
+          "deprecated": true
+        },
+        "expected_version": {
+          "allOf": [
+            {
+              "$ref": "../common/precondition.schema.json#/$defs/expected_version"
+            },
+            {
+              "type": "string",
+              "pattern": "^(0|[1-9][0-9]*)$",
+              "maxLength": 20
+            }
+          ]
         },
         "mode": {
           "$ref": "#/$defs/mode"
@@ -90,7 +102,23 @@
         "cooldown_ms": {
           "$ref": "#/$defs/cooldown_ms"
         }
-      }
+      },
+      "allOf": [
+        {
+          "oneOf": [
+            {
+              "required": ["expected_version"],
+              "properties": {"expected_version": true},
+              "not": {"required": ["expected_revision"], "properties": {"expected_revision": true}}
+            },
+            {
+              "required": ["expected_revision"],
+              "properties": {"expected_revision": true},
+              "not": {"required": ["expected_version"], "properties": {"expected_version": true}}
+            }
+          ]
+        }
+      ]
     },
     "recovery_request": {
       "type": "object",

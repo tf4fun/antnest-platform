@@ -62,17 +62,31 @@
     },
     "policy_mutation_request": {
       "type": "object", "additionalProperties": false,
-      "required": ["request_id", "organization_id", "actor_principal_id", "expected_revision", "mode", "scope", "pinned_paths", "limits"],
+      "required": ["request_id", "organization_id", "actor_principal_id", "mode", "scope", "pinned_paths", "limits"],
       "properties": {
         "request_id": { "$ref": "#/$defs/request_id" },
         "organization_id": { "$ref": "#/$defs/organization_id" },
         "actor_principal_id": { "$ref": "#/$defs/user_id" },
-        "expected_revision": { "$ref": "#/$defs/revision" },
+        "expected_revision": { "$ref": "#/$defs/revision", "deprecated": true },
+        "expected_version": {
+          "allOf": [
+            { "$ref": "../common/precondition.schema.json#/$defs/expected_version" },
+            { "$ref": "#/$defs/revision" }
+          ]
+        },
         "mode": { "enum": ["automatic", "off"] },
         "scope": { "$ref": "#/$defs/policy/properties/scope" },
         "pinned_paths": { "$ref": "#/$defs/policy/properties/pinned_paths" },
         "limits": { "$ref": "#/$defs/policy/properties/limits" }
-      }
+      },
+      "allOf": [
+        {
+          "oneOf": [
+            { "required": ["expected_version"], "properties": {"expected_version": true}, "not": { "required": ["expected_revision"], "properties": {"expected_revision": true}} },
+            { "required": ["expected_revision"], "properties": {"expected_revision": true}, "not": { "required": ["expected_version"], "properties": { "expected_version": true } } }
+          ]
+        }
+      ]
     },
     "apply_basis": {
       "oneOf": [

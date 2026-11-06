@@ -112,6 +112,7 @@ function pendingValidators({ useDefaults = false } = {}) {
   const schema = read("agent-controller/runtime-barrier-recovery.schema.json");
   assert.equal(schema.$id, schemaID);
   const ajv = new Ajv2020({ strict: true, allErrors: true, useDefaults });
+  ajv.addSchema(read("common/precondition.schema.json"));
   ajv.addFormat("date-time", { type: "string", validate: utcTimestamp });
   ajv.addSchema(schema);
   return {
@@ -143,6 +144,7 @@ function activeValidators() {
     new URL("../runtime/managed-mcp.schema.json", schema.$id).href,
   );
   ajv.addSchema(read("agent-controller/runtime-barrier-recovery.schema.json"));
+  ajv.addSchema(read("common/precondition.schema.json"));
   ajv.addSchema(schema);
   return Object.fromEntries(
     [
@@ -703,6 +705,11 @@ test("pending wire has exactly its closed field sets and a policy root", () => {
     const required = Object.keys(make());
     const properties = [...required];
     if (name === "rebuild_agent_request") properties.push("recovery");
+    if (name === "policy_update_request") {
+      required.splice(required.indexOf("expected_revision"), 1);
+      properties.splice(properties.indexOf("expected_revision"), 1);
+      properties.push("expected_revision", "expected_version");
+    }
     assert.equal(definition.type, "object", name);
     assert.equal(definition.additionalProperties, false, name);
     assert.deepEqual([...definition.required].sort(), required.sort(), name);

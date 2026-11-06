@@ -23,6 +23,7 @@ function validators() {
     useDefaults: false,
     removeAdditional: false,
   });
+  ajv.addSchema(read("common/precondition.schema.json"));
   ajv.addSchema(schema);
   return (definition) => ajv.getSchema(`${schemaId}#/$defs/${definition}`);
 }

@@ -41,6 +41,9 @@ func (service *catalogServiceStub) GetProviderConnection(context.Context, string
 }
 
 func (service *catalogServiceStub) ListProviderConnections(context.Context, application.ListCatalogInput) (application.ProviderConnectionPage, error) {
+	if service.providerPage != nil {
+		return *service.providerPage, service.getModelErr
+	}
 	return application.ProviderConnectionPage{Items: []application.ProviderConnectionView{sampleProviderConnection()}}, service.getModelErr
 }
 

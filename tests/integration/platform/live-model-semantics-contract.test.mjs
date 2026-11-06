@@ -118,6 +118,7 @@ function controlApiValidators() {
   );
   ajv.addSchema(read("agent-controller/runtime-barrier-recovery.schema.json"));
   ajv.addSchema(read("common/pagination.schema.json"));
+  ajv.addSchema(read("common/precondition.schema.json"));
   ajv.addSchema(schema);
   return {
     agent: ajv.compile({ $ref: `${schema.$id}#/$defs/agent` }),

@@ -16,6 +16,16 @@ const schema = JSON.parse(
   ),
 );
 const ajv = new Ajv2020({ strict: true, validateFormats: false });
+ajv.addSchema(
+  JSON.parse(
+    await readFile(
+      new URL(
+        "../../../contracts/common/precondition.schema.json",
+        import.meta.url,
+      ),
+    ),
+  ),
+);
 ajv.addSchema(schema);
 const accepts = (name, value) => {
   const validate = ajv.getSchema(`${schema.$id}#/$defs/${name}`);

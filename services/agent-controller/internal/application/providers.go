@@ -56,7 +56,7 @@ type ProviderConnectionView struct {
 
 type ProviderConnectionPage struct {
 	Items       []ProviderConnectionView `json:"items"`
-	NextAfterID string                   `json:"next_after_id,omitempty"`
+	NextAfterID string                   `json:"next_cursor,omitempty"`
 }
 
 func (service *CatalogService) CreateProviderConnection(ctx context.Context, input CreateProviderConnectionInput) (ProviderConnectionView, error) {

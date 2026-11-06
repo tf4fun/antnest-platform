@@ -149,7 +149,7 @@ baseline; it is not permission to access deployment control networks.
   "actor_principal_id": "admin-1",
   "policy_id": "builtin/deny-all",
   "revision": 1,
-  "expected_resource_version": 3
+  "expected_version": "3"
 }
 ```
 
@@ -161,13 +161,18 @@ or, from control contract revision 49, an inline policy document:
   "organization_id": "org-1",
   "actor_principal_id": "admin-1",
   "spec": { "schema_version": 2, "default": "deny", "rules": [] },
-  "expected_resource_version": 3
+  "expected_version": "3"
 }
 ```
 
 The request admits exactly one of the existing `(policy_id, revision)`
 reference tuple or a `spec` document; carrying both or neither is invalid, as
-is any additional field. `spec` is validated against `network_policy_spec`,
+is any additional field. The optimistic-concurrency precondition is
+`expected_version`, an unsigned decimal string; exactly one strong `If-Match`
+token may permanently replace the body field. For one release the numeric
+`expected_resource_version` also remains accepted as a deprecated input
+alias — a request carrying more than one form is rejected even when the
+values agree. `spec` is validated against `network_policy_spec`,
 which mirrors the Egress policy schema — the two schema_version 1 shapes plus
 the schema_version 2 document — and stays self-contained with no
 external schema references. For a spec request, Controller derives `custom/<sha256-hex>` from the
@@ -192,7 +197,8 @@ Returns the Egress-confirmed assignment with HTTP 200:
 The caller supplies a positive observed assignment version. `request_id`
 correlates the request/log/trace; this operation does not introduce a Controller
 idempotency journal. Durable retry identity is Egress's unchanged
-`(agent_id, policy_id, revision, expected_resource_version)` tuple; a spec
+`(agent_id, policy_id, revision, expected_resource_version)` tuple (the wire
+alias `expected_version` maps to it); a spec
 request retries with its original `spec`, never a rewritten reference, and no
 automatic mutation or read repair is performed. `resource_version_conflict` is 409;
 unknown revisions and unallocated networks are 404. Cleanup failure returns
@@ -242,7 +248,9 @@ connection, one encrypted credential and all initial models commit atomically.
 There is no provider-name-based defaulting. OAuth/custom providers are rejected.
 
 `GET /internal/provider-connections` lists organization-scoped connections with
-`after_id`/`limit` pagination. `GET /internal/provider-connections/{connection_id}`
+`cursor`/`limit` pagination; `after_id` remains accepted for one release as a
+deprecated input alias for the canonical `cursor`, and a request carrying both
+is rejected. `GET /internal/provider-connections/{connection_id}`
 requires `organization_id`. Responses include credential method/version and the
 implemented `request_protocol`, never the key or encrypted bytes.
 
@@ -267,7 +275,11 @@ profile's model parameters and display name. Neither command accepts a credentia
 or model endpoint. Revision input cannot move a model to another connection or
 change its API model ID. The same API model ID is allowed on distinct connections.
 
-Model edits require `expected_version`, the integer `revision` read by the caller.
+Model edits require `expected_version`, the integer `revision` read by the
+caller; the canonical wire form is an unsigned decimal string, or a single
+strong `If-Match` token in place of the body field. For one release the
+integer body form also remains accepted — a request carrying more than one
+form is rejected.
 The transaction compares this version with the current row and returns 409
 `lifecycle_conflict` for a stale edit, without changing model data. An identical
 committed request replays its original response before version comparison.
@@ -334,7 +346,9 @@ non-secret response; replay does not return or overwrite a newer configuration.
 Agent build and Run snapshots retain consumed parameters without a model-history table.
 The endpoint comes from its connection, which is immutable.
 `GET /internal/model-profiles` requires `organization_id` and uses stable
-`after_id` plus bounded `limit` pagination. It never returns encrypted
+`cursor` plus bounded `limit` pagination; `after_id` remains accepted for one
+release as a deprecated input alias for `cursor`, and a request carrying both
+is rejected. It never returns encrypted
 credential bytes or plaintext secrets.
 
 `GET /internal/model-profiles/{model_profile_id}/usage` requires the verified
@@ -420,7 +434,8 @@ return current heads. `GET
 /internal/agent-templates/{template_id}/revisions/{revision}` returns one
 immutable historical configuration while retaining the current Template name
 as a display label. Get requires `organization_id`; revise carries it in the request. List requires `organization_id`
-and uses the same `after_id`/`limit` pagination. Agent creation resolves the
+and uses the same `cursor`/`limit` pagination with the same deprecated
+`after_id` input alias. Agent creation resolves the
 explicit `(template_id, template_revision)` pair rather than silently using a
 newer head.
 
@@ -738,7 +753,10 @@ strict JSON/media/size rules. No Agent owner or other workload gains policy or
 Rebuild authority.
 
 PUT requires `request_id`, `organization_id`, `actor_principal_id`,
-`expected_revision`, `mode` and `cooldown_ms`. GET and PUT return the four-field
+`expected_revision`, `mode` and `cooldown_ms`. The canonical `expected_version`
+unsigned-decimal string and a single strong `If-Match` token are permanent
+forms; for one release the legacy `expected_revision` number also remains
+accepted — a request carrying more than one form is rejected. GET and PUT return the four-field
 policy snapshot (`organization_id`, `revision`, `mode`, `cooldown_ms`) with
 `Cache-Control: no-store`. Every input field is required; missing or null
 `expected_revision` is invalid, while explicit 0 is accepted. An organization
@@ -855,7 +873,10 @@ GET and PUT return the flattened six-field policy (`organization_id`,
 with no persisted policy reads as revision 0, `unknown_cost=allow` and empty
 cap objects; GET creates no record and changes no execution head. PUT requires
 all eight input fields — missing or null members are invalid, including
-`expected_revision` where explicit 0 is accepted. `unknown_cost` is `allow` or
+`expected_revision` where explicit 0 is accepted — the permanent
+`expected_version` string or one `If-Match` token substitutes for it, while
+the legacy numeric form expires after one release under the same exclusivity
+rule. `unknown_cost` is `allow` or
 `deny`; every cap is an optional nonnegative safe integer and a configured soft
 cap must not exceed its hard cap. Reusing `(organization_id, request_id)` with
 different intent returns `409 request_id_conflict`; a stale expected revision

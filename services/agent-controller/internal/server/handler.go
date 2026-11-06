@@ -328,7 +328,7 @@ type templateResponse struct {
 
 type modelProfileListResponse struct {
 	Items       []modelProfileResponse `json:"items"`
-	NextAfterID *string                `json:"next_after_id"`
+	NextAfterID *string                `json:"next_cursor"`
 }
 
 type modelProfileEventListResponse struct {
@@ -338,7 +338,7 @@ type modelProfileEventListResponse struct {
 
 type templateListResponse struct {
 	Items       []templateResponse `json:"items"`
-	NextAfterID *string            `json:"next_after_id"`
+	NextAfterID *string            `json:"next_cursor"`
 }
 
 type runtimeBindingResponse struct {
@@ -1081,25 +1081,40 @@ func requiredOrganizationQuery(response http.ResponseWriter, request *http.Reque
 	return organizationID, true
 }
 
+const catalogListLimitMaximum = 500
+
 func catalogListInput(response http.ResponseWriter, request *http.Request) (application.ListCatalogInput, bool) {
-	query := request.URL.Query()
-	for key := range query {
-		if key != "organization_id" && key != "after_id" && key != "limit" {
+	query, ok := strictQuery(response, request, map[string]struct{}{
+		"organization_id": {}, "cursor": {}, "after_id": {}, "limit": {},
+	})
+	if !ok {
+		return application.ListCatalogInput{}, false
+	}
+	if _, hasCursor := query["cursor"]; hasCursor {
+		if _, hasAfter := query["after_id"]; hasAfter {
 			writeError(response, http.StatusBadRequest, apierror.InvalidRequest, "request is invalid", false)
 			return application.ListCatalogInput{}, false
 		}
 	}
+	cursor := query.Get("cursor")
+	if cursor == "" {
+		cursor = query.Get("after_id")
+	}
+	if len(cursor) > 4096 {
+		writeError(response, http.StatusBadRequest, apierror.InvalidRequest, "request is invalid", false)
+		return application.ListCatalogInput{}, false
+	}
 	limit := 0
-	if raw := strings.TrimSpace(query.Get("limit")); raw != "" {
-		parsed, err := strconv.Atoi(raw)
-		if err != nil || parsed < 1 {
+	if values, present := query["limit"]; present {
+		parsed, err := strconv.Atoi(values[0])
+		if err != nil || parsed < 1 || parsed > catalogListLimitMaximum {
 			writeError(response, http.StatusBadRequest, apierror.InvalidRequest, "request is invalid", false)
 			return application.ListCatalogInput{}, false
 		}
 		limit = parsed
 	}
 	return application.ListCatalogInput{
-		OrganizationID: query.Get("organization_id"), AfterID: query.Get("after_id"), Limit: limit,
+		OrganizationID: query.Get("organization_id"), AfterID: cursor, Limit: limit,
 	}, true
 }
 
@@ -1236,6 +1251,9 @@ func nonnegativeInt64(response http.ResponseWriter, raw string) (int64, bool) {
 func decodeJSON(response http.ResponseWriter, request *http.Request, target any) bool {
 	request.Body = http.MaxBytesReader(response, request.Body, maximumRequestBytes)
 	raw, err := io.ReadAll(request.Body)
+	if err == nil {
+		raw, err = normalizePrecondition(raw, request, target)
+	}
 	if err == nil {
 		err = serviceauth.DecodeObject(raw, target)
 	}

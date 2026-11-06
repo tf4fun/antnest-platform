@@ -111,7 +111,8 @@
       "list": {
         "method": "GET",
         "path": "/internal/provider-connections",
-        "query": ["organization_id", "after_id", "limit"],
+        "query": ["organization_id", "cursor", "limit"],
+        "deprecated_query": ["after_id"],
         "success_status": 200,
         "response": "control-api.schema.json#/$defs/provider_connection_list"
       }
@@ -173,7 +174,8 @@
       "list": {
         "method": "GET",
         "path": "/internal/model-profiles",
-        "query": ["organization_id", "after_id", "limit"],
+        "query": ["organization_id", "cursor", "limit"],
+        "deprecated_query": ["after_id"],
         "success_status": 200,
         "response": "control-api.schema.json#/$defs/model_profile_list"
       },
@@ -231,7 +233,8 @@
       "list": {
         "method": "GET",
         "path": "/internal/agent-templates",
-        "query": ["organization_id", "after_id", "limit"],
+        "query": ["organization_id", "cursor", "limit"],
+        "deprecated_query": ["after_id"],
         "success_status": 200,
         "response": "control-api.schema.json#/$defs/agent_template_list"
       }

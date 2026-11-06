@@ -936,6 +936,11 @@ func compileControlSchema(t *testing.T, path string) *jsonschema.Compiler {
 	if err := compiler.AddResource("https://schemas.antnest.dev/common/pagination.schema.json", paginationContract); err != nil {
 		t.Fatalf("load common pagination contract: %v", err)
 	}
+	var preconditionContract any
+	readContractJSON(t, filepath.Join(repositoryRoot(t), "contracts/common/precondition.schema.json"), &preconditionContract)
+	if err := compiler.AddResource("https://schemas.antnest.dev/common/precondition.schema.json", preconditionContract); err != nil {
+		t.Fatalf("load common precondition contract: %v", err)
+	}
 	if err := compiler.AddResource(controlSchemaID, document); err != nil {
 		t.Fatalf("load control schema: %v", err)
 	}
