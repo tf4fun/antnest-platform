@@ -1,6 +1,35 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
+test("browser recovery failures expose only classification and a public source line", async () => {
+  const { summarizeBrowserRecoveryFailure } =
+    await import("./browser-recovery-evidence.mjs");
+  const error = new assert.AssertionError({
+    actual: "PRIVATE_BROWSER_TOKEN",
+    expected: "PRIVATE_SESSION_COOKIE",
+  });
+  const source = new URL("./browser-recovery.mjs", import.meta.url);
+  error.stack = `AssertionError: PRIVATE_BROWSER_TOKEN\n    at async login (${source.href}:73:9)`;
+  assert.deepEqual(summarizeBrowserRecoveryFailure(error), {
+    status: "failed",
+    error_type: "AssertionError",
+    code: "ERR_ASSERTION",
+    source: { file: "tests/e2e/acp-restart/browser-recovery.mjs", line: 73 },
+  });
+  for (const frame of [
+    `    at ${source.href}:999999:1`,
+    "    at file:///private/credential.mjs:10:1",
+    `    at ${source.href}?PRIVATE_BROWSER_TOKEN:73:9`,
+  ]) {
+    error.stack = `AssertionError: PRIVATE_BROWSER_TOKEN\n${frame}`;
+    assert.deepEqual(summarizeBrowserRecoveryFailure(error), {
+      status: "failed",
+      error_type: "AssertionError",
+      code: "ERR_ASSERTION",
+    });
+  }
+});
+
 const implementation = new URL(
   "./browser-recovery-evidence.mjs",
   import.meta.url,
