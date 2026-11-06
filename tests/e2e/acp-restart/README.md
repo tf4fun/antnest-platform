@@ -99,8 +99,10 @@ in either profile.
 An actual owner login observes the recovery reason in Workspace. The manual
 case uses an administrator owner and follows the existing Console link; the
 notify case uses a member owner and verifies that only the administrator-contact
-guidance is offered. A separate administrator browser confirms recovery through
-Console with the original barrier, configured Template, request ID and CSRF pair.
+guidance is offered. Member login's automatic navigation to the Workspace chooser
+finishes before the runner opens the original Session. A separate administrator
+browser confirms recovery through Console with the original barrier, configured
+Template, request ID and CSRF pair.
 The original operation lookup must return typed `operation_not_found` before
 the sole recovery POST. Opening the dialog and refreshing must not dispatch.
 
@@ -116,6 +118,9 @@ four joined ACP connections, seven original requests and three model requests.
 
 All four restart profiles belong to the remote `c-acp-recovery` gate. Source and
 fixture checks alone do not establish that the real browser or Docker cases passed.
+Browser failures retain `browser-recovery-failure.json` with the error
+classification and a bounded source line in the public runner. Exception text,
+cookies and request observations remain in the excluded private files.
 
 ## Trace rules
 

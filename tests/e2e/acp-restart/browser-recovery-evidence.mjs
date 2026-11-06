@@ -1,5 +1,18 @@
 import assert from "node:assert/strict";
 import { gatewaySessionCookies } from "../../support/gateway-session-cookies.mjs";
+import { summarizeFailure } from "../../support/verification/failure.mjs";
+import { sourceLocation } from "../acp-files/failure-evidence.mjs";
+
+export function summarizeBrowserRecoveryFailure(error) {
+  return {
+    status: "failed",
+    ...summarizeFailure(error),
+    ...sourceLocation(error, {
+      file: "tests/e2e/acp-restart/browser-recovery.mjs",
+      url: new URL("./browser-recovery.mjs", import.meta.url).href,
+    }),
+  };
+}
 
 export function assertBrowserRecoveryRequests(
   rows,
