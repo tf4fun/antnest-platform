@@ -78,12 +78,17 @@ test("replacement request requires the CAS and principal precondition", () => {
   assert.deepEqual(request.required.sort(), [
     "daily",
     "expected_principal",
-    "expected_revision",
     "monthly",
     "run_caps",
     "unknown_cost",
   ]);
   assert.equal(request.additionalProperties, false);
+  assert.equal(request.properties.expected_revision.deprecated, true);
+  assert.deepEqual(request.not.required, ["expected_version", "expected_revision"]);
+  assert.equal(
+    request.properties.expected_version.allOf[0].$ref,
+    "../common/precondition.schema.json#/$defs/expected_version",
+  );
   assert.equal(request.properties.expected_principal.minItems, 2);
   assert.equal(request.properties.expected_principal.maxItems, 2);
   assert.equal(request.properties.expected_principal.items.minLength, 1);

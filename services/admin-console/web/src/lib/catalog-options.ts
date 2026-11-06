@@ -59,7 +59,7 @@ function useCatalogOptions<T>(
         key,
         eligible,
       ).items);
-      setNextAfterID(page.next_after_id ?? undefined);
+      setNextAfterID(page.next_cursor ?? undefined);
       setAvailable(true);
     } catch (cause) {
       if (replaceItems) setAvailable((current) => current ?? false);

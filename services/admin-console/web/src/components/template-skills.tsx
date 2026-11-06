@@ -17,7 +17,7 @@ export function TemplateSkills({ value, frozen = [], onChange, disabled = false 
   const [morePending, setMorePending] = useState(false);
   const [selectedID, setSelectedID] = useState("");
   const [versions, setVersions] = useState<SkillVersion[]>();
-  const [versionCursor, setVersionCursor] = useState<number | null>(null);
+  const [versionCursor, setVersionCursor] = useState<string | null>(null);
   const [versionError, setVersionError] = useState("");
   const [versionPending, setVersionPending] = useState(false);
   const [selectedVersion, setSelectedVersion] = useState("");
@@ -28,7 +28,7 @@ export function TemplateSkills({ value, frozen = [], onChange, disabled = false 
     try {
       const page = await api.skills();
       setSkills(page.items);
-      setCursor(page.next_after_id);
+      setCursor(page.next_cursor);
     } catch (cause) { setSkillError(errorMessage(cause)); }
   }, []);
   useEffect(() => { void loadSkills(); }, [loadSkills]);
@@ -41,7 +41,7 @@ export function TemplateSkills({ value, frozen = [], onChange, disabled = false 
     void api.skillVersions(selectedID).then((page) => {
       if (!current) return;
       setVersions(page.items);
-      setVersionCursor(page.next_after_version);
+      setVersionCursor(page.next_cursor);
       setSelectedVersion(String(page.items.find((item) => item.version === selectedHead)?.version ?? page.items[0]?.version ?? ""));
     }).catch((cause) => { if (current) setVersionError(errorMessage(cause)); });
     return () => { current = false; };
@@ -53,7 +53,7 @@ export function TemplateSkills({ value, frozen = [], onChange, disabled = false 
     try {
       const page = await api.skills(cursor);
       setSkills((current) => [...(current ?? []), ...page.items.filter((item) => !current?.some((known) => known.skill_id === item.skill_id))]);
-      setCursor(page.next_after_id);
+      setCursor(page.next_cursor);
     } catch (cause) { setSkillError(errorMessage(cause)); }
     finally { setMorePending(false); }
   }
@@ -64,7 +64,7 @@ export function TemplateSkills({ value, frozen = [], onChange, disabled = false 
     try {
       const page = await api.skillVersions(selectedID, versionCursor);
       setVersions((current) => [...(current ?? []), ...page.items.filter((item) => !current?.some((known) => known.version === item.version))]);
-      setVersionCursor(page.next_after_version);
+      setVersionCursor(page.next_cursor);
     } catch (cause) { setVersionError(errorMessage(cause)); }
     finally { setVersionPending(false); }
   }

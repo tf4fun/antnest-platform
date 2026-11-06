@@ -38,8 +38,8 @@ function useExternalIdentities(membershipID?: string) {
       // Each cursor describes its own scan. The other returned stream is ignored
       // when loading more so it cannot replace rows or silently advance a cursor.
       if (stream !== "notices") {
-        setBindings(previous => after ? appendByID(previous ?? [], page.bindings) : page.bindings);
-        setBindingCursor(page.next_after_id);
+        setBindings(previous => after ? appendByID(previous ?? [], page.items) : page.items);
+        setBindingCursor(page.next_cursor ?? undefined);
       }
       if (stream !== "bindings" && "notices" in page) {
         setNotices(previous => after ? appendByID(previous, page.notices as ExternalIdentityNotice[]) : page.notices as ExternalIdentityNotice[]);

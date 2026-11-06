@@ -27,13 +27,16 @@ func externalIdentityListInput(response http.ResponseWriter, request *http.Reque
 			return 0, "", false
 		}
 	}
-	query, ok := parseListQuery(response, request, "limit", "after_id")
+	query, ok := parseListQuery(response, request, "limit", "cursor", "after_id")
 	if !ok {
 		return 0, "", false
 	}
 	limit, err := strconv.Atoi(query.Get("limit"))
-	after := query.Get("after_id")
-	_, hasAfter := query["after_id"]
+	after, cursorOK := canonicalListCursor(response, query, "after_id")
+	if !cursorOK {
+		return 0, "", false
+	}
+	hasAfter := after != ""
 	if err != nil || limit < 1 || limit > 100 || strconv.Itoa(limit) != query.Get("limit") || hasAfter && !browserSessionPublicID.MatchString(after) {
 		writeInvalidListQuery(response)
 		return 0, "", false
@@ -57,7 +60,7 @@ func (h *handler) listExternalIdentityProviders(response http.ResponseWriter, re
 	}
 	input := map[string]any{"actor_principal_id": actor.UserID, "limit": limit}
 	if after != "" {
-		input["after_id"] = after
+		input["cursor"] = after
 	}
 	h.forwardExternalIdentity(response, request, "list-external-identity-providers", input, func(body []byte) ([]byte, error) { return projectExternalIdentityProviders(body, after, limit) })
 }
@@ -73,7 +76,7 @@ func (h *handler) listOrganizationExternalIdentities(response http.ResponseWrite
 	}
 	input := map[string]any{"actor_principal_id": actor.UserID, "scope": "organization", "membership_id": membership, "limit": limit}
 	if after != "" {
-		input["after_id"] = after
+		input["cursor"] = after
 	}
 	h.forwardExternalIdentity(response, request, "list-external-identities", input, func(body []byte) ([]byte, error) {
 		return projectOrganizationExternalIdentities(body, actor.OrganizationID, membership, after, limit)

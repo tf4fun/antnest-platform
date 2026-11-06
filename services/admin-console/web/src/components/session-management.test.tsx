@@ -10,16 +10,16 @@ const row = {
 };
 
 it("follows an empty filtered page's cursor and displays cross-organization browser hints as text", async () => {
-  const request = vi.fn(async (path: string) => path.endsWith("after_id=public-session-1")
-    ? Response.json({ sessions: [row] })
-    : Response.json({ sessions: [], next_after_id: "public-session-1" }));
+  const request = vi.fn(async (path: string) => path.endsWith("cursor=public-session-1")
+    ? Response.json({ items: [row] })
+    : Response.json({ items: [], next_cursor: "public-session-1" }));
   vi.stubGlobal("fetch", request);
   render(<SessionManagement open onOpenChange={() => undefined} />);
   fireEvent.click(await screen.findByRole("button", { name: "Load more sessions" }));
   expect(await screen.findByText("Other organization")).toBeTruthy();
   expect(screen.getByText(row.user_agent_hint)).toBeTruthy();
   expect(screen.queryByRole("img")).toBeNull();
-  expect(request.mock.calls.map(([path]) => path)).toEqual(["/api/session/sessions?limit=50", "/api/session/sessions?limit=50&after_id=public-session-1"]);
+  expect(request.mock.calls.map(([path]) => path)).toEqual(["/api/session/sessions?limit=50", "/api/session/sessions?limit=50&cursor=public-session-1"]);
 });
 
 it("keeps sessions visible after revoke 503 and retries only after a new confirmation click", async () => {
@@ -30,7 +30,7 @@ it("keeps sessions visible after revoke 503 and retries only after a new confirm
       expect(JSON.parse(String(init.body))).toEqual({ mode: "others" });
       return write();
     }
-    return Response.json({ sessions: [row] });
+    return Response.json({ items: [row] });
   });
   vi.stubGlobal("fetch", request);
   window.addEventListener("antnest:session-expired", expired);
@@ -55,7 +55,7 @@ it("clears the active UI only when Identity reports the current session was revo
   const closed = vi.fn();
   vi.stubGlobal("fetch", vi.fn(async (path: string) => path.endsWith("/revoke")
     ? Response.json({ revoked_count: 2, current_revoked: true })
-    : Response.json({ sessions: [{ ...row, current: true }] })));
+    : Response.json({ items: [{ ...row, current: true }] })));
   window.addEventListener("antnest:session-expired", expired);
   try {
     render(<SessionManagement open onOpenChange={closed} />);
@@ -72,13 +72,13 @@ it("aborts a closed dialog's read and ignores its response after reopening", asy
   const pending = new Promise<Response>(resolve => { complete = resolve; });
   const request = vi.fn((_path: string, _init: RequestInit) => pending)
     .mockImplementationOnce(() => pending)
-    .mockResolvedValueOnce(Response.json({ sessions: [] }));
+    .mockResolvedValueOnce(Response.json({ items: [] }));
   vi.stubGlobal("fetch", request);
   const view = render(<SessionManagement open onOpenChange={() => undefined} />);
   view.rerender(<SessionManagement open={false} onOpenChange={() => undefined} />);
   expect(request.mock.calls[0]![1].signal?.aborted).toBe(true);
   view.rerender(<SessionManagement open onOpenChange={() => undefined} />);
   await screen.findByText("No active sessions in this page.");
-  await act(async () => { complete(Response.json({ sessions: [row] })); });
+  await act(async () => { complete(Response.json({ items: [row] })); });
   expect(screen.queryByText("Other organization")).toBeNull();
 });

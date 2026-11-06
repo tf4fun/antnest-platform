@@ -158,7 +158,7 @@ type modelCatalogSource struct {
 
 type modelProfileListSource struct {
 	Items       []modelProfileSource `json:"items"`
-	NextAfterID *string              `json:"next_after_id"`
+	NextAfterID *string              `json:"next_cursor"`
 }
 
 type templateSource struct {
@@ -199,7 +199,7 @@ func (source *templateSource) UnmarshalJSON(raw []byte) error {
 
 type templateListSource struct {
 	Items       []templateSource `json:"items"`
-	NextAfterID *string          `json:"next_after_id"`
+	NextAfterID *string          `json:"next_cursor"`
 }
 
 type runtimeProjectionSource struct {
@@ -511,7 +511,15 @@ func projectModelProfile(payload []byte) ([]byte, error) {
 }
 
 func projectModelProfileList(payload []byte) ([]byte, error) {
-	return projectPayload[modelProfileListSource](payload)
+	var err error
+	if payload, err = canonicalPage(payload, "items", "next_after_id", false); err != nil {
+		return nil, err
+	}
+	var result modelProfileListSource
+	if err := json.Unmarshal(payload, &result); err != nil || result.Items == nil {
+		return nil, fmt.Errorf("invalid model inventory")
+	}
+	return encodeBrowserResponse(result)
 }
 
 func projectTemplate(payload []byte) ([]byte, error) {
@@ -537,9 +545,16 @@ func projectTemplate(payload []byte) ([]byte, error) {
 }
 
 func projectTemplateList(payload []byte) ([]byte, error) {
+	var err error
+	if payload, err = canonicalPage(payload, "items", "next_after_id", false); err != nil {
+		return nil, err
+	}
 	var result templateListSource
 	if err := json.Unmarshal(payload, &result); err != nil {
 		return nil, fmt.Errorf("decode template inventory: %w", err)
+	}
+	if result.Items == nil {
+		return nil, fmt.Errorf("template inventory items are required")
 	}
 	for index := range result.Items {
 		result.Items[index].Runtime.MCPServers = nil

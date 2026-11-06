@@ -60,7 +60,7 @@ func TestNetworkPolicySpecWriteConsumesTheSharedHandoffFixture(t *testing.T) {
 	}
 	if command["organization_id"] != fixture["organization_id"] ||
 		command["actor_principal_id"] != fixture["actor_principal_id"] ||
-		command["expected_resource_version"] != float64(1) || command["request_id"] == nil ||
+		command["expected_version"] != "1" || command["request_id"] == nil ||
 		command["request_id"] == "" {
 		t.Fatalf("trusted tuple=%v", command)
 	}

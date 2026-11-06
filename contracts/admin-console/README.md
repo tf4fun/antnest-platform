@@ -8,6 +8,15 @@ JSON. Admin Console owns no durable records and therefore has no persistence
 contract. Skill source discovery and promotion are specified separately in
 [skill-discovery.md](skill-discovery.md).
 
+The #68 migration follows [shared conventions](../CONVENTIONS.md). List queries
+accept `cursor` and one deprecated request alias for a single release, rejecting
+ambiguous forms. Browser pages emit only `items` and nullable-string
+`next_cursor`; self external-identity notices remain a separate extension.
+CAS input is canonical string `expected_version` or one strong `If-Match`;
+deprecated numeric body forms normalize before existing typed validation.
+Multiple preconditions are rejected even when equal. Existing organization
+scope, private-field projections and idempotency receipts do not change.
+
 Version 57 defines the optional current Agent `readiness` projection in
 [agent-readiness.schema.json](agent-readiness.schema.json). The closed schema
 describes this extension, not the entire existing Agent response. The BFF copies

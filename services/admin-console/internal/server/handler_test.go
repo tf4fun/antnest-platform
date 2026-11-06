@@ -361,7 +361,7 @@ func TestModelProfileDetailAndRevisionRemainOrganizationScoped(t *testing.T) {
 	var payload map[string]any
 	decodeBytes(t, backend.calls[1].Body, &payload)
 	if backend.calls[1].Path != "/internal/model-profiles/model-1/revisions" ||
-		payload["organization_id"] != "org-1" || payload["expected_version"] != float64(1) {
+		payload["organization_id"] != "org-1" || payload["expected_version"] != "1" {
 		t.Fatalf("revision call=%#v payload=%v", backend.calls[1], payload)
 	}
 	if strings.Contains(response.Body.String(), "replacement-secret") {
@@ -532,11 +532,11 @@ func TestListEndpointsKeepPaginationAndDeletedVisibilityOrganizationScoped(t *te
 		t.Fatalf("calls=%#v", backend.calls)
 	}
 	if backend.calls[0].Path != "/internal/model-profiles" ||
-		backend.calls[0].Query != "after_id=model-9&limit=25&organization_id=org-1" {
+		backend.calls[0].Query != "cursor=model-9&limit=25&organization_id=org-1" {
 		t.Fatalf("model call=%#v", backend.calls[0])
 	}
 	if backend.calls[1].Path != "/internal/agent-templates" ||
-		backend.calls[1].Query != "after_id=template-9&limit=25&organization_id=org-1" {
+		backend.calls[1].Query != "cursor=template-9&limit=25&organization_id=org-1" {
 		t.Fatalf("template call=%#v", backend.calls[1])
 	}
 	if backend.calls[2].Path != "/internal/agents" ||

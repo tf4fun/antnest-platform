@@ -169,7 +169,7 @@ it("preserves a stale model draft until an explicit successful reload", async ()
   const requests = mockCatalog((request) => {
     if (request.method === "POST") {
       const input = JSON.parse(request.body);
-      if (input.expected_version !== 2) return Response.json({ code: "lifecycle_conflict", message: "resource changed concurrently" }, { status: 409 });
+        if (input.expected_version !== "2") return Response.json({ code: "lifecycle_conflict", message: "resource changed concurrently" }, { status: 409 });
       return Response.json({ ...latest, model: { ...latest.model, ...input.model }, revision: 3 }, { status: 201 });
     }
     if (request.path === "/api/admin/model-profiles/model-1") {
@@ -193,7 +193,7 @@ it("preserves a stale model draft until an explicit successful reload", async ()
   fireEvent.click(dialog.getByRole("button", { name: "Save changes" }));
   fireEvent.click(await dialog.findByRole("button", { name: "Confirm changes" }));
   const reload = await dialog.findByRole("button", { name: "Reload latest model" });
-  expect(JSON.parse(requests.find((request) => request.method === "POST")!.body).expected_version).toBe(1);
+  expect(JSON.parse(requests.find((request) => request.method === "POST")!.body).expected_version).toBe("1");
   expect((dialog.getByRole("button", { name: "Save changes" }) as HTMLButtonElement).disabled).toBe(true);
   expect((dialog.getByLabelText("Maximum output") as HTMLInputElement).value).toBe("2048");
   expect((dialog.getByLabelText("Image input") as HTMLInputElement).checked).toBe(true);
@@ -222,7 +222,7 @@ it("preserves a stale model draft until an explicit successful reload", async ()
   await screen.findByText("Model settings saved.");
   const writes = requests.filter((request) => request.method === "POST");
   expect(writes).toHaveLength(2);
-  expect(JSON.parse(writes[1]!.body).expected_version).toBe(2);
+  expect(JSON.parse(writes[1]!.body).expected_version).toBe("2");
   expect(writes[1]!.key).not.toBe(writes[0]!.key);
 });
 
@@ -238,7 +238,7 @@ it("treats refreshed A to B to A edits as new intents after an uncertain respons
     const receipt = receipts.get(request.key!);
     if (receipt) return Response.json(receipt, { status: 201 });
     const input = JSON.parse(request.body);
-    if (input.expected_version !== saved.revision) return Response.json({ code: "lifecycle_conflict" }, { status: 409 });
+    if (input.expected_version !== String(saved.revision)) return Response.json({ code: "lifecycle_conflict" }, { status: 409 });
     saved = { ...saved, display_name: input.display_name, model: { ...saved.model, ...input.model }, revision: saved.revision + 1 };
     receipts.set(request.key!, saved);
     if (first) { first = false; throw new Error("response lost after commit"); }
@@ -275,7 +275,7 @@ it("retries an uncertain model save with the original version and command key", 
   expect(writes).toHaveLength(2);
   expect(writes[1]!.key).toBe(writes[0]!.key);
   expect(writes[1]!.body).toBe(writes[0]!.body);
-  expect(JSON.parse(writes[1]!.body).expected_version).toBe(1);
+  expect(JSON.parse(writes[1]!.body).expected_version).toBe("1");
 });
 
 describe("Template stable model reference", () => {
@@ -295,7 +295,7 @@ describe("Template stable model reference", () => {
 
   it("keeps a selected model outside the first page and submits its stable ID", async () => {
     const requests = mockCatalog((request) => {
-      if (request.path === "/api/admin/model-profiles") return Response.json({ items: [], next_after_id: "page-2" });
+    if (request.path === "/api/admin/model-profiles") return Response.json({ items: [], next_cursor: "page-2" });
       if (request.method === "POST") return Response.json({ ...template, revision: 2 }, { status: 201 });
       return undefined;
     });
@@ -338,7 +338,7 @@ describe("Template stable model reference", () => {
     let pages = 0;
     const requests = mockCatalog((request) => {
       if (request.path === "/api/admin/model-profiles") return Response.json(++pages === 1
-        ? { items: [model], next_after_id: "page-2" }
+    ? { items: [model], next_cursor: "page-2" }
         : { items: [{ ...model, revision_id: "model-revision-2", revision: 2, display_name: "Updated model" }] });
       if (request.method === "POST") return Response.json({ ...template, revision: 2 }, { status: 201 });
       return undefined;
@@ -367,7 +367,7 @@ function mockCatalog(overrides: (request: Request) => Response | Promise<Respons
     switch (request.path) {
       case "/api/admin/model-catalog": return Response.json(catalog);
       case "/api/admin/model-profiles": return Response.json({ items: [model] });
-      case "/api/admin/skills": return Response.json({ items: [], next_after_id: null });
+      case "/api/admin/skills": return Response.json({ items: [], next_cursor: null });
       case "/api/admin/model-profiles/model-1": return Response.json(model);
       case "/api/admin/model-profiles/model-1/usage": return Response.json({ templates: 0, agents: 0 });
       case "/api/admin/templates/template-1":
@@ -383,7 +383,7 @@ it("keeps the frozen Skill version when publishing a Template revision", async (
   const withSkill = { ...template, skill_refs: [frozen], skill_set_digest: `sha256:${"c".repeat(64)}` };
   const requests = mockCatalog((request) => {
     if (request.path === "/api/admin/templates/template-1" && request.method === "GET") return Response.json(withSkill);
-    if (request.path === "/api/admin/skills") return Response.json({ items: [], next_after_id: null });
+    if (request.path === "/api/admin/skills") return Response.json({ items: [], next_cursor: null });
     if (request.path === "/api/admin/templates/template-1/revisions" && request.method === "POST") return Response.json({ ...withSkill, revision: 2 }, { status: 201 });
     return undefined;
   });

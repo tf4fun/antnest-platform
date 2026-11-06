@@ -26,9 +26,9 @@ func browserSessionRow() map[string]any {
 
 func encodedSessionPage(t *testing.T, rows []map[string]any, cursor string) string {
 	t.Helper()
-	value := map[string]any{"sessions": rows}
+	value := map[string]any{"items": rows, "next_cursor": nil}
 	if cursor != "" {
-		value["next_after_id"] = cursor
+		value["next_cursor"] = cursor
 	}
 	body, err := json.Marshal(value)
 	if err != nil {
@@ -60,7 +60,7 @@ func TestBrowserSessionOrganizationListDerivesSignedScopeAndProjectsOnlyPublicFi
 	if call.Target != upstream.Identity || call.Method != http.MethodPost || call.Path != "/rpc/identity/list-user-sessions" || call.Query != "" {
 		t.Fatalf("wrong operation: %s", call.Path)
 	}
-	if !reflect.DeepEqual(input, map[string]any{"actor_principal_id": "real-admin", "user_id": "user-target", "scope": "organization", "limit": float64(2), "after_id": "public-session-0"}) {
+	if !reflect.DeepEqual(input, map[string]any{"actor_principal_id": "real-admin", "user_id": "user-target", "scope": "organization", "limit": float64(2), "cursor": "public-session-0"}) {
 		t.Fatalf("wrong scope: %v", input)
 	}
 	expected := encodedSessionPage(t, []map[string]any{browserSessionRow()}, "public-session-3")

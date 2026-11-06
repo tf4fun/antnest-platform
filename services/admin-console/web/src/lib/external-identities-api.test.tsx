@@ -31,9 +31,9 @@ it("uses the Gateway self API and exact Membership BFF paths without browser aut
   vi.stubGlobal("fetch", fetcher);
   for (const call of calls()) await call();
   expect(fetcher.mock.calls.map(([path]) => path)).toEqual([
-    "/api/session/external-identities?limit=50&after_id=binding.1&notice_after_id=notice-1",
-    "/api/admin/directory/identity-providers?limit=50&after_id=provider-1",
-    "/api/admin/directory/memberships/membership-1/external-identities?limit=50&after_id=binding-1",
+    "/api/session/external-identities?limit=50&cursor=binding.1&notice_after_id=notice-1",
+    "/api/admin/directory/identity-providers?limit=50&cursor=provider-1",
+    "/api/admin/directory/memberships/membership-1/external-identities?limit=50&cursor=binding-1",
     "/api/admin/directory/memberships/membership-1/external-identities",
     "/api/session/external-identities/binding-1",
     "/api/admin/directory/memberships/membership-1/external-identities/binding-1",

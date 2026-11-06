@@ -34,8 +34,8 @@ export function SessionManagement({ open, onOpenChange, user, organizationName }
     try {
       const result = userID ? await api.organizationSessions(userID, after, controller.signal) : await api.sessions(after, controller.signal);
       if (scope.current !== current || controller.signal.aborted) return;
-      setRows(previous => after ? [...(previous ?? []), ...result.sessions.filter(row => !previous?.some(existing => existing.id === row.id))] : result.sessions);
-      setCursor(result.next_after_id);
+      setRows(previous => after ? [...(previous ?? []), ...result.items.filter(row => !previous?.some(existing => existing.id === row.id))] : result.items);
+      setCursor(result.next_cursor ?? undefined);
     } catch (cause) {
       if (scope.current === current && !controller.signal.aborted) setError(errorMessage(cause));
     } finally {

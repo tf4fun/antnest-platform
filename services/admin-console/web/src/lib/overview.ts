@@ -44,7 +44,7 @@ export function overviewResourceSummary(overview: Overview): OverviewResourceSum
   const models = overview.model_profiles.status === "available"
     ? pagedMetric(
       overview.model_profiles.data.items.length,
-      overview.model_profiles.data.next_after_id,
+      overview.model_profiles.data.next_cursor,
       "Configured model profiles",
       "Loaded model profiles; more available",
     )
@@ -52,7 +52,7 @@ export function overviewResourceSummary(overview: Overview): OverviewResourceSum
   const templates = overview.templates.status === "available"
     ? pagedMetric(
       overview.templates.data.items.length,
-      overview.templates.data.next_after_id,
+      overview.templates.data.next_cursor,
       "Versioned build definitions",
       "Loaded templates; more available",
     )

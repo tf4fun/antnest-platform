@@ -44,7 +44,7 @@ type providerConnectionSource struct {
 
 type providerConnectionListSource struct {
 	Items       []providerConnectionSource `json:"items"`
-	NextAfterID string                     `json:"next_after_id,omitempty"`
+	NextAfterID *string                    `json:"next_cursor"`
 }
 
 func (h *handler) registerProviderRoutes() {
@@ -62,7 +62,17 @@ func (h *handler) listProviderConnections(w http.ResponseWriter, r *http.Request
 		return
 	}
 	h.forwardProjected(w, r, upstream.AgentController, http.MethodGet,
-		"/internal/provider-connections", query, nil, projectPayload[providerConnectionListSource])
+		"/internal/provider-connections", query, nil, func(body []byte) ([]byte, error) {
+			canonical, err := canonicalPage(body, "items", "next_after_id", false)
+			if err != nil {
+				return nil, err
+			}
+			var page providerConnectionListSource
+			if err := json.Unmarshal(canonical, &page); err != nil || page.Items == nil {
+				return nil, fmt.Errorf("invalid provider inventory")
+			}
+			return encodeBrowserResponse(page)
+		})
 }
 
 func (h *handler) getProviderConnection(w http.ResponseWriter, r *http.Request, actor principal.Principal) {
@@ -99,11 +109,13 @@ func (h *handler) createProviderConnection(w http.ResponseWriter, r *http.Reques
 	}, projectPayload[providerConnectionSource])
 }
 
+type rotateProviderCredentialInput struct {
+	ExpectedVersion string                  `json:"expected_version"`
+	Credential      providerCredentialInput `json:"credential"`
+}
+
 func (h *handler) rotateProviderCredential(w http.ResponseWriter, r *http.Request, actor principal.Principal) {
-	var input struct {
-		ExpectedVersion string                  `json:"expected_version"`
-		Credential      providerCredentialInput `json:"credential"`
-	}
+	var input rotateProviderCredentialInput
 	if !decodeJSON(w, r, &input) {
 		return
 	}

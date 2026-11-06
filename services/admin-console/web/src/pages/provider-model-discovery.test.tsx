@@ -139,7 +139,7 @@ it("merges all saved pages without allowing saved models to be added again", asy
     },
   };
   vi.mocked(api.models)
-    .mockResolvedValueOnce({ items: [], next_after_id: "page2" })
+    .mockResolvedValueOnce({ items: [], next_cursor: "page2" })
     .mockResolvedValueOnce({ items: [saved] });
   state.start();
   expect(

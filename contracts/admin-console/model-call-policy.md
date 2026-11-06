@@ -16,14 +16,21 @@ persisted; it is not a stored record.
 
 ## Organization budget replace
 
+The canonical concurrency input is `expected_version`, a decimal string.
+Deprecated numeric `expected_revision` remains accepted for one release.
+A single strong quoted `If-Match` can replace the body version; multiple
+forms, repeated headers, weak tags and null versions are rejected before
+calling Controller. The BFF forwards only canonical string `expected_version`
+and preserves the internal numeric revision and original idempotency identity.
+
 `PUT /api/admin/model-call-policy` takes a complete replacement plus two
-preconditions. `expected_revision` is the CAS against the displayed revision.
+preconditions. `expected_version` is the CAS against the displayed revision.
 `expected_principal` is exactly `[organization_id, user_id]` of the signed
 account as a stale-account guard — the BFF compares it to the verified CCT and
 returns `409 principal_changed` on mismatch without calling upstream. Neither
 field grants authority; the signed caller context remains the sole authority.
 A successful response re-validates the upstream acknowledgement (organization,
-revision `expected_revision + 1`, exact caps) and projects the same five
+revision `Number(expected_version) + 1`, exact caps) and projects the same five
 browser fields.
 
 All money amounts are nonnegative integer USD microdollars with the shared

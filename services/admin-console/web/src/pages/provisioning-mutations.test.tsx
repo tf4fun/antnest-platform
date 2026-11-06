@@ -133,8 +133,8 @@ it("retries the failed chooser page without silently dropping a selected SCIM pa
     }
     const after = url.searchParams.get("after_id");
     if (after === "provider-2") return ++attempts === 1 ? Response.json({ message: "Third page unavailable" }, { status: 503 }) : Response.json({ providers: [choice("provider-3")] });
-    if (after === "provider-1") return Response.json({ providers: [choice("provider-2")], next_after_id: "provider-2" });
-    return Response.json({ providers: [choice("provider-1")], next_after_id: "provider-1" });
+    if (after === "provider-1") return Response.json({ providers: [choice("provider-2")], next_cursor: "provider-2" });
+    return Response.json({ providers: [choice("provider-1")], next_cursor: "provider-1" });
   }));
   render(<ProvisioningPage systemAdministrator={false} />);
   const issue = await screen.findByRole("button", { name: "Issue SCIM token" });

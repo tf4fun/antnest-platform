@@ -103,11 +103,11 @@ function overview(input: {
       ? unavailable<Directory>("directory")
       : available({ users: members, groups: [] }),
     model_profiles: input.unavailable === "model_profiles"
-      ? unavailable<{ items: ModelProfile[]; next_after_id?: string | null }>("models")
-      : available({ items: models, next_after_id: input.moreModels ? "next-model" : null }),
+      ? unavailable<{ items: ModelProfile[]; next_cursor?: string | null }>("models")
+      : available({ items: models, next_cursor: input.moreModels ? "next-model" : null }),
     templates: input.unavailable === "templates"
-      ? unavailable<{ items: AgentTemplate[]; next_after_id?: string | null }>("templates")
-      : available({ items: templates, next_after_id: input.moreTemplates ? "next-template" : null }),
+      ? unavailable<{ items: AgentTemplate[]; next_cursor?: string | null }>("templates")
+      : available({ items: templates, next_cursor: input.moreTemplates ? "next-template" : null }),
     agents: input.unavailable === "agents"
       ? unavailable<{ items: Agent[]; next_cursor?: string | null }>("agents")
       : available({ items: agents, next_cursor: input.moreAgents ? "next-agent" : null }),

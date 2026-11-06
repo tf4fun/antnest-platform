@@ -1,4 +1,5 @@
 export type CatalogPageOptions = {
+  cursor?: string;
   afterID?: string;
   limit?: number;
 };
@@ -11,6 +12,7 @@ export type AgentPageOptions = {
 
 export type CatalogOptionPage<T> = {
   items: T[];
+  next_cursor?: string | null;
   next_after_id?: string | null;
 };
 
@@ -21,7 +23,7 @@ export type CatalogOptionState<T> = {
 
 export function catalogPagePath(path: string, options: CatalogPageOptions = {}): string {
   return pagePath(path, [
-    ["after_id", options.afterID],
+    ["cursor", options.cursor ?? options.afterID],
     ["limit", options.limit],
   ]);
 }
@@ -49,7 +51,7 @@ export function mergeCatalogOptions<T>(
 ): CatalogOptionState<T> {
   return {
     items: mergePage(current, page.items, key).filter(eligible),
-    nextAfterID: page.next_after_id ?? undefined,
+    nextAfterID: "next_cursor" in page ? (page.next_cursor ?? undefined) : (page.next_after_id ?? undefined),
   };
 }
 

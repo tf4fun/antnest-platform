@@ -64,7 +64,7 @@ export function ProviderList() {
     try {
       const page = await api.providers();
       setItems(page.items);
-      setNext(page.next_after_id ?? undefined);
+      setNext(page.next_cursor ?? undefined);
     } catch (cause) {
       setFailure(resourceFailure(cause));
     }
@@ -86,7 +86,7 @@ export function ProviderList() {
       setItems((current) =>
         mergePage(current ?? [], page.items, (item) => item.connection_id),
       );
-      setNext(page.next_after_id ?? undefined);
+      setNext(page.next_cursor ?? undefined);
     } catch (cause) {
       setPageFailure(resourceFailure(cause));
     } finally {
@@ -502,7 +502,7 @@ function ConnectionModels({
             )
           : page.items,
       );
-      setNext(page.next_after_id ?? undefined);
+      setNext(page.next_cursor ?? undefined);
     } catch (cause) {
       setFailure(resourceFailure(cause));
     } finally {
