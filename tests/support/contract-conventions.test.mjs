@@ -412,3 +412,19 @@ test("pending_migration suppresses $pagination but not $cursor", () => {
     ],
   );
 });
+
+test("completed convention migrations leave only deprecated inputs or protocol exceptions", () => {
+  const aliases = JSON.parse(
+    readFileSync(
+      new URL(
+        "../../contracts/common/convention-aliases.json",
+        import.meta.url,
+      ),
+      "utf8",
+    ),
+  );
+  assert.deepEqual(
+    aliases.filter(({ kind }) => kind === "pending_migration"),
+    [],
+  );
+});
