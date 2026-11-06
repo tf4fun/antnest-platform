@@ -108,7 +108,7 @@ func TestNetworkPolicySpecOnlyPutPublishesV2RevisionAndAssigns(t *testing.T) {
 	if err := json.Unmarshal([]byte(assignmentCall.body), &assignment); err != nil {
 		t.Fatal(err)
 	}
-	if string(assignment["policy_id"]) != `"`+policyID+`"` || string(assignment["revision"]) != "1" || string(assignment["expected_resource_version"]) != "7" {
+	if string(assignment["policy_id"]) != `"`+policyID+`"` || string(assignment["revision"]) != "1" || string(assignment["expected_version"]) != `"7"` || assignment["expected_resource_version"] != nil {
 		t.Fatalf("assignment must reference the derived revision at expected version 7: %s", assignmentCall.body)
 	}
 	if string(result["policy_id"]) != `"`+policyID+`"` || string(result["revision"]) != "1" || string(result["resource_version"]) != "8" {

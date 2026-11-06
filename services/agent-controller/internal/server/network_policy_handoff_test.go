@@ -2,6 +2,7 @@ package server
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -94,7 +95,7 @@ func TestNetworkPolicySpecWriteConsumesTheSharedHandoffFixture(t *testing.T) {
 		t.Fatal(err)
 	}
 	if len(cas) != 3 || cas["policy_id"] != fixture["policy_id"] || cas["revision"] != float64(1) ||
-		cas["expected_resource_version"] != fixture["expected_resource_version"] {
+		cas["expected_version"] != fmt.Sprint(fixture["expected_resource_version"]) {
 		t.Fatalf("CAS=%v fixture=%v", cas, fixture)
 	}
 	var result map[string]any
