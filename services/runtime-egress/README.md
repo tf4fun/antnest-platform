@@ -11,6 +11,13 @@ resource lifetimes explicit without a garbage-collection pause or a second
 low-level helper process. The control path may use PostgreSQL; the packet path
 never queries the database, spawns commands, or waits on a global lock.
 
+The internal HTTP boundary follows the shared contract conventions in
+[`contracts/CONVENTIONS.md`](../../contracts/CONVENTIONS.md): preconditioned
+mutations accept canonical `expected_version` (unsigned decimal string) or a
+single strong `If-Match` token — permanent forms — while the numeric
+`expected_resource_version` remains accepted for one release as a deprecated
+input alias, and a request carrying more than one form is rejected.
+
 Startup rejects published PostgreSQL passwords using the connection driver parser under the [development secret policy](../../contracts/platform/development-secrets.md). Only exact `ANTNEST_ALLOW_PUBLIC_DEV_SECRETS=true` allows those passwords, with a variable-only WARN; other gates remain independent.
 
 ## Responsibilities

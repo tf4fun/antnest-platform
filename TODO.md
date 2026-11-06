@@ -20,6 +20,8 @@ Issue 状态最后核对于 2026-10-28：141 个 issue，87 个已关闭，54 �
 
 ## 当前批次
 
+- **#68 Runtime Egress 批次（2026-11-06，依赖 Controller PR #548）**：attachment／release／policy assignment 三个入口将 canonical `expected_version` 字符串、旧 numeric `expected_resource_version` 或单强 `If-Match` 归一到原 u64 CAS；缺失／null／重复／多形式／越界／非十进制输入拒绝，domain／repository／kernel 未改。三组真实 HTTP 定向测试通过，含拒绝后计数／策略不变与 schema lint；日志 `artifacts/verification/issue-68-egress/`。本服务首稿测试晚于实现，无真实 RED 证据，明确不称严格 TDD；后续服务分离 tests-only RED 阶段后才实施。远程准入待确认，继续下一服务，不等待／轮询 CI；不合并、不处理 Docker E2E。
+
 - **#68 Controller 批次（2026-11-06，依赖共享契约 PR #547）**：Controller HTTP 边界已接受 `cursor`／旧 `after_id`、canonical string `expected_version`／一版旧字段及单个强 `If-Match`；多种前置条件同时提交、重复字段、空游标、越界版本与分页限制在服务调用前拒绝。Provider／Model／Template 分页仅发 `next_cursor`，有序 feed 不变；domain counters／原 idempotency receipt 未改，外发消费方接线由后续单服务／集成批次交付。新增回归先 RED 后 GREEN，定向 server 测试、6＋22＋58 项契约测试及 lint 通过（`artifacts/verification/issue-68-controller/`）；远程完整准入待确认。不等待 CI，继续下一服务；不合并、不处理 Docker E2E。
 
 - **#68 共享契约批次（2026-11-06，源码审查完成、远程准入待确认）**：基于 main `4ea9027a` 开始；新增 `contracts/CONVENTIONS.md`、pagination／precondition／idempotency 公共片段与 repository lint，统一 schema 2020-12 和 `https://schemas.antnest.dev/<area>/<file>` 标识及本地解析注册表。先 RED（checker 缺失），后定向 22＋29 项 GREEN，ACP 契约生成一致性检查通过；最小日志在 `artifacts/verification/issue-68-contract/`。113 个精确字段／路径记录分别标为待服务迁移或有理由的协议例外，不以 allowlist 宣称行为迁移完成。后续按 Controller、Runtime Egress、Runtime Controller、Skill Registry、Identity、ACP、Console、Gateway、Agent UI 单服务 PR 及显式契约／组件集成推进；Runtime 临时 Skill 仅 schema 方言迁移，无新增 API 字段行为。每批 TDD，完整门禁使用远程 CI，不等待当前 CI；全部 PR 创建后停止查询，结果由用户通知。不合并、不关闭 #68／#83，不运行或维护 Docker E2E。原有 TODO 未提交交接及 `artifacts/recovery/` 保留、不混入本批。

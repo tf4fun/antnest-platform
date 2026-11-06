@@ -620,10 +620,15 @@ async fn register_tunnel(
 async fn set_attachment(
     State(state): State<AppState>,
     Path(agent_id): Path<String>,
+    headers: axum::http::HeaderMap,
     request: Result<ControlJson<SetAttachmentRequest>, JsonRejection>,
 ) -> Result<ControlJson<NetworkResponse>, ApiError> {
     let ControlJson(request) = request.map_err(|_| ApiError::invalid_request())?;
-    validate_resource_version(request.expected_resource_version)?;
+    let expected = resolve_resource_version(
+        request.expected_version,
+        request.expected_resource_version,
+        &headers,
+    )?;
     let agent_id = parse_agent_id(agent_id)?;
     record_agent_id(&agent_id);
     state
@@ -631,7 +636,7 @@ async fn set_attachment(
         .set_attachment(
             agent_id,
             request.state,
-            request.expected_resource_version,
+            expected,
             request.runtime_endpoint,
             request
                 .tunnel_key_id
@@ -651,22 +656,38 @@ async fn set_attachment(
 struct SetAttachmentRequest {
     tunnel_key_id: Option<String>,
     state: AttachmentState,
-    expected_resource_version: u64,
+    #[serde(
+        default,
+        deserialize_with = "present_non_null",
+        skip_serializing_if = "Option::is_none"
+    )]
+    expected_version: Option<String>,
+    #[serde(
+        default,
+        deserialize_with = "present_non_null",
+        skip_serializing_if = "Option::is_none"
+    )]
+    expected_resource_version: Option<u64>,
     runtime_endpoint: Option<Ipv4Addr>,
 }
 
 async fn release_network(
     State(state): State<AppState>,
     Path(agent_id): Path<String>,
+    headers: axum::http::HeaderMap,
     request: Result<ControlJson<ExpectedResourceVersionRequest>, JsonRejection>,
 ) -> Result<ControlJson<NetworkResponse>, ApiError> {
     let ControlJson(request) = request.map_err(|_| ApiError::invalid_request())?;
-    validate_resource_version(request.expected_resource_version)?;
+    let expected = resolve_resource_version(
+        request.expected_version,
+        request.expected_resource_version,
+        &headers,
+    )?;
     let agent_id = parse_agent_id(agent_id)?;
     record_agent_id(&agent_id);
     state
         .api
-        .release(agent_id, request.expected_resource_version)
+        .release(agent_id, expected)
         .await
         .map(NetworkResponse::from)
         .map(ControlJson)
@@ -676,7 +697,81 @@ async fn release_network(
 #[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 struct ExpectedResourceVersionRequest {
-    expected_resource_version: u64,
+    #[serde(
+        default,
+        deserialize_with = "present_non_null",
+        skip_serializing_if = "Option::is_none"
+    )]
+    expected_version: Option<String>,
+    #[serde(
+        default,
+        deserialize_with = "present_non_null",
+        skip_serializing_if = "Option::is_none"
+    )]
+    expected_resource_version: Option<u64>,
+}
+
+fn present_non_null<'de, D, T>(deserializer: D) -> Result<Option<T>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: serde::Deserialize<'de>,
+{
+    T::deserialize(deserializer).map(Some)
+}
+
+fn parse_quoted_version(header: &str) -> Result<String, ApiError> {
+    let bytes = header.as_bytes();
+    if bytes.len() < 3 || bytes.len() > 130 || bytes[0] != b'"' || bytes[bytes.len() - 1] != b'"' {
+        return Err(ApiError::invalid_request());
+    }
+    let inner = &header[1..header.len() - 1];
+    if inner
+        .bytes()
+        .any(|b| b == b'"' || b == b'\\' || b <= 0x20 || b == 0x7f)
+    {
+        return Err(ApiError::invalid_request());
+    }
+    Ok(inner.to_owned())
+}
+
+fn parse_resource_version_token(token: &str) -> Result<u64, ApiError> {
+    let bytes = token.as_bytes();
+    if bytes.is_empty()
+        || bytes.len() > 20
+        || bytes[0] == b'0'
+        || !token.bytes().all(|b| b.is_ascii_digit())
+    {
+        return Err(ApiError::invalid_request());
+    }
+    token
+        .parse::<u64>()
+        .map_err(|_| ApiError::invalid_request())
+}
+
+fn resolve_resource_version(
+    canonical: Option<String>,
+    legacy: Option<u64>,
+    headers: &axum::http::HeaderMap,
+) -> Result<u64, ApiError> {
+    let values = headers.get_all(axum::http::header::IF_MATCH);
+    let mut iter = values.iter();
+    let header = match (iter.next(), iter.next()) {
+        (None, None) => None,
+        (Some(value), None) => Some(parse_quoted_version(
+            value.to_str().map_err(|_| ApiError::invalid_request())?,
+        )?),
+        _ => return Err(ApiError::invalid_request()),
+    };
+    let forms = canonical.is_some() as u8 + legacy.is_some() as u8 + header.is_some() as u8;
+    if forms != 1 {
+        return Err(ApiError::invalid_request());
+    }
+    if let Some(version) = legacy {
+        validate_resource_version(version)?;
+        return Ok(version);
+    }
+    let token = canonical.or(header).ok_or_else(ApiError::invalid_request)?;
+    parse_resource_version_token(&token)
 }
 
 fn validate_resource_version(resource_version: u64) -> Result<(), ApiError> {
@@ -747,27 +842,39 @@ async fn get_assignment(
 struct AssignPolicyRequest {
     policy_id: String,
     revision: u64,
-    expected_resource_version: u64,
+    #[serde(
+        default,
+        deserialize_with = "present_non_null",
+        skip_serializing_if = "Option::is_none"
+    )]
+    expected_version: Option<String>,
+    #[serde(
+        default,
+        deserialize_with = "present_non_null",
+        skip_serializing_if = "Option::is_none"
+    )]
+    expected_resource_version: Option<u64>,
 }
 
 async fn assign_policy(
     State(state): State<AppState>,
     Path(agent_id): Path<String>,
+    headers: axum::http::HeaderMap,
     request: Result<ControlJson<AssignPolicyRequest>, JsonRejection>,
 ) -> Result<ControlJson<AssignmentResponse>, ApiError> {
     let ControlJson(request) = request.map_err(|_| ApiError::invalid_request())?;
+    let expected = resolve_resource_version(
+        request.expected_version,
+        request.expected_resource_version,
+        &headers,
+    )?;
     let agent_id = parse_agent_id(agent_id)?;
     let policy_id = parse_policy_id(request.policy_id)?;
     record_agent_id(&agent_id);
     record_policy(&policy_id, request.revision);
     state
         .api
-        .assign(
-            agent_id,
-            policy_id,
-            request.revision,
-            request.expected_resource_version,
-        )
+        .assign(agent_id, policy_id, request.revision, expected)
         .await
         .map(AssignmentResponse::from)
         .map(ControlJson)
