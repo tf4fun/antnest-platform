@@ -679,7 +679,9 @@ test("Gateway query and mutation schemas forbid actor and organization overrides
     validator({ $defs: browser.$defs, $ref: `#/$defs/${name}` });
   const list = browserValidator("external_identity_list_query");
   closedObject(list, { limit: 50 });
+  valid(list, { limit: 50, cursor: binding.id, notice_after_id: notice.id });
   valid(list, { limit: 50, after_id: binding.id, notice_after_id: notice.id });
+  invalid(list, { limit: 50, cursor: binding.id, after_id: binding.id });
   for (const field of [
     "user_id",
     "organization_id",
@@ -701,7 +703,11 @@ test("Gateway query and mutation schemas forbid actor and organization overrides
     actor_principal_id: "user-other",
   });
   const page = browserValidator("external_identity_list");
-  closedObject(page, { bindings: [binding], notices: [notice] });
+  closedObject(page, {
+    items: [binding],
+    notices: [notice],
+    next_cursor: null,
+  });
 });
 
 test("Console binding schemas keep signed scope out of browser payloads", () => {

@@ -29,7 +29,7 @@ func browserControlReply(t *testing.T, route string) map[string]any {
 		delete(payload, "caller_context")
 		return payload
 	case "list-user-sessions":
-		return map[string]any{"sessions": []any{map[string]any{"id": "public-session", "organization_id": "org-1", "organization_slug": "engineering", "organization_name": "Engineering", "created_at": "2026-10-12T01:00:00Z", "last_active_at": "2026-10-12T01:00:00Z", "idle_expires_at": "2026-10-12T01:30:00Z", "expires_at": "2026-10-12T13:00:00Z", "user_agent_hint": "plain <script>", "current": true}}, "next_after_id": "public-session"}
+		return map[string]any{"items": []any{map[string]any{"id": "public-session", "organization_id": "org-1", "organization_slug": "engineering", "organization_name": "Engineering", "created_at": "2026-10-12T01:00:00Z", "last_active_at": "2026-10-12T01:00:00Z", "idle_expires_at": "2026-10-12T01:30:00Z", "expires_at": "2026-10-12T13:00:00Z", "user_agent_hint": "plain <script>", "current": true}}, "next_cursor": "public-session"}
 	case "revoke-user-sessions":
 		return map[string]any{"revoked_count": 2, "current_revoked": false}
 	case "list-session-revocations":
@@ -133,7 +133,7 @@ func TestBrowserControlClientRequiresVerifiedPrincipalContext(t *testing.T) {
 func TestBrowserControlClientRejectsMalformedResponses(t *testing.T) {
 	for _, route := range []string{"get-current-account", "touch-browser-session", "change-local-password", "list-user-sessions", "revoke-user-sessions", "list-session-revocations"} {
 		t.Run(route, func(t *testing.T) {
-			for _, payload := range []string{`{}`, `null`, `{"sessions":null}`, `{"events":null,"next_sequence":7}`, `{"revoked_count":-1,"current_revoked":false}`} {
+			for _, payload := range []string{`{}`, `null`, `{"items":null}`, `{"events":null,"next_sequence":7}`, `{"revoked_count":-1,"current_revoked":false}`} {
 				client, err := NewClient("http://identity.internal", &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) { return jsonResponse(200, payload), nil })})
 				if err != nil {
 					t.Fatal(err)
@@ -151,9 +151,9 @@ func TestBrowserSessionInventoryAcceptsAdvancingCursorPastFreshlyExpiredRows(t *
 		for _, cursor := range []string{"public-z", "public-before", "public-a", "bad cursor"} {
 			t.Run(cursor+map[bool]string{true: "/empty", false: "/visible"}[empty], func(t *testing.T) {
 				payload := browserControlReply(t, "list-user-sessions")
-				payload["next_after_id"] = cursor
+				payload["next_cursor"] = cursor
 				if empty {
-					payload["sessions"] = []any{}
+					payload["items"] = []any{}
 				}
 				data, _ := json.Marshal(payload)
 				client, err := NewClient("http://identity.internal", &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) { return jsonResponse(200, string(data)), nil })})
@@ -175,19 +175,19 @@ func TestBrowserSessionInventoryAcceptsAdvancingCursorPastFreshlyExpiredRows(t *
 
 func TestBrowserSessionPublicIDsFollowTheirClosedASCIISchema(t *testing.T) {
 	for _, invalid := range []string{"public/z", "public:z", "公开", "_public", strings.Repeat("z", 201)} {
-		for _, field := range []string{"id", "next_after_id", "after_id"} {
+		for _, field := range []string{"id", "next_cursor", "cursor"} {
 			t.Run(field+"/"+invalid, func(t *testing.T) {
 				payload := browserControlReply(t, "list-user-sessions")
 				query := SessionListInput{Limit: 50, AfterID: "public-before"}
 				switch field {
 				case "id":
-					payload["sessions"].([]any)[0].(map[string]any)["id"] = invalid
-					delete(payload, "next_after_id")
-				case "next_after_id":
-					payload["sessions"], payload["next_after_id"] = []any{}, invalid
-				case "after_id":
+					payload["items"].([]any)[0].(map[string]any)["id"] = invalid
+					payload["next_cursor"] = nil
+				case "next_cursor":
+					payload["items"], payload["next_cursor"] = []any{}, invalid
+				case "cursor":
 					query.AfterID = invalid
-					payload = map[string]any{"sessions": []any{}}
+					payload = map[string]any{"items": []any{}, "next_cursor": nil}
 				}
 				data, _ := json.Marshal(payload)
 				calls := 0
@@ -198,7 +198,7 @@ func TestBrowserSessionPublicIDsFollowTheirClosedASCIISchema(t *testing.T) {
 				if _, err := client.ListSessions(WithPrincipal(t.Context(), browserCaller(t)), query); err == nil {
 					t.Fatal("public identifier violated the browser schema")
 				}
-				if field == "after_id" && calls != 0 {
+				if field == "cursor" && calls != 0 {
 					t.Fatal("invalid public cursor reached Identity")
 				}
 			})

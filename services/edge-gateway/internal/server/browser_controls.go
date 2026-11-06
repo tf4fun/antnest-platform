@@ -152,14 +152,21 @@ func (h *handler) listBrowserSessions(response http.ResponseWriter, request *htt
 		return nil
 	}
 	for key, values := range query {
-		if key != "limit" && key != "after_id" || len(values) != 1 || values[0] == "" {
+		if key != "limit" && key != "after_id" && key != "cursor" || len(values) != 1 || values[0] == "" {
 			writeError(response, http.StatusBadRequest, apierror.InvalidRequest, "Session query is invalid")
 			return nil
 		}
 	}
 	limit, err := strconv.Atoi(query.Get("limit"))
-	after := query.Get("after_id")
-	if err != nil || limit < 1 || limit > 100 || strings.IndexFunc(query.Get("limit"), func(r rune) bool { return r < '0' || r > '9' }) >= 0 || after != "" && !identity.ValidPublicID(after) {
+	if query.Has("cursor") && query.Has("after_id") {
+		writeError(response, http.StatusBadRequest, apierror.InvalidRequest, "send only one cursor form")
+		return nil
+	}
+	after := query.Get("cursor")
+	if after == "" {
+		after = query.Get("after_id")
+	}
+	if err != nil || limit < 1 || limit > 100 || strconv.Itoa(limit) != query.Get("limit") || after != "" && !identity.ValidPublicID(after) {
 		writeError(response, http.StatusBadRequest, apierror.InvalidRequest, "Session page is invalid")
 		return nil
 	}

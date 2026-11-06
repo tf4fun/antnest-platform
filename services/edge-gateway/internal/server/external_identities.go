@@ -25,7 +25,7 @@ func (h *handler) listBrowserExternalIdentities(response http.ResponseWriter, re
 		return nil
 	}
 	for key, values := range query {
-		if (key != "limit" && key != "after_id" && key != "notice_after_id") || len(values) != 1 || key != "limit" && !identity.ValidPublicID(values[0]) {
+		if (key != "limit" && key != "after_id" && key != "cursor" && key != "notice_after_id") || len(values) != 1 || key != "limit" && !identity.ValidPublicID(values[0]) {
 			writeError(response, http.StatusBadRequest, apierror.InvalidRequest, "Query parameters are invalid")
 			return nil
 		}
@@ -37,7 +37,15 @@ func (h *handler) listBrowserExternalIdentities(response http.ResponseWriter, re
 	}
 	ctx, cancel := context.WithTimeout(request.Context(), h.requestTimeout)
 	defer cancel()
-	page, err := h.identity.ListExternalIdentities(ctx, identity.ExternalIdentityListInput{Limit: limit, AfterID: query.Get("after_id"), NoticeAfterID: query.Get("notice_after_id")})
+	if query.Has("cursor") && query.Has("after_id") {
+		writeError(response, http.StatusBadRequest, apierror.InvalidRequest, "send only one cursor form")
+		return nil
+	}
+	after := query.Get("cursor")
+	if after == "" {
+		after = query.Get("after_id")
+	}
+	page, err := h.identity.ListExternalIdentities(ctx, identity.ExternalIdentityListInput{Limit: limit, AfterID: after, NoticeAfterID: query.Get("notice_after_id")})
 	if err != nil {
 		return h.writeExternalIdentityError(response, err)
 	}

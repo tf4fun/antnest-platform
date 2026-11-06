@@ -105,7 +105,8 @@ func newBrowserControlFixture(t *testing.T) *browserControlFixture {
 			case "change-local-password":
 				metadata["status"], metadata["principal"], metadata["access_token"], metadata["token_id"] = "changed", f.principal, "new-private-token", "token-2"
 			case "list-user-sessions":
-				metadata = map[string]any{"sessions": []any{map[string]any{"id": "public-session", "organization_id": "org-1", "organization_slug": "engineering", "organization_name": "Engineering", "created_at": f.now, "last_active_at": f.now, "expires_at": f.principal.ExpiresAt, "idle_expires_at": f.principal.IdleExpiresAt, "user_agent_hint": "<script>plain text</script>", "current": true}}}
+				metadata = map[string]any{"items": []any{map[string]any{"id": "public-session", "organization_id": "org-1", "organization_slug": "engineering", "organization_name": "Engineering", "created_at": f.now, "last_active_at": f.now, "expires_at": f.principal.ExpiresAt, "idle_expires_at": f.principal.IdleExpiresAt, "user_agent_hint": "<script>plain text</script>", "current": true}}}
+				metadata["next_cursor"] = nil
 			case "revoke-user-sessions":
 				metadata = map[string]any{"revoked_count": 1, "current_revoked": body["mode"] == "all"}
 			case "list-external-identities", "unbind-external-identity", "acknowledge-external-identity-notices":

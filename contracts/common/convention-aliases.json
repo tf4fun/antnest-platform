@@ -703,11 +703,20 @@
   },
   {
     "file": "edge-gateway/session-response.schema.json",
-    "pointer": "/$defs/external_identity_list/properties/next_after_id",
-    "field": "next_after_id",
-    "replacement": "next_cursor",
-    "kind": "pending_migration",
-    "reason": "edge-gateway owner migration tracked by issue #68; legacy wire shape remains until its service batch.",
+    "pointer": "/$defs/external_identity_list_query/not/properties/after_id",
+    "field": "after_id",
+    "replacement": "cursor",
+    "reason": "One-release deprecated request alias; Gateway forwards only canonical cursor.",
+    "kind": "deprecated_alias",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "edge-gateway/session-response.schema.json",
+    "pointer": "/$defs/external_identity_list_query/not/required/1",
+    "field": "after_id",
+    "replacement": "cursor",
+    "reason": "One-release deprecated request alias; Gateway forwards only canonical cursor.",
+    "kind": "deprecated_alias",
     "remove_after": "next_release"
   },
   {
@@ -715,26 +724,26 @@
     "pointer": "/$defs/external_identity_list_query/properties/after_id",
     "field": "after_id",
     "replacement": "cursor",
-    "kind": "pending_migration",
-    "reason": "edge-gateway owner migration tracked by issue #68; legacy wire shape remains until its service batch.",
+    "reason": "One-release deprecated request alias; Gateway forwards only canonical cursor.",
+    "kind": "deprecated_alias",
     "remove_after": "next_release"
   },
   {
     "file": "edge-gateway/session-response.schema.json",
-    "pointer": "/$defs/external_identity_organization_list/properties/next_after_id",
-    "field": "next_after_id",
-    "replacement": "next_cursor",
-    "kind": "pending_migration",
-    "reason": "edge-gateway owner migration tracked by issue #68; legacy wire shape remains until its service batch.",
+    "pointer": "/$defs/list_sessions_query/not/properties/after_id",
+    "field": "after_id",
+    "replacement": "cursor",
+    "reason": "One-release deprecated request alias; Gateway forwards only canonical cursor.",
+    "kind": "deprecated_alias",
     "remove_after": "next_release"
   },
   {
     "file": "edge-gateway/session-response.schema.json",
-    "pointer": "/$defs/external_identity_self_list/properties/next_after_id",
-    "field": "next_after_id",
-    "replacement": "next_cursor",
-    "kind": "pending_migration",
-    "reason": "edge-gateway owner migration tracked by issue #68; legacy wire shape remains until its service batch.",
+    "pointer": "/$defs/list_sessions_query/not/required/1",
+    "field": "after_id",
+    "replacement": "cursor",
+    "reason": "One-release deprecated request alias; Gateway forwards only canonical cursor.",
+    "kind": "deprecated_alias",
     "remove_after": "next_release"
   },
   {
@@ -742,17 +751,8 @@
     "pointer": "/$defs/list_sessions_query/properties/after_id",
     "field": "after_id",
     "replacement": "cursor",
-    "kind": "pending_migration",
-    "reason": "edge-gateway owner migration tracked by issue #68; legacy wire shape remains until its service batch.",
-    "remove_after": "next_release"
-  },
-  {
-    "file": "edge-gateway/session-response.schema.json",
-    "pointer": "/$defs/session_list/properties/next_after_id",
-    "field": "next_after_id",
-    "replacement": "next_cursor",
-    "kind": "pending_migration",
-    "reason": "edge-gateway owner migration tracked by issue #68; legacy wire shape remains until its service batch.",
+    "reason": "One-release deprecated request alias; Gateway forwards only canonical cursor.",
+    "kind": "deprecated_alias",
     "remove_after": "next_release"
   },
   {

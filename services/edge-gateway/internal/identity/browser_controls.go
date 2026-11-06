@@ -2,6 +2,7 @@ package identity
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -45,8 +46,8 @@ type BrowserSession struct {
 }
 
 type SessionPage struct {
-	Sessions    []BrowserSession `json:"sessions"`
-	NextAfterID string           `json:"next_after_id,omitempty"`
+	Sessions    []BrowserSession `json:"items"`
+	NextAfterID string           `json:"-"`
 }
 
 type SessionListInput struct {
@@ -185,26 +186,26 @@ func (client *Client) ListSessions(ctx context.Context, input SessionListInput) 
 		return SessionPage{}, fmt.Errorf("invalid session page query")
 	}
 	var result struct {
-		Sessions []struct {
+		Items []struct {
 			BrowserSession
 			Current       *bool   `json:"current"`
 			UserAgentHint *string `json:"user_agent_hint"`
-		} `json:"sessions"`
-		NextAfterID string `json:"next_after_id"`
+		} `json:"items"`
+		NextCursor json.RawMessage `json:"next_cursor"`
 	}
 	body := map[string]any{"actor_principal_id": principal.UserID, "user_id": principal.UserID, "scope": "self", "limit": input.Limit}
 	if input.AfterID != "" {
-		body["after_id"] = input.AfterID
+		body["cursor"] = input.AfterID
 	}
 	if err := client.browserRequest(ctx, principal, "list-user-sessions", body, &result); err != nil {
 		return SessionPage{}, err
 	}
-	if result.Sessions == nil || len(result.Sessions) > input.Limit {
+	if result.Items == nil || len(result.Items) > input.Limit {
 		return SessionPage{}, fmt.Errorf("identity returned invalid session page")
 	}
-	page := SessionPage{Sessions: make([]BrowserSession, 0, len(result.Sessions)), NextAfterID: result.NextAfterID}
+	page := SessionPage{Sessions: make([]BrowserSession, 0, len(result.Items))}
 	previous := input.AfterID
-	for _, row := range result.Sessions {
+	for _, row := range result.Items {
 		value := row.BrowserSession
 		if !ValidPublicID(value.ID) || value.ID <= previous || !ValidPublicID(value.OrganizationID) ||
 			!hasDisplayText(value.OrganizationSlug) || !hasDisplayText(value.OrganizationName) ||
@@ -220,7 +221,7 @@ func (client *Client) ListSessions(ctx context.Context, input SessionListInput) 
 	// Identity may filter rows that expire after its scan. The cursor describes
 	// the scanned window, so it can advance beyond the last visible row even
 	// when every row in this page expired before the final authority check.
-	if result.NextAfterID != "" && (!ValidPublicID(result.NextAfterID) || result.NextAfterID <= input.AfterID || result.NextAfterID < previous) {
+	if page.NextAfterID, err = primaryPageCursor(result.NextCursor, input.AfterID, previous); err != nil {
 		return SessionPage{}, fmt.Errorf("identity returned invalid session cursor")
 	}
 	return page, nil

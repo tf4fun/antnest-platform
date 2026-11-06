@@ -42,9 +42,9 @@ type ExternalIdentityNotice struct {
 }
 
 type ExternalIdentityPage struct {
-	Bindings          []ExternalIdentity       `json:"bindings"`
+	Bindings          []ExternalIdentity       `json:"items"`
 	Notices           []ExternalIdentityNotice `json:"notices"`
-	NextAfterID       string                   `json:"next_after_id,omitempty"`
+	NextAfterID       string                   `json:"-"`
 	NextNoticeAfterID string                   `json:"next_notice_after_id,omitempty"`
 }
 
@@ -160,26 +160,26 @@ func (client *Client) ListExternalIdentities(ctx context.Context, input External
 	}
 	body := map[string]any{"actor_principal_id": principal.UserID, "scope": "self", "limit": input.Limit}
 	if input.AfterID != "" {
-		body["after_id"] = input.AfterID
+		body["cursor"] = input.AfterID
 	}
 	if input.NoticeAfterID != "" {
 		body["notice_after_id"] = input.NoticeAfterID
 	}
 	var wire struct {
-		Bindings          []externalIdentityBindingWire `json:"bindings"`
+		Items             []externalIdentityBindingWire `json:"items"`
 		Notices           []externalIdentityNoticeWire  `json:"notices"`
-		NextAfterID       json.RawMessage               `json:"next_after_id"`
+		NextCursor        json.RawMessage               `json:"next_cursor"`
 		NextNoticeAfterID json.RawMessage               `json:"next_notice_after_id"`
 	}
 	if err := client.externalIdentityRequest(ctx, principal, "list-external-identities", body, &wire); err != nil {
 		return ExternalIdentityPage{}, err
 	}
-	if wire.Bindings == nil || wire.Notices == nil || len(wire.Bindings) > input.Limit || len(wire.Notices) > input.Limit {
+	if wire.Items == nil || wire.Notices == nil || len(wire.Items) > input.Limit || len(wire.Notices) > input.Limit {
 		return ExternalIdentityPage{}, fmt.Errorf("invalid external identity page")
 	}
-	result := ExternalIdentityPage{Bindings: make([]ExternalIdentity, 0, len(wire.Bindings)), Notices: make([]ExternalIdentityNotice, 0, len(wire.Notices))}
+	result := ExternalIdentityPage{Bindings: make([]ExternalIdentity, 0, len(wire.Items)), Notices: make([]ExternalIdentityNotice, 0, len(wire.Notices))}
 	previous := input.AfterID
-	for _, item := range wire.Bindings {
+	for _, item := range wire.Items {
 		details, err := item.verified()
 		if err != nil {
 			return ExternalIdentityPage{}, err
@@ -206,7 +206,7 @@ func (client *Client) ListExternalIdentities(ctx context.Context, input External
 		result.Bindings = append(result.Bindings, value)
 		previous = details.ID
 	}
-	if result.NextAfterID, err = externalIdentityCursor(wire.NextAfterID, input.AfterID, previous); err != nil {
+	if result.NextAfterID, err = primaryPageCursor(wire.NextCursor, input.AfterID, previous); err != nil {
 		return ExternalIdentityPage{}, err
 	}
 	previous = input.NoticeAfterID

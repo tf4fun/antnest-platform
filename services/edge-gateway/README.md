@@ -5,6 +5,14 @@ turns an Identity Service access credential into one trusted internal principal
 and routes the request to the owning service without owning the requested
 business operation. It is written in Go.
 
+Browser session and external-identity inventories use canonical `cursor` and
+`items` / nullable-string `next_cursor`. The deprecated `after_id` browser
+query is accepted for one release, never together with `cursor`. Identity RPCs
+send and require the canonical page shape from Identity's #68 producer batch.
+Public-ID validation, signed scope, filtered-window ordering, and independent
+notice cursors remain unchanged. The existing Console proxy forwards all
+`If-Match` and `Idempotency-Key` values, leaving ambiguity rejection to Console.
+
 The accepted [workspace entry decision](../../docs/architecture/browser-workspace-entry.md)
 is implemented by Gateway 24: the unused direct bootstrap, state and ACP
 browser routes return 404; the shipped Agent UI Bridge remains.

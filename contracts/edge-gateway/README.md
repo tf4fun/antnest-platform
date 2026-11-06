@@ -6,6 +6,13 @@ workspace routes plus the trusted headers Edge Gateway may inject into internal
 services. It is a product-facing browser contract, not a public third-party
 OpenAPI.
 
+Under [shared conventions](../CONVENTIONS.md), primary list pages require
+`items` and string-or-null `next_cursor`. Query `cursor` replaces `after_id`,
+with exclusive one-release alias acceptance. Self notices retain the separate
+`notice_after_id` / `next_notice_after_id` stream. Gateway's Identity client
+requires canonical producer responses; rollout depends on the Identity #68
+batch and the following Agent UI consumer batch, not an old-response fallback.
+
 The [workspace entry retirement contract](workspace-entry-retirement.md) and
 its [policy](workspace-entry-retirement-policy.json) select removal of the
 unused direct browser stack for #64. Gateway 24 activates that retirement and

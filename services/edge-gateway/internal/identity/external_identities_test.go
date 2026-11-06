@@ -12,7 +12,7 @@ import (
 
 func externalPageFixture() map[string]any {
 	return map[string]any{
-		"bindings": []any{map[string]any{
+		"items": []any{map[string]any{
 			"id": "binding-2", "provider_id": "provider-1", "provider_name": "workforce", "provider_display_name": "Workforce",
 			"organization_id": "other-org", "organization_slug": "other", "organization_name": "Other", "membership_id": "other-membership",
 			"subject": " opaque 界 ", "method": "scim", "provider_enabled": false,
@@ -23,7 +23,7 @@ func externalPageFixture() map[string]any {
 			"organization_id": "old-org", "organization_slug": "old", "organization_name": "Old", "membership_id": "old-membership",
 			"subject": " opaque 界 ", "method": "admin", "created_at": "2026-10-10T00:00:00Z",
 		}},
-		"next_after_id": "binding-2", "next_notice_after_id": "notice-4",
+		"next_cursor": "binding-2", "next_notice_after_id": "notice-4",
 	}
 }
 
@@ -63,7 +63,7 @@ func TestExternalIdentityClientBindsSelfAuthority(t *testing.T) {
 				var result any
 				switch route {
 				case "list-external-identities":
-					want["scope"], want["limit"], want["after_id"], want["notice_after_id"] = "self", float64(1), "binding-1", "notice-3"
+					want["scope"], want["limit"], want["cursor"], want["notice_after_id"] = "self", float64(1), "binding-1", "notice-3"
 					result = externalPageFixture()
 				case "unbind-external-identity":
 					want["scope"], want["request_id"], want["binding_id"], want["allow_lockout"] = "self", "request-1", "binding-2", true
@@ -116,10 +116,10 @@ func TestExternalIdentityClientRejectsMalformedInventory(t *testing.T) {
 	}
 	cases := []mutation{
 		{"unknown_top", func(p map[string]any) { p["user_id"] = "private-user" }},
-		{"binding_limit", func(p map[string]any) { p["bindings"] = append(p["bindings"].([]any), p["bindings"].([]any)[0]) }},
+		{"binding_limit", func(p map[string]any) { p["items"] = append(p["items"].([]any), p["items"].([]any)[0]) }},
 		{"notice_limit", func(p map[string]any) { p["notices"] = append(p["notices"].([]any), p["notices"].([]any)[0]) }},
 	}
-	for _, array := range []string{"bindings", "notices"} {
+	for _, array := range []string{"items", "notices"} {
 		for _, key := range []string{"id", "provider_id", "provider_name", "provider_display_name", "organization_id", "organization_slug", "organization_name", "membership_id", "subject", "method", "created_at"} {
 			for _, null := range []bool{false, true} {
 				cases = append(cases, mutation{fmt.Sprintf("%s/%s/null=%t", array, key, null), func(p map[string]any) {
@@ -150,17 +150,20 @@ func TestExternalIdentityClientRejectsMalformedInventory(t *testing.T) {
 		)
 	}
 	for _, key := range []string{"provider_enabled", "bound_at", "revoked_at"} {
-		cases = append(cases, mutation{key + "/missing", func(p map[string]any) { delete(p["bindings"].([]any)[0].(map[string]any), key) }})
+		cases = append(cases, mutation{key + "/missing", func(p map[string]any) { delete(p["items"].([]any)[0].(map[string]any), key) }})
 		if key != "revoked_at" {
-			cases = append(cases, mutation{key + "/null", func(p map[string]any) { p["bindings"].([]any)[0].(map[string]any)[key] = nil }})
+			cases = append(cases, mutation{key + "/null", func(p map[string]any) { p["items"].([]any)[0].(map[string]any)[key] = nil }})
 		}
-		cases = append(cases, mutation{key + "/wrong_type", func(p map[string]any) { p["bindings"].([]any)[0].(map[string]any)[key] = 2 }})
+		cases = append(cases, mutation{key + "/wrong_type", func(p map[string]any) { p["items"].([]any)[0].(map[string]any)[key] = 2 }})
 	}
 	for _, key := range []string{"binding_id", "acknowledged_at", "revoked_at", "provider_enabled"} {
 		cases = append(cases, mutation{"notice/" + key, func(p map[string]any) { p["notices"].([]any)[0].(map[string]any)[key] = nil }})
 	}
-	for _, key := range []string{"next_after_id", "next_notice_after_id"} {
+	for _, key := range []string{"next_cursor", "next_notice_after_id"} {
 		for _, value := range []any{nil, "", "bad:id", "a-before-input"} {
+			if key == "next_cursor" && value == nil {
+				value = 0
+			}
 			cases = append(cases, mutation{fmt.Sprintf("%s/%v", key, value), func(p map[string]any) { p[key] = value }})
 		}
 	}
@@ -203,8 +206,8 @@ func TestExternalIdentityClientChecksRawJSONAndPreservesSubject(t *testing.T) {
 		})
 	}
 	for _, payload := range []string{
-		`null`, `[]`, `{}`, base + `{}`, strings.Replace(base, `"bindings":`, `"Bindings":`, 1),
-		strings.Replace(base, `"bindings":`, `"bindings":[],"bindings":`, 1),
+		`null`, `[]`, `{}`, base + `{}`, strings.Replace(base, `"items":`, `"Bindings":`, 1),
+		strings.Replace(base, `"items":`, `"items":[],"items":`, 1),
 		strings.Replace(base, `"subject":`, `"subject":"shadow","subject":`, 1),
 	} {
 		if _, err := externalReplyClient(t, payload).ListExternalIdentities(WithPrincipal(t.Context(), browserCaller(t)), ExternalIdentityListInput{Limit: 1}); err == nil {
@@ -214,24 +217,28 @@ func TestExternalIdentityClientChecksRawJSONAndPreservesSubject(t *testing.T) {
 }
 
 func TestExternalIdentityClientIndependentPagination(t *testing.T) {
-	for _, array := range []string{"bindings", "notices"} {
+	for _, array := range []string{"items", "notices"} {
 		for _, empty := range []bool{false, true} {
 			payload := externalPageFixture()
 			if empty {
 				payload[array] = []any{}
 			}
-			cursor := "next_after_id"
+			cursor := "next_cursor"
 			if array == "notices" {
 				cursor = "next_notice_after_id"
 			}
-			delete(payload, cursor)
+			if cursor == "next_cursor" {
+				payload[cursor] = nil
+			} else {
+				delete(payload, cursor)
+			}
 			if _, err := externalReplyClient(t, externalJSON(t, payload)).ListExternalIdentities(WithPrincipal(t.Context(), browserCaller(t)), ExternalIdentityListInput{Limit: 1}); err != nil {
 				t.Fatal(err)
 			}
 		}
 		for _, ids := range [][]string{{"a", "a"}, {"b", "a"}, {"before", "z"}} {
 			payload := externalPageFixture()
-			delete(payload, "next_after_id")
+			payload["next_cursor"] = nil
 			delete(payload, "next_notice_after_id")
 			var second map[string]any
 			_ = json.Unmarshal([]byte(externalJSON(t, payload[array].([]any)[0])), &second)
@@ -239,7 +246,7 @@ func TestExternalIdentityClientIndependentPagination(t *testing.T) {
 			payload[array] = append(payload[array].([]any), second)
 			input := ExternalIdentityListInput{Limit: 2}
 			if ids[0] == "before" {
-				if array == "bindings" {
+				if array == "items" {
 					input.AfterID = "before"
 				} else {
 					input.NoticeAfterID = "before"
@@ -252,9 +259,9 @@ func TestExternalIdentityClientIndependentPagination(t *testing.T) {
 	}
 	for _, empty := range []bool{false, true} {
 		payload := externalPageFixture()
-		payload["next_after_id"], payload["next_notice_after_id"] = "z-binding", "z-notice"
+		payload["next_cursor"], payload["next_notice_after_id"] = "z-binding", "z-notice"
 		if empty {
-			payload["bindings"], payload["notices"] = []any{}, []any{}
+			payload["items"], payload["notices"] = []any{}, []any{}
 		}
 		if _, err := externalReplyClient(t, externalJSON(t, payload)).ListExternalIdentities(WithPrincipal(t.Context(), browserCaller(t)), ExternalIdentityListInput{Limit: 2}); err != nil {
 			t.Fatalf("advancing independent cursors rejected: %v", err)
@@ -314,7 +321,7 @@ func TestExternalIdentityClientRejectsMissingAuthorityAndInvalidInputs(t *testin
 }
 
 func TestExternalIdentityClientMatchesDisplayAndTimestampContract(t *testing.T) {
-	for _, array := range []string{"bindings", "notices"} {
+	for _, array := range []string{"items", "notices"} {
 		for _, field := range []string{"provider_name", "provider_display_name", "organization_slug", "organization_name"} {
 			t.Run(array+"/"+field+"/U0085", func(t *testing.T) {
 				page := externalPageFixture()
@@ -329,7 +336,7 @@ func TestExternalIdentityClientMatchesDisplayAndTimestampContract(t *testing.T) 
 		for _, value := range []string{"2026-10-11T00:00:00,123Z", "2026-10-11T1:00:00Z", "2026-10-11T00:00:00+24:00", "2026-10-11T00:00:00+01:60"} {
 			t.Run(field+"/"+value, func(t *testing.T) {
 				page := externalPageFixture()
-				page["bindings"].([]any)[0].(map[string]any)[field] = value
+				page["items"].([]any)[0].(map[string]any)[field] = value
 				if _, err := externalReplyClient(t, externalJSON(t, page)).ListExternalIdentities(WithPrincipal(t.Context(), browserCaller(t)), ExternalIdentityListInput{Limit: 1}); err == nil {
 					t.Fatal("non-RFC3339 timestamp admitted")
 				}
@@ -340,10 +347,10 @@ func TestExternalIdentityClientMatchesDisplayAndTimestampContract(t *testing.T) 
 
 func TestExternalIdentityClientAcceptsCapacityAndTombstones(t *testing.T) {
 	page := externalPageFixture()
-	delete(page, "next_after_id")
+	page["next_cursor"] = nil
 	delete(page, "next_notice_after_id")
 	ids := make([]string, 100)
-	for _, array := range []string{"bindings", "notices"} {
+	for _, array := range []string{"items", "notices"} {
 		items := make([]any, 100)
 		for i := range items {
 			var item map[string]any
@@ -352,7 +359,7 @@ func TestExternalIdentityClientAcceptsCapacityAndTombstones(t *testing.T) {
 			}
 			item["id"] = fmt.Sprintf("entry-%03d", i)
 			item["subject"] = strings.Repeat("😀", 255)
-			if array == "bindings" {
+			if array == "items" {
 				item["bound_at"], item["revoked_at"] = "2026-10-11T01:00:00Z", "2026-10-11T02:00:00Z"
 			}
 			items[i], ids[i] = item, item["id"].(string)

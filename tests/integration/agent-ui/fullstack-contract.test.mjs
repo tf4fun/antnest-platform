@@ -19,11 +19,8 @@ function json(relativePath) {
 
 function definition(relativePath, name) {
   const schema = json(relativePath);
-  return validator.compile({
-    $schema: "https://json-schema.org/draft/2020-12/schema",
-    $defs: schema.$defs,
-    $ref: `#/$defs/${name}`,
-  });
+  if (!validator.getSchema(schema.$id)) validator.addSchema(schema);
+  return validator.getSchema(`${schema.$id}#/$defs/${name}`);
 }
 
 const ui = "../../../contracts/agent-ui/workspace-api.schema.json";
