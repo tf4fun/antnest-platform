@@ -1,4 +1,5 @@
 import { learningStatusSchema, type LearningStatus } from "../protocol/learning-status.ts";
+import { projectResponse } from "./response-projection.ts";
 import * as acp from "@agentclientprotocol/sdk/unstable";
 import { AcpTransportLifecycle } from "./acp-transport-lifecycle.ts";
 import { OwnedHttpResponse } from "./owned-http-response.ts";
@@ -543,21 +544,14 @@ export class AcpHttpBridge {
 
   public async readLearningStatus(): Promise<LearningStatus> {
     const response = await this.internalGet(`/rpc/agent-acp/workspace/agents/${encodeURIComponent(this.scope.agentId)}/learning-status`);
-    await requireSuccessfulObservation(response);
-    const status = learningStatusSchema.parse(await response.json());
-    if (status.agentId !== this.scope.agentId) throw new Error("Foreign learning status");
-    return status;
+    return parseLearningStatus(response, this.scope.agentId);
   }
 
   public async readLearningChanges(): Promise<LearningChangePage> {
     const response = await this.internalGet(
       `/rpc/agent-acp/workspace/agents/${encodeURIComponent(this.scope.agentId)}/learning-changes?limit=20`,
     );
-    await requireSuccessfulObservation(response);
-    const page = learningChangePageSchema.parse(await response.json());
-    if (page.items.some((item) => item.agentId !== this.scope.agentId))
-      throw new Error("Learning change page contains a foreign Agent");
-    return page;
+    return parseLearningChanges(response, this.scope.agentId);
   }
 
   public async watchAgentExecutionState(
@@ -625,7 +619,7 @@ function parseAuthorizedAgentState(
     (input as Record<string, unknown>).access_allowed === false
   )
     throw new AgentAccessRevokedError();
-  const state = agentStateSchema.safeParse(input);
+  const state = agentStateSchema.safeParse(projectResponse(agentStateSchema, input));
   if (!state.success || state.data.agent_id !== agentId)
     throw new BridgeCapabilityError("ACP Agent execution scope is unavailable");
   return {
@@ -714,7 +708,32 @@ export async function parseExecutionObservation(
   response: Response,
 ): Promise<ExecutionObservation> {
   await requireSuccessfulObservation(response);
-  return observationSchema.parse(await response.json());
+  return observationSchema.parse(projectResponse(observationSchema, await response.json()));
+}
+
+export async function parseLearningStatus(
+  response: Response,
+  agentId: string,
+): Promise<LearningStatus> {
+  await requireSuccessfulObservation(response);
+  const status = learningStatusSchema.parse(
+    projectResponse(learningStatusSchema, await response.json()),
+  );
+  if (status.agentId !== agentId) throw new Error("Foreign learning status");
+  return status;
+}
+
+export async function parseLearningChanges(
+  response: Response,
+  agentId: string,
+): Promise<LearningChangePage> {
+  await requireSuccessfulObservation(response);
+  const page = learningChangePageSchema.parse(
+    projectResponse(learningChangePageSchema, await response.json()),
+  );
+  if (page.items.some((item) => item.agentId !== agentId))
+    throw new Error("Learning change page contains a foreign Agent");
+  return page;
 }
 
 export async function parseIntentObservation(
@@ -736,7 +755,7 @@ export async function parseIntentObservation(
   await requireSuccessfulObservation(response);
   return {
     kind: "receipt",
-    receipt: receiptSchema.parse(await response.json()),
+    receipt: receiptSchema.parse(projectResponse(receiptSchema, await response.json())),
   };
 }
 
