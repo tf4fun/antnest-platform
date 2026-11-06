@@ -84,7 +84,7 @@ async function exercise(browser, origin, viewport, label) {
         return route.fulfill({
           json: {
             items: head ? [{ ...metadata, current_version: head }] : [],
-            next_after_id: null,
+            next_cursor: null,
           },
         });
       if (url.pathname === "/api/admin/skills" && request.method() === "POST") {
@@ -110,7 +110,7 @@ async function exercise(browser, origin, viewport, label) {
               ...metadata,
               version: index + 1,
             })),
-            next_after_version: null,
+            next_cursor: null,
           },
         });
       if (

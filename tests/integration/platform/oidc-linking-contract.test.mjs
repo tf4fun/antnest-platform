@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import test from "node:test";
+import { withCommonErrorSchema } from "../../support/common-error-schema.mjs";
 
 const require = createRequire(
   new URL("../../../services/agent-acp-service/package.json", import.meta.url),
@@ -61,7 +62,11 @@ function validator(schema, definitions = identity.definitions) {
       );
     },
   });
-  return ajv.compile({ definitions, ...schema });
+  return withCommonErrorSchema(ajv).compile({
+    $id: "https://schemas.antnest.dev/identity/identity-contract.json",
+    definitions,
+    ...schema,
+  });
 }
 
 const rpc = (name, direction) => {
@@ -239,7 +244,13 @@ test("binding inventory derives self identity and requires a Membership only for
   const validate = rpc("list_external_identities", "request");
   const self = { actor_principal_id: "user-1", scope: "self", limit: 50 };
   closedObject(validate, self);
+  valid(validate, { ...self, cursor: "externalidentity-1" });
   valid(validate, { ...self, after_id: "externalidentity-1" });
+  invalid(validate, {
+    ...self,
+    cursor: "externalidentity-1",
+    after_id: "externalidentity-1",
+  });
   valid(validate, { ...self, notice_after_id: "notice-1" });
   invalid(validate, { ...self, user_id: "user-other" });
   invalid(validate, { ...self, membership_id: "member-other" });
@@ -537,23 +548,23 @@ test("binding and notice timestamps reject malformed and impossible dates", () =
 
 test("self inventory has independently bounded binding and pending-notice pages", () => {
   const validate = validator(identity.definitions.external_identity_self_list);
-  const response = { bindings: [binding], notices: [notice] };
+  const response = { items: [binding], notices: [notice], next_cursor: null };
   closedObject(validate, response);
-  valid(validate, { bindings: [], notices: [] });
-  valid(validate, { ...response, next_after_id: binding.id });
+  valid(validate, { items: [], notices: [], next_cursor: null });
+  valid(validate, { ...response, next_cursor: binding.id });
   valid(validate, { ...response, next_notice_after_id: notice.id });
   valid(validate, {
     ...response,
-    next_after_id: binding.id,
+    next_cursor: binding.id,
     next_notice_after_id: notice.id,
   });
-  for (const field of ["bindings", "notices"])
+  for (const field of ["items", "notices"])
     invalid(validate, {
       ...response,
       [field]: Array(101).fill(response[field][0]),
     });
-  for (const field of ["next_after_id", "next_notice_after_id"])
-    for (const cursor of [null, "", 1])
+  for (const field of ["next_cursor", "next_notice_after_id"])
+    for (const cursor of field === "next_cursor" ? ["", 1] : [null, "", 1])
       invalid(validate, { ...response, [field]: cursor });
   invalid(validate, { ...response, through_sequence: 10 });
 });
@@ -562,11 +573,15 @@ test("organization inventory cannot expose private user notices", () => {
   const validate = validator(
     identity.definitions.external_identity_organization_list,
   );
-  closedObject(validate, { bindings: [binding] });
-  valid(validate, { bindings: [], next_after_id: binding.id });
-  invalid(validate, { bindings: [binding], notices: [] });
-  invalid(validate, { bindings: [binding], next_notice_after_id: notice.id });
-  invalid(validate, { bindings: Array(101).fill(binding) });
+  closedObject(validate, { items: [binding], next_cursor: null });
+  valid(validate, { items: [], next_cursor: binding.id });
+  invalid(validate, { items: [binding], next_cursor: null, notices: [] });
+  invalid(validate, {
+    items: [binding],
+    next_cursor: null,
+    next_notice_after_id: notice.id,
+  });
+  invalid(validate, { items: Array(101).fill(binding), next_cursor: null });
 });
 
 test("notices are independently renderable immutable public snapshots", () => {
@@ -587,10 +602,11 @@ test("notices are independently renderable immutable public snapshots", () => {
   invalid(validate, { ...notice, acknowledged: true });
   // The pending notice remains meaningful even when its binding is absent or revoked.
   const page = validator(identity.definitions.external_identity_self_list);
-  valid(page, { bindings: [], notices: [notice] });
+  valid(page, { items: [], notices: [notice], next_cursor: null });
   valid(page, {
-    bindings: [{ ...binding, revoked_at: "2026-10-11T01:00:00Z" }],
+    items: [{ ...binding, revoked_at: "2026-10-11T01:00:00Z" }],
     notices: [notice],
+    next_cursor: null,
   });
 });
 
@@ -608,7 +624,9 @@ test("Provider chooser is bounded and omits secrets and full IdP configuration",
   const input = { actor_principal_id: "user-admin", limit: 50 };
   const request = rpc("list_external_identity_providers", "request");
   closedObject(request, input);
+  valid(request, { ...input, cursor: "provider-1" });
   valid(request, { ...input, after_id: "provider-1" });
+  invalid(request, { ...input, cursor: "provider-1", after_id: "provider-1" });
   invalid(request, { ...input, organization_id: "org-other" });
   const provider = {
     id: "provider-1",
@@ -631,9 +649,9 @@ test("Provider chooser is bounded and omits secrets and full IdP configuration",
   ])
     invalid(projection, { ...provider, [field]: "private" });
   const response = rpc("list_external_identity_providers", "response");
-  closedObject(response, { providers: [provider] });
-  valid(response, { providers: [], next_after_id: "provider-1" });
-  invalid(response, { providers: Array(101).fill(provider) });
+  closedObject(response, { items: [provider], next_cursor: null });
+  valid(response, { items: [], next_cursor: "provider-1" });
+  invalid(response, { items: Array(101).fill(provider), next_cursor: null });
 });
 
 test("SCIM token metadata distinguishes unpaired legacy credentials from a fixed Provider", () => {
@@ -661,7 +679,9 @@ test("Gateway query and mutation schemas forbid actor and organization overrides
     validator({ $defs: browser.$defs, $ref: `#/$defs/${name}` });
   const list = browserValidator("external_identity_list_query");
   closedObject(list, { limit: 50 });
+  valid(list, { limit: 50, cursor: binding.id, notice_after_id: notice.id });
   valid(list, { limit: 50, after_id: binding.id, notice_after_id: notice.id });
+  invalid(list, { limit: 50, cursor: binding.id, after_id: binding.id });
   for (const field of [
     "user_id",
     "organization_id",
@@ -683,7 +703,11 @@ test("Gateway query and mutation schemas forbid actor and organization overrides
     actor_principal_id: "user-other",
   });
   const page = browserValidator("external_identity_list");
-  closedObject(page, { bindings: [binding], notices: [notice] });
+  closedObject(page, {
+    items: [binding],
+    notices: [notice],
+    next_cursor: null,
+  });
 });
 
 test("Console binding schemas keep signed scope out of browser payloads", () => {
@@ -714,8 +738,11 @@ test("Console binding schemas keep signed scope out of browser payloads", () => 
     });
   const list = compile("list_query");
   closedObject(list, { limit: 50 });
+  valid(list, { limit: 50, cursor: binding.id });
+  valid(list, { limit: 50, after_id: binding.id });
+  invalid(list, { limit: 50, cursor: binding.id, after_id: binding.id });
   invalid(list, { limit: 50, notice_after_id: notice.id });
   const page = compile("binding_list");
-  closedObject(page, { bindings: [binding] });
-  invalid(page, { bindings: [binding], notices: [] });
+  closedObject(page, { items: [binding], next_cursor: null });
+  invalid(page, { items: [binding], next_cursor: null, notices: [] });
 });

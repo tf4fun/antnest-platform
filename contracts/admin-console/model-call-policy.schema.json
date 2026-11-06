@@ -128,6 +128,7 @@
       },
       "properties": {
         "expected_version": {
+          "type": "string",
           "allOf": [
             { "$ref": "../common/precondition.schema.json#/$defs/expected_version" }
           ],
