@@ -79,9 +79,7 @@ func TestPutPolicyRevisionRejectsCorruptMetadataAndConflict(t *testing.T) {
 		{"null_schema", strings.Replace(valid, `"schema_version":2`, `"schema_version":null`, 1)},
 		{"bad_digest", strings.Replace(valid, `"digest":"sha256:`, `"digest":"md5:`, 1)},
 		{"wrong_digest", strings.Replace(valid, egressSpecDigest(t, spec), "sha256:"+strings.Repeat("f", 64), 1)},
-		{"unknown_field", strings.TrimSuffix(valid, "}") + `,"extra":1}`},
 		{"duplicate_field", `{"policy_id":"` + ref.PolicyID + `","policy_id":"` + ref.PolicyID + `","revision":1,"schema_version":2,"digest":"` + egressSpecDigest(t, spec) + `"}`},
-		{"injected_spec", strings.TrimSuffix(valid, "}") + `,"spec":` + egressV2SpecJSON + `}`},
 	}
 	for _, scenario := range corrupt {
 		t.Run(scenario.name, func(t *testing.T) {

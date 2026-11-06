@@ -7,7 +7,7 @@ import (
 	"errors"
 	"strconv"
 
-	"github.com/tf4fun/antnest-platform/modules/service-authentication/serviceauth"
+	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/responsejson"
 	"go.opentelemetry.io/otel/attribute"
 
 	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/ports"
@@ -57,7 +57,7 @@ func (wire *runtimeBarrierResultWire) UnmarshalJSON(raw []byte) error {
 		RuntimeRevision string          `json:"runtime_revision"`
 		Barrier         json.RawMessage `json:"barrier"`
 	}
-	if err := serviceauth.DecodeObject(raw, &document); err != nil {
+	if err := responsejson.Decode(raw, &document); err != nil {
 		return err
 	}
 	if len(document.Barrier) == 0 {
@@ -67,7 +67,7 @@ func (wire *runtimeBarrierResultWire) UnmarshalJSON(raw []byte) error {
 		AgentID: document.AgentID, RuntimeRevision: document.RuntimeRevision}
 	if !bytes.Equal(bytes.TrimSpace(document.Barrier), []byte("null")) {
 		var barrier ports.RuntimeBarrier
-		if err := serviceauth.DecodeObject(document.Barrier, &barrier); err != nil {
+		if err := responsejson.Decode(document.Barrier, &barrier); err != nil {
 			return err
 		}
 		result.Barrier = &barrier

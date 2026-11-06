@@ -66,7 +66,6 @@ func (client *Client) Resolve(ctx context.Context, organizationID string, refs [
 		Items []domain.FrozenSkill `json:"items"`
 	}
 	decoder := json.NewDecoder(io.LimitReader(response.Body, 32<<10))
-	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&result); err != nil || result.Items == nil {
 		return nil, fmt.Errorf("skill registry returned invalid resolve result")
 	}

@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 
 	"go.opentelemetry.io/otel/attribute"
@@ -31,9 +30,6 @@ func (wire *executionDigestWire) UnmarshalJSON(raw []byte) error {
 	if err := json.Unmarshal(raw, &fields); err != nil {
 		return err
 	}
-	if len(fields) != len(executionDigestRequiredKeys) {
-		return errors.New("execution digest field count mismatch")
-	}
 	for _, key := range executionDigestRequiredKeys {
 		value, present := fields[key]
 		if !present {
@@ -44,7 +40,6 @@ func (wire *executionDigestWire) UnmarshalJSON(raw []byte) error {
 		}
 	}
 	decoder := json.NewDecoder(bytes.NewReader(raw))
-	decoder.DisallowUnknownFields()
 	return decoder.Decode(&wire.digest)
 }
 
