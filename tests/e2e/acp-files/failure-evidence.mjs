@@ -6,7 +6,7 @@ import {
 } from "../../support/storage.mjs";
 import { summarizeFailure } from "../../support/verification/failure.mjs";
 
-function sourceLocation(error, source) {
+export function sourceLocation(error, source) {
   try {
     if (
       !source ||
