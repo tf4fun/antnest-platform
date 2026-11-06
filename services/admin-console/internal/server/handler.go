@@ -604,7 +604,7 @@ func (h *handler) reviseModelProfile(response http.ResponseWriter, request *http
 	payload := map[string]any{
 		"request_id": requestID, "organization_id": actor.OrganizationID,
 		"display_name": input.DisplayName, "model": input.Model,
-		"expected_version": input.ExpectedVersion,
+		"expected_version": strconv.FormatInt(input.ExpectedVersion, 10),
 	}
 	h.forwardProjectedJSON(response, request, upstream.AgentController, http.MethodPost,
 		"/internal/model-profiles/"+url.PathEscape(request.PathValue("model_profile_id"))+"/revisions",
@@ -1366,6 +1366,18 @@ func decodeJSON(response http.ResponseWriter, request *http.Request, target any)
 		writeError(response, http.StatusBadRequest, apierror.InvalidRequest, "Request body is invalid")
 		return false
 	}
+	switch target.(type) {
+	case *reviseModelProfileInput:
+		raw, err = normalizeConsolePrecondition(raw, request, "expected_version", true, true)
+	case *modelCallPolicyInput:
+		raw, err = normalizeConsolePrecondition(raw, request, "expected_revision", true, true)
+	case *rotateProviderCredentialInput:
+		raw, err = normalizeConsolePrecondition(raw, request, "expected_version", false, true)
+	}
+	if err != nil {
+		writeFailure(response, http.StatusBadRequest, apierror.InvalidRequest, "Request body is invalid", err)
+		return false
+	}
 	if err := serviceauth.DecodeObject(raw, target); err != nil {
 		writeFailure(response, http.StatusBadRequest, apierror.InvalidRequest, "Request body is invalid", err)
 		return false
@@ -1406,7 +1418,7 @@ func organizationScopeQuery(organizationID string) string {
 }
 
 func catalogListQuery(response http.ResponseWriter, request *http.Request, organizationID string) (string, bool) {
-	input, ok := parseListQuery(response, request, "after_id", "limit")
+	input, ok := parseListQuery(response, request, "after_id", "cursor", "limit")
 	if !ok {
 		return "", false
 	}
@@ -1414,8 +1426,12 @@ func catalogListQuery(response http.ResponseWriter, request *http.Request, organ
 	if !ok {
 		return "", false
 	}
-	if !copyBoundedListValue(response, query, input, "after_id") {
+	cursor, ok := canonicalListCursor(response, input, "after_id")
+	if !ok {
 		return "", false
+	}
+	if cursor != "" {
+		query.Set("cursor", cursor)
 	}
 	return query.Encode(), true
 }
@@ -1670,8 +1686,9 @@ func writeError(response http.ResponseWriter, status int, code, message string) 
 func commandRequestID(
 	response http.ResponseWriter, request *http.Request, organizationID, namespace string,
 ) (string, bool) {
-	key := strings.TrimSpace(request.Header.Get("Idempotency-Key"))
-	if len(key) < minimumIdempotencyKeyBytes || len(key) > maximumIdempotencyKeyBytes ||
+	keys := request.Header.Values("Idempotency-Key")
+	key := request.Header.Get("Idempotency-Key")
+	if len(keys) != 1 || len(key) < minimumIdempotencyKeyBytes || len(key) > maximumIdempotencyKeyBytes ||
 		strings.IndexFunc(key, func(value rune) bool { return value < 0x21 || value > 0x7e }) >= 0 {
 		writeError(response, http.StatusBadRequest, apierror.InvalidIdempotencyKey, "A valid Idempotency-Key is required")
 		return "", false

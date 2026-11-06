@@ -26,8 +26,8 @@ export function IdentityProviderSelect({ name = "provider_id", optional = false,
     try {
       const page = await api.externalIdentityProviders(after, controller.signal);
       if (scope.current !== current || controller.signal.aborted) return;
-      setProviders(previous => after ? [...previous, ...page.providers.filter(row => !previous.some(old => old.id === row.id))] : page.providers);
-      setCursor(page.next_after_id);
+      setProviders(previous => after ? [...previous, ...page.items.filter(row => !previous.some(old => old.id === row.id))] : page.items);
+      setCursor(page.next_cursor ?? undefined);
     } catch (cause) {
       if (scope.current === current && !controller.signal.aborted) setError(errorMessage(cause));
     } finally {

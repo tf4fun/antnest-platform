@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
+import { createRequire } from "node:module";
+import { withCommonErrorSchema } from "../../support/common-error-schema.mjs";
 import { test } from "node:test";
 
 const root = new URL("../../..", import.meta.url);
@@ -78,12 +80,20 @@ test("replacement request requires the CAS and principal precondition", () => {
   assert.deepEqual(request.required.sort(), [
     "daily",
     "expected_principal",
-    "expected_revision",
     "monthly",
     "run_caps",
     "unknown_cost",
   ]);
   assert.equal(request.additionalProperties, false);
+  assert.equal(request.properties.expected_revision.deprecated, true);
+  assert.deepEqual(request.not.required, [
+    "expected_version",
+    "expected_revision",
+  ]);
+  assert.equal(
+    request.properties.expected_version.allOf[0].$ref,
+    "../common/precondition.schema.json#/$defs/expected_version",
+  );
   assert.equal(request.properties.expected_principal.minItems, 2);
   assert.equal(request.properties.expected_principal.maxItems, 2);
   assert.equal(request.properties.expected_principal.items.minLength, 1);
@@ -97,4 +107,26 @@ test("shared cap shapes match the canonical Controller definitions", () => {
       name,
     );
   }
+});
+
+test("canonical policy precondition compiles with strict string constraints", () => {
+  const require = createRequire(
+    new URL(
+      "../../../services/agent-acp-service/package.json",
+      import.meta.url,
+    ),
+  );
+  const { Ajv2020 } = require("ajv/dist/2020.js");
+  const ajv = withCommonErrorSchema(
+    new Ajv2020({ strict: true, validateFormats: false }),
+  );
+  ajv.addSchema(schema);
+  const validate = ajv.compile({
+    $id: "https://schemas.antnest.dev/admin-console/policy-precondition-test.json",
+    $ref: "model-call-policy.schema.json#/$defs/set_model_call_policy_request/properties/expected_version",
+  });
+  assert(validate("0"));
+  assert(validate("7"));
+  for (const value of [0, null, "", "01", "-1", "1.0", "1".repeat(21)])
+    assert.equal(validate(value), false);
 });

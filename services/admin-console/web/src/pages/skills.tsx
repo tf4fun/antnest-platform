@@ -29,7 +29,7 @@ function SkillInventory() {
     try {
       const page = await api.skills();
       setItems(page.items);
-      setCursor(page.next_after_id);
+      setCursor(page.next_cursor);
       setFailure(undefined);
     } catch (cause) { setFailure(resourceFailure(cause)); }
   }, []);
@@ -40,7 +40,7 @@ function SkillInventory() {
     try {
       const page = await api.skills(cursor);
       setItems((current) => mergePage(current ?? [], page.items, (item) => item.skill_id));
-      setCursor(page.next_after_id);
+      setCursor(page.next_cursor);
     } catch (cause) { setMoreFailure(resourceFailure(cause)); }
     finally { setMorePending(false); }
   }
@@ -71,7 +71,7 @@ function SkillInventory() {
 
 function SkillDetail({ skillID }: { skillID: string }) {
   const [versions, setVersions] = useState<SkillVersion[]>();
-  const [cursor, setCursor] = useState<number | null>(null);
+  const [cursor, setCursor] = useState<string | null>(null);
   const [failure, setFailure] = useState<ResourceFailure>();
   const [moreFailure, setMoreFailure] = useState<ResourceFailure>();
   const [pending, setPending] = useState(false);
@@ -79,14 +79,14 @@ function SkillDetail({ skillID }: { skillID: string }) {
   const [success, setSuccess] = useState("");
   const [downloadError, setDownloadError] = useState("");
   const load = useCallback(async () => {
-    try { const page = await api.skillVersions(skillID); setVersions(page.items); setCursor(page.next_after_version); setFailure(undefined); }
+    try { const page = await api.skillVersions(skillID); setVersions(page.items); setCursor(page.next_cursor); setFailure(undefined); }
     catch (cause) { setFailure(resourceFailure(cause)); }
   }, [skillID]);
   useEffect(() => { void load(); }, [load]);
   async function more() {
     if (!cursor || pending) return;
     setPending(true); setMoreFailure(undefined);
-    try { const page = await api.skillVersions(skillID, cursor); setVersions((current) => mergePage(current ?? [], page.items, (item) => String(item.version))); setCursor(page.next_after_version); }
+    try { const page = await api.skillVersions(skillID, cursor); setVersions((current) => mergePage(current ?? [], page.items, (item) => String(item.version))); setCursor(page.next_cursor); }
     catch (cause) { setMoreFailure(resourceFailure(cause)); }
     finally { setPending(false); }
   }

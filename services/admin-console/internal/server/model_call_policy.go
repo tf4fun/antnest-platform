@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 
 	"github.com/tf4fun/antnest-platform/modules/service-authentication/serviceauth"
@@ -340,7 +341,7 @@ func (h *handler) setModelCallPolicy(response http.ResponseWriter, request *http
 	}
 	payload, err := json.Marshal(map[string]any{
 		"request_id": requestID, "organization_id": actor.OrganizationID,
-		"actor_principal_id": actor.UserID, "expected_revision": input.ExpectedRevision,
+		"actor_principal_id": actor.UserID, "expected_version": strconv.FormatInt(input.ExpectedRevision, 10),
 		"unknown_cost": input.UnknownCost, "run_caps": input.RunCaps,
 		"daily": input.Daily, "monthly": input.Monthly,
 	})

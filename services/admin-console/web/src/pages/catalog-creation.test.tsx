@@ -168,11 +168,11 @@ it("creates a Template with a selected fixed Skill version", async () => {
       written = JSON.parse(String(init.body));
       return Response.json({ ...template, skill_refs: [{ ...published, version: 2 }] }, { status: 201 });
     }
-    if (path === "/api/admin/templates") return Response.json({ items: [], next_after_id: null });
-    if (path === "/api/admin/model-profiles") return Response.json({ items: [model], next_after_id: null });
+    if (path === "/api/admin/templates") return Response.json({ items: [], next_cursor: null });
+    if (path === "/api/admin/model-profiles") return Response.json({ items: [model], next_cursor: null });
     if (path === "/api/admin/template-defaults") return Response.json({ runtime_image_ref: "runtime:latest" });
-    if (path === "/api/admin/skills") return Response.json({ items: [{ ...published, current_version: 2 }], next_after_id: null });
-    if (path === `/api/admin/skills/${skillID}/versions`) return Response.json({ items: [{ ...published, version: 2 }, { ...published, version: 1 }], next_after_version: null });
+    if (path === "/api/admin/skills") return Response.json({ items: [{ ...published, current_version: 2 }], next_cursor: null });
+    if (path === `/api/admin/skills/${skillID}/versions`) return Response.json({ items: [{ ...published, version: 2 }, { ...published, version: 1 }], next_cursor: null });
     throw new Error(`Unexpected request: ${path}`);
   }));
   render(<TemplatesPage />);

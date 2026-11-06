@@ -112,17 +112,17 @@
     "external_identity_organization_list": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["bindings"],
+      "required": ["items", "next_cursor"],
       "properties": {
-        "bindings": {
+        "items": {
           "type": "array",
           "maxItems": 100,
           "items": {
             "$ref": "#/$defs/external_identity"
           }
         },
-        "next_after_id": {
-          "$ref": "#/$defs/id"
+        "next_cursor": {
+          "$ref": "../common/pagination.schema.json#/$defs/nullable_cursor"
         }
       }
     },
@@ -211,8 +211,26 @@
           "minimum": 1,
           "maximum": 100
         },
+        "cursor": {
+          "allOf": [
+            {
+              "$ref": "../common/pagination.schema.json#/$defs/cursor"
+            },
+            {
+              "$ref": "#/$defs/id"
+            }
+          ]
+        },
         "after_id": {
-          "$ref": "#/$defs/id"
+          "$ref": "#/$defs/id",
+          "deprecated": true
+        }
+      },
+      "not": {
+        "required": ["cursor", "after_id"],
+        "properties": {
+          "cursor": { "$ref": "../common/pagination.schema.json#/$defs/cursor" },
+          "after_id": { "$ref": "#/$defs/id" }
         }
       }
     },
@@ -247,17 +265,17 @@
     "binding_list": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["bindings"],
+      "required": ["items", "next_cursor"],
       "properties": {
-        "bindings": {
+        "items": {
           "type": "array",
           "maxItems": 100,
           "items": {
             "$ref": "#/$defs/external_identity"
           }
         },
-        "next_after_id": {
-          "$ref": "#/$defs/id"
+        "next_cursor": {
+          "$ref": "../common/pagination.schema.json#/$defs/nullable_cursor"
         }
       }
     },
@@ -288,17 +306,17 @@
     "provider_list": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["providers"],
+      "required": ["items", "next_cursor"],
       "properties": {
-        "providers": {
+        "items": {
           "type": "array",
           "maxItems": 100,
           "items": {
             "$ref": "#/$defs/external_identity_provider"
           }
         },
-        "next_after_id": {
-          "$ref": "#/$defs/id"
+        "next_cursor": {
+          "$ref": "../common/pagination.schema.json#/$defs/nullable_cursor"
         }
       }
     }

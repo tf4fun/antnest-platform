@@ -72,7 +72,7 @@ function TemplateList() {
     try {
       const page = await api.templates();
       setItems(page.items);
-      setNextAfterID(page.next_after_id ?? undefined);
+      setNextAfterID(page.next_cursor ?? undefined);
     } catch (cause) {
       setLoadFailure(resourceFailure(cause));
     }
@@ -94,7 +94,7 @@ function TemplateList() {
     try {
       const page = await api.templates({ afterID: nextAfterID });
       setItems((current) => mergePage(current ?? [], page.items, (item) => item.template_id));
-      setNextAfterID(page.next_after_id ?? undefined);
+      setNextAfterID(page.next_cursor ?? undefined);
     } catch (cause) {
       setPageFailure(resourceFailure(cause));
     } finally {

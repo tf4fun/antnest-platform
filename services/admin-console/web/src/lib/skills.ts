@@ -15,8 +15,8 @@ export type SkillVersion = Omit<SkillSummary, "current_version"> & { version: nu
 export type SkillReference = { skill_id: string; version: number };
 export type FrozenSkill = SkillVersion;
 
-export type SkillPage = { items: SkillSummary[]; next_after_id: string | null };
-export type SkillVersionPage = { items: SkillVersion[]; next_after_version: number | null };
+export type SkillPage = { items: SkillSummary[]; next_cursor: string | null };
+export type SkillVersionPage = { items: SkillVersion[]; next_cursor: string | null };
 
 export type AgentSkillSourceRef = { kind: "agent"; agent_id: string; name: string; sequence: number };
 export type SkillSource = { skill_ref: AgentSkillSourceRef; name: string; description: string; content_digest: string };

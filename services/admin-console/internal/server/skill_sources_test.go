@@ -98,7 +98,7 @@ func TestSkillSourceRequestsRejectIdentityOverrideAndInvalidSelectionsBeforeDisp
 func TestSkillSourcePromotionBindsReviewedSourceTargetAndStableReceipt(t *testing.T) {
 	stub := &skillStub{status: 201, body: `{"skill_id":"` + sourceTarget + `","version":3,"name":"code-review","description":"Review code","artifact_digest":"` + sourceDigest + `","content_digest":"` + sourceDigest + `","artifact_size":100,"unpacked_size":200,"package_rules_version":1,"source_owner":"hidden"}`}
 	h := skillHandler(t, stub)
-	body := strings.TrimSuffix(sourceSelection(sourceDigest), "}") + `,"skill_id":"` + sourceTarget + `","expected_version":2}`
+	body := strings.TrimSuffix(sourceSelection(sourceDigest), "}") + `,"skill_id":"` + sourceTarget + `","expected_version":"2"}`
 	for i := 0; i < 2; i++ {
 		w := sourceCall(t, h, "promote", body, "source-attempt-0001")
 		if w.Code != 201 || strings.Contains(w.Body.String(), "hidden") || w.Header().Get("Cache-Control") != "no-store" {
@@ -109,7 +109,7 @@ func TestSkillSourcePromotionBindsReviewedSourceTargetAndStableReceipt(t *testin
 	for _, call := range stub.calls {
 		var in map[string]any
 		decodeBytes(t, call.body, &in)
-		if call.path != "/internal/skill-projections/promote" || in["organization_id"] != "org-1" || in["actor_id"] != "user-admin" || in["expected_digest"] != sourceDigest || in["skill_id"] != sourceTarget || in["expected_version"] != float64(2) || len(in) != 7 {
+		if call.path != "/internal/skill-projections/promote" || in["organization_id"] != "org-1" || in["actor_id"] != "user-admin" || in["expected_digest"] != sourceDigest || in["skill_id"] != sourceTarget || in["expected_version"] != "2" || len(in) != 7 {
 			t.Fatalf("input=%v call=%+v", in, call)
 		}
 		id, _ := in["request_id"].(string)
@@ -119,7 +119,7 @@ func TestSkillSourcePromotionBindsReviewedSourceTargetAndStableReceipt(t *testin
 		requestID = id
 	}
 	before := len(stub.calls)
-	for _, extra := range []string{`,"skill_id":"` + sourceTarget + `"`, `,"expected_version":2`, `,"skill_id":null,"expected_version":null`, `,"skill_id":"` + sourceTarget + `","expected_version":0`, `,"skill_id":"` + sourceTarget + `","expected_version":9007199254740992`} {
+	for _, extra := range []string{`,"skill_id":"` + sourceTarget + `"`, `,"expected_version":"2"`, `,"skill_id":null,"expected_version":null`, `,"skill_id":"` + sourceTarget + `","expected_version":0`, `,"skill_id":"` + sourceTarget + `","expected_version":9007199254740992`} {
 		w := sourceCall(t, h, "promote", strings.TrimSuffix(sourceSelection(sourceDigest), "}")+extra+"}", "source-attempt-0001")
 		if w.Code != 400 {
 			t.Fatalf("extra=%s status=%d", extra, w.Code)
@@ -266,5 +266,30 @@ func TestSkillSourceRequestsAreBoundedAndPromotionHasNoAutomaticRetry(t *testing
 		if w.Code != 429 || len(stub.calls) != 0 {
 			t.Fatalf("action=%s status=%d", action, w.Code)
 		}
+	}
+}
+
+func TestSkillSourcePromotionIfMatchPrecondition(t *testing.T) {
+	body := strings.TrimSuffix(sourceSelection(sourceDigest), "}") + `,"skill_id":"` + sourceTarget + `"}`
+	for _, header := range []string{`"2"`, `W/"2"`, `*`, `"2", "3"`} {
+		t.Run(header, func(t *testing.T) {
+			stub := &skillStub{status: 201, body: `{"skill_id":"` + sourceTarget + `","version":3,"name":"code-review","description":"Review code","artifact_digest":"` + sourceDigest + `","content_digest":"` + sourceDigest + `","artifact_size":100,"unpacked_size":200,"package_rules_version":1}`}
+			request := skillRequest("POST", "/api/admin/skill-sources/promote", strings.NewReader(body), "application/json", "source-attempt-0001")
+			request.Header.Set("If-Match", header)
+			response := httptest.NewRecorder()
+			skillHandler(t, stub).ServeHTTP(response, request)
+			if header == `"2"` {
+				if response.Code != 201 || len(stub.calls) != 1 {
+					t.Fatalf("status=%d calls=%d body=%s", response.Code, len(stub.calls), response.Body.String())
+				}
+				var sent map[string]any
+				decodeBytes(t, stub.calls[0].body, &sent)
+				if sent["expected_version"] != "2" {
+					t.Fatalf("forwarded version=%v", sent["expected_version"])
+				}
+			} else if response.Code != 400 || len(stub.calls) != 0 {
+				t.Fatalf("status=%d calls=%d", response.Code, len(stub.calls))
+			}
+		})
 	}
 }

@@ -66,7 +66,7 @@ func externalIdentityDate(value string) bool {
 }
 
 func validateExternalIdentityCursor(raw json.RawMessage, after, last string) error {
-	if raw == nil {
+	if raw == nil || bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
 		return nil
 	}
 	var cursor string
@@ -77,9 +77,13 @@ func validateExternalIdentityCursor(raw json.RawMessage, after, last string) err
 }
 
 func projectOrganizationExternalIdentities(body []byte, organization, membership, after string, limit int) ([]byte, error) {
+	var err error
+	if body, err = canonicalPage(body, "bindings", "next_after_id", false); err != nil {
+		return nil, err
+	}
 	var page struct {
-		Bindings    []externalIdentityBindingSource `json:"bindings"`
-		NextAfterID json.RawMessage                 `json:"next_after_id,omitempty"`
+		Bindings    []externalIdentityBindingSource `json:"items"`
+		NextAfterID json.RawMessage                 `json:"next_cursor"`
 	}
 	if err := serviceauth.DecodeObject(body, &page); err != nil {
 		return nil, err
@@ -132,9 +136,13 @@ type externalIdentityProviderSource struct {
 }
 
 func projectExternalIdentityProviders(body []byte, after string, limit int) ([]byte, error) {
+	var err error
+	if body, err = canonicalPage(body, "providers", "next_after_id", false); err != nil {
+		return nil, err
+	}
 	var page struct {
-		Providers   []externalIdentityProviderSource `json:"providers"`
-		NextAfterID json.RawMessage                  `json:"next_after_id,omitempty"`
+		Providers   []externalIdentityProviderSource `json:"items"`
+		NextAfterID json.RawMessage                  `json:"next_cursor"`
 	}
 	if err := serviceauth.DecodeObject(body, &page); err != nil {
 		return nil, err

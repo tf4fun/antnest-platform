@@ -732,8 +732,11 @@ test("Console binding schemas keep signed scope out of browser payloads", () => 
     });
   const list = compile("list_query");
   closedObject(list, { limit: 50 });
+  valid(list, { limit: 50, cursor: binding.id });
+  valid(list, { limit: 50, after_id: binding.id });
+  invalid(list, { limit: 50, cursor: binding.id, after_id: binding.id });
   invalid(list, { limit: 50, notice_after_id: notice.id });
   const page = compile("binding_list");
-  closedObject(page, { bindings: [binding] });
-  invalid(page, { bindings: [binding], notices: [] });
+  closedObject(page, { items: [binding], next_cursor: null });
+  invalid(page, { items: [binding], next_cursor: null, notices: [] });
 });

@@ -122,7 +122,7 @@ async function exercise(browser, origin, viewport, label) {
         },
         "/api/admin/execution-synchronization": { synchronization: null },
         "/api/admin/agents": { items: [], next_cursor: null },
-        "/api/admin/templates": { items: [template], next_after_id: null },
+        "/api/admin/templates": { items: [template], next_cursor: null },
         "/api/admin/directory": { users: [member], groups: [] },
         "/api/admin/agent-skill-preparations/by-idempotency-key": {
           request_id: "request-1",

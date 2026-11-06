@@ -38,8 +38,9 @@
       "method": "GET",
       "path": "/skills",
       "query": {
-        "optional": ["after_id", "limit"],
-        "cursor_response": "next_after_id"
+        "optional": ["cursor", "after_id", "limit"],
+        "cursor_response": "next_cursor",
+        "deprecated": ["after_id"]
       }
     },
     "publish_skill": {
@@ -53,8 +54,9 @@
       "method": "GET",
       "path": "/skills/{skill_id}/versions",
       "query": {
-        "optional": ["after_version", "limit"],
-        "cursor_response": "next_after_version"
+        "optional": ["cursor", "after_version", "limit"],
+        "cursor_response": "next_cursor",
+        "deprecated": ["after_version"]
       }
     },
     "publish_skill_version": {
@@ -130,8 +132,9 @@
       "path": "/directory/users/{user_id}/sessions",
       "query": {
         "required": ["limit"],
-        "optional": ["after_id"],
-        "cursor_response": "next_after_id"
+        "optional": ["cursor", "after_id"],
+        "cursor_response": "next_cursor",
+        "deprecated": ["after_id"]
       }
     },
     "revoke_organization_sessions": {
@@ -199,8 +202,9 @@
       "method": "GET",
       "path": "/model-profiles",
       "query": {
-        "optional": ["after_id", "limit"],
-        "cursor_response": "next_after_id"
+        "optional": ["cursor", "after_id", "limit"],
+        "cursor_response": "next_cursor",
+        "deprecated": ["after_id"]
       }
     },
     "create_model_profile": {
@@ -226,8 +230,9 @@
       "method": "GET",
       "path": "/templates",
       "query": {
-        "optional": ["after_id", "limit"],
-        "cursor_response": "next_after_id"
+        "optional": ["cursor", "after_id", "limit"],
+        "cursor_response": "next_cursor",
+        "deprecated": ["after_id"]
       }
     },
     "create_template": {
@@ -338,8 +343,9 @@
       "method": "GET",
       "path": "/provider-connections",
       "query": {
-        "optional": ["after_id", "limit"],
-        "cursor_response": "next_after_id"
+        "optional": ["cursor", "after_id", "limit"],
+        "cursor_response": "next_cursor",
+        "deprecated": ["after_id"]
       }
     },
     "discover_draft_models": {
@@ -530,7 +536,8 @@
       "authority": "agent_controller_scopes_egress_assignment",
       "attachment_states": ["open", "closed", "pending"],
       "attachment_snapshot": "last_confirmed_read_not_live_health_or_execution",
-      "input": ["action", "spec", "expected_resource_version"],
+      "input": ["action", "spec", "expected_version"],
+      "deprecated_input": ["expected_resource_version"],
       "input_exclusivity": "action_or_spec_never_both",
       "action": ["allow_all", "deny_all"],
       "spec": "../agent-controller/control-api.schema.json#/$defs/network_policy_spec",

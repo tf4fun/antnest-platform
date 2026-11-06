@@ -24,7 +24,7 @@ export type BrowserSession = {
   user_agent_hint: string;
   current: boolean;
 };
-export type BrowserSessionPage = { sessions: BrowserSession[]; next_after_id?: string };
+export type BrowserSessionPage = { items: BrowserSession[]; next_cursor?: string | null };
 export type SessionRevocation = { revoked_count: number; current_revoked: boolean };
 
 export type CurrentAccount = {
@@ -103,7 +103,7 @@ export type ExternalIdentityProvider = OIDCPolicy & {
   enabled: boolean;
   link_policy_review_required: boolean;
 };
-export type ExternalIdentityProviderPage = { providers: ExternalIdentityProvider[]; next_after_id?: string };
+export type ExternalIdentityProviderPage = { items: ExternalIdentityProvider[]; next_cursor?: string | null };
 export type ExternalIdentityDetails = {
   id: string;
   provider_id: string;
@@ -123,7 +123,7 @@ export type ExternalIdentity = ExternalIdentityDetails & {
   revoked_at: string | null;
 };
 export type ExternalIdentityNotice = ExternalIdentityDetails & { binding_id: string };
-export type ExternalIdentityPage = { bindings: ExternalIdentity[]; next_after_id?: string };
+export type ExternalIdentityPage = { items: ExternalIdentity[]; next_cursor?: string | null };
 export type SelfExternalIdentityPage = ExternalIdentityPage & { notices: ExternalIdentityNotice[]; next_notice_after_id?: string };
 export type ExternalIdentityBindInput = { provider_id: string; subject: string; restore_revoked?: boolean };
 
@@ -200,7 +200,7 @@ export type ProviderConnection = {
   created_at: string;
   updated_at: string;
 };
-export type ProviderConnectionList = { items: ProviderConnection[]; next_after_id?: string | null };
+export type ProviderConnectionList = { items: ProviderConnection[]; next_cursor?: string | null };
 export type ProviderModelInput = { display_name: string; model: ModelParameters };
 
 export type ModelCatalogEntry = {
@@ -250,7 +250,7 @@ export type ModelProfile = {
 
 export type ModelProfileList = {
   items: ModelProfile[];
-  next_after_id?: string | null;
+  next_cursor?: string | null;
 };
 
 export type ModelProfileUsage = {
@@ -306,7 +306,7 @@ export type AgentTemplate = {
 
 export type TemplateList = {
   items: AgentTemplate[];
-  next_after_id?: string | null;
+  next_cursor?: string | null;
 };
 
 export type TemplateDefaults = {

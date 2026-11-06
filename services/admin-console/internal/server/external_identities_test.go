@@ -62,8 +62,8 @@ func TestExternalIdentityOrganizationRoutesDeriveSignedScope(t *testing.T) {
 		reply                   any
 		want                    map[string]any
 	}{
-		{"GET", externalProviderPath + "?limit=2&after_id=provider-0", "", "list-external-identity-providers", map[string]any{"providers": []any{externalProviderRow()}, "next_after_id": "provider-3"}, map[string]any{"actor_principal_id": "user-admin", "limit": float64(2), "after_id": "provider-0"}},
-		{"GET", externalMembershipPath + "?limit=2&after_id=binding-0", "", "list-external-identities", map[string]any{"bindings": []any{externalBindingRow()}, "next_after_id": "binding-3"}, map[string]any{"actor_principal_id": "user-admin", "scope": "organization", "membership_id": "membership-1", "limit": float64(2), "after_id": "binding-0"}},
+		{"GET", externalProviderPath + "?limit=2&after_id=provider-0", "", "list-external-identity-providers", map[string]any{"providers": []any{externalProviderRow()}, "next_after_id": "provider-3"}, map[string]any{"actor_principal_id": "user-admin", "limit": float64(2), "cursor": "provider-0"}},
+		{"GET", externalMembershipPath + "?limit=2&after_id=binding-0", "", "list-external-identities", map[string]any{"bindings": []any{externalBindingRow()}, "next_after_id": "binding-3"}, map[string]any{"actor_principal_id": "user-admin", "scope": "organization", "membership_id": "membership-1", "limit": float64(2), "cursor": "binding-0"}},
 		{"POST", externalMembershipPath, `{"provider_id":"provider-1","subject":"  <opaque> e\u0301 😀  ","restore_revoked":false}`, "bind-external-identity", map[string]any{"binding": externalBindingRow()}, map[string]any{"actor_principal_id": "user-admin", "membership_id": "membership-1", "provider_id": "provider-1", "subject": "  <opaque> e\u0301 😀  ", "restore_revoked": false}},
 		{"DELETE", externalMembershipPath + "/binding-1", `{"allow_lockout":false}`, "unbind-external-identity", map[string]any{"revoked_count": 2, "current_revoked": true}, map[string]any{"actor_principal_id": "user-admin", "scope": "organization", "membership_id": "membership-1", "binding_id": "binding-1", "allow_lockout": false}},
 	} {
@@ -93,6 +93,19 @@ func TestExternalIdentityOrganizationRoutesDeriveSignedScope(t *testing.T) {
 			var got, want any
 			decodeBytes(t, w.Body.Bytes(), &got)
 			decodeBytes(t, []byte(oidcLinkingJSON(t, row.reply)), &want)
+			if row.method == "GET" {
+				canonical := map[string]any{}
+				for key, value := range want.(map[string]any) {
+					switch key {
+					case "bindings", "providers":
+						key = "items"
+					case "next_after_id":
+						key = "next_cursor"
+					}
+					canonical[key] = value
+				}
+				want = canonical
+			}
 			if !reflect.DeepEqual(got, want) {
 				t.Fatalf("changed public response: %s", w.Body.String())
 			}
@@ -338,7 +351,7 @@ func TestExternalIdentityOrganizationPagination(t *testing.T) {
 			path, key, prefix = externalProviderPath, "providers", "provider-"
 			factory = externalProviderRow
 		}
-		for _, payload := range []string{`{}`, `{"` + key + `":null}`, `{"` + key + `":[],"next_after_id":null}`, `{"` + key + `":[],"next_after_id":""}`, `{"` + key + `":[],"next_after_id":"` + prefix + `0"}`, oidcLinkingJSON(t, map[string]any{key: []any{factory(), factory()}}), oidcLinkingJSON(t, map[string]any{key: []any{factory()}, "next_after_id": prefix + "0"})} {
+		for _, payload := range []string{`{}`, `{"` + key + `":null}`, `{"items":[],"next_cursor":""}`, `{"` + key + `":[],"next_after_id":""}`, `{"` + key + `":[],"next_after_id":"` + prefix + `0"}`, oidcLinkingJSON(t, map[string]any{key: []any{factory(), factory()}}), oidcLinkingJSON(t, map[string]any{key: []any{factory()}, "next_after_id": prefix + "0"})} {
 			backend := newBackendStub()
 			backend.enqueue(200, payload)
 			w := externalAdminRequest(t, backend, "GET", path+"?limit=1&after_id="+prefix+"0", "", externalAdmin(), "")

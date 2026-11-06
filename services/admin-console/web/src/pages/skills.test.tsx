@@ -13,7 +13,7 @@ const skill: SkillSummary = {
 };
 
 it("shows an accessible ZIP picker, selected package details and an empty publication guard", async () => {
-  vi.spyOn(api, "skills").mockResolvedValue({ items: [skill], next_after_id: null });
+  vi.spyOn(api, "skills").mockResolvedValue({ items: [skill], next_cursor: null });
   const publish = vi.spyOn(api, "publishSkill").mockResolvedValue({ ...skill, version: 3 });
   render(<SkillsPage />);
   fireEvent.click(await screen.findByRole("button", { name: "Upload Skill" }));
@@ -33,7 +33,7 @@ it("shows an accessible ZIP picker, selected package details and an empty public
 });
 
 it("clears the chosen ZIP when the upload dialog is cancelled and reopened", async () => {
-  vi.spyOn(api, "skills").mockResolvedValue({ items: [skill], next_after_id: null });
+  vi.spyOn(api, "skills").mockResolvedValue({ items: [skill], next_cursor: null });
   render(<SkillsPage />);
   fireEvent.click(await screen.findByRole("button", { name: "Upload Skill" }));
   fireEvent.change(screen.getByLabelText("Skill ZIP"), { target: { files: [new File(["zip"], "review.zip")] } });
@@ -45,8 +45,8 @@ it("clears the chosen ZIP when the upload dialog is cancelled and reopened", asy
 
 it("shows a separately paginated organization Skill inventory", async () => {
   const list = vi.spyOn(api, "skills")
-    .mockResolvedValueOnce({ items: [skill], next_after_id: "next" })
-    .mockResolvedValueOnce({ items: [{ ...skill, skill_id: "skill_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", name: "deploy" }], next_after_id: null });
+    .mockResolvedValueOnce({ items: [skill], next_cursor: "next" })
+    .mockResolvedValueOnce({ items: [{ ...skill, skill_id: "skill_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", name: "deploy" }], next_cursor: null });
   render(<SkillsPage />);
   expect((await screen.findByRole("link", { name: /review/i })).getAttribute("href")).toBe(`#skills/${skill.skill_id}`);
   fireEvent.click(screen.getByRole("button", { name: "Load more" }));
@@ -57,8 +57,8 @@ it("shows a separately paginated organization Skill inventory", async () => {
 it("waits for the current version before offering a CAS publication", async () => {
   const base: SkillVersion = { ...skill, version: 1 };
   const list = vi.spyOn(api, "skillVersions")
-    .mockResolvedValueOnce({ items: [base], next_after_version: 1 })
-    .mockResolvedValueOnce({ items: [{ ...base, version: 2 }], next_after_version: null });
+    .mockResolvedValueOnce({ items: [base], next_cursor: "1" })
+    .mockResolvedValueOnce({ items: [{ ...base, version: 2 }], next_cursor: null });
   render(<SkillsPage skillID={skill.skill_id} />);
   await screen.findByText("Version 1");
   expect(screen.queryByRole("button", { name: "Publish new version" })).toBeNull();
@@ -66,11 +66,11 @@ it("waits for the current version before offering a CAS publication", async () =
   await waitFor(() => expect(screen.getByRole("button", { name: "Publish new version" })).toBeTruthy());
   fireEvent.click(screen.getByRole("button", { name: "Publish new version" }));
   expect(screen.getByText(/Expected current version: 2/)).toBeTruthy();
-  expect(list).toHaveBeenCalledWith(skill.skill_id, 1);
+  expect(list).toHaveBeenCalledWith(skill.skill_id, "1");
 });
 
 it("opens source discovery without issuing a search or publication automatically", async () => {
-  vi.spyOn(api, "skills").mockResolvedValue({ items: [], next_after_id: null });
+  vi.spyOn(api, "skills").mockResolvedValue({ items: [], next_cursor: null });
   const search = vi.spyOn(api, "searchSkillSources");
   const promote = vi.spyOn(api, "promoteSkillSource");
   render(<SkillsPage />);

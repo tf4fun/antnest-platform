@@ -92,7 +92,7 @@ export function ProviderModelDiscovery({
               });
             }
           }
-          afterID = page.next_after_id ?? undefined;
+          afterID = page.next_cursor ?? undefined;
         } while (afterID);
       }
       setSaved(new Set(stored.map((item) => item.model_id)));

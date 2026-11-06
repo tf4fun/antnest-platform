@@ -81,7 +81,7 @@ func TestNetworkPolicyCommandIsOneScopedCAS(t *testing.T) {
 		call := backend.calls[index]
 		var body map[string]any
 		decodeBytes(t, call.Body, &body)
-		if call.Method != http.MethodPut || call.Path != "/internal/agents/agent-1/network-policy" || body["organization_id"] != org || body["actor_principal_id"] != "user-admin" || body["policy_id"] != "builtin/allow-all" || body["revision"] != float64(1) || body["expected_resource_version"] != float64(7) {
+		if call.Method != http.MethodPut || call.Path != "/internal/agents/agent-1/network-policy" || body["organization_id"] != org || body["actor_principal_id"] != "user-admin" || body["policy_id"] != "builtin/allow-all" || body["revision"] != float64(1) || body["expected_version"] != "7" {
 			t.Fatalf("body=%+v call=%+v", body, call)
 		}
 		if index == 0 {
@@ -109,7 +109,7 @@ func TestNetworkPolicyDenySelectionUsesDenyBuiltin(t *testing.T) {
 	call := backend.singleCall(t)
 	var input map[string]any
 	decodeBytes(t, call.Body, &input)
-	if input["policy_id"] != "builtin/deny-all" || input["expected_resource_version"] != float64(7) {
+	if input["policy_id"] != "builtin/deny-all" || input["expected_version"] != "7" {
 		t.Fatalf("command=%v", input)
 	}
 }

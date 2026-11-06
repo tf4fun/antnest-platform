@@ -10,8 +10,8 @@ afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 it("adds a fixed version and retains the frozen revision until explicitly removed", async () => {
   const old = { skill_id: "skill_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", version: 2, name: "review", description: "Review", artifact_digest: "sha256:a", content_digest: "sha256:b", artifact_size: 1, unpacked_size: 1, package_rules_version: 1 };
   const next = { ...old, skill_id: "skill_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", version: 4, name: "triage" };
-  vi.spyOn(api, "skills").mockResolvedValue({ items: [{ ...next, current_version: 4 }], next_after_id: null });
-  vi.spyOn(api, "skillVersions").mockResolvedValue({ items: [next, { ...next, version: 3 }], next_after_version: null });
+  vi.spyOn(api, "skills").mockResolvedValue({ items: [{ ...next, current_version: 4 }], next_cursor: null });
+  vi.spyOn(api, "skillVersions").mockResolvedValue({ items: [next, { ...next, version: 3 }], next_cursor: null });
   let selected: SkillReference[] = [{ skill_id: old.skill_id, version: old.version }];
   function Harness() {
     const [value, setValue] = useState(selected);

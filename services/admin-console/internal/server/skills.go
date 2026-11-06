@@ -65,7 +65,7 @@ func skillQuery(w http.ResponseWriter, r *http.Request, cursor string) (url.Valu
 		return nil, false
 	}
 	for key, values := range query {
-		if key != cursor && key != "limit" || len(values) != 1 || len(values[0]) > maximumListCursorBytes {
+		if key != cursor && key != "cursor" && key != "limit" || len(values) != 1 || len(values[0]) == 0 || len(values[0]) > maximumListCursorBytes {
 			writeError(w, http.StatusBadRequest, apierror.InvalidRequest, "Skill query is invalid")
 			return nil, false
 		}
@@ -77,11 +77,19 @@ func skillQuery(w http.ResponseWriter, r *http.Request, cursor string) (url.Valu
 			return nil, false
 		}
 	}
-	if cursor == "after_version" && query.Has(cursor) {
-		if version, err := strconv.ParseInt(query.Get(cursor), 10, 64); err != nil || version < 1 {
+	token, ok := canonicalListCursor(w, query, cursor)
+	if !ok {
+		return nil, false
+	}
+	if cursor == "after_version" && token != "" {
+		if version, err := strconv.ParseInt(token, 10, 64); err != nil || version < 1 || strconv.FormatInt(version, 10) != token {
 			writeError(w, http.StatusBadRequest, apierror.InvalidRequest, "Skill version cursor is invalid")
 			return nil, false
 		}
+	}
+	query.Del(cursor)
+	if token != "" {
+		query.Set("cursor", token)
 	}
 	return query, true
 }
@@ -105,9 +113,14 @@ func (h *handler) listSkills(w http.ResponseWriter, r *http.Request, actor princ
 	if !ok {
 		return
 	}
+	result, err := canonicalPage(result, "items", "next_after_id", false)
+	if err != nil {
+		writeError(w, http.StatusBadGateway, apierror.InvalidUpstreamResponse, "Skill inventory response is invalid")
+		return
+	}
 	var page struct {
 		Items       []skillSummary `json:"items"`
-		NextAfterID *string        `json:"next_after_id"`
+		NextAfterID *string        `json:"next_cursor"`
 	}
 	if json.Unmarshal(result, &page) != nil || page.Items == nil {
 		writeError(w, http.StatusBadGateway, apierror.InvalidUpstreamResponse, "Skill inventory response is invalid")
@@ -139,9 +152,14 @@ func (h *handler) listSkillVersions(w http.ResponseWriter, r *http.Request, acto
 	if !ok {
 		return
 	}
+	result, err := canonicalPage(result, "items", "next_after_version", true)
+	if err != nil {
+		writeError(w, http.StatusBadGateway, apierror.InvalidUpstreamResponse, "Skill version response is invalid")
+		return
+	}
 	var page struct {
 		Items            []skillVersion `json:"items"`
-		NextAfterVersion *int64         `json:"next_after_version"`
+		NextAfterVersion *string        `json:"next_cursor"`
 	}
 	if json.Unmarshal(result, &page) != nil || page.Items == nil {
 		writeError(w, http.StatusBadGateway, apierror.InvalidUpstreamResponse, "Skill version response is invalid")
@@ -153,8 +171,12 @@ func (h *handler) listSkillVersions(w http.ResponseWriter, r *http.Request, acto
 			return
 		}
 	}
-	if page.NextAfterVersion != nil && *page.NextAfterVersion == 0 {
-		page.NextAfterVersion = nil
+	if page.NextAfterVersion != nil {
+		version, err := strconv.ParseInt(*page.NextAfterVersion, 10, 64)
+		if err != nil || version < 1 || strconv.FormatInt(version, 10) != *page.NextAfterVersion {
+			writeError(w, http.StatusBadGateway, apierror.InvalidUpstreamResponse, "Skill version response is invalid")
+			return
+		}
 	}
 	writeJSON(w, http.StatusOK, page)
 }
@@ -189,7 +211,7 @@ func (h *handler) publishSkillTo(w http.ResponseWriter, r *http.Request, actor p
 	}
 	metadata := map[string]any{"request_id": requestID, "organization_id": actor.OrganizationID, "actor_id": actor.UserID}
 	if id != "" {
-		metadata["expected_version"] = expected
+		metadata["expected_version"] = strconv.FormatInt(expected, 10)
 	}
 	var buffer bytes.Buffer
 	writer := multipart.NewWriter(&buffer)
@@ -263,7 +285,7 @@ func browserSkillUpload(w http.ResponseWriter, r *http.Request, revision bool) (
 			}
 			value, readErr := io.ReadAll(io.LimitReader(part, 32))
 			expected, err = strconv.ParseInt(string(value), 10, 64)
-			if readErr != nil || err != nil || expected < 1 {
+			if readErr != nil || err != nil || !validVersionToken(string(value)) || expected < 1 || expected > maximumSafeJSONInteger {
 				writeError(w, 400, apierror.InvalidRequest, "Expected version is invalid")
 				return nil, 0, false
 			}
@@ -273,6 +295,17 @@ func browserSkillUpload(w http.ResponseWriter, r *http.Request, revision bool) (
 			return nil, 0, false
 		}
 		_ = part.Close()
+	}
+	if values := r.Header.Values("If-Match"); len(values) > 0 {
+		normalized, err := normalizeConsolePrecondition([]byte(`{}`), r, "expected_version", true, true)
+		var version struct {
+			Expected int64 `json:"expected_version"`
+		}
+		if seenVersion || !revision || err != nil || json.Unmarshal(normalized, &version) != nil || version.Expected < 1 {
+			writeError(w, 400, apierror.InvalidRequest, "Expected version is invalid")
+			return nil, 0, false
+		}
+		expected, seenVersion = version.Expected, true
 	}
 	if len(archive) == 0 || revision && !seenVersion {
 		writeError(w, 400, apierror.InvalidRequest, "Skill ZIP and expected version are required")

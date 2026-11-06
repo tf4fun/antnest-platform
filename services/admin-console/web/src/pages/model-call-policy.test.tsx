@@ -59,7 +59,7 @@ describe("ModelCallPolicyPage", () => {
     await waitFor(() => expect(calls.some((c) => c.init.method === "PUT")).toBe(true));
     const put = calls.find((c) => c.init.method === "PUT")!;
     expect(put.body).toMatchObject({
-      expected_revision: 3,
+      expected_version: "3",
       expected_principal: ["org-1", "user-1"],
       run_caps: { max_input_tokens: 0, max_cost_usd_micros: 1 },
     });
@@ -180,7 +180,7 @@ describe("ModelCallPolicyPage", () => {
     await waitFor(() => expect((screen.getByLabelText(/Input token limit/) as HTMLInputElement).value).toBe("7"));
     fireEvent.click(screen.getByText("Save budget"));
     await waitFor(() => expect(calls.filter((c) => c.init.method === "PUT")).toHaveLength(2));
-    expect(calls.filter((c) => c.init.method === "PUT")[1]!.body).toMatchObject({ expected_revision: 5 });
+    expect(calls.filter((c) => c.init.method === "PUT")[1]!.body).toMatchObject({ expected_version: "5" });
     await screen.findByText(/revision 6/);
   });
 
@@ -244,7 +244,7 @@ describe("ModelCallPolicyPage", () => {
     fireEvent.click(screen.getByText("Save budget"));
     await waitFor(() => expect(calls.some((c) => c.init.method === "PUT")).toBe(true));
     expect(calls.find((c) => c.init.method === "PUT")!.body).toMatchObject({
-      expected_revision: 7,
+      expected_version: "7",
       expected_principal: ["org-new", "user-new"],
     });
   });

@@ -11,6 +11,19 @@ through one interface without the Console becoming a second source of truth.
 The BFF is written in Go and embeds the compiled React (Vite, Tailwind, shadcn)
 application.
 
+List boundaries follow [shared conventions](../../contracts/CONVENTIONS.md):
+`cursor` requests and `items` with nullable-string `next_cursor` responses.
+Deprecated `after_id`/`after_version` inputs remain accepted for one release;
+sending both cursor forms is invalid. Self external-identity notices keep their
+independent notice cursor. Upstream legacy pages are projected into canonical
+responses without relaxing row, ordering, scope or secret-field validation.
+
+CAS writes accept canonical string `expected_version`, one deprecated body
+form, or a single strong quoted `If-Match`, never multiple forms. Local numeric
+versions and saved retry intents remain unchanged; outgoing service requests
+use string tokens. `Idempotency-Key` must occur exactly once and remains the
+original printable 16–200-byte token for the existing organization-scoped hash.
+
 Every write is one command to one owning service, and every read is projected
 through an explicit browser DTO allowlist. Organization scope and actor always
 come from verified Identity-signed caller context, never from browser input.

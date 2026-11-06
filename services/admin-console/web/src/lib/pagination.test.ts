@@ -11,7 +11,7 @@ test("catalog pagination emits only an explicit bounded cursor and limit", () =>
   assert.equal(catalogPagePath("/api/admin/templates"), "/api/admin/templates");
   assert.equal(
     catalogPagePath("/api/admin/templates", { afterID: "template 9", limit: 25 }),
-    "/api/admin/templates?after_id=template+9&limit=25",
+    "/api/admin/templates?cursor=template+9&limit=25",
   );
 });
 
@@ -53,7 +53,7 @@ test("catalog option pages retain only eligible rows and advance their opaque cu
         { id: "two", enabled: false, label: "disabled" },
         { id: "three", enabled: true, label: "added" },
       ],
-      next_after_id: "next-page",
+      next_cursor: "next-page",
     },
     (item) => item.id,
     (item) => item.enabled,

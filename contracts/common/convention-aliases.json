@@ -1,119 +1,137 @@
 [
   {
     "file": "admin-console/admin-contract.json",
-    "pointer": "/response_policy/agent_network_policy/input/2",
+    "pointer": "/response_policy/agent_network_policy/deprecated_input/0",
     "field": "expected_resource_version",
     "replacement": "expected_version",
-    "kind": "pending_migration",
-    "reason": "admin-console owner migration tracked by issue #68; legacy wire shape remains until its service batch.",
+    "reason": "One-release deprecated request alias; Console normalizes to the canonical wire field.",
+    "kind": "deprecated_alias",
     "remove_after": "next_release"
   },
   {
     "file": "admin-console/admin-contract.json",
-    "pointer": "/routes/list_model_profiles/query/cursor_response",
-    "field": "next_after_id",
-    "replacement": "next_cursor",
-    "kind": "pending_migration",
-    "reason": "admin-console owner migration tracked by issue #68; legacy wire shape remains until its service batch.",
-    "remove_after": "next_release"
-  },
-  {
-    "file": "admin-console/admin-contract.json",
-    "pointer": "/routes/list_model_profiles/query/optional/0",
+    "pointer": "/routes/list_model_profiles/query/deprecated/0",
     "field": "after_id",
     "replacement": "cursor",
-    "kind": "pending_migration",
-    "reason": "admin-console owner migration tracked by issue #68; legacy wire shape remains until its service batch.",
+    "reason": "One-release deprecated request alias; Console normalizes to the canonical wire field.",
+    "kind": "deprecated_alias",
     "remove_after": "next_release"
   },
   {
     "file": "admin-console/admin-contract.json",
-    "pointer": "/routes/list_organization_sessions/query/cursor_response",
-    "field": "next_after_id",
-    "replacement": "next_cursor",
-    "kind": "pending_migration",
-    "reason": "admin-console owner migration tracked by issue #68; legacy wire shape remains until its service batch.",
-    "remove_after": "next_release"
-  },
-  {
-    "file": "admin-console/admin-contract.json",
-    "pointer": "/routes/list_organization_sessions/query/optional/0",
+    "pointer": "/routes/list_model_profiles/query/optional/1",
     "field": "after_id",
     "replacement": "cursor",
-    "kind": "pending_migration",
-    "reason": "admin-console owner migration tracked by issue #68; legacy wire shape remains until its service batch.",
+    "reason": "One-release deprecated request alias; Console normalizes to the canonical wire field.",
+    "kind": "deprecated_alias",
     "remove_after": "next_release"
   },
   {
     "file": "admin-console/admin-contract.json",
-    "pointer": "/routes/list_provider_connections/query/cursor_response",
-    "field": "next_after_id",
-    "replacement": "next_cursor",
-    "kind": "pending_migration",
-    "reason": "admin-console owner migration tracked by issue #68; legacy wire shape remains until its service batch.",
-    "remove_after": "next_release"
-  },
-  {
-    "file": "admin-console/admin-contract.json",
-    "pointer": "/routes/list_provider_connections/query/optional/0",
+    "pointer": "/routes/list_organization_sessions/query/deprecated/0",
     "field": "after_id",
     "replacement": "cursor",
-    "kind": "pending_migration",
-    "reason": "admin-console owner migration tracked by issue #68; legacy wire shape remains until its service batch.",
+    "reason": "One-release deprecated request alias; Console normalizes to the canonical wire field.",
+    "kind": "deprecated_alias",
     "remove_after": "next_release"
   },
   {
     "file": "admin-console/admin-contract.json",
-    "pointer": "/routes/list_skill_versions/query/cursor_response",
-    "field": "next_after_version",
-    "replacement": "next_cursor",
-    "kind": "pending_migration",
-    "reason": "admin-console owner migration tracked by issue #68; legacy wire shape remains until its service batch.",
+    "pointer": "/routes/list_organization_sessions/query/optional/1",
+    "field": "after_id",
+    "replacement": "cursor",
+    "reason": "One-release deprecated request alias; Console normalizes to the canonical wire field.",
+    "kind": "deprecated_alias",
     "remove_after": "next_release"
   },
   {
     "file": "admin-console/admin-contract.json",
-    "pointer": "/routes/list_skill_versions/query/optional/0",
+    "pointer": "/routes/list_provider_connections/query/deprecated/0",
+    "field": "after_id",
+    "replacement": "cursor",
+    "reason": "One-release deprecated request alias; Console normalizes to the canonical wire field.",
+    "kind": "deprecated_alias",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "admin-console/admin-contract.json",
+    "pointer": "/routes/list_provider_connections/query/optional/1",
+    "field": "after_id",
+    "replacement": "cursor",
+    "reason": "One-release deprecated request alias; Console normalizes to the canonical wire field.",
+    "kind": "deprecated_alias",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "admin-console/admin-contract.json",
+    "pointer": "/routes/list_skill_versions/query/deprecated/0",
     "field": "after_version",
     "replacement": "cursor",
-    "kind": "pending_migration",
-    "reason": "admin-console owner migration tracked by issue #68; legacy wire shape remains until its service batch.",
+    "reason": "One-release deprecated request alias; Console normalizes to the canonical wire field.",
+    "kind": "deprecated_alias",
     "remove_after": "next_release"
   },
   {
     "file": "admin-console/admin-contract.json",
-    "pointer": "/routes/list_skills/query/cursor_response",
-    "field": "next_after_id",
-    "replacement": "next_cursor",
-    "kind": "pending_migration",
-    "reason": "admin-console owner migration tracked by issue #68; legacy wire shape remains until its service batch.",
+    "pointer": "/routes/list_skill_versions/query/optional/1",
+    "field": "after_version",
+    "replacement": "cursor",
+    "reason": "One-release deprecated request alias; Console normalizes to the canonical wire field.",
+    "kind": "deprecated_alias",
     "remove_after": "next_release"
   },
   {
     "file": "admin-console/admin-contract.json",
-    "pointer": "/routes/list_skills/query/optional/0",
+    "pointer": "/routes/list_skills/query/deprecated/0",
     "field": "after_id",
     "replacement": "cursor",
-    "kind": "pending_migration",
-    "reason": "admin-console owner migration tracked by issue #68; legacy wire shape remains until its service batch.",
+    "reason": "One-release deprecated request alias; Console normalizes to the canonical wire field.",
+    "kind": "deprecated_alias",
     "remove_after": "next_release"
   },
   {
     "file": "admin-console/admin-contract.json",
-    "pointer": "/routes/list_templates/query/cursor_response",
-    "field": "next_after_id",
-    "replacement": "next_cursor",
-    "kind": "pending_migration",
-    "reason": "admin-console owner migration tracked by issue #68; legacy wire shape remains until its service batch.",
-    "remove_after": "next_release"
-  },
-  {
-    "file": "admin-console/admin-contract.json",
-    "pointer": "/routes/list_templates/query/optional/0",
+    "pointer": "/routes/list_skills/query/optional/1",
     "field": "after_id",
     "replacement": "cursor",
-    "kind": "pending_migration",
-    "reason": "admin-console owner migration tracked by issue #68; legacy wire shape remains until its service batch.",
+    "reason": "One-release deprecated request alias; Console normalizes to the canonical wire field.",
+    "kind": "deprecated_alias",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "admin-console/admin-contract.json",
+    "pointer": "/routes/list_templates/query/deprecated/0",
+    "field": "after_id",
+    "replacement": "cursor",
+    "reason": "One-release deprecated request alias; Console normalizes to the canonical wire field.",
+    "kind": "deprecated_alias",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "admin-console/admin-contract.json",
+    "pointer": "/routes/list_templates/query/optional/1",
+    "field": "after_id",
+    "replacement": "cursor",
+    "reason": "One-release deprecated request alias; Console normalizes to the canonical wire field.",
+    "kind": "deprecated_alias",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "admin-console/model-call-policy.schema.json",
+    "pointer": "/$defs/set_model_call_policy_request/not/properties/expected_revision",
+    "field": "expected_revision",
+    "replacement": "expected_version",
+    "reason": "One-release deprecated request alias; Console normalizes to the canonical wire field.",
+    "kind": "deprecated_alias",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "admin-console/model-call-policy.schema.json",
+    "pointer": "/$defs/set_model_call_policy_request/not/required/1",
+    "field": "expected_revision",
+    "replacement": "expected_version",
+    "reason": "One-release deprecated request alias; Console normalizes to the canonical wire field.",
+    "kind": "deprecated_alias",
     "remove_after": "next_release"
   },
   {
@@ -121,35 +139,26 @@
     "pointer": "/$defs/set_model_call_policy_request/properties/expected_revision",
     "field": "expected_revision",
     "replacement": "expected_version",
-    "kind": "pending_migration",
-    "reason": "admin-console owner migration tracked by issue #68; legacy wire shape remains until its service batch.",
-    "remove_after": "next_release"
-  },
-  {
-    "file": "admin-console/model-call-policy.schema.json",
-    "pointer": "/$defs/set_model_call_policy_request/required/0",
-    "field": "expected_revision",
-    "replacement": "expected_version",
-    "kind": "pending_migration",
-    "reason": "admin-console owner migration tracked by issue #68; legacy wire shape remains until its service batch.",
+    "reason": "One-release deprecated request alias; Console normalizes to the canonical wire field.",
+    "kind": "deprecated_alias",
     "remove_after": "next_release"
   },
   {
     "file": "admin-console/oidc-linking.schema.json",
-    "pointer": "/$defs/binding_list/properties/next_after_id",
-    "field": "next_after_id",
-    "replacement": "next_cursor",
-    "kind": "pending_migration",
-    "reason": "admin-console owner migration tracked by issue #68; legacy wire shape remains until its service batch.",
+    "pointer": "/$defs/list_query/not/properties/after_id",
+    "field": "after_id",
+    "replacement": "cursor",
+    "reason": "One-release deprecated request alias; Console normalizes to the canonical wire field.",
+    "kind": "deprecated_alias",
     "remove_after": "next_release"
   },
   {
     "file": "admin-console/oidc-linking.schema.json",
-    "pointer": "/$defs/external_identity_organization_list/properties/next_after_id",
-    "field": "next_after_id",
-    "replacement": "next_cursor",
-    "kind": "pending_migration",
-    "reason": "admin-console owner migration tracked by issue #68; legacy wire shape remains until its service batch.",
+    "pointer": "/$defs/list_query/not/required/1",
+    "field": "after_id",
+    "replacement": "cursor",
+    "reason": "One-release deprecated request alias; Console normalizes to the canonical wire field.",
+    "kind": "deprecated_alias",
     "remove_after": "next_release"
   },
   {
@@ -157,17 +166,8 @@
     "pointer": "/$defs/list_query/properties/after_id",
     "field": "after_id",
     "replacement": "cursor",
-    "kind": "pending_migration",
-    "reason": "admin-console owner migration tracked by issue #68; legacy wire shape remains until its service batch.",
-    "remove_after": "next_release"
-  },
-  {
-    "file": "admin-console/oidc-linking.schema.json",
-    "pointer": "/$defs/provider_list/properties/next_after_id",
-    "field": "next_after_id",
-    "replacement": "next_cursor",
-    "kind": "pending_migration",
-    "reason": "admin-console owner migration tracked by issue #68; legacy wire shape remains until its service batch.",
+    "reason": "One-release deprecated request alias; Console normalizes to the canonical wire field.",
+    "kind": "deprecated_alias",
     "remove_after": "next_release"
   },
   {

@@ -96,7 +96,7 @@ func TestNetworkPolicyV2SpecWriteIsOneSpecOnlyCASWithDerivedAck(t *testing.T) {
 		t.Fatalf("downstream call=%+v", call)
 	}
 	if command["organization_id"] != "org-1" || command["actor_principal_id"] != "user-admin" ||
-		command["expected_resource_version"] != float64(7) {
+		command["expected_version"] != "7" {
 		t.Fatalf("trusted metadata dropped: %v", command)
 	}
 	if command["request_id"] == "" || command["request_id"] == nil {

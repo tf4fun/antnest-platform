@@ -34,11 +34,11 @@ test("overview resource summary counts only active directory members", () => {
     },
     model_profiles: {
       status: "available",
-      data: { items: [], next_after_id: null },
+      data: { items: [], next_cursor: null },
     },
     templates: {
       status: "available",
-      data: { items: [], next_after_id: null },
+      data: { items: [], next_cursor: null },
     },
     agents: {
       status: "available",

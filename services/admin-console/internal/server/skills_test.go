@@ -75,14 +75,14 @@ func skillRequest(method, path string, body io.Reader, contentType, key string) 
 }
 
 func TestSkillListScopesAndProjectsRegistryResponse(t *testing.T) {
-	stub := &skillStub{body: `{"items":[{"skill_id":"skill_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","name":"review","current_version":2,"description":"Review","artifact_digest":"sha256:a","content_digest":"sha256:b","artifact_size":100,"unpacked_size":200,"package_rules_version":1,"private":"secret"}],"next_after_id":"skill_cursor"}`}
+	stub := &skillStub{body: `{"items":[{"skill_id":"skill_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","name":"review","current_version":2,"description":"Review","artifact_digest":"sha256:a","content_digest":"sha256:b","artifact_size":100,"unpacked_size":200,"package_rules_version":1,"private":"secret"}],"next_cursor":"skill_cursor"}`}
 	h := skillHandler(t, stub)
 	w := httptest.NewRecorder()
 	h.ServeHTTP(w, skillRequest("GET", "/api/admin/skills?after_id=skill_old&limit=20", nil, "", ""))
 	if w.Code != 200 || len(stub.calls) != 1 {
 		t.Fatalf("status=%d calls=%d body=%s", w.Code, len(stub.calls), w.Body.String())
 	}
-	if stub.calls[0].path != "/internal/skills" || stub.calls[0].query != "after_id=skill_old&limit=20&organization_id=org-1" {
+	if stub.calls[0].path != "/internal/skills" || stub.calls[0].query != "cursor=skill_old&limit=20&organization_id=org-1" {
 		t.Fatalf("call=%+v", stub.calls[0])
 	}
 	if strings.Contains(w.Body.String(), "private") || !strings.Contains(w.Body.String(), "review") {
@@ -99,8 +99,8 @@ func TestSkillListScopesAndProjectsRegistryResponse(t *testing.T) {
 
 func TestSkillRegistryTerminalCursorsBecomeBrowserNull(t *testing.T) {
 	for _, scenario := range []struct{ path, body, cursor string }{
-		{"/api/admin/skills", `{"items":[],"next_after_id":""}`, "next_after_id"},
-		{"/api/admin/skills/skill_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/versions", `{"items":[{"skill_id":"skill_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","version":1,"name":"review","description":"Review","artifact_digest":"sha256:a","content_digest":"sha256:b","artifact_size":100,"unpacked_size":200,"package_rules_version":1}],"next_after_version":0}`, "next_after_version"},
+		{"/api/admin/skills", `{"items":[],"next_after_id":""}`, "next_cursor"},
+		{"/api/admin/skills/skill_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/versions", `{"items":[{"skill_id":"skill_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","version":1,"name":"review","description":"Review","artifact_digest":"sha256:a","content_digest":"sha256:b","artifact_size":100,"unpacked_size":200,"package_rules_version":1}],"next_after_version":0}`, "next_cursor"},
 	} {
 		t.Run(scenario.cursor, func(t *testing.T) {
 			stub := &skillStub{body: scenario.body}
@@ -184,11 +184,11 @@ func TestSkillRoutesRejectMissingOrNonAdminPrincipal(t *testing.T) {
 
 func TestSkillVersionsAndRevisionUseTrustedScopeAndExpectedHead(t *testing.T) {
 	id := "skill_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-	stub := &skillStub{body: `{"items":[{"skill_id":"` + id + `","version":1,"name":"review","description":"Review","artifact_digest":"sha256:a","content_digest":"sha256:b","artifact_size":100,"unpacked_size":200,"package_rules_version":1,"secret":"hidden"}],"next_after_version":null}`}
+	stub := &skillStub{body: `{"items":[{"skill_id":"` + id + `","version":1,"name":"review","description":"Review","artifact_digest":"sha256:a","content_digest":"sha256:b","artifact_size":100,"unpacked_size":200,"package_rules_version":1,"secret":"hidden"}],"next_cursor":null}`}
 	h := skillHandler(t, stub)
 	w := httptest.NewRecorder()
 	h.ServeHTTP(w, skillRequest("GET", "/api/admin/skills/"+id+"/versions?after_version=2", nil, "", ""))
-	if w.Code != 200 || strings.Contains(w.Body.String(), "hidden") || stub.calls[0].query != "after_version=2&organization_id=org-1" {
+	if w.Code != 200 || strings.Contains(w.Body.String(), "hidden") || stub.calls[0].query != "cursor=2&organization_id=org-1" {
 		t.Fatalf("status=%d body=%s call=%+v", w.Code, w.Body.String(), stub.calls[0])
 	}
 	stub.status = 201
@@ -213,7 +213,7 @@ func TestSkillVersionsAndRevisionUseTrustedScopeAndExpectedHead(t *testing.T) {
 	if err := json.Unmarshal([]byte(request.FormValue("metadata")), &metadata); err != nil {
 		t.Fatal(err)
 	}
-	if metadata["expected_version"] != float64(1) || metadata["organization_id"] != "org-1" {
+	if metadata["expected_version"] != "1" || metadata["organization_id"] != "org-1" {
 		t.Fatalf("metadata=%v", metadata)
 	}
 }
@@ -295,7 +295,7 @@ func TestSkillConsoleBoundaryCallsRegistryWithServiceTokenAndTrustedScope(t *tes
 		if r.URL.Path != "/internal/skills" || r.URL.Query().Get("organization_id") != "org-1" || r.URL.Query().Has("actor_id") {
 			t.Errorf("Registry URL=%s", r.URL)
 		}
-		_, _ = io.WriteString(w, `{"items":[],"next_after_id":null}`)
+		_, _ = io.WriteString(w, `{"items":[],"next_cursor":null}`)
 	}))
 	defer registry.Close()
 	client, err := upstream.NewRegistryClient(registry.URL, registry.Client())

@@ -28,7 +28,7 @@ function SelfHarness() {
 function deferred<T>() { let resolve!: (value: T) => void; const promise = new Promise<T>(done => { resolve = done; }); return { promise, resolve }; }
 
 it("loads historical notices while closed and shows cross-organization bindings without an Agent lookup", async () => {
-  const fetcher = vi.fn(async (_path: string, _init?: RequestInit) => Response.json({ bindings: [binding], notices: [notice] })); vi.stubGlobal("fetch", fetcher);
+  const fetcher = vi.fn(async (_path: string, _init?: RequestInit) => Response.json({ items: [binding], notices: [notice] })); vi.stubGlobal("fetch", fetcher);
   render(<SelfHarness />);
   fireEvent.click(await screen.findByRole("button", { name: "Review external login notices" }));
   const dialog = within(await screen.findByRole("dialog", { name: "Your external logins" }));
@@ -44,9 +44,9 @@ it("loads historical notices while closed and shows cross-organization bindings 
 
 it("advances bindings and notices independently without replacing the other stream", async () => {
   const fetcher = vi.fn(async (path: string) => {
-    if (path.includes("after_id=binding-1")) return Response.json({ bindings: [{ ...binding, id: "binding-2", subject: "next binding" }], notices: [{ ...notice, id: "ignored-notice", subject: "must not appear" }], next_notice_after_id: "ignored" });
-    if (path.includes("notice_after_id=notice-1")) return Response.json({ bindings: [{ ...binding, id: "ignored-binding", subject: "must not appear" }], next_after_id: "ignored", notices: [{ ...notice, id: "notice-2", subject: "next notice" }] });
-    return Response.json({ bindings: [binding], notices: [notice], next_after_id: "binding-1", next_notice_after_id: "notice-1" });
+    if (path.includes("cursor=binding-1")) return Response.json({ items: [{ ...binding, id: "binding-2", subject: "next binding" }], notices: [{ ...notice, id: "ignored-notice", subject: "must not appear" }], next_notice_after_id: "ignored" });
+    if (path.includes("notice_after_id=notice-1")) return Response.json({ items: [{ ...binding, id: "ignored-binding", subject: "must not appear" }], next_cursor: "ignored", notices: [{ ...notice, id: "notice-2", subject: "next notice" }] });
+    return Response.json({ items: [binding], notices: [notice], next_cursor: "binding-1", next_notice_after_id: "notice-1" });
   }); vi.stubGlobal("fetch", fetcher);
   render(<SelfExternalIdentities open onOpenChange={vi.fn()} />);
   fireEvent.click(await screen.findByRole("button", { name: "Load more bindings" }));
@@ -66,7 +66,7 @@ it("acknowledges exact immutable notice IDs and retains a new notice for the sam
   let read = 0;
   const fetcher = vi.fn(async (path: string, init: RequestInit) => {
     if (init.method === "POST") { expect(path).toBe(`${selfPath}/notices/acknowledge`); expect(JSON.parse(String(init.body))).toEqual({ notice_ids: ["notice-1"] }); return ack.promise; }
-    return Response.json({ bindings: [], notices: ++read === 1 ? [notice] : [newer] });
+    return Response.json({ items: [], notices: ++read === 1 ? [notice] : [newer] });
   }); vi.stubGlobal("fetch", fetcher);
   render(<SelfExternalIdentities open onOpenChange={vi.fn()} />);
   fireEvent.click(await screen.findByRole("button", { name: "Acknowledge notice notice-1" }));
@@ -79,7 +79,7 @@ it("acknowledges exact immutable notice IDs and retains a new notice for the sam
 });
 
 it.each([404, 503])("retains notice and binding data after ACK failure %s without replay", async status => {
-  const fetcher = vi.fn(async (_path: string, init: RequestInit) => init.method === "POST" ? Response.json({ message: "Acknowledgment unavailable" }, { status }) : Response.json({ bindings: [binding], notices: [notice] }));
+  const fetcher = vi.fn(async (_path: string, init: RequestInit) => init.method === "POST" ? Response.json({ message: "Acknowledgment unavailable" }, { status }) : Response.json({ items: [binding], notices: [notice] }));
   vi.stubGlobal("fetch", fetcher); render(<SelfExternalIdentities open onOpenChange={vi.fn()} />);
   fireEvent.click(await screen.findByRole("button", { name: "Acknowledge notice notice-1" }));
   expect((await screen.findByRole("alert")).textContent).toContain("Acknowledgment unavailable");
@@ -95,7 +95,7 @@ it("requires a second explicit lockout action and stops after current-session re
       writes.push(JSON.parse(String(init.body)));
       return writes.length === 1 ? Response.json({ code: "external_identity_last_method", message: "Last login method" }, { status: 409 }) : Response.json({ revoked_count: 2, current_revoked: true });
     }
-    return Response.json({ bindings: [binding], notices: [] });
+    return Response.json({ items: [binding], notices: [] });
   }); vi.stubGlobal("fetch", fetcher); render(<SelfExternalIdentities open onOpenChange={closed} />);
   fireEvent.click(await screen.findByRole("button", { name: "Unbind Workforce" }));
   expect(writes).toHaveLength(0);
@@ -110,12 +110,12 @@ it("requires a second explicit lockout action and stops after current-session re
 
 it("does not install a stale page after the session component is replaced", async () => {
   const stale = deferred<Response>(); let read = 0;
-  const fetcher = vi.fn(async (_path: string, _init: RequestInit) => ++read === 1 ? stale.promise : Response.json({ bindings: [], notices: [] })); vi.stubGlobal("fetch", fetcher);
+  const fetcher = vi.fn(async (_path: string, _init: RequestInit) => ++read === 1 ? stale.promise : Response.json({ items: [], notices: [] })); vi.stubGlobal("fetch", fetcher);
   const view = render(<SelfExternalIdentities key="old" open onOpenChange={vi.fn()} />);
   await waitFor(() => expect(fetcher).toHaveBeenCalledTimes(1));
   view.rerender(<SelfExternalIdentities key="new" open onOpenChange={vi.fn()} />);
   await screen.findByText("No external logins to display.");
-  await act(async () => { stale.resolve(Response.json({ bindings: [binding], notices: [notice] })); });
+  await act(async () => { stale.resolve(Response.json({ items: [binding], notices: [notice] })); });
   expect(screen.queryByText("Historical organization")).toBeNull();
   expect(fetcher.mock.calls[0]?.[1].signal?.aborted).toBe(true);
 });
@@ -123,9 +123,9 @@ it("does not install a stale page after the session component is replaced", asyn
 it("binds an opaque subject using disabled organization providers and explicit restoration", async () => {
   const writes: unknown[] = [];
   const fetcher = vi.fn(async (path: string, init: RequestInit) => {
-    if (path.startsWith(providerPath)) return Response.json({ providers: [provider] });
+    if (path.startsWith(providerPath)) return Response.json({ items: [provider] });
     if (init.method === "POST") { expect(path).toBe(orgPath); writes.push(JSON.parse(String(init.body))); return writes.length === 1 ? Response.json({ code: "external_identity_restore_required", message: "Explicit restore required" }, { status: 409 }) : Response.json({ binding }); }
-    expect(path).toBe(`${orgPath}?limit=50`); return Response.json({ bindings: [] });
+    expect(path).toBe(`${orgPath}?limit=50`); return Response.json({ items: [] });
   }); vi.stubGlobal("fetch", fetcher);
   render(<OrganizationExternalIdentities membership={{ id: "member-2", name: "Directory member" }} onClose={vi.fn()} />);
   await screen.findByRole("option", { name: /Workforce.*disabled/i });
@@ -144,11 +144,11 @@ it("binds an opaque subject using disabled organization providers and explicit r
 it.each(["restore", "lockout"])("retires old Membership data and %s confirmation when the target changes", async mode => {
   const next = deferred<Response>();
   vi.stubGlobal("fetch", vi.fn(async (path: string, init: RequestInit) => {
-    if (path.startsWith(providerPath)) return Response.json({ providers: [provider] });
+    if (path.startsWith(providerPath)) return Response.json({ items: [provider] });
     if (path.includes("/member-3/")) return next.promise;
     if (init.method === "POST") return Response.json({ code: "external_identity_restore_required" }, { status: 409 });
     if (init.method === "DELETE") return Response.json({ code: "external_identity_last_method" }, { status: 409 });
-    return Response.json({ bindings: [binding] });
+    return Response.json({ items: [binding] });
   }));
   const view = render(<OrganizationExternalIdentities membership={{ id: "member-2", name: "First member" }} onClose={vi.fn()} />);
   if (mode === "restore") {
@@ -167,5 +167,5 @@ it.each(["restore", "lockout"])("retires old Membership data and %s confirmation
   expect(screen.queryByRole("button", { name: "Unbind and accept lockout" })).toBeNull();
   expect(screen.queryByText("Other organization")).toBeNull();
   expect((screen.getByLabelText("Provider subject") as HTMLTextAreaElement).value).toBe("");
-  await act(async () => { next.resolve(Response.json({ bindings: [] })); });
+  await act(async () => { next.resolve(Response.json({ items: [] })); });
 });

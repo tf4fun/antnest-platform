@@ -126,7 +126,7 @@ async function exercise(browser, origin, viewport, label) {
         "/api/admin/template-defaults": { runtime_image_ref: "runtime:local" },
         "/api/admin/model-profiles": { items: [model] },
         "/api/admin/model-profiles/model-1": model,
-        "/api/admin/skills": { items: [], next_after_id: null },
+        "/api/admin/skills": { items: [], next_cursor: null },
       };
       if (!(url.pathname in fixtures)) unexpected.push(url.pathname);
       return route.fulfill({

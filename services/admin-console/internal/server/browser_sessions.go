@@ -45,13 +45,16 @@ func (h *handler) listOrganizationSessions(response http.ResponseWriter, request
 			return
 		}
 	}
-	query, ok := parseListQuery(response, request, "limit", "after_id")
+	query, ok := parseListQuery(response, request, "limit", "cursor", "after_id")
 	if !ok {
 		return
 	}
 	limit, err := strconv.Atoi(query.Get("limit"))
-	after := query.Get("after_id")
-	_, hasAfter := query["after_id"]
+	after, cursorOK := canonicalListCursor(response, query, "after_id")
+	if !cursorOK {
+		return
+	}
+	hasAfter := after != ""
 	if err != nil || limit < 1 || limit > 100 || strconv.Itoa(limit) != query.Get("limit") ||
 		hasAfter && !browserSessionPublicID.MatchString(after) {
 		writeInvalidListQuery(response)
@@ -59,7 +62,7 @@ func (h *handler) listOrganizationSessions(response http.ResponseWriter, request
 	}
 	payload := map[string]any{"actor_principal_id": actor.UserID, "user_id": userID, "scope": "organization", "limit": limit}
 	if hasAfter {
-		payload["after_id"] = after
+		payload["cursor"] = after
 	}
 	h.forwardProjectedJSON(response, request, upstream.Identity, http.MethodPost, "/rpc/identity/list-user-sessions", "", payload,
 		func(body []byte) ([]byte, error) { return projectBrowserSessions(body, actor, userID, after, limit) })
@@ -101,9 +104,13 @@ type browserSessionProjection struct {
 }
 
 func projectBrowserSessions(body []byte, actor principal.Principal, userID, after string, limit int) ([]byte, error) {
+	var err error
+	if body, err = canonicalPage(body, "sessions", "next_after_id", false); err != nil {
+		return nil, err
+	}
 	var page struct {
-		Sessions    []browserSessionProjection `json:"sessions"`
-		NextAfterID string                     `json:"next_after_id,omitempty"`
+		Sessions    []browserSessionProjection `json:"items"`
+		NextAfterID *string                    `json:"next_cursor"`
 	}
 	if err := json.Unmarshal(body, &page); err != nil {
 		return nil, err
@@ -131,7 +138,7 @@ func projectBrowserSessions(body []byte, actor principal.Principal, userID, afte
 	}
 	// Expiry filtering after Identity's scan may leave an empty visible page
 	// with a cursor beyond the last visible row. Preserve that scanned window.
-	if page.NextAfterID != "" && (!browserSessionPublicID.MatchString(page.NextAfterID) || page.NextAfterID <= after || page.NextAfterID < previous) {
+	if page.NextAfterID != nil && (!browserSessionPublicID.MatchString(*page.NextAfterID) || *page.NextAfterID <= after || *page.NextAfterID < previous) {
 		return nil, fmt.Errorf("invalid browser session cursor")
 	}
 	return json.Marshal(page)

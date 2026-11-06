@@ -133,7 +133,7 @@ async function exercise(browser, origin, viewport, label) {
         path === "/api/session/external-identities" &&
         request.method() === "GET"
       )
-        return reply({ bindings: [], notices: [] });
+        return reply({ items: [], notices: [], next_cursor: null });
       const headers =
         request.method() === "POST" ? await request.allHeaders() : null;
       const currentDelivery =
@@ -155,13 +155,16 @@ async function exercise(browser, origin, viewport, label) {
       }
       if (path === "/api/session/sessions") {
         assert.equal(url.searchParams.get("limit"), "50");
-        if (url.searchParams.has("after_id")) {
-          assert.equal(url.searchParams.get("after_id"), "public-current");
-          return reply({ sessions: [row("public-other", "org-2", false)] });
+        if (url.searchParams.has("cursor")) {
+          assert.equal(url.searchParams.get("cursor"), "public-current");
+          return reply({
+            items: [row("public-other", "org-2", false)],
+            next_cursor: null,
+          });
         }
         return reply({
-          sessions: [row("public-current", "org-1", true)],
-          ...(othersRevoked ? {} : { next_after_id: "public-current" }),
+          items: [row("public-current", "org-1", true)],
+          next_cursor: othersRevoked ? null : "public-current",
         });
       }
       if (path === "/api/session/sessions/revoke") {
@@ -186,9 +189,10 @@ async function exercise(browser, origin, viewport, label) {
       }
       if (path === "/api/admin/directory/users/target-user/sessions")
         return reply({
-          sessions: organizationRevoked
+          items: organizationRevoked
             ? []
             : [row("public-target", "org-1", false)],
+          next_cursor: null,
         });
       if (path === "/api/admin/directory/users/target-user/sessions/revoke") {
         const body = request.postDataJSON();

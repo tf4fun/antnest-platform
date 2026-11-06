@@ -277,7 +277,7 @@ it("conflict requires a read and a new deliberate selection, never auto rebase",
   const bodies = fetch.mock.calls
     .filter(([, init]) => init.method === "PUT")
     .map(([, init]) => JSON.parse(String(init.body)));
-  expect(bodies.map((body) => body.expected_resource_version)).toEqual([7, 9]);
+  expect(bodies.map((body) => body.expected_version)).toEqual(["7", "9"]);
 });
 
 it("disabled Agents can save policy without claiming traffic resumed", async () => {

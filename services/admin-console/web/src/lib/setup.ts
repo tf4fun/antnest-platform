@@ -28,12 +28,12 @@ export type CreationGate = {
 
 export function platformSetup(overview: Overview): SetupGuidance {
   const modelHasMore = overview.model_profiles.status === "available"
-    && Boolean(overview.model_profiles.data.next_after_id);
+    && Boolean(overview.model_profiles.data.next_cursor);
   const modelCount = overview.model_profiles.status === "available"
     ? overview.model_profiles.data.items.filter((item) => item.enabled).length
     : null;
   const templateHasMore = overview.templates.status === "available"
-    && Boolean(overview.templates.data.next_after_id);
+    && Boolean(overview.templates.data.next_cursor);
   const templateCount = overview.templates.status === "available"
     ? overview.templates.data.items.filter((item) => item.enabled).length
     : null;

@@ -7,6 +7,7 @@ import (
 	"mime"
 	"net/http"
 	"regexp"
+	"strconv"
 	"strings"
 	"unicode/utf8"
 
@@ -53,6 +54,12 @@ func readSkillSourceRequest(w http.ResponseWriter, r *http.Request, out any) (ma
 	if err != nil {
 		writeError(w, 400, apierror.InvalidRequest, "Skill source request exceeds 4 KiB")
 		return nil, false
+	}
+	if r.URL.Path == "/api/admin/skill-sources/promote" {
+		if data, err = normalizeConsolePrecondition(data, r, "expected_version", true, false); err != nil {
+			writeError(w, 400, apierror.InvalidRequest, "Skill source request is invalid")
+			return nil, false
+		}
 	}
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.DisallowUnknownFields()
@@ -216,7 +223,7 @@ func (h *handler) promoteSkillSource(w http.ResponseWriter, r *http.Request, act
 	metadata := map[string]any{"request_id": requestID, "organization_id": actor.OrganizationID, "actor_id": actor.UserID, "skill_ref": input.SkillRef, "expected_digest": input.ExpectedDigest}
 	if hasTarget {
 		metadata["skill_id"] = input.SkillID
-		metadata["expected_version"] = input.ExpectedVersion
+		metadata["expected_version"] = strconv.FormatInt(input.ExpectedVersion, 10)
 	}
 	body, err := json.Marshal(metadata)
 	if err != nil {

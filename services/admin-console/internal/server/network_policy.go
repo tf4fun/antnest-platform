@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+	"strconv"
 
 	"github.com/tf4fun/antnest-platform/modules/service-authentication/serviceauth"
 
@@ -123,7 +124,12 @@ func (h *handler) setNetworkPolicy(w http.ResponseWriter, r *http.Request, actor
 	if !decodeJSON(w, r, &raw) {
 		return
 	}
-	input, err := decodeNetworkPolicyInput(raw)
+	normalized, err := normalizeConsolePrecondition(raw, r, "expected_resource_version", true, true)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, apierror.InvalidRequest, "Network policy selection is invalid")
+		return
+	}
+	input, err := decodeNetworkPolicyInput(normalized)
 	if err != nil ||
 		(input.Spec == nil && !networkActionValid(input.Action)) ||
 		!browserVersionValid(input.ExpectedResourceVersion) {
@@ -136,7 +142,7 @@ func (h *handler) setNetworkPolicy(w http.ResponseWriter, r *http.Request, actor
 	}
 	agentID := r.PathValue("agent_id")
 	payload := map[string]any{"request_id": requestID, "organization_id": actor.OrganizationID, "actor_principal_id": actor.UserID,
-		"expected_resource_version": input.ExpectedResourceVersion}
+		"expected_version": strconv.FormatUint(input.ExpectedResourceVersion, 10)}
 	var policyID string
 	if input.Spec != nil {
 		payload["spec"] = *input.Spec

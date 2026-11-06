@@ -94,13 +94,26 @@
           "$ref": "https://schemas.antnest.dev/skill-registry/discovery-api.schema.json#/$defs/skill_id"
         },
         "expected_version": {
-          "type": "integer",
-          "minimum": 1,
-          "maximum": 9007199254740991
+          "description": "Canonical decimal string; the same-name integer is a one-release deprecated input. A single strong If-Match may replace this body member for append.",
+          "anyOf": [
+            {
+              "type": "string",
+              "allOf": [
+                { "$ref": "../common/precondition.schema.json#/$defs/expected_version" }
+              ],
+              "pattern": "^[1-9][0-9]*$",
+              "maxLength": 20
+            },
+            {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9007199254740991,
+              "deprecated": true
+            }
+          ]
         }
       },
       "dependentRequired": {
-        "skill_id": ["expected_version"],
         "expected_version": ["skill_id"]
       }
     },

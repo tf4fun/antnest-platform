@@ -384,9 +384,9 @@ async function unbindExternalIdentity(path: string, allowLockout: boolean): Prom
 export const api = {
   searchSkillSources: (query: string, signal?: AbortSignal) => request<SkillSourcePage>("/api/admin/skill-sources/search", { method: "POST", body: json({ query, limit: 50 }), signal }),
   previewSkillSource: (selection: SkillSourceSelection, signal?: AbortSignal) => request<SkillSourcePreview>("/api/admin/skill-sources/preview", { method: "POST", body: json(selection), signal }),
-  promoteSkillSource: (selection: SkillSourcePromotion) => idempotentRequest<SkillVersion>(`skill-promotion:${selection.skill_ref.agent_id}:${selection.skill_ref.name}`, "/api/admin/skill-sources/promote", selection),
-  skills: (afterID?: string) => request<SkillPage>(`/api/admin/skills${afterID ? `?after_id=${encodeURIComponent(afterID)}` : ""}`),
-  skillVersions: (skillID: string, afterVersion?: number) => request<SkillVersionPage>(`/api/admin/skills/${encodeURIComponent(skillID)}/versions${afterVersion ? `?after_version=${afterVersion}` : ""}`),
+  promoteSkillSource: (selection: SkillSourcePromotion) => idempotentRequest<SkillVersion>(`skill-promotion:${selection.skill_ref.agent_id}:${selection.skill_ref.name}`, "/api/admin/skill-sources/promote", selection.expected_version === undefined ? selection : { ...selection, expected_version: String(selection.expected_version) }),
+  skills: (afterID?: string) => request<SkillPage>(`/api/admin/skills${afterID ? `?cursor=${encodeURIComponent(afterID)}` : ""}`),
+  skillVersions: (skillID: string, cursor?: string) => request<SkillVersionPage>(`/api/admin/skills/${encodeURIComponent(skillID)}/versions${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ""}`),
   publishSkill: (file: File) => skillUpload(undefined, file),
   publishSkillVersion: (skillID: string, expectedVersion: number, file: File) => skillUpload(skillID, file, expectedVersion),
   skillArtifact,
@@ -405,7 +405,7 @@ export const api = {
   networkPolicy: async (agentID: string, signal?: AbortSignal) => decodeNetworkPolicy(await request<unknown>(`/api/admin/agents/${encodeURIComponent(agentID)}/network-policy`, { signal }), agentID),
   setNetworkPolicy: async (agentID: string, intent: PendingNetwork, scope: string) => decodeNetworkAssignment(await request<unknown>(`/api/admin/agents/${encodeURIComponent(agentID)}/network-policy`, {
     method: "PUT", headers: { "Idempotency-Key": intent.idempotency_key, "X-Antnest-Expected-Principal": encodeURIComponent(scope) },
-    body: json("spec" in intent ? { spec: JSON.parse(canonicalNetworkSpec(intent.spec)), expected_resource_version: intent.expected_resource_version } : { action: intent.action, expected_resource_version: intent.expected_resource_version }),
+    body: json("spec" in intent ? { spec: JSON.parse(canonicalNetworkSpec(intent.spec)), expected_version: String(intent.expected_resource_version) } : { action: intent.action, expected_version: String(intent.expected_resource_version) }),
   }), agentID, intent),
   modelCallPolicy: async (signal?: AbortSignal) => {
     try {
@@ -415,8 +415,9 @@ export const api = {
       throw new APIError(502, "invalid_response", "The server returned an invalid model policy.");
     }
   },
-  setModelCallPolicy: (input: ModelCallPolicyUpdate) =>
-    idempotentRequest<ModelCallPolicy>("model-call-policy", "/api/admin/model-call-policy", input, "PUT", (body) => {
+  setModelCallPolicy: (input: ModelCallPolicyUpdate) => {
+    const { expected_revision, ...update } = input;
+    return idempotentRequest<ModelCallPolicy>("model-call-policy", "/api/admin/model-call-policy", { ...update, expected_version: String(expected_revision) }, "PUT", (body) => {
       let policy: ModelCallPolicy;
       try {
         policy = decodeModelCallPolicy(body);
@@ -430,7 +431,8 @@ export const api = {
       // the shared pending indicator follows a validated save only.
       window.dispatchEvent(new Event("antnest:configuration-changed"));
       return policy;
-    }),
+    });
+  },
   session: readSession,
   loginMethods: (organization_slug: string, signal?: AbortSignal) => request<LoginMethodList>("/api/session/login-methods", {
     method: "POST",
@@ -453,16 +455,16 @@ export const api = {
   changeOwnPassword: (current_password: string, new_password: string) =>
     request<Session>("/api/session/password", { method: "POST", body: json({ current_password, new_password }) }, { writer: "password" }),
   activity: (signal: AbortSignal) => request<SessionMetadata>("/api/session/activity", { method: "POST", body: "{}", signal }),
-  sessions: (afterID?: string, signal?: AbortSignal) => request<BrowserSessionPage>(`/api/session/sessions?limit=50${afterID ? `&after_id=${encodeURIComponent(afterID)}` : ""}`, { signal }),
+  sessions: (afterID?: string, signal?: AbortSignal) => request<BrowserSessionPage>(`/api/session/sessions?limit=50${afterID ? `&cursor=${encodeURIComponent(afterID)}` : ""}`, { signal }),
   revokeSessions: (mode: "others" | "all") => revokeBrowserSessions("/api/session/sessions/revoke", { mode }),
-  organizationSessions: (userID: string, afterID?: string, signal?: AbortSignal) => request<BrowserSessionPage>(`/api/admin/directory/users/${encodeURIComponent(userID)}/sessions?limit=50${afterID ? `&after_id=${encodeURIComponent(afterID)}` : ""}`, { signal }),
+  organizationSessions: (userID: string, afterID?: string, signal?: AbortSignal) => request<BrowserSessionPage>(`/api/admin/directory/users/${encodeURIComponent(userID)}/sessions?limit=50${afterID ? `&cursor=${encodeURIComponent(afterID)}` : ""}`, { signal }),
   revokeOrganizationSessions: (userID: string) => revokeBrowserSessions(`/api/admin/directory/users/${encodeURIComponent(userID)}/sessions/revoke`, {}),
   externalIdentities: (cursors: { afterID?: string; noticeAfterID?: string } = {}, signal?: AbortSignal) => request<SelfExternalIdentityPage>(
-    `/api/session/external-identities?limit=50${cursors.afterID ? `&after_id=${encodeURIComponent(cursors.afterID)}` : ""}${cursors.noticeAfterID ? `&notice_after_id=${encodeURIComponent(cursors.noticeAfterID)}` : ""}`, { signal }),
+    `/api/session/external-identities?limit=50${cursors.afterID ? `&cursor=${encodeURIComponent(cursors.afterID)}` : ""}${cursors.noticeAfterID ? `&notice_after_id=${encodeURIComponent(cursors.noticeAfterID)}` : ""}`, { signal }),
   externalIdentityProviders: (afterID?: string, signal?: AbortSignal) => request<ExternalIdentityProviderPage>(
-    `/api/admin/directory/identity-providers?limit=50${afterID ? `&after_id=${encodeURIComponent(afterID)}` : ""}`, { signal }),
+    `/api/admin/directory/identity-providers?limit=50${afterID ? `&cursor=${encodeURIComponent(afterID)}` : ""}`, { signal }),
   organizationExternalIdentities: (membershipID: string, afterID?: string, signal?: AbortSignal) => request<ExternalIdentityPage>(
-    `/api/admin/directory/memberships/${encodeURIComponent(membershipID)}/external-identities?limit=50${afterID ? `&after_id=${encodeURIComponent(afterID)}` : ""}`, { signal }),
+    `/api/admin/directory/memberships/${encodeURIComponent(membershipID)}/external-identities?limit=50${afterID ? `&cursor=${encodeURIComponent(afterID)}` : ""}`, { signal }),
   bindExternalIdentity: (membershipID: string, input: ExternalIdentityBindInput) => oneShotCommand<{ binding: ExternalIdentity }>(
     `/api/admin/directory/memberships/${encodeURIComponent(membershipID)}/external-identities`, input),
   unbindExternalIdentity: (bindingID: string, allowLockout = false) => unbindExternalIdentity(`/api/session/external-identities/${encodeURIComponent(bindingID)}`, allowLockout),
@@ -553,7 +555,7 @@ export const api = {
   }) => idempotentRequest<ModelProfile>(
     `revise-model:${modelProfileID}`,
     `/api/admin/model-profiles/${encodeURIComponent(modelProfileID)}/revisions`,
-    input,
+    { ...input, expected_version: String(input.expected_version) },
   ),
   templates: (options: CatalogPageOptions = {}) =>
     request<TemplateList>(catalogPagePath("/api/admin/templates", options)),

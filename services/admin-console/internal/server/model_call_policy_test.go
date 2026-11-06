@@ -125,7 +125,7 @@ func TestModelCallPolicyPUTForwardsSignedCompleteReplacement(t *testing.T) {
 	if sent["organization_id"] != "org-1" || sent["actor_principal_id"] != "user-admin" || sent["unknown_cost"] != "deny" {
 		t.Fatalf("forwarded=%v", sent)
 	}
-	if sent["expected_revision"] != float64(0) {
+	if sent["expected_version"] != "0" {
 		t.Fatalf("expected revision: %v", sent)
 	}
 	requestID, _ := sent["request_id"].(string)
