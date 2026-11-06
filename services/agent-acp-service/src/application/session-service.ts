@@ -1,5 +1,6 @@
 import type { ResourceIdGenerator } from "../domain/resource-id.js";
 import { DomainError } from "../domain/errors.js";
+import { boundedCursorSchema } from "../domain/pagination.js";
 import { requireNoClientMcpServers } from "../domain/mcp.js";
 import {
   authorizeSession,
@@ -55,6 +56,9 @@ export class SessionService implements Pick<
   ): Promise<Awaited<ReturnType<AcpApplicationPort["listSessions"]>>> {
     if (input.cwd !== undefined) {
       requireDirectoryFilter(input.cwd);
+    }
+    if (input.cursor !== undefined && !boundedCursorSchema.safeParse(input.cursor).success) {
+      throw new DomainError("invalid_cursor", "Cursor must be 1–4096 UTF-8 bytes");
     }
     const result = await this.dependencies.repository.list({
       organizationId: input.binding.organizationId,

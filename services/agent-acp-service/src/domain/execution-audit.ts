@@ -1,13 +1,14 @@
 import { z } from "zod";
 import { budgetFactSchema } from "./model-budget.js";
 import { DomainError } from "./errors.js";
+import { boundedCursorSchema } from "./pagination.js";
 
 const identifier = z.string().min(1).max(200);
 const timestamp = z.iso.datetime().regex(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?Z$/u);
 const opaqueId = z.string().min(1);
 const page = {
   limit: z.number().int().min(1).max(100).default(50),
-  cursor: z.string().min(1).optional(),
+  cursor: boundedCursorSchema.optional(),
 };
 export const listAuditsSchema = z.strictObject({
   agent_id: identifier.optional(),
@@ -81,7 +82,7 @@ const permissionSchema = z.strictObject({
   created_at: timestamp,
   decided_at: timestamp.nullable(),
 });
-const nextCursor = z.string().nullable();
+const nextCursor = boundedCursorSchema.nullable();
 export const auditListSchema = z.strictObject({
   items: z.array(summarySchema),
   next_cursor: nextCursor,
@@ -105,6 +106,11 @@ export type AuditPermission = z.infer<typeof permissionSchema>;
 export type AuditPage<T> = { items: T[]; next_cursor: string | null };
 
 const positionSchema = z.discriminatedUnion("kind", [
+  z.strictObject({
+    kind: z.literal("permission_hash"),
+    at: timestamp,
+    id: z.string().regex(/^[a-f0-9]{64}$/u),
+  }),
   z.strictObject({ kind: z.literal("time"), at: timestamp, id: opaqueId }),
   z.strictObject({
     kind: z.literal("sequence"),
@@ -113,6 +119,7 @@ const positionSchema = z.discriminatedUnion("kind", [
 ]);
 export type AuditPosition = z.infer<typeof positionSchema>;
 export type AuditTimePosition = Extract<AuditPosition, { kind: "time" }>;
+export type AuditPermissionPosition = Exclude<AuditPosition, { kind: "sequence" }>;
 const cursorSchema = z.strictObject({ scope: z.string(), position: positionSchema });
 
 // Validated UTC timestamps use PostgreSQL's microsecond precision, not JS milliseconds.
@@ -131,6 +138,7 @@ export function readAuditCursor(
 ): AuditPosition | undefined {
   if (value === undefined) return undefined;
   try {
+    if (!boundedCursorSchema.safeParse(value).success) throw new Error("Cursor too large");
     if (Buffer.from(value, "base64url").toString("base64url") !== value)
       throw new Error("Invalid encoding");
     const decoded: unknown = JSON.parse(Buffer.from(value, "base64url").toString("utf8"));

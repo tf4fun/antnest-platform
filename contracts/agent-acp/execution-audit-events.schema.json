@@ -58,9 +58,15 @@
               "$ref": "../common/pagination.schema.json#/$defs/nullable_cursor"
             }
           ],
-          "type": [
-            "string",
-            "null"
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 4096
+            },
+            {
+              "type": "null"
+            }
           ]
         }
       },
@@ -158,9 +164,15 @@
               "$ref": "../common/pagination.schema.json#/$defs/nullable_cursor"
             }
           ],
-          "type": [
-            "string",
-            "null"
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 4096
+            },
+            {
+              "type": "null"
+            }
           ]
         }
       },

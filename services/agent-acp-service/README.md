@@ -41,6 +41,18 @@ responses are aborted and cleanup is joined before listeners retire. See the
 
 Startup rejects published PostgreSQL passwords and uniform 32-byte client-MCP keys under the [development secret policy](../../contracts/platform/development-secrets.md). The exact independent `ANTNEST_ALLOW_PUBLIC_DEV_SECRETS=true` opt-in emits one variable-only WARN per affected setting and enables neither Skill learning debug mode nor removed Registry bearers.
 
+The ACP boundary follows the shared contract conventions in
+[`contracts/CONVENTIONS.md`](../../contracts/CONVENTIONS.md) with one explicit
+protocol exception: the Agent Client Protocol session surface keeps camelCase
+`nextCursor`. Administrative audit lists use canonical snake_case
+`cursor`/`next_cursor`; audit and ACP Session page tokens are opaque strings bounded at 4096
+UTF-8 bytes (enforced at the service boundary, stricter than the shared JSON
+Schema for non-ASCII input). Internal request identity/idempotency and the
+prompt protocol are unchanged. Permission audit continuation uses a Run-scoped
+SHA-256 anchor when the provider Tool ID would make the token exceed this bound;
+the stored ID and timestamp/ID ordering are preserved, and shorter legacy cursors
+remain accepted.
+
 ## Responsibilities
 
 - ACP Sessions, replayable messages and active connection bindings.
