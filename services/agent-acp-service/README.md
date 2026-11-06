@@ -423,6 +423,16 @@ package checks.
   [Skill discovery tools](../../contracts/agent-acp/skill-discovery-tools.md),
   [resource identifiers](../../contracts/resource-identifiers.md).
 
+### Golden examples and N-1 rollout
+
+Execution snapshot consumers accept the legacy unversioned form, `schema_version: 1`, and `schema_version: 2`. Response projection (`src/domain/response-projection.ts`) ignores additive unknown members while every known check — credential `ref`/`version` binding, forbidden plaintext `secret`/`method`, required fields, authority scoping — stays enforced; ordinary business request schemas remain strict, while durable configuration consumption (snapshots and deltas) ignores extensions. Deploy consumers first: the snapshot producer began emitting the new legacy v1 marker in PR #561, while the existing V2 sealed credential publication remains version 2, so this consumer must accept both before those roll out. Producer goldens for workspace Bridge, Skill learning, and execution audit responses are captured from real handlers only via opt-in `UPDATE_GOLDEN=1`:
+
+```sh
+UPDATE_GOLDEN=1 npx vitest run test/contracts/producer-golden.test.ts
+```
+
+Focused cases cover the current output, the legacy unversioned snapshot, and the frozen `contracts/agent-acp/examples/execution-events.n-1.json` N-1 baseline, which is never recomputed.
+
 ### Data retention and erasure
 
 Deleted Session content is purged under a bounded, fenced retention worker and

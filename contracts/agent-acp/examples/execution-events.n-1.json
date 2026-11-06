@@ -1,0 +1,16 @@
+{
+  "items": [
+    {
+      "created_at": "2026-09-01T00:00:00Z",
+      "id": "event-1",
+      "kind": "run_started",
+      "payload": {
+        "text": "started"
+      },
+      "sequence": 1,
+      "visible": true
+    }
+  ],
+  "next_cursor": null,
+  "stream": "execution"
+}

@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
 import { z } from "zod";
 import { DomainError } from "./errors.js";
+import { projectResponse } from "./response-projection.js";
 import {
   executionModelSchema,
   parseExecutionConfiguration,
@@ -105,8 +106,32 @@ export const executionDigestResponseSchema = z
 
 export type ExecutionDigestResponse = z.infer<typeof executionDigestResponseSchema>;
 
+function rejectPlaintextCredentialFields(collection: unknown): void {
+  if (!Array.isArray(collection)) return;
+  for (const provider of collection) {
+    if (provider === null || typeof provider !== "object") continue;
+    const credential = (provider as Record<string, unknown>).credential;
+    if (credential === null || typeof credential !== "object" || Array.isArray(credential))
+      continue;
+    if (Object.hasOwn(credential, "secret") || Object.hasOwn(credential, "method"))
+      throw new DomainError(
+        "invalid_execution_configuration",
+        "Provider credential must not carry plaintext material",
+      );
+  }
+}
+
 export function parseExecutionDelta(input: unknown): ExecutionDelta {
-  const parsed = executionDeltaSchema.safeParse(input);
+  const providers =
+    input !== null && typeof input === "object"
+      ? (input as Record<string, unknown>).providers
+      : undefined;
+  rejectPlaintextCredentialFields(
+    providers !== null && typeof providers === "object" && !Array.isArray(providers)
+      ? (providers as Record<string, unknown>).upserts
+      : undefined,
+  );
+  const parsed = executionDeltaSchema.safeParse(projectResponse(executionDeltaSchema, input));
   if (!parsed.success)
     throw new DomainError("invalid_execution_configuration", "Invalid execution delta");
   if (parsed.data.revision <= parsed.data.base_revision)
@@ -146,7 +171,14 @@ export function parseExecutionDelta(input: unknown): ExecutionDelta {
 }
 
 export function parseExecutionConfigurationV2(input: unknown): ExecutionConfigurationV2 {
-  const parsed = executionConfigurationV2Schema.safeParse(input);
+  rejectPlaintextCredentialFields(
+    input !== null && typeof input === "object"
+      ? (input as Record<string, unknown>).providers
+      : undefined,
+  );
+  const parsed = executionConfigurationV2Schema.safeParse(
+    projectResponse(executionConfigurationV2Schema, input),
+  );
   if (!parsed.success)
     throw new DomainError("invalid_execution_configuration", "Invalid execution configuration");
   for (const provider of parsed.data.providers) {
@@ -307,16 +339,13 @@ export function absentExecutionDigest(organizationId: string): ExecutionDigestRe
 }
 
 export function parseExecutionAuthority(input: unknown): ExecutionConfiguration {
-  if (
-    input !== null &&
-    typeof input === "object" &&
-    (input as Record<string, unknown>).schema_version !== undefined
-  ) {
-    if ((input as Record<string, unknown>).schema_version !== 2)
-      throw new DomainError("invalid_execution_configuration", "Unsupported schema_version");
-    return parseExecutionConfigurationV2(input);
-  }
-  return parseExecutionConfiguration(input);
+  const version =
+    input !== null && typeof input === "object"
+      ? (input as Record<string, unknown>).schema_version
+      : undefined;
+  if (version === undefined || version === 1) return parseExecutionConfiguration(input);
+  if (version === 2) return parseExecutionConfigurationV2(input);
+  throw new DomainError("invalid_execution_configuration", "Unsupported schema_version");
 }
 
 export function reconstructExecutionDelta(
@@ -369,7 +398,7 @@ export function allowsV1ToV2Upgrade(
   previous: ExecutionConfiguration,
   incoming: ExecutionConfiguration,
 ): boolean {
-  if ("schema_version" in previous) return false;
-  if (!("schema_version" in incoming)) return false;
+  if (previous.schema_version === 2) return false;
+  if (incoming.schema_version !== 2) return false;
   return isDeepStrictEqual(upgradeComparable(previous), upgradeComparable(incoming));
 }

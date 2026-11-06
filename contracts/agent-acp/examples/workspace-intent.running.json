@@ -1,0 +1,10 @@
+{
+  "appendVersion": 1,
+  "errorClass": null,
+  "intentId": "intent1",
+  "outputWatermark": 2,
+  "phase": "running",
+  "runId": "run1",
+  "sessionId": "session1",
+  "stopReason": null
+}

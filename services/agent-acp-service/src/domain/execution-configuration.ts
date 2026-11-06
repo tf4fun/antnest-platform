@@ -1,5 +1,6 @@
 import { z } from "zod";
 import type { ExecutionConfigurationV2 } from "./execution-publication-v2.js";
+import { projectResponse } from "./response-projection.js";
 import { providerTokenLimitsSchema } from "./provider-token-limits.js";
 import { modelFailoverSchema, modelRetryConfigurationSchema } from "./model-call-policy.js";
 import { organizationBudgetSchema, runBudgetSchema } from "./model-budget.js";
@@ -219,6 +220,7 @@ function validateExecutableRuntime(
 export const executionConfigurationSchema = z.strictObject({
   organization_id: identifier,
   revision,
+  schema_version: z.literal(1).optional(),
   organization_budget: organizationBudgetSchema.optional(),
   providers: z.array(providerConfigurationSchema),
   models: z.array(executionModelSchema),
@@ -242,10 +244,12 @@ export const publicProviderConfigurationSchema = z.discriminatedUnion("enabled",
     credential_revision: identifier.optional(),
   }),
 ]);
-export const publicExecutionConfigurationSchema = executionConfigurationSchema.extend({
-  providers: z.array(publicProviderConfigurationSchema),
-  agents: z.array(agentConfigurationSchema),
-});
+export const publicExecutionConfigurationSchema = executionConfigurationSchema
+  .omit({ schema_version: true })
+  .extend({
+    providers: z.array(publicProviderConfigurationSchema),
+    agents: z.array(agentConfigurationSchema),
+  });
 export type PublicProviderConfiguration = z.infer<typeof publicProviderConfigurationSchema>;
 export type ProviderRouting = Pick<
   ProviderConfiguration,
@@ -323,7 +327,9 @@ export function isExecutionAccessRevoked(
 }
 
 export function parseExecutionConfiguration(input: unknown): ExecutionConfigurationV1 {
-  const parsed = executionConfigurationSchema.safeParse(input);
+  const parsed = executionConfigurationSchema.safeParse(
+    projectResponse(executionConfigurationSchema, input),
+  );
   if (!parsed.success) {
     throw new DomainError("invalid_execution_configuration", "Invalid execution configuration");
   }
@@ -331,7 +337,9 @@ export function parseExecutionConfiguration(input: unknown): ExecutionConfigurat
 }
 
 export function parsePublicExecutionConfiguration(input: unknown): PublicExecutionConfiguration {
-  const parsed = publicExecutionConfigurationSchema.safeParse(input);
+  const parsed = publicExecutionConfigurationSchema.safeParse(
+    projectResponse(publicExecutionConfigurationSchema, input),
+  );
   if (!parsed.success) {
     throw new DomainError(
       "invalid_execution_configuration",

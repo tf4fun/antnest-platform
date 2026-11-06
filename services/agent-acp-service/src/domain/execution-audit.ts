@@ -65,6 +65,7 @@ export const auditDetailSchema = z.strictObject({
   usage_measurements: z.array(z.unknown()),
 });
 const eventSchema = z.strictObject({
+  schema_version: z.literal(1).optional(),
   id: opaqueId,
   sequence: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
   kind: z.string(),
@@ -73,6 +74,7 @@ const eventSchema = z.strictObject({
   created_at: timestamp,
 });
 const permissionSchema = z.strictObject({
+  schema_version: z.literal(1).optional(),
   tool_call_id: opaqueId,
   request: z.unknown(),
   decision: z
@@ -90,11 +92,13 @@ export const auditListSchema = z.strictObject({
 export const auditEventsSchema = z.discriminatedUnion("stream", [
   z.strictObject({
     stream: z.literal("execution"),
+    schema_version: z.literal(1).optional(),
     items: z.array(eventSchema),
     next_cursor: nextCursor,
   }),
   z.strictObject({
     stream: z.literal("permissions"),
+    schema_version: z.literal(1).optional(),
     items: z.array(permissionSchema),
     next_cursor: nextCursor,
   }),

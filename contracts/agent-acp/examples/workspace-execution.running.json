@@ -1,0 +1,19 @@
+{
+  "activeRunId": "run1",
+  "appendVersion": 1,
+  "configurationRevision": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "outputWatermark": 2,
+  "recentReceipts": [
+    {
+      "appendVersion": 1,
+      "errorClass": null,
+      "intentId": "intent1",
+      "outputWatermark": 2,
+      "phase": "running",
+      "runId": "run1",
+      "sessionId": "session1",
+      "stopReason": null
+    }
+  ],
+  "sessionId": "session1"
+}
