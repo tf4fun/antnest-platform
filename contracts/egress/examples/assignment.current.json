@@ -1,0 +1,6 @@
+{
+  "agent_id": "agent-1",
+  "policy_id": "builtin/allow-all",
+  "resource_version": 1,
+  "revision": 1
+}

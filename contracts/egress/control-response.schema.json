@@ -1,0 +1,151 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.antnest.dev/egress/control-response.schema.json",
+  "type": "object",
+  "$defs": {
+    "identifier": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200,
+      "pattern": "^[!-~]{1,200}$"
+    },
+    "digest": {
+      "type": "string",
+      "pattern": "^sha256:[a-f0-9]{64}$"
+    },
+    "endpoint": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["ipv4", "port"],
+      "properties": {
+        "ipv4": {
+          "type": "string",
+          "format": "ipv4"
+        },
+        "port": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535
+        }
+      }
+    },
+    "network": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "tunnel_key_id",
+        "agent_id",
+        "tunnel_ipv4",
+        "resolver_ipv4",
+        "packet_contract_revision",
+        "egress_endpoint",
+        "state",
+        "network_resource_version",
+        "attachment_state",
+        "attachment_resource_version"
+      ],
+      "properties": {
+        "tunnel_key_id": {
+          "type": ["string", "null"]
+        },
+        "agent_id": {
+          "$ref": "#/$defs/identifier"
+        },
+        "tunnel_ipv4": {
+          "type": "string",
+          "format": "ipv4"
+        },
+        "resolver_ipv4": {
+          "type": "string",
+          "format": "ipv4"
+        },
+        "packet_contract_revision": {
+          "const": 2
+        },
+        "egress_endpoint": {
+          "$ref": "#/$defs/endpoint"
+        },
+        "state": {
+          "enum": ["active", "quarantined"]
+        },
+        "network_resource_version": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "attachment_state": {
+          "enum": ["closed", "pending", "open"]
+        },
+        "attachment_resource_version": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "runtime_endpoint": {
+          "type": "string",
+          "format": "ipv4"
+        }
+      }
+    },
+    "policy_revision": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["policy_id", "revision", "spec", "digest"],
+      "properties": {
+        "policy_id": {
+          "$ref": "#/$defs/identifier"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "spec": {
+          "$ref": "policy.schema.json"
+        },
+        "digest": {
+          "$ref": "#/$defs/digest"
+        }
+      }
+    },
+    "policy_metadata": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["policy_id", "revision", "schema_version", "digest"],
+      "properties": {
+        "policy_id": {
+          "$ref": "#/$defs/identifier"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "schema_version": {
+          "type": "integer",
+          "enum": [1, 2]
+        },
+        "digest": {
+          "$ref": "#/$defs/digest"
+        }
+      }
+    },
+    "assignment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["agent_id", "policy_id", "revision", "resource_version"],
+      "properties": {
+        "agent_id": {
+          "$ref": "#/$defs/identifier"
+        },
+        "policy_id": {
+          "$ref": "#/$defs/identifier"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "resource_version": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    }
+  }
+}
