@@ -48,10 +48,10 @@ async function models() {
   do {
     const result = await read(
       "/api/admin/model-profiles" +
-        (after ? "?after_id=" + encodeURIComponent(after) : ""),
+        (after ? "?cursor=" + encodeURIComponent(after) : ""),
     );
     items.push(...result.items);
-    after = result.next_after_id;
+    after = result.next_cursor;
   } while (after);
   return items;
 }
