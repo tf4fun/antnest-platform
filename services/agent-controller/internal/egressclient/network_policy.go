@@ -61,7 +61,13 @@ func (client *Client) SetAgentPolicyAssignment(ctx context.Context, agentID stri
 	if !input.Valid() || input.ExpectedResourceVersion == 0 {
 		return ports.NetworkPolicyAssignment{}, dependencyFailure("invalid_request", false)
 	}
-	body, err := json.Marshal(input)
+	body, err := json.Marshal(struct {
+		ports.NetworkPolicyReference
+		ExpectedVersion string `json:"expected_version"`
+	}{
+		NetworkPolicyReference: input.NetworkPolicyReference,
+		ExpectedVersion:        strconv.FormatUint(input.ExpectedResourceVersion, 10),
+	})
 	if err != nil {
 		return ports.NetworkPolicyAssignment{}, dependencyFailure("invalid_request", false)
 	}

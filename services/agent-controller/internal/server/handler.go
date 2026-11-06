@@ -1255,7 +1255,11 @@ func decodeJSON(response http.ResponseWriter, request *http.Request, target any)
 		raw, err = normalizePrecondition(raw, request, target)
 	}
 	if err == nil {
-		err = serviceauth.DecodeObject(raw, target)
+		if custom, ok := target.(*application.SetAgentNetworkPolicyInput); ok {
+			err = custom.UnmarshalJSON(raw)
+		} else {
+			err = serviceauth.DecodeObject(raw, target)
+		}
 	}
 	if err != nil {
 		telemetry.RecordBoundaryError(request.Context(), err, "decode_request", "invalid_request", "request JSON could not be decoded", false)
