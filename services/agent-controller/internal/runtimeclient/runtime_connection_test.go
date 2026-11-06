@@ -49,6 +49,64 @@ func TestResolveRuntimeConnectionUsesPrivateReadContract(t *testing.T) {
 	require.Equal(t, connectionToken, connection.Credential.Token)
 }
 
+func TestResolveRuntimeConnectionToleratesResponseExtensions(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Cache-Control", "no-store")
+		_, _ = w.Write([]byte(connectionBody()))
+	}))
+	defer server.Close()
+	client, err := New(server.URL, time.Second, server.Client())
+	require.NoError(t, err)
+	baseline, err := client.ResolveRuntimeConnection(t.Context(), "agent-1", connectionRevision, "boot-1")
+	require.NoError(t, err)
+
+	extended := strings.Replace(connectionBody(), `"agent_id":`, `"raw_token":"private","future_marker":{"nested":[1]},"agent_id":`, 1)
+	extended = strings.Replace(extended, `"credential":{`, `"credential":{"future":"x",`, 1)
+	serverExtended := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Cache-Control", "no-store")
+		_, _ = w.Write([]byte(extended))
+	}))
+	defer serverExtended.Close()
+	clientExtended, err := New(serverExtended.URL, time.Second, serverExtended.Client())
+	require.NoError(t, err)
+	result, err := clientExtended.ResolveRuntimeConnection(t.Context(), "agent-1", connectionRevision, "boot-1")
+	require.NoError(t, err)
+	require.Equal(t, baseline, result)
+	require.Equal(t, connectionToken, result.Credential.Token)
+	encoded, err := json.Marshal(result)
+	require.NoError(t, err)
+	require.NotContains(t, string(encoded), "private")
+	require.NotContains(t, string(encoded), "future")
+}
+
+func TestResolveRuntimeConnectionToleratesFailureDiagnostics(t *testing.T) {
+	for _, body := range []string{
+		`{"code":"invalid_request","message":"denied","retryable":false}`,
+		`{"code":"invalid_request","message":"denied","retryable":false,"diagnostic":"private-detail"}`,
+	} {
+		t.Run(body[0:30], func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				w.Header().Set("Cache-Control", "no-store")
+				w.WriteHeader(http.StatusBadRequest)
+				_, _ = w.Write([]byte(body))
+			}))
+			defer server.Close()
+			client, err := New(server.URL, time.Second, server.Client())
+			require.NoError(t, err)
+			connection, err := client.ResolveRuntimeConnection(t.Context(), "agent-1", connectionRevision, "boot-1")
+			require.Error(t, err)
+			require.Empty(t, connection)
+			require.NotContains(t, err.Error(), "private-detail")
+			var dependency *ports.DependencyError
+			require.ErrorAs(t, err, &dependency)
+			require.Equal(t, "invalid_request", dependency.Code)
+		})
+	}
+}
+
 func TestResolveRuntimeConnectionRejectsAmbiguityAndWrongAuthority(t *testing.T) {
 	for name, body := range map[string]string{
 		"wrong agent":       strings.Replace(connectionBody(), `"agent_id":"agent-1"`, `"agent_id":"agent-2"`, 1),
@@ -62,7 +120,6 @@ func TestResolveRuntimeConnectionRejectsAmbiguityAndWrongAuthority(t *testing.T)
 		"duplicate":         strings.Replace(connectionBody(), `"agent_id":`, `"agent_id":"agent-2","agent_id":`, 1),
 		"escaped duplicate": strings.Replace(connectionBody(), `"token":`, `"\u0074oken":"forged","token":`, 1),
 		"case alias":        strings.Replace(connectionBody(), `"agent_id":`, `"AGENT_ID":`, 1),
-		"unknown":           strings.Replace(connectionBody(), `"agent_id":`, `"raw_token":"private","agent_id":`, 1),
 		"invalid utf8":      strings.Replace(connectionBody(), "boot-1", string([]byte{0xff}), 1),
 		"bom":               "\ufeff" + connectionBody(),
 		"trailing":          connectionBody() + " {}",

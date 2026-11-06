@@ -12,8 +12,8 @@ import (
 	"net/url"
 	"strings"
 
-	"github.com/tf4fun/antnest-platform/modules/service-authentication/serviceauth"
 	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/ports"
+	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/responsejson"
 	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/telemetry"
 	"go.opentelemetry.io/otel/attribute"
 )
@@ -66,7 +66,7 @@ func (client *Client) ResolveRuntimeConnection(ctx context.Context, agentID, rev
 	cache := response.Header.Values("Cache-Control")
 	if !connectionJSONMedia(response.Header.Values("Content-Type")) ||
 		len(cache) != 1 || cache[0] != "no-store" || len(response.Header.Values("Content-Encoding")) != 0 ||
-		serviceauth.DecodeObject(raw, &result) != nil ||
+		responsejson.Decode(raw, &result) != nil ||
 		!result.Valid() || result.AgentID != agentID || result.RuntimeRevision != revision || result.RuntimeExecutionID != executionID {
 		return ports.RuntimeConnection{}, connectionFailure("invalid_response", true, nil)
 	}
@@ -88,7 +88,7 @@ func connectionResponseFailure(status int, raw []byte) error {
 		Message   string `json:"message"`
 		Retryable bool   `json:"retryable"`
 	}
-	if serviceauth.DecodeObject(raw, &response) == nil {
+	if responsejson.Decode(raw, &response) == nil {
 		for _, expected := range []struct {
 			status    int
 			code      string

@@ -57,6 +57,12 @@ func (client *Client) ListRuntimeObservations(
 	}
 	previous := after
 	for _, observation := range response.Observations {
+		if len(observation.SchemaVersion) != 0 {
+			var version uint64
+			if json.Unmarshal(observation.SchemaVersion, &version) != nil || version != 1 {
+				return ports.RuntimeObservationPage{}, dependencyFailure("invalid_response", true)
+			}
+		}
 		if observation.Sequence <= previous || observation.Sequence > math.MaxInt64 || observation.ObservedAt.IsZero() ||
 			strings.TrimSpace(observation.Kind) == "" {
 			return ports.RuntimeObservationPage{}, dependencyFailure("invalid_response", true)
@@ -139,12 +145,13 @@ func (client *Client) get(
 }
 
 type runtimeObservationDTO struct {
-	Sequence           uint64    `json:"sequence"`
-	AgentID            string    `json:"agent_id"`
-	RuntimeRevision    string    `json:"runtime_revision"`
-	RuntimeExecutionID string    `json:"runtime_execution_id"`
-	Kind               string    `json:"kind"`
-	ObservedAt         time.Time `json:"observed_at"`
+	Sequence           uint64          `json:"sequence"`
+	SchemaVersion      json.RawMessage `json:"schema_version,omitempty"`
+	AgentID            string          `json:"agent_id"`
+	RuntimeRevision    string          `json:"runtime_revision"`
+	RuntimeExecutionID string          `json:"runtime_execution_id"`
+	Kind               string          `json:"kind"`
+	ObservedAt         time.Time       `json:"observed_at"`
 }
 
 type runtimeObservationsDTO struct {

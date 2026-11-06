@@ -345,3 +345,17 @@ parsers tolerate unknown fields recursively. Consumers deploy first: the
 previous ACP parser rejects the new marker, so Controller may only rely on
 `schema_version` 1 after the ACP change accepting unknown response fields has
 shipped. The v2 publication keeps `schema_version` 2.
+
+### Upstream Consumer Evidence
+
+Upstream consumers are verified against the real producer captures in
+`contracts/`: `runtime/examples/rc-inspection.healthy.json` and
+`rc-observations.{current,n-1}.json` (legacy absent or `schema_version` 1
+admitted; any other value rejected), `egress/examples/network.{closed,open}`,
+`assignment.current`, `policy.{v1,v2}`, `policy-metadata.{v1,v2}`, and
+`identity/examples/resolve-principal.member.json`. Recursive response
+extensions are dropped while every declared-field check — authority, IDs,
+revision/sequence/digest, endpoint and credential semantics — stays strict.
+Runtime connection response decoding uses `internal/responsejson` for the two
+typed responses; unknown members (including injected private canaries) never
+enter typed results. Deploy consumers before producers evolve the wire.
