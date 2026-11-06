@@ -21,6 +21,14 @@ admit ACP. The Docker boundary and separate Runtime instance credential lifecycl
 
 Startup rejects published PostgreSQL passwords under the [development secret policy](../../contracts/platform/development-secrets.md). The exact `ANTNEST_ALLOW_PUBLIC_DEV_SECRETS=true` opt-in emits a variable-only WARN; it never restores the retired Registry token.
 
+The internal HTTP boundary follows the shared contract conventions in
+[`contracts/CONVENTIONS.md`](../../contracts/CONVENTIONS.md): preconditioned
+lifecycle mutations accept canonical `expected_version` (the opaque `rtv_`
+token) or a single strong `If-Match` token — permanent forms — while the
+`expected_revision` string remains accepted for one release as a deprecated
+input alias, and a request carrying more than one form is rejected. The
+`Idempotency-Key` receipt contract is unchanged.
+
 ## Responsibilities
 
 - Issue and atomically seal distinct RC/ACP Runtime tokens with each private

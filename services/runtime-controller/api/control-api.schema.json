@@ -121,25 +121,78 @@
     "revision_request": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["expected_revision"],
       "properties": {
         "expected_revision": {
-          "$ref": "#/$defs/runtime_revision"
+          "$ref": "#/$defs/runtime_revision",
+          "deprecated": true
+        },
+        "expected_version": {
+          "allOf": [
+            {
+              "$ref": "../common/precondition.schema.json#/$defs/expected_version"
+            },
+            {
+              "$ref": "#/$defs/runtime_revision"
+            }
+          ]
         }
-      }
+      },
+      "allOf": [
+        {
+          "oneOf": [
+            {
+              "required": ["expected_version"],
+              "properties": {"expected_version": true},
+              "not": {"required": ["expected_revision"], "properties": {"expected_revision": true}}
+            },
+            {
+              "required": ["expected_revision"],
+              "properties": {"expected_revision": true},
+              "not": {"required": ["expected_version"], "properties": {"expected_version": true}}
+            }
+          ]
+        }
+      ]
     },
     "revision_configuration_request": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["expected_revision", "configuration"],
+      "required": ["configuration"],
       "properties": {
         "expected_revision": {
-          "$ref": "#/$defs/runtime_revision"
+          "$ref": "#/$defs/runtime_revision",
+          "deprecated": true
+        },
+        "expected_version": {
+          "allOf": [
+            {
+              "$ref": "../common/precondition.schema.json#/$defs/expected_version"
+            },
+            {
+              "$ref": "#/$defs/runtime_revision"
+            }
+          ]
         },
         "configuration": {
           "$ref": "#/$defs/configuration"
         }
-      }
+      },
+      "allOf": [
+        {
+          "oneOf": [
+            {
+              "required": ["expected_version"],
+              "properties": {"expected_version": true},
+              "not": {"required": ["expected_revision"], "properties": {"expected_revision": true}}
+            },
+            {
+              "required": ["expected_revision"],
+              "properties": {"expected_revision": true},
+              "not": {"required": ["expected_version"], "properties": {"expected_version": true}}
+            }
+          ]
+        }
+      ]
     },
     "readiness": {
       "type": "object",
