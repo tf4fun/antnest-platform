@@ -97,6 +97,7 @@
           "description": "Canonical decimal string; the same-name integer is a one-release deprecated input. A single strong If-Match may replace this body member for append.",
           "anyOf": [
             {
+              "type": "string",
               "allOf": [
                 { "$ref": "../common/precondition.schema.json#/$defs/expected_version" }
               ],
