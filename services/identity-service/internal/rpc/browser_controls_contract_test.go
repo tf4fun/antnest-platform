@@ -13,7 +13,7 @@ import (
 )
 
 func TestBrowserControlResponsesMatchCompleteSchemas(t *testing.T) {
-	const schemaID = "https://antnest.local/contracts/identity/identity-contract.json"
+	const schemaID = "https://schemas.antnest.dev/identity/identity-contract.json"
 	raw, err := os.ReadFile("../../../../contracts/identity/identity-contract.json")
 	if err != nil {
 		t.Fatal(err)
@@ -22,7 +22,7 @@ func TestBrowserControlResponsesMatchCompleteSchemas(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	compiler := newIdentitySchemaCompiler()
+	compiler := newIdentitySchemaCompiler(t)
 	if err := compiler.AddResource(schemaID, document); err != nil {
 		t.Fatal(err)
 	}

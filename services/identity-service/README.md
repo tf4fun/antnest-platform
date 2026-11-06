@@ -21,6 +21,13 @@ per affected variable. A published bootstrap password is rejected only when
 creating a new administrator under the bootstrap lock; existing accounts are
 not rejected or reset by that unused value.
 
+The internal RPC boundary follows the shared contract conventions in
+[`contracts/CONVENTIONS.md`](../../contracts/CONVENTIONS.md): paginated list
+methods accept `cursor` (plus the one-release `after_id` alias, mutually
+exclusive) and emit `items` + `next_cursor`; external-identity self notices
+keep their independent `notices`/`next_notice_after_id` stream. Consumer
+migration (Edge Gateway, Admin Console) remains pending.
+
 ## Responsibilities
 
 - Users, Organizations, OrganizationMemberships, Groups, and GroupMemberships.

@@ -20,6 +20,8 @@ Issue 状态最后核对于 2026-10-28：141 个 issue，87 个已关闭，54 �
 
 ## 当前批次
 
+- **#68 Identity 批次（2026-11-06，依赖 Skill Registry PR #551）**：session／external binding／provider 三类 RPC 列表支持 cursor／一版 after_id 输入别名与 items／必有 nullable next_cursor 输出；双 cursor／无效 limit 在依赖调用前拒绝。self notices 保留独立流，不合并游标；domain 查询／签名 caller scope／request_id receipts／有序撤销 feed 未改。先 RED 后实现，协调者定向 RPC 与真实输出 schema GREEN，修复离线编译器忽略注册错误与旧 ID（`artifacts/verification/issue-68-identity/`）。Gateway／Console 消费方接线待各自批次；远程完整准入待确认，继续下一服务。
+
 - **#68 Skill Registry 批次（2026-11-06，依赖 Runtime Controller PR #550）**：tests-only RED 后，将 Skill／Version 列表统一为 `cursor`／`limit` 和 `items`／nullable-string `next_cursor`，旧 after_id／after_version 仅作输入别名；append multipart metadata 与 promote 支持 canonical string expected_version／旧 integer／独占单强 If-Match，原 request_id fingerprint 与回放行为保留。分页、输入歧义拒绝、追加后版本不变、promotion、幂等重放及离线 schema 定向 GREEN（`artifacts/verification/issue-68-skill-registry/`），lint clean；远程完整准入待确认。后续委派仅编辑，协调者串行执行验证及 Git／网络操作。
 
 - **#68 Runtime Controller 批次（2026-11-06，依赖 Egress PR #549）**：先 tests-only 阶段获得 38 个失败子用例，再实现四类生命周期入口 canonical `expected_version`／旧 `expected_revision`／单强 `If-Match` 归一；必须符合原 `rtv_` revision grammar，原 command、receipt、Idempotency-Key 与 feed 不变。新增约 80 个子用例及 legacy／canonical schema 验证定向通过，lint clean（`artifacts/verification/issue-68-runtime-controller/`），远程完整准入待确认。已将 #547 的 strict metadata 读取修复 `80b2030a` 与 #548 的 deprecated_query 精确校验 `ba8e8243` 普通合并向后传播，不重写历史；旧失败不追认为新候选成功。继续下一服务，不等待 CI。
