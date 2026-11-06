@@ -1,8 +1,8 @@
 package identity
 
 import (
-	"encoding/json"
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/url"
