@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { test } from "node:test";
+import { withCommonErrorSchema } from "../../support/common-error-schema.mjs";
 
 const requireAcp = createRequire(
   new URL("../../../services/agent-acp-service/package.json", import.meta.url),
@@ -15,7 +16,9 @@ const original = await load(
 const schema = await load(
   "../../../contracts/skill-registry/discovery-api.schema.json",
 );
-const ajv = new Ajv2020({ strict: true, validateFormats: false });
+const ajv = withCommonErrorSchema(
+  new Ajv2020({ strict: true, validateFormats: false }),
+);
 ajv.addSchema(original);
 ajv.addSchema(schema);
 const accepts = (name, value) => {
