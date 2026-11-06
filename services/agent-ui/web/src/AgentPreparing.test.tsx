@@ -45,7 +45,7 @@ function fixture(administrator: boolean, initialPreparing = false, initialView?:
         organization_role: administrator ? "admin" : "member", active: true },
       expires_at: "2026-10-24T00:00:00Z", idle_expires_at: "2026-10-23T12:30:00Z", activity_interval_ms: 30_000,
     });
-    if (path === "/api/session/external-identities?limit=50") return Response.json({ bindings: [], notices: [] });
+    if (path === "/api/session/external-identities?limit=50") return Response.json({ items: [], notices: [], next_cursor: null });
     if (path.endsWith("/bootstrap")) return Response.json({
       principal: { organizationSlug: "engineering", organizationName: "Engineering", userId: "user-1",
         organizationId: "org-1", administrator },
