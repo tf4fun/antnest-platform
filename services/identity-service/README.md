@@ -357,3 +357,16 @@ Test-only variables:
 - [Stage 2 identity](../../docs/stage-2-identity.md) - platform identity design.
 - [Identity contracts](../../contracts/identity/README.md) - RPC schema and principal revocation feed.
 - [Resource identifiers](../../contracts/resource-identifiers.md) - platform ID format.
+
+## Golden examples
+
+Captured producer outputs live under `contracts/identity/examples/`, enumerated
+by [`contracts/golden-manifest.json`](../../contracts/golden-manifest.json).
+`internal/rpc/golden_test.go` drives the real `NewHandler` with deterministic
+synthetic fixtures — a fixed-seed ed25519 caller-context authority, fixed
+timestamps, and fixed token IDs; these are public test values, never deployment
+credentials. Goldens are rewritten only on explicit `-update`, and the shared
+offline Ajv checker validates each capture against the method response
+fragments of `contracts/identity/identity-contract.json`. The real Gateway and
+Controller consumer wiring lands in their own batches and the explicit
+integration batch.

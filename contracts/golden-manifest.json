@@ -90,6 +90,30 @@
     "consumers": ["agent-controller"]
   },
   {
+    "file": "identity/examples/list-login-methods.member.json",
+    "schema": "identity/identity-contract.json#/methods/list_login_methods/response",
+    "producer": "identity-service",
+    "consumers": ["edge-gateway"]
+  },
+  {
+    "file": "identity/examples/local-login.member.json",
+    "schema": "identity/identity-contract.json#/methods/local_login/response",
+    "producer": "identity-service",
+    "consumers": ["edge-gateway"]
+  },
+  {
+    "file": "identity/examples/resolve-access-token.member.json",
+    "schema": "identity/identity-contract.json#/methods/resolve_access_token/response",
+    "producer": "identity-service",
+    "consumers": ["edge-gateway"]
+  },
+  {
+    "file": "identity/examples/resolve-principal.member.json",
+    "schema": "identity/identity-contract.json#/methods/resolve_principal/response",
+    "producer": "identity-service",
+    "consumers": ["agent-controller"]
+  },
+  {
     "file": "runtime/examples/rc-inspection.healthy.json",
     "schema": "runtime-controller/control-api.schema.json#/$defs/runtime_inspection",
     "producer": "runtime-controller",

@@ -1,0 +1,17 @@
+{
+  "access_token": "ant_api_contract",
+  "activity_interval_ms": 30000,
+  "expires_at": "2099-09-01T01:00:00Z",
+  "idle_expires_at": "2099-09-01T00:30:00Z",
+  "principal": {
+    "active": true,
+    "membership_id": "membership-1",
+    "organization_id": "org-1",
+    "organization_name": "Engineering",
+    "organization_role": "member",
+    "organization_slug": "engineering",
+    "system_role": "user",
+    "user_id": "user-1"
+  },
+  "token_id": "token-1"
+}
