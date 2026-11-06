@@ -130,23 +130,23 @@ async function exercise(browser, origin, viewport, label) {
             applied_at: model.updated_at,
           },
         },
-        "/api/admin/templates": { items: [template], next_after_id: null },
+        "/api/admin/templates": { items: [template], next_cursor: null },
         "/api/admin/templates/template-1": template,
         "/api/admin/template-defaults": {
           runtime_image_ref: "antnest/antnest-runtime:local",
         },
-        "/api/admin/model-profiles": { items: [model], next_after_id: null },
+        "/api/admin/model-profiles": { items: [model], next_cursor: null },
         "/api/admin/model-profiles/model-1": model,
         "/api/admin/skills": {
           items: [{ ...skill, current_version: 2 }],
-          next_after_id: null,
+          next_cursor: null,
         },
         [`/api/admin/skills/${skillID}/versions`]: {
           items: [
             { ...skill, version: 2 },
             { ...skill, version: 1 },
           ],
-          next_after_version: null,
+          next_cursor: null,
         },
       };
       if (!(url.pathname in fixtures))

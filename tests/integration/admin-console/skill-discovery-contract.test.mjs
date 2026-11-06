@@ -2,12 +2,15 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { test } from "node:test";
+import { withCommonErrorSchema } from "../../support/common-error-schema.mjs";
 
 const require = createRequire(
   new URL("../../../services/agent-acp-service/package.json", import.meta.url),
 );
 const { Ajv2020 } = require("ajv/dist/2020.js");
-const ajv = new Ajv2020({ strict: true, validateFormats: false });
+const ajv = withCommonErrorSchema(
+  new Ajv2020({ strict: true, validateFormats: false }),
+);
 for (const path of [
   "skill-registry/registry-api.schema.json",
   "skill-registry/discovery-api.schema.json",
@@ -84,8 +87,31 @@ test("promotion chooses create or an explicit expected formal head, never Templa
       expected_version: 1,
     }),
   );
+  // The body may omit the version when the HTTP handler receives If-Match.
+  // The handler tests separately reject this shape without a header.
+  assert(
+    accepts("promote_request", {
+      ...selection,
+      skill_id: `skill_${"c".repeat(32)}`,
+    }),
+  );
+  assert(
+    accepts("promote_request", {
+      ...selection,
+      skill_id: `skill_${"c".repeat(32)}`,
+      expected_version: "1",
+    }),
+  );
+  for (const value of ["", "0", "01", "-1", "1.0", "1".repeat(21), null])
+    assert.equal(
+      accepts("promote_request", {
+        ...selection,
+        skill_id: `skill_${"c".repeat(32)}`,
+        expected_version: value,
+      }),
+      false,
+    );
   for (const extra of [
-    { skill_id: `skill_${"c".repeat(32)}` },
     { expected_version: 1 },
     { rebuild: true },
     { template_id: "template" },

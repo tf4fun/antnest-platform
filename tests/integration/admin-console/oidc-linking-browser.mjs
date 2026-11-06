@@ -196,21 +196,26 @@ export async function exerciseExternalIdentities(
       if (path === self && method === "GET") {
         selfReads++;
         assert.equal(url.searchParams.get("limit"), "50");
-        if (url.searchParams.has("after_id")) {
-          assert.equal(url.searchParams.get("after_id"), "binding-1");
+        if (url.searchParams.has("cursor")) {
+          assert.equal(url.searchParams.get("cursor"), "binding-1");
           assert.equal(url.searchParams.has("notice_after_id"), false);
-          return reply({ bindings: [otherBinding], notices: [] });
+          return reply({
+            items: [otherBinding],
+            notices: [],
+            next_cursor: null,
+          });
         }
         if (url.searchParams.has("notice_after_id")) {
           assert.equal(url.searchParams.get("notice_after_id"), "notice-1");
           return reply({
-            bindings: [],
+            items: [],
+            next_cursor: null,
             notices: [{ ...notice, id: "notice-2", subject: "second notice" }],
           });
         }
         return reply({
-          bindings: [binding],
-          next_after_id: "binding-1",
+          items: [binding],
+          next_cursor: "binding-1",
           notices: [
             acknowledged
               ? {
@@ -248,7 +253,7 @@ export async function exerciseExternalIdentities(
       if (path === chooser) {
         assert.equal(url.searchParams.get("limit"), "50");
         return reply({
-          providers: [
+          items: [
             {
               id: "provider-1",
               name: provider.name,
@@ -260,12 +265,13 @@ export async function exerciseExternalIdentities(
               link_policy_review_required: provider.link_policy_review_required,
             },
           ],
+          next_cursor: null,
         });
       }
       if (path === organization) {
         if (method === "GET")
           return reply({
-            bindings: restored
+            items: restored
               ? [
                   {
                     ...binding,
@@ -274,6 +280,7 @@ export async function exerciseExternalIdentities(
                   },
                 ]
               : [],
+            next_cursor: null,
           });
         assert.deepEqual(request.postDataJSON(), {
           provider_id: "provider-1",
