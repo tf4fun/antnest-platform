@@ -120,6 +120,37 @@ func TestContractConventionsDecodeJSONAcceptedPreconditions(t *testing.T) {
 	}
 }
 
+func TestContractConventionsSpecPolicyPortsPreserveStrictCustomDecoding(t *testing.T) {
+	for _, port := range []string{`443`, `{"from":443,"to":443}`} {
+		for _, version := range []string{`"expected_version":"7"`, `"expected_resource_version":7`, ""} {
+			body := `{"request_id":"r1","organization_id":"org-1","actor_principal_id":"a1","spec":{"schema_version":2,"default":"deny","rules":[{"action":"allow","ports":[` + port + `]}]}`
+			var headers []string
+			if version == "" {
+				headers = []string{`"7"`}
+			} else {
+				body += "," + version
+			}
+			response, request := preconditionRequest(t, body+"}", headers...)
+			var input application.SetAgentNetworkPolicyInput
+			if !decodeJSON(response, request, &input) {
+				t.Fatalf("port=%s version=%s: %s", port, version, response.Body.String())
+			}
+			got := input.Spec.Rules[0].Ports[0]
+			if input.ExpectedResourceVersion != 7 || got.From != 443 || got.To != 443 || got.Range != strings.HasPrefix(port, "{") {
+				t.Fatalf("lost version or port shape: %+v %+v", input, got)
+			}
+		}
+	}
+	for _, port := range []string{`{"from":443,"to":443,"unknown":1}`, `{"from":443,"from":443,"to":443}`, `{"From":443,"to":443}`, `null`} {
+		body := `{"request_id":"r1","organization_id":"org-1","actor_principal_id":"a1","expected_version":"7","spec":{"schema_version":2,"default":"deny","rules":[{"action":"allow","ports":[` + port + `]}]}}`
+		response, request := preconditionRequest(t, body)
+		var input application.SetAgentNetworkPolicyInput
+		if decodeJSON(response, request, &input) || response.Code != http.StatusBadRequest {
+			t.Fatalf("invalid port accepted: %s", port)
+		}
+	}
+}
+
 func TestContractConventionsDecodeJSONRejectsMalformedPreconditions(t *testing.T) {
 	t.Parallel()
 
