@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { describe, expect, it, vi } from "vitest";
 import { ExecutionAudits } from "../../src/application/execution-audit.js";
 import type { AuditPrincipal, AuditSummary } from "../../src/domain/execution-audit.js";
@@ -152,6 +153,7 @@ describe("administrative execution audit queries", () => {
       { run_id: "run-1", stream: "permissions", limit: 1 },
       signal,
     );
+    expect(Buffer.byteLength(first.next_cursor!)).toBeLessThanOrEqual(4096);
     await service.events(
       admin,
       { run_id: "run-1", stream: "permissions", cursor: first.next_cursor },
@@ -159,7 +161,11 @@ describe("administrative execution audit queries", () => {
     );
     expect(repository.permissions).toHaveBeenLastCalledWith(
       expect.objectContaining({
-        after: { kind: "time", at: record.created_at, id: permission.tool_call_id },
+        after: {
+          kind: "permission_hash",
+          at: record.created_at,
+          id: createHash("sha256").update(permission.tool_call_id).digest("hex"),
+        },
       }),
       signal,
     );

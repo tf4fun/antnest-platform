@@ -29,7 +29,7 @@ function mockProvisioning(options: {
     if (init.method === "POST") return options.write(path, String(init.body));
     if (path === providerPath) return options.providers ? options.providers() : Response.json({ providers: [provider] });
     if (path === tokenPath) return options.tokens ? options.tokens() : Response.json({ tokens: [token] });
-    if (path === "/api/admin/directory/identity-providers") return Response.json({ providers: [{ id: "provider-1", name: provider.name, display_name: provider.display_name, enabled: false, link_policy: "none", link_domains: [], authoritative: false, link_policy_review_required: false }] });
+    if (path === "/api/admin/directory/identity-providers") return Response.json({ items: [{ id: "provider-1", name: provider.name, display_name: provider.display_name, enabled: false, link_policy: "none", link_domains: [], authoritative: false, link_policy_review_required: false }], next_cursor: null });
     throw new Error(`Unexpected request: ${path}`);
   }));
   return requests;
@@ -131,10 +131,10 @@ it("retries the failed chooser page without silently dropping a selected SCIM pa
       if (init.method === "POST") { sent = JSON.parse(String(init.body)); return Response.json({ token: { ...token, oidc_provider_id: sent?.oidc_provider_id ?? null }, credential: "synthetic" }); }
       return Response.json({ tokens: [] });
     }
-    const after = url.searchParams.get("after_id");
-    if (after === "provider-2") return ++attempts === 1 ? Response.json({ message: "Third page unavailable" }, { status: 503 }) : Response.json({ providers: [choice("provider-3")] });
-    if (after === "provider-1") return Response.json({ providers: [choice("provider-2")], next_cursor: "provider-2" });
-    return Response.json({ providers: [choice("provider-1")], next_cursor: "provider-1" });
+    const after = url.searchParams.get("cursor");
+    if (after === "provider-2") return ++attempts === 1 ? Response.json({ message: "Third page unavailable" }, { status: 503 }) : Response.json({ items: [choice("provider-3")], next_cursor: null });
+    if (after === "provider-1") return Response.json({ items: [choice("provider-2")], next_cursor: "provider-2" });
+    return Response.json({ items: [choice("provider-1")], next_cursor: "provider-1" });
   }));
   render(<ProvisioningPage systemAdministrator={false} />);
   const issue = await screen.findByRole("button", { name: "Issue SCIM token" });
