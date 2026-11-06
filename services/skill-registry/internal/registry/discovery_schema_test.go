@@ -24,6 +24,19 @@ func TestDiscoveryHTTPResponsesMatchSharedSchemaAndRejectMixedAuthority(t *testi
 	if err := compiler.AddResource("https://schemas.antnest.dev/common/error.schema.json", commonDoc); err != nil {
 		t.Fatal(err)
 	}
+	for _, fragment := range []string{"pagination", "precondition"} {
+		data, err := os.ReadFile("../../../../contracts/common/" + fragment + ".schema.json")
+		if err != nil {
+			t.Fatal(err)
+		}
+		doc, err := jsonschema.UnmarshalJSON(bytes.NewReader(data))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := compiler.AddResource("https://schemas.antnest.dev/common/"+fragment+".schema.json", doc); err != nil {
+			t.Fatal(err)
+		}
+	}
 	for _, name := range []string{"registry-api", "discovery-api"} {
 		data, err := os.ReadFile("../../../../contracts/skill-registry/" + name + ".schema.json")
 		if err != nil {

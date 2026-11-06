@@ -19,6 +19,12 @@ func (h *Handler) readDiscovery(w http.ResponseWriter, r *http.Request, out any)
 		writeError(w, failure(apierror.LimitExceeded, "discovery request exceeds 4 KiB"))
 		return nil, false
 	}
+	if _, promote := out.(*PromoteInput); promote {
+		if data, err = normalizeExpectedVersion(data, r); err != nil {
+			writeError(w, failure(apierror.InvalidRequest, "invalid discovery request"))
+			return nil, false
+		}
+	}
 	if err := decodeOne(data, out); err != nil {
 		writeError(w, failure(apierror.InvalidRequest, "invalid discovery request"))
 		return nil, false

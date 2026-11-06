@@ -1132,59 +1132,5 @@
     "kind": "protocol_exception",
     "reason": "Finite bounded discovery/resolution result, not a continuation list.",
     "remove_after": "protocol"
-  },
-  {
-    "file": "skill-registry/registry-api.schema.json",
-    "pointer": "/$defs/skill_page",
-    "field": "$pagination",
-    "replacement": "next_cursor",
-    "kind": "pending_migration",
-    "reason": "skill-registry owner migration tracked by issue #68; legacy wire shape remains until its service batch.",
-    "remove_after": "next_release"
-  },
-  {
-    "file": "skill-registry/registry-api.schema.json",
-    "pointer": "/$defs/skill_page/properties/next_after_id",
-    "field": "next_after_id",
-    "replacement": "next_cursor",
-    "kind": "pending_migration",
-    "reason": "skill-registry owner migration tracked by issue #68; legacy wire shape remains until its service batch.",
-    "remove_after": "next_release"
-  },
-  {
-    "file": "skill-registry/registry-api.schema.json",
-    "pointer": "/$defs/skill_page/required/1",
-    "field": "next_after_id",
-    "replacement": "next_cursor",
-    "kind": "pending_migration",
-    "reason": "skill-registry owner migration tracked by issue #68; legacy wire shape remains until its service batch.",
-    "remove_after": "next_release"
-  },
-  {
-    "file": "skill-registry/registry-api.schema.json",
-    "pointer": "/$defs/version_page",
-    "field": "$pagination",
-    "replacement": "next_cursor",
-    "kind": "pending_migration",
-    "reason": "skill-registry owner migration tracked by issue #68; legacy wire shape remains until its service batch.",
-    "remove_after": "next_release"
-  },
-  {
-    "file": "skill-registry/registry-api.schema.json",
-    "pointer": "/$defs/version_page/properties/next_after_version",
-    "field": "next_after_version",
-    "replacement": "next_cursor",
-    "kind": "pending_migration",
-    "reason": "skill-registry owner migration tracked by issue #68; legacy wire shape remains until its service batch.",
-    "remove_after": "next_release"
-  },
-  {
-    "file": "skill-registry/registry-api.schema.json",
-    "pointer": "/$defs/version_page/required/1",
-    "field": "next_after_version",
-    "replacement": "next_cursor",
-    "kind": "pending_migration",
-    "reason": "skill-registry owner migration tracked by issue #68; legacy wire shape remains until its service batch.",
-    "remove_after": "next_release"
   }
 ]

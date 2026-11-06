@@ -92,7 +92,9 @@ version without consulting a changed/deleted/unavailable source; changed input
 is request_conflict. New requests fetch the selected complete package and check
 its current source sequence, digest and shared format before publishing.
 
-No target means create; appending requires both skill_id and expected_version,
+No target means create; appending requires both skill_id and the precondition
+(canonical `expected_version` decimal string, one-release numeric alias, or a
+single strong `If-Match` token),
 keeps the same package name and follows the existing name uniqueness/CAS rules.
 Fingerprint binds action=promotion, organization, actor, source ref/digest,
 target and expected version. Existing upload and promotion receipts share one
