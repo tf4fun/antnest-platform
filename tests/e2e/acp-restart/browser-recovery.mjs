@@ -16,7 +16,11 @@ import {
   assertManualRecoveryEvidence,
   recoveryResourceID,
 } from "./manual-recovery-evidence.mjs";
-import { assertBrowserRecoveryRequests } from "./browser-recovery-evidence.mjs";
+import {
+  assertBrowserRecoveryRequests,
+  summarizeBrowserRecoveryFailure,
+} from "./browser-recovery-evidence.mjs";
+import { openRecoveryWorkspace } from "./browser-navigation.mjs";
 
 const [expectedFile, checkpoint, directory] = process.argv.slice(2);
 assert(expectedFile && checkpoint && directory);
@@ -236,8 +240,10 @@ try {
       expected.owner_role,
     );
     observe(owner, ownerScope, operationPath);
-    await owner.goto(new URL(workspace, gateway).href, {
-      waitUntil: "domcontentloaded",
+    await openRecoveryWorkspace(owner, {
+      gateway,
+      workspace,
+      role: expected.owner_role,
     });
     const alert = owner.getByRole("status", { name: "Workspace recovery" });
     await alert.waitFor({ state: "visible" });
@@ -451,6 +457,7 @@ try {
     { signal },
   );
 } catch (error) {
+  save("browser-recovery-failure.json", summarizeBrowserRecoveryFailure(error));
   save("browser-recovery-requests.private.json", requests);
   save("browser-recovery-failure.private.json", {
     name: error.name,
