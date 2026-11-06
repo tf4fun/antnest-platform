@@ -28,8 +28,8 @@ export function useExternalIdentities(client: BrowserSessionClient, enabled = tr
       if (!active(current) || !client.responseCurrent(page)) return;
       // A page always contains both streams. Only the requested stream advances.
       if (stream !== "notices") {
-        setBindings(previous => after ? append(previous ?? [], page.bindings) : page.bindings);
-        setBindingCursor(page.next_after_id);
+        setBindings(previous => after ? append(previous ?? [], page.items) : page.items);
+        setBindingCursor(page.next_cursor ?? undefined);
       }
       if (stream !== "bindings") {
         setNotices(previous => after ? append(previous, page.notices) : page.notices);

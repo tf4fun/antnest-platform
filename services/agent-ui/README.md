@@ -13,6 +13,14 @@ execution or exposing internal service credentials to the browser. It is one
 TypeScript/Node 24 service: the Node process runs the ACP Bridge, the Workspace
 HTTP/SSE API and streaming React SSR.
 
+Browser account inventories consume Gateway's #68 canonical `items` and
+nullable-string `next_cursor` pages and send primary query `cursor`, with
+no legacy response adapter. Gateway's #68 producer batch is a prerequisite.
+Account paging preserves deduplication, validated-response ownership and
+cancellation; bindings and notices still advance independently through the
+notice-specific cursor. ACP `nextCursor`, ordered feeds, and Bridge commands
+are unchanged.
+
 The browser is an in-memory presentation layer that talks only to its own
 origin. It never opens an ACP connection. Node holds the official ACP SDK
 connection per authorized owner, independently of browser tabs, and rebuilds

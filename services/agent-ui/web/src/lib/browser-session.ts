@@ -17,12 +17,12 @@ export type BrowserAccount = {
   local_password_available: boolean;
 };
 export type SessionInventory = {
-  sessions: Array<{
+  items: Array<{
     id: string; organization_id: string; organization_slug: string; organization_name: string;
     created_at: string; last_active_at: string; idle_expires_at: string; expires_at: string;
     user_agent_hint: string; current: boolean;
   }>;
-  next_after_id?: string;
+  next_cursor: string | null;
 };
 export type SessionRevocation = { revoked_count: number; current_revoked: boolean };
 export type ExternalIdentityDetails = {
@@ -35,8 +35,8 @@ export type ExternalIdentity = ExternalIdentityDetails & {
 };
 export type ExternalIdentityNotice = ExternalIdentityDetails & { id: string; binding_id: string };
 export type ExternalIdentityInventory = {
-  bindings: ExternalIdentity[]; notices: ExternalIdentityNotice[];
-  next_after_id?: string; next_notice_after_id?: string;
+  items: ExternalIdentity[]; notices: ExternalIdentityNotice[];
+  next_cursor: string | null; next_notice_after_id?: string;
 };
 export type BrowserRequest = Readonly<{ generation: symbol; hint: string | undefined }>;
 export type SessionEvent = { type: "validation_required" | "transition" } |
@@ -202,10 +202,10 @@ export class BrowserSessionClient {
     return this.track(raw, before);
   }
   sessions(afterID?: string, signal?: AbortSignal): Promise<SessionInventory> {
-    return this.request(`/api/session/sessions?limit=50${afterID ? `&after_id=${encodeURIComponent(afterID)}` : ""}`, { signal }) as Promise<SessionInventory>;
+    return this.request(`/api/session/sessions?limit=50${afterID ? `&cursor=${encodeURIComponent(afterID)}` : ""}`, { signal }) as Promise<SessionInventory>;
   }
   externalIdentities(cursors: { afterID?: string; noticeAfterID?: string } = {}, signal?: AbortSignal): Promise<ExternalIdentityInventory> {
-    return this.request(`/api/session/external-identities?limit=50${cursors.afterID ? `&after_id=${encodeURIComponent(cursors.afterID)}` : ""}${cursors.noticeAfterID ? `&notice_after_id=${encodeURIComponent(cursors.noticeAfterID)}` : ""}`, { signal }) as Promise<ExternalIdentityInventory>;
+    return this.request(`/api/session/external-identities?limit=50${cursors.afterID ? `&cursor=${encodeURIComponent(cursors.afterID)}` : ""}${cursors.noticeAfterID ? `&notice_after_id=${encodeURIComponent(cursors.noticeAfterID)}` : ""}`, { signal }) as Promise<ExternalIdentityInventory>;
   }
   async unbindExternalIdentity(bindingID: string, allowLockout = false, signal?: AbortSignal): Promise<SessionRevocation> {
     const before = this.capture();

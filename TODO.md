@@ -20,6 +20,8 @@ Issue 状态最后核对于 2026-10-28：141 个 issue，87 个已关闭，54 �
 
 ## 当前批次
 
+- **#68 Agent UI 批次（2026-11-06，依赖 Gateway PR #556）**：browser account／external identity 消费 canonical items／next_cursor，query 只发 cursor；内部参数名、已验证 response ownership、跨页 dedupe／abort 与 notices 独立游标不变；ACP nextCursor／Bridge 无改动。新增 2 项 query RED 后实现，61 unit／17 component／typecheck GREEN，日志 `artifacts/verification/issue-68-agent-ui/`。服务批次到此全部提交，随后只做显式契约集成与交接；不再查询 CI，完整远程准入由用户反馈。
+
 - **#68 Gateway 批次（2026-11-06，依赖 Console PR #554／Identity PR #552）**：主列表 browser alias 独占接收，Identity RPC 只发 cursor、只接 canonical items／nullable next_cursor；internal Go fields、公有 ID／排序／scope／独立 notices feed 不变。先 8 项 RED，定向 Identity client／Gateway browser／external identity／contract GREEN；127-document convention lint clean，日志 `artifacts/verification/issue-68-gateway/`。Agent UI 消费者接线与跨平台 schema 交接分别留后续批次；远程完整准入待确认。
 
 - **#68 Console 批次（2026-11-06，依赖 ACP PR #553）**：BFF／Web 的 catalog、Skill、Identity 页统一 cursor→items／nullable string next_cursor；旧请求别名与旧上游页面过渡读取保留，输出只用新名。CAS 在 HTTP 边界独占 body alias／If-Match，向 Controller／Registry 发 expected_version string；numeric domain／local retry intents 与 scope/key hash 不变。先 RED，协调者 Go 定向 GREEN、Web 24 unit／99 component 用例（失败组修复重跑）、6 owned contract checks、typecheck 与 127-document conventions lint GREEN，日志在 `artifacts/verification/issue-68-console/`。跨平台 schema 编译／消费者集成交接留显式 integration 批次；远程完整准入待确认，继续 Gateway。

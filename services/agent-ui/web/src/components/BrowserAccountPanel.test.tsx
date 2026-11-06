@@ -34,8 +34,8 @@ async function setup(local = false) {
     const path = String(input); calls.push({ path, init });
     if (path === "/api/session") return Response.json(session);
     if (path === "/api/session/account") return Response.json({ account: { ...account, local_password_available: local } });
-    if (path === "/api/session/sessions?limit=50") return Response.json({ sessions: [entry("first")], next_after_id: "next" });
-    if (path.endsWith("after_id=next")) return Response.json({ sessions: [entry("second")] });
+    if (path === "/api/session/sessions?limit=50") return Response.json({ items: [entry("first")], next_cursor: "next" });
+    if (path.endsWith("cursor=next")) return Response.json({ items: [entry("second")], next_cursor: null });
     if (path.endsWith("/password")) {
       if (status !== 200) return Response.json({ code: "invalid_current_password", message: "Current password is incorrect." }, { status });
       hint = "csrf-replacement"; return Response.json(session);
@@ -62,7 +62,7 @@ test("OIDC-only account exposes paginated sessions and escaped agent hints witho
   expect(document.querySelector("dialog img")).toBeNull();
   fireEvent.click(screen.getByRole("button", { name: "Load more sessions" }));
   await waitFor(() => expect(screen.getAllByText('<img src=x onerror="alert(1)">')).toHaveLength(2));
-  expect(calls.some(call => call.path.endsWith("after_id=next"))).toBe(true);
+  expect(calls.some(call => call.path.endsWith("cursor=next"))).toBe(true);
   client.dispose();
 });
 
@@ -136,7 +136,7 @@ test("StrictMode replacement keeps old aborted loads from changing the new panel
   expect(screen.getByText("Loading sessions…")).toBeTruthy();
   await act(async () => {
     for (const load of loads.slice(2)) load.resolve(Response.json(load.path.endsWith("/account")
-      ? { account } : { sessions: [entry("first")] }));
+      ? { account } : { items: [entry("first")], next_cursor: null }));
   });
   expect(await screen.findByText("person@example.test")).toBeTruthy();
   expect(screen.queryByRole("alert")).toBeNull();
