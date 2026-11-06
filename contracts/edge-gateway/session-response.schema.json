@@ -266,17 +266,17 @@
     "session_list": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["sessions"],
+      "required": ["items", "next_cursor"],
       "properties": {
-        "sessions": {
+        "items": {
           "type": "array",
           "maxItems": 100,
           "items": {
             "$ref": "#/$defs/browser_session"
           }
         },
-        "next_after_id": {
-          "$ref": "#/$defs/id"
+        "next_cursor": {
+          "$ref": "../common/pagination.schema.json#/$defs/nullable_cursor"
         }
       }
     },
@@ -327,10 +327,22 @@
           "minimum": 1,
           "maximum": 100
         },
+        "cursor": {
+          "allOf": [
+            {
+              "$ref": "../common/pagination.schema.json#/$defs/cursor"
+            },
+            {
+              "$ref": "#/$defs/id"
+            }
+          ]
+        },
         "after_id": {
-          "$ref": "#/$defs/id"
+          "$ref": "#/$defs/id",
+          "deprecated": true
         }
-      }
+      },
+      "not": {"required": ["cursor", "after_id"], "properties": {"cursor": {"$ref": "../common/pagination.schema.json#/$defs/cursor"}, "after_id": {"$ref": "#/$defs/id"}}}
     },
     "revoke_sessions_request": {
       "type": "object",
@@ -507,9 +519,9 @@
     "external_identity_self_list": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["bindings", "notices"],
+      "required": ["items", "notices", "next_cursor"],
       "properties": {
-        "bindings": {
+        "items": {
           "type": "array",
           "maxItems": 100,
           "items": {
@@ -523,8 +535,8 @@
             "$ref": "#/$defs/external_identity_notice"
           }
         },
-        "next_after_id": {
-          "$ref": "#/$defs/id"
+        "next_cursor": {
+          "$ref": "../common/pagination.schema.json#/$defs/nullable_cursor"
         },
         "next_notice_after_id": {
           "$ref": "#/$defs/id"
@@ -534,17 +546,17 @@
     "external_identity_organization_list": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["bindings"],
+      "required": ["items", "next_cursor"],
       "properties": {
-        "bindings": {
+        "items": {
           "type": "array",
           "maxItems": 100,
           "items": {
             "$ref": "#/$defs/external_identity"
           }
         },
-        "next_after_id": {
-          "$ref": "#/$defs/id"
+        "next_cursor": {
+          "$ref": "../common/pagination.schema.json#/$defs/nullable_cursor"
         }
       }
     },
@@ -626,9 +638,9 @@
     "external_identity_list": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["bindings", "notices"],
+      "required": ["items", "notices", "next_cursor"],
       "properties": {
-        "bindings": {
+        "items": {
           "type": "array",
           "maxItems": 100,
           "items": {
@@ -642,8 +654,8 @@
             "$ref": "#/$defs/external_identity_notice"
           }
         },
-        "next_after_id": {
-          "$ref": "#/$defs/id"
+        "next_cursor": {
+          "$ref": "../common/pagination.schema.json#/$defs/nullable_cursor"
         },
         "next_notice_after_id": {
           "$ref": "#/$defs/id"
@@ -660,13 +672,25 @@
           "minimum": 1,
           "maximum": 100
         },
+        "cursor": {
+          "allOf": [
+            {
+              "$ref": "../common/pagination.schema.json#/$defs/cursor"
+            },
+            {
+              "$ref": "#/$defs/id"
+            }
+          ]
+        },
         "after_id": {
-          "$ref": "#/$defs/id"
+          "$ref": "#/$defs/id",
+          "deprecated": true
         },
         "notice_after_id": {
           "$ref": "#/$defs/id"
         }
-      }
+      },
+      "not": {"required": ["cursor", "after_id"], "properties": {"cursor": {"$ref": "../common/pagination.schema.json#/$defs/cursor"}, "after_id": {"$ref": "#/$defs/id"}}}
     },
     "external_identity_unbind_request": {
       "type": "object",

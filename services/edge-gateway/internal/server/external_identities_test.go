@@ -24,7 +24,7 @@ func externalIdentityControlReply(path string, body map[string]any, now time.Tim
 		// Self inventory is global to the User; a notice is an immutable snapshot
 		// and need not refer to a binding or Membership on the current page.
 		return map[string]any{
-			"bindings": []any{map[string]any{
+			"items": []any{map[string]any{
 				"id": "binding-2", "provider_id": "provider-2", "provider_name": "workforce", "provider_display_name": "Workforce",
 				"organization_id": "other-org", "organization_slug": "other", "organization_name": "Other Organization", "membership_id": "other-member",
 				"subject": " \t opaque 界 ", "method": "scim", "provider_enabled": false, "created_at": now, "bound_at": now, "revoked_at": nil,
@@ -34,7 +34,7 @@ func externalIdentityControlReply(path string, body map[string]any, now time.Tim
 				"organization_id": "historical-org", "organization_slug": "historical", "organization_name": "Historical Organization", "membership_id": "old-membership",
 				"subject": " \t opaque 界 ", "method": "admin", "created_at": now,
 			}},
-			"next_after_id": "binding-2", "next_notice_after_id": "notice-4",
+			"next_cursor": "binding-2", "next_notice_after_id": "notice-4",
 		}
 	}
 }
@@ -68,9 +68,9 @@ func TestGatewayExternalIdentitiesUseSelfAuthorityAndPublicSchemas(t *testing.T)
 			want := map[string]any{"actor_principal_id": f.principal.UserID}
 			switch row.rpc {
 			case "list-external-identities":
-				want["scope"], want["limit"], want["after_id"], want["notice_after_id"] = "self", float64(1), "binding-1", "notice-3"
+				want["scope"], want["limit"], want["cursor"], want["notice_after_id"] = "self", float64(1), "binding-1", "notice-3"
 				var page map[string]any
-				if json.Unmarshal(w.Body.Bytes(), &page) != nil || !reflect.DeepEqual(page["bindings"].([]any)[0].(map[string]any)["subject"], " \t opaque 界 ") {
+				if json.Unmarshal(w.Body.Bytes(), &page) != nil || !reflect.DeepEqual(page["items"].([]any)[0].(map[string]any)["subject"], " \t opaque 界 ") {
 					t.Fatal("opaque subject was changed")
 				}
 			case "unbind-external-identity":
@@ -228,7 +228,7 @@ func TestGatewayExternalIdentityUnbindReturnsCommitBeforeNextRequestReauthentica
 
 func TestGatewayExternalIdentityMalformedUpstreamIsUnavailable(t *testing.T) {
 	for _, row := range []struct{ method, path, body, rpc, response string }{
-		{"GET", "/api/session/external-identities?limit=1", "", "list-external-identities", `{"bindings":[],"notices":null}`},
+		{"GET", "/api/session/external-identities?limit=1", "", "list-external-identities", `{"items":[],"notices":null}`},
 		{"DELETE", "/api/session/external-identities/binding-2", `{}`, "unbind-external-identity", `{"revoked_count":0,"current_revoked":true}`},
 		{"POST", "/api/session/external-identities/notices/acknowledge", `{"notice_ids":["notice-4"]}`, "acknowledge-external-identity-notices", `{"acknowledged_count":2}`},
 	} {

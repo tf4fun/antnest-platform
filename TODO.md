@@ -20,6 +20,8 @@ Issue 状态最后核对于 2026-10-28：141 个 issue，87 个已关闭，54 �
 
 ## 当前批次
 
+- **#68 Gateway 批次（2026-11-06，依赖 Console PR #554／Identity PR #552）**：主列表 browser alias 独占接收，Identity RPC 只发 cursor、只接 canonical items／nullable next_cursor；internal Go fields、公有 ID／排序／scope／独立 notices feed 不变。先 8 项 RED，定向 Identity client／Gateway browser／external identity／contract GREEN；127-document convention lint clean，日志 `artifacts/verification/issue-68-gateway/`。Agent UI 消费者接线与跨平台 schema 交接分别留后续批次；远程完整准入待确认。
+
 - **#68 Console 批次（2026-11-06，依赖 ACP PR #553）**：BFF／Web 的 catalog、Skill、Identity 页统一 cursor→items／nullable string next_cursor；旧请求别名与旧上游页面过渡读取保留，输出只用新名。CAS 在 HTTP 边界独占 body alias／If-Match，向 Controller／Registry 发 expected_version string；numeric domain／local retry intents 与 scope/key hash 不变。先 RED，协调者 Go 定向 GREEN、Web 24 unit／99 component 用例（失败组修复重跑）、6 owned contract checks、typecheck 与 127-document conventions lint GREEN，日志在 `artifacts/verification/issue-68-console/`。跨平台 schema 编译／消费者集成交接留显式 integration 批次；远程完整准入待确认，继续 Gateway。
 
 - **#68 ACP 批次（2026-11-06，依赖 Identity PR #552）**：审计请求／响应与 ACP Session 列表在解码或 repository 调用前 enforcing 1..4096 UTF-8 byte opaque cursors；共享 schema 同步字符界限，非 ASCII byte 界限保留 runtime 检查。协议 sessions／nextCursor、prompt idempotency、learning 双向 feed 和 owner-history structured cursor 例外不变。协调者先确认 8 项 RED，后 37 项定向 GREEN，契约生成 --check 与 lint clean（`artifacts/verification/issue-68-acp/`）；远程完整准入待确认，继续 Console。

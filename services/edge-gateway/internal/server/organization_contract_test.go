@@ -84,6 +84,17 @@ func compileOrganizationSchema(t *testing.T, path, definition string) *jsonschem
 		compiled.MatchTimeout = 100 * time.Millisecond
 		return contractRegexp{compiled}, nil
 	})
+	pagination, err := os.ReadFile("../../../../contracts/common/pagination.schema.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	paginationDoc, err := jsonschema.UnmarshalJSON(bytes.NewReader(pagination))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := compiler.AddResource("https://schemas.antnest.dev/common/pagination.schema.json", paginationDoc); err != nil {
+		t.Fatal(err)
+	}
 	if err := compiler.AddResource(id, document); err != nil {
 		t.Fatal(err)
 	}
