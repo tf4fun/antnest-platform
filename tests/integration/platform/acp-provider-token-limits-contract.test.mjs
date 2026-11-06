@@ -10,7 +10,7 @@ const { Ajv2020 } = require("ajv/dist/2020.js");
 const contracts = new URL("../../../contracts/", import.meta.url);
 const schemaPath = "agent-controller/provider-token-limits.schema.json";
 const schemaId =
-  "https://antnest.local/contracts/agent-controller/provider-token-limits.schema.json";
+  "https://schemas.antnest.dev/agent-controller/provider-token-limits.schema.json";
 const read = (path) =>
   JSON.parse(readFileSync(new URL(path, contracts), "utf8"));
 

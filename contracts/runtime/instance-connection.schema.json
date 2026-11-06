@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://antnest.local/contracts/runtime/instance-connection.schema.json",
+  "$id": "https://schemas.antnest.dev/runtime/instance-connection.schema.json",
   "title": "Private Runtime instance connection, version 1",
   "$comment": "Raw credentials are a private service handoff, never a public binding or Run snapshot. Canonical token decoding, binding equality and endpoint ownership require semantic checks.",
   "$defs": {

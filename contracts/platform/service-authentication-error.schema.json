@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://antnest.local/contracts/platform/service-authentication-error.schema.json",
+  "$id": "https://schemas.antnest.dev/platform/service-authentication-error.schema.json",
   "title": "Common authentication error classification (not a replacement HTTP envelope)",
   "type": "object",
   "additionalProperties": false,

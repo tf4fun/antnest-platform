@@ -1,24 +1,24 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://antnest.local/runtime-controller/api/control-api.schema.json",
+  "$id": "https://schemas.antnest.dev/runtime-controller/control-api.schema.json",
   "title": "Antnest Runtime Controller HTTP Messages",
   "$defs": {
     "acp_register_request": {
-      "$ref": "https://antnest.dev/contracts/agent-acp/owner-incarnation.schema.json#/$defs/register_request"
+      "$ref": "https://schemas.antnest.dev/agent-acp/owner-incarnation.schema.json#/$defs/register_request"
     },
     "acp_registration": {
-      "$ref": "https://antnest.dev/contracts/agent-acp/owner-incarnation.schema.json#/$defs/registration"
+      "$ref": "https://schemas.antnest.dev/agent-acp/owner-incarnation.schema.json#/$defs/registration"
     },
     "acp_inspection": {
-      "$ref": "https://antnest.dev/contracts/agent-acp/owner-incarnation.schema.json#/$defs/inspection"
+      "$ref": "https://schemas.antnest.dev/agent-acp/owner-incarnation.schema.json#/$defs/inspection"
     },
     "acp_registration_id": {
-      "$ref": "https://antnest.dev/contracts/agent-acp/owner-incarnation.schema.json#/$defs/registration_id"
+      "$ref": "https://schemas.antnest.dev/agent-acp/owner-incarnation.schema.json#/$defs/registration_id"
     },
     "acp_incarnation_error": {
-      "$ref": "https://antnest.dev/contracts/agent-acp/owner-incarnation.schema.json#/$defs/error",
+      "$ref": "https://schemas.antnest.dev/agent-acp/owner-incarnation.schema.json#/$defs/error",
       "allOf": [
-        {"$ref": "https://antnest.local/contracts/common/error.schema.json"}
+        {"$ref": "https://schemas.antnest.dev/common/error.schema.json"}
       ]
     },
     "tagged_image_reference": {
@@ -75,7 +75,7 @@
       "$ref": "runtime-deployment.schema.json"
     },
     "skill_prepare_request": {
-      "$ref": "../../../contracts/skill-registry/runtime-delivery.schema.json#/$defs/prepare_request",
+      "$ref": "../skill-registry/runtime-delivery.schema.json#/$defs/prepare_request",
       "required": [
         "organization_id",
         "owner_operation_id",
@@ -85,7 +85,7 @@
       ]
     },
     "skill_prepare_receipt": {
-      "$ref": "../../../contracts/skill-registry/runtime-delivery.schema.json#/$defs/prepare_receipt",
+      "$ref": "../skill-registry/runtime-delivery.schema.json#/$defs/prepare_receipt",
       "required": [
         "request_id",
         "agent_id",
@@ -497,7 +497,7 @@
       }
     },
     "error": {
-      "$ref": "https://antnest.local/contracts/common/error.schema.json",
+      "$ref": "https://schemas.antnest.dev/common/error.schema.json",
       "type": "object",
       "additionalProperties": false,
       "required": ["code", "category", "message", "retryable", "request_id"],
@@ -552,16 +552,16 @@
       "description": "Header wire profile; canonical base64url bytes and per-caller SHA256 comparison are enforced by the receiver."
     },
     "runtime_connection_request": {
-      "$ref": "../../../contracts/runtime/instance-connection.schema.json#/$defs/resolve_request"
+      "$ref": "../runtime/instance-connection.schema.json#/$defs/resolve_request"
     },
     "runtime_connection": {
-      "$ref": "../../../contracts/runtime/instance-connection.schema.json#/$defs/private_connection"
+      "$ref": "../runtime/instance-connection.schema.json#/$defs/private_connection"
     },
     "acp_history_request": {
-      "$ref": "https://antnest.dev/contracts/agent-acp/owner-incarnation-history.schema.json#/$defs/request"
+      "$ref": "https://schemas.antnest.dev/agent-acp/owner-incarnation-history.schema.json#/$defs/request"
     },
     "acp_history_page": {
-      "$ref": "https://antnest.dev/contracts/agent-acp/owner-incarnation-history.schema.json#/$defs/response"
+      "$ref": "https://schemas.antnest.dev/agent-acp/owner-incarnation-history.schema.json#/$defs/response"
     }
   }
 }

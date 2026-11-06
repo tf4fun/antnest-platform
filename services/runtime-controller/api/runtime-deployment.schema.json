@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://antnest.local/runtime-controller/api/runtime-deployment.schema.json",
+  "$id": "https://schemas.antnest.dev/runtime-controller/runtime-deployment.schema.json",
   "title": "Antnest Runtime Configuration",
   "description": "Caller-owned Runtime policy. Runtime Controller injects identity, internal generation, listener, filesystem, and platform mapping.",
   "type": "object",
@@ -34,21 +34,21 @@
       "type": "array",
       "maxItems": 32,
       "items": {
-        "$ref": "../../../contracts/skill-registry/runtime-delivery.schema.json#/$defs/frozen_skill"
+        "$ref": "../skill-registry/runtime-delivery.schema.json#/$defs/frozen_skill"
       }
     },
     "prepared_skill_set": {
-      "$ref": "../../../contracts/skill-registry/runtime-delivery.schema.json#/$defs/prepared_skill_set"
+      "$ref": "../skill-registry/runtime-delivery.schema.json#/$defs/prepared_skill_set"
     },
     "prepared_reference_id": {
       "type": "string",
       "pattern": "^psr_[0-9a-f]{32}$"
     },
     "managed_mcp_template": {
-      "$ref": "../../../contracts/runtime/managed-mcp.schema.json#/$defs/template_source"
+      "$ref": "../runtime/managed-mcp.schema.json#/$defs/template_source"
     },
     "mcp_servers": {
-      "$ref": "../../../contracts/runtime/runtime-spec.schema.json#/properties/mcp_servers"
+      "$ref": "../runtime/runtime-spec.schema.json#/properties/mcp_servers"
     },
     "image_ref": {
       "type": "string",

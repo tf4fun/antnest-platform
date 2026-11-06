@@ -172,7 +172,7 @@
       "additionalProperties": false
     }
   ],
-  "$id": "https://antnest.local/contracts/agent-acp/agent-execution-state.schema.json",
+  "$id": "https://schemas.antnest.dev/agent-acp/agent-execution-state.schema.json",
   "title": "Workspace execution state",
   "description": "Current view only, not an admission or execution result. Denied views disclose neither configuration nor Session identity."
 }

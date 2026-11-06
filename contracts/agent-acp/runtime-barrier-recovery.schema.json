@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://antnest.local/contracts/agent-acp/runtime-barrier-recovery.schema.json",
+  "$id": "https://schemas.antnest.dev/agent-acp/runtime-barrier-recovery.schema.json",
   "title": "Pending Controller runtime barrier recovery query",
   "description": "A scoped recovery fact, not execution admission or proof of settlement. Producer and consumer implementation remain pending.",
   "$ref": "#/$defs/result",

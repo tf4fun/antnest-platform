@@ -1,6 +1,6 @@
 {
-  "$schema": "http://json-schema.org/draft-07/schema#",
-  "$id": "urn:antnest:runtime:temporary-skills:v1",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.antnest.dev/runtime/temporary-skills.schema.json",
   "title": "Runtime private temporary Skill delivery",
   "oneOf": [
     { "$ref": "#/$defs/install_metadata" },
@@ -153,7 +153,7 @@
     },
     "common_error_reply": {
       "allOf": [
-        {"$ref": "https://antnest.local/contracts/common/error.schema.json"},
+        {"$ref": "https://schemas.antnest.dev/common/error.schema.json"},
         {
           "type": "object",
           "additionalProperties": false,
@@ -170,7 +170,7 @@
             "details": {"type": "object"},
             "error": {
               "allOf": [
-                {"$ref": "https://antnest.local/contracts/common/error.schema.json"},
+                {"$ref": "https://schemas.antnest.dev/common/error.schema.json"},
                 {
                   "type": "object",
                   "additionalProperties": false,

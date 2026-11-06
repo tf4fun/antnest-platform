@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://antnest.local/contracts/egress/resource-version-request.schema.json",
+  "$id": "https://schemas.antnest.dev/egress/resource-version-request.schema.json",
   "title": "Runtime Egress Resource Version Request",
   "type": "object",
   "additionalProperties": false,

@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://antnest.local/contracts/egress/policy.schema.json",
+  "$id": "https://schemas.antnest.dev/egress/policy.schema.json",
   "title": "Antnest Runtime Egress Policy",
   "oneOf": [
     {

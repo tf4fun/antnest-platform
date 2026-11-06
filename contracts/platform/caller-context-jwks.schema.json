@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://antnest.local/contracts/platform/caller-context-jwks.schema.json",
+  "$id": "https://schemas.antnest.dev/platform/caller-context-jwks.schema.json",
   "type": "object",
   "additionalProperties": false,
   "required": [

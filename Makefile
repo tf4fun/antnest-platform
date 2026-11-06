@@ -121,6 +121,7 @@ test-node: test-repo
 .PHONY: test-repo
 test-repo:
 	$(MAKE) test-verification-python
+	node scripts/check-contract-conventions.mjs
 	node --test --test-concurrency=1 tests/integration/deployment/dependency-secrets.test.mjs
 	node --test --test-concurrency=1 tests/integration/deployment/e2e-overlays.test.mjs tests/integration/deployment/agent-ui-receipt-gate.test.mjs
 	node --test --test-concurrency=1 tests/support/*.test.mjs tests/support/verification/*.test.mjs

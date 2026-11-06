@@ -1,5 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.antnest.dev/runtime/runtime-information.schema.json",
   "title": "Antnest Runtime Information",
   "type": "object",
   "additionalProperties": false,

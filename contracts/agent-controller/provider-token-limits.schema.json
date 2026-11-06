@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://antnest.local/contracts/agent-controller/provider-token-limits.schema.json",
+  "$id": "https://schemas.antnest.dev/agent-controller/provider-token-limits.schema.json",
   "title": "Observed Provider token limits",
   "type": "object",
   "additionalProperties": false,

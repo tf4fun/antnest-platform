@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://antnest.local/contracts/platform/caller-context-claims.schema.json",
+  "$id": "https://schemas.antnest.dev/platform/caller-context-claims.schema.json",
   "title": "Antnest Caller Context Token claims v1",
   "type": "object",
   "additionalProperties": false,

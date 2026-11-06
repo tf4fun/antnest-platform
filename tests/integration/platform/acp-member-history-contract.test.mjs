@@ -14,7 +14,7 @@ const schemaPath = "contracts/agent-acp/owner-incarnation-history.schema.json";
 const manifestPath =
   "contracts/agent-acp/owner-incarnation-history-contract.json";
 const schemaID =
-  "https://antnest.dev/contracts/agent-acp/owner-incarnation-history.schema.json";
+  "https://schemas.antnest.dev/agent-acp/owner-incarnation-history.schema.json";
 const routePath = "/internal/acp-incarnations/history";
 const historyID = "01234567-89ab-4cde-8fab-0123456789ab";
 const otherHistoryID = "23456789-abcd-4ef0-abcd-23456789abcd";

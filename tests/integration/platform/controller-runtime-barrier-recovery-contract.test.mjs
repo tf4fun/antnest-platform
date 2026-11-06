@@ -10,7 +10,7 @@ const { Ajv2020 } = require("ajv/dist/2020.js");
 const root = new URL("../../../contracts/", import.meta.url);
 const read = (path) => JSON.parse(readFileSync(new URL(path, root), "utf8"));
 const schemaID =
-  "https://antnest.local/agent-controller/runtime-barrier-recovery.schema.json";
+  "https://schemas.antnest.dev/agent-controller/runtime-barrier-recovery.schema.json";
 const policyPath = "/internal/runtime-barrier-recovery-policy";
 const rebuildRoute = "POST /internal/agents/{agent_id}/rebuild";
 const maximumRevision = Number.MAX_SAFE_INTEGER;

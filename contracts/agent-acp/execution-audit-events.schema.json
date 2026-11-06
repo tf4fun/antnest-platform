@@ -53,6 +53,11 @@
           }
         },
         "next_cursor": {
+          "allOf": [
+            {
+              "$ref": "../common/pagination.schema.json#/$defs/nullable_cursor"
+            }
+          ],
           "type": [
             "string",
             "null"
@@ -148,6 +153,11 @@
           }
         },
         "next_cursor": {
+          "allOf": [
+            {
+              "$ref": "../common/pagination.schema.json#/$defs/nullable_cursor"
+            }
+          ],
           "type": [
             "string",
             "null"
@@ -162,7 +172,7 @@
       "additionalProperties": false
     }
   ],
-  "$id": "https://antnest.local/contracts/agent-acp/execution-audit-events.schema.json",
+  "$id": "https://schemas.antnest.dev/agent-acp/execution-audit-events.schema.json",
   "title": "Administrative execution records",
   "description": "Normalized message payloads or current permission records; no fabricated cross-store sequence."
 }

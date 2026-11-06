@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://antnest.dev/contracts/agent-acp/owner-incarnation.schema.json",
+  "$id": "https://schemas.antnest.dev/agent-acp/owner-incarnation.schema.json",
   "title": "Private ACP incarnation registration and stop facts (planned producers)",
   "$defs": {
     "member_id": {
@@ -294,7 +294,7 @@
                 },
                 "allOf": [
                   {
-                    "$ref": "https://antnest.local/contracts/common/error.schema.json"
+                    "$ref": "https://schemas.antnest.dev/common/error.schema.json"
                   }
                 ]
               }
@@ -376,7 +376,7 @@
                 },
                 "allOf": [
                   {
-                    "$ref": "https://antnest.local/contracts/common/error.schema.json"
+                    "$ref": "https://schemas.antnest.dev/common/error.schema.json"
                   }
                 ]
               }

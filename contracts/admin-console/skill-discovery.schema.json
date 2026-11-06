@@ -1,13 +1,13 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://antnest.local/contracts/admin-console/skill-discovery.schema.json",
+  "$id": "https://schemas.antnest.dev/admin-console/skill-discovery.schema.json",
   "title": "Console Skill sources and explicit promotion",
   "$defs": {
     "agent_ref": {
-      "$ref": "https://antnest.local/contracts/skill-registry/discovery-api.schema.json#/$defs/agent_ref"
+      "$ref": "https://schemas.antnest.dev/skill-registry/discovery-api.schema.json#/$defs/agent_ref"
     },
     "digest": {
-      "$ref": "https://antnest.local/contracts/skill-registry/discovery-api.schema.json#/$defs/digest"
+      "$ref": "https://schemas.antnest.dev/skill-registry/discovery-api.schema.json#/$defs/digest"
     },
     "search_request": {
       "type": "object",
@@ -15,10 +15,10 @@
       "required": ["query"],
       "properties": {
         "query": {
-          "$ref": "https://antnest.local/contracts/skill-registry/discovery-api.schema.json#/$defs/query"
+          "$ref": "https://schemas.antnest.dev/skill-registry/discovery-api.schema.json#/$defs/query"
         },
         "limit": {
-          "$ref": "https://antnest.local/contracts/skill-registry/discovery-api.schema.json#/$defs/limit"
+          "$ref": "https://schemas.antnest.dev/skill-registry/discovery-api.schema.json#/$defs/limit"
         }
       }
     },
@@ -29,10 +29,10 @@
       "properties": {
         "skill_ref": { "$ref": "#/$defs/agent_ref" },
         "name": {
-          "$ref": "https://antnest.local/contracts/skill-registry/discovery-api.schema.json#/$defs/name"
+          "$ref": "https://schemas.antnest.dev/skill-registry/discovery-api.schema.json#/$defs/name"
         },
         "description": {
-          "$ref": "https://antnest.local/contracts/skill-registry/discovery-api.schema.json#/$defs/description"
+          "$ref": "https://schemas.antnest.dev/skill-registry/discovery-api.schema.json#/$defs/description"
         },
         "content_digest": { "$ref": "#/$defs/digest" }
       }
@@ -91,7 +91,7 @@
         "skill_ref": { "$ref": "#/$defs/agent_ref" },
         "expected_digest": { "$ref": "#/$defs/digest" },
         "skill_id": {
-          "$ref": "https://antnest.local/contracts/skill-registry/discovery-api.schema.json#/$defs/skill_id"
+          "$ref": "https://schemas.antnest.dev/skill-registry/discovery-api.schema.json#/$defs/skill_id"
         },
         "expected_version": {
           "type": "integer",
@@ -105,7 +105,7 @@
       }
     },
     "promote_response": {
-      "$ref": "https://antnest.local/contracts/skill-registry/registry-api.schema.json#/$defs/version"
+      "$ref": "https://schemas.antnest.dev/skill-registry/registry-api.schema.json#/$defs/version"
     }
   }
 }

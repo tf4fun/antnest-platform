@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.antnest.dev/common/pagination.schema.json",
+  "title": "Shared pagination conventions",
+  "$defs": {
+    "cursor": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 4096
+    },
+    "nullable_cursor": {
+      "type": ["string", "null"],
+      "minLength": 1,
+      "maxLength": 4096
+    },
+    "limit": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 100,
+      "default": 50
+    },
+    "request": {
+      "type": "object",
+      "properties": {
+        "cursor": { "$ref": "#/$defs/cursor" },
+        "limit": { "$ref": "#/$defs/limit" }
+      }
+    },
+    "response": {
+      "type": "object",
+      "required": ["items", "next_cursor"],
+      "properties": {
+        "items": { "type": "array" },
+        "next_cursor": { "$ref": "#/$defs/nullable_cursor" }
+      }
+    }
+  }
+}

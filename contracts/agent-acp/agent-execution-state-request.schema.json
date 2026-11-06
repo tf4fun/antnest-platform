@@ -3,7 +3,7 @@
   "type": "object",
   "properties": {},
   "additionalProperties": false,
-  "$id": "https://antnest.local/contracts/agent-acp/agent-execution-state-request.schema.json",
+  "$id": "https://schemas.antnest.dev/agent-acp/agent-execution-state-request.schema.json",
   "title": "Workspace execution state request",
   "description": "The trusted transport tuple selects the Agent and caller; the request has no identity parameters."
 }

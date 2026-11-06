@@ -11,7 +11,7 @@ const contracts = new URL("../../../contracts/", import.meta.url);
 const read = (path) =>
   JSON.parse(readFileSync(new URL(path, contracts), "utf8"));
 const schemaPath = "agent-controller/model-call-policy.schema.json";
-const schemaId = `https://antnest.local/contracts/${schemaPath}`;
+const schemaId = `https://schemas.antnest.dev/${schemaPath}`;
 
 function validators() {
   const schema = read(schemaPath);

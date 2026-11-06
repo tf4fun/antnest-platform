@@ -12,11 +12,11 @@ const read = (path) =>
   JSON.parse(readFileSync(new URL(path, contracts), "utf8"));
 
 const legacyId =
-  "https://antnest.local/contracts/agent-acp/execution-snapshot.schema.json";
+  "https://schemas.antnest.dev/agent-acp/execution-snapshot.schema.json";
 const publicationId =
-  "https://antnest.local/contracts/agent-acp/execution-publication-v2.schema.json";
+  "https://schemas.antnest.dev/agent-acp/execution-publication-v2.schema.json";
 const credentialsId =
-  "https://antnest.local/contracts/agent-controller/execution-credentials.schema.json";
+  "https://schemas.antnest.dev/agent-controller/execution-credentials.schema.json";
 
 function validators() {
   const legacy = read("agent-acp/execution-snapshot.schema.json");

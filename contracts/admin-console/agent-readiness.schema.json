@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://antnest.local/contracts/admin-console/agent-readiness.schema.json",
+  "$id": "https://schemas.antnest.dev/admin-console/agent-readiness.schema.json",
   "title": "Console Agent readiness projection",
   "description": "The optional readiness extension of an Agent response. Missing readiness remains unknown; Runtime health and lifecycle completion do not supply a default.",
   "type": "object",

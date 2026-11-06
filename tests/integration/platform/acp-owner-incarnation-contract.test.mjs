@@ -11,7 +11,7 @@ const { Ajv2020 } = require("ajv/dist/2020.js");
 const root = new URL("../../../", import.meta.url);
 const read = (path) => JSON.parse(readFileSync(new URL(path, root), "utf8"));
 const schemaID =
-  "https://antnest.dev/contracts/agent-acp/owner-incarnation.schema.json";
+  "https://schemas.antnest.dev/agent-acp/owner-incarnation.schema.json";
 const schemaPath = "contracts/agent-acp/owner-incarnation.schema.json";
 const manifestPath = "contracts/agent-acp/owner-incarnation-contract.json";
 const controlSchemaPath =
@@ -724,7 +724,7 @@ test("RC local aliases execute the shared closed DTO grammar without coercion or
             $ref: `${schemaID}#/$defs/${definition}`,
             allOf: [
               {
-                $ref: "https://antnest.local/contracts/common/error.schema.json",
+                $ref: "https://schemas.antnest.dev/common/error.schema.json",
               },
             ],
           }

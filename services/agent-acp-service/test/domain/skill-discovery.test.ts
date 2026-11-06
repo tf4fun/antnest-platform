@@ -51,7 +51,7 @@ it("publishes the frozen model inputs and rejects mixed refs or chosen authority
   ] as const;
   for (const [name, implementation, allowed, denied] of entries) {
     const frozen = ajv.getSchema(
-      `https://antnest.local/contracts/skill-registry/discovery-api.schema.json#/$defs/${name}_input`,
+      `https://schemas.antnest.dev/skill-registry/discovery-api.schema.json#/$defs/${name}_input`,
     )!;
     const published = ajv.compile(
       skillDiscoveryTools.find((tool) => tool.name === name)!.inputSchema!,

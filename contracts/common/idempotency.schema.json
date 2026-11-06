@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.antnest.dev/common/idempotency.schema.json",
+  "title": "Shared idempotency conventions",
+  "$defs": {
+    "key": {
+      "type": "string",
+      "minLength": 8,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9._:-]+$"
+    },
+    "internal_request": {
+      "type": "object",
+      "required": ["request_id"],
+      "properties": {
+        "request_id": { "$ref": "#/$defs/key" }
+      }
+    },
+    "external_headers": {
+      "type": "object",
+      "required": ["Idempotency-Key"],
+      "properties": {
+        "Idempotency-Key": { "$ref": "#/$defs/key" }
+      }
+    }
+  }
+}

@@ -36,6 +36,11 @@ type machineControlContract struct {
 	Schemas struct {
 		Messages string `json:"messages"`
 	} `json:"schemas"`
+	Conventions struct {
+		Pagination   string `json:"pagination"`
+		Precondition string `json:"precondition"`
+		Idempotency  string `json:"idempotency"`
+	} `json:"conventions"`
 	Status    controlContractRoute                       `json:"status"`
 	Resources map[string]map[string]controlContractRoute `json:"resources"`
 	Enums     map[string][]string                        `json:"enums"`
@@ -106,6 +111,11 @@ func TestMachineControlContractMatchesRegisteredBoundary(t *testing.T) {
 	if contract.MediaTypes.Request != "application/json" ||
 		contract.MediaTypes.Response != "application/json" {
 		t.Fatalf("control contract media types = %+v", contract.MediaTypes)
+	}
+	if contract.Conventions.Pagination != "../common/pagination.schema.json" ||
+		contract.Conventions.Precondition != "../common/precondition.schema.json" ||
+		contract.Conventions.Idempotency != "../common/idempotency.schema.json" {
+		t.Fatalf("control contract conventions = %+v", contract.Conventions)
 	}
 
 	endpoint, err := newBusinessHandler(t,
@@ -864,7 +874,7 @@ func assertControlWireType(
 	}
 }
 
-const controlSchemaID = "https://antnest.local/agent-controller/control-api.schema.json"
+const controlSchemaID = "https://schemas.antnest.dev/agent-controller/control-api.schema.json"
 const draft202012Schema = "https://json-schema.org/draft/2020-12/schema"
 
 func assertControlSSEMetadata(t *testing.T, route controlContractRoute) {
@@ -903,33 +913,38 @@ func compileControlSchema(t *testing.T, path string) *jsonschema.Compiler {
 	compiler.AssertFormat()
 	var instanceConnectionContract any
 	readContractJSON(t, filepath.Join(repositoryRoot(t), "contracts/runtime/instance-connection.schema.json"), &instanceConnectionContract)
-	if err := compiler.AddResource("https://antnest.local/contracts/runtime/instance-connection.schema.json", instanceConnectionContract); err != nil {
+	if err := compiler.AddResource("https://schemas.antnest.dev/runtime/instance-connection.schema.json", instanceConnectionContract); err != nil {
 		t.Fatalf("load Runtime instance connection contract: %v", err)
 	}
 	var managedSecretContract any
 	readContractJSON(t, filepath.Join(repositoryRoot(t), "contracts/runtime/managed-mcp.schema.json"), &managedSecretContract)
-	if err := compiler.AddResource("https://antnest.local/runtime/managed-mcp.schema.json", managedSecretContract); err != nil {
+	if err := compiler.AddResource("https://schemas.antnest.dev/runtime/managed-mcp.schema.json", managedSecretContract); err != nil {
 		t.Fatal(err)
 	}
 	var runtimeContract any
 	readContractJSON(t, filepath.Join(repositoryRoot(t), "contracts/runtime/runtime-spec.schema.json"), &runtimeContract)
-	if err := compiler.AddResource("https://antnest.local/runtime/runtime-spec.schema.json", runtimeContract); err != nil {
+	if err := compiler.AddResource("https://schemas.antnest.dev/runtime/runtime-spec.schema.json", runtimeContract); err != nil {
 		t.Fatalf("load Runtime MCP contract: %v", err)
 	}
 	var runtimeControllerContract any
 	readContractJSON(t, filepath.Join(repositoryRoot(t), "services/runtime-controller/api/control-api.schema.json"), &runtimeControllerContract)
-	if err := compiler.AddResource("https://antnest.local/runtime-controller/api/control-api.schema.json", runtimeControllerContract); err != nil {
+	if err := compiler.AddResource("https://schemas.antnest.dev/runtime-controller/control-api.schema.json", runtimeControllerContract); err != nil {
 		t.Fatalf("load Runtime Controller contract: %v", err)
 	}
 	var recoveryPolicyContract any
 	readContractJSON(t, filepath.Join(repositoryRoot(t), "contracts/agent-controller/runtime-barrier-recovery.schema.json"), &recoveryPolicyContract)
-	if err := compiler.AddResource("https://antnest.local/agent-controller/runtime-barrier-recovery.schema.json", recoveryPolicyContract); err != nil {
+	if err := compiler.AddResource("https://schemas.antnest.dev/agent-controller/runtime-barrier-recovery.schema.json", recoveryPolicyContract); err != nil {
 		t.Fatalf("load Runtime barrier recovery contract: %v", err)
 	}
 	var commonErrorContract any
 	readContractJSON(t, filepath.Join(repositoryRoot(t), "contracts/common/error.schema.json"), &commonErrorContract)
-	if err := compiler.AddResource("https://antnest.local/contracts/common/error.schema.json", commonErrorContract); err != nil {
+	if err := compiler.AddResource("https://schemas.antnest.dev/common/error.schema.json", commonErrorContract); err != nil {
 		t.Fatalf("load common error contract: %v", err)
+	}
+	var paginationContract any
+	readContractJSON(t, filepath.Join(repositoryRoot(t), "contracts/common/pagination.schema.json"), &paginationContract)
+	if err := compiler.AddResource("https://schemas.antnest.dev/common/pagination.schema.json", paginationContract); err != nil {
+		t.Fatalf("load common pagination contract: %v", err)
 	}
 	if err := compiler.AddResource(controlSchemaID, document); err != nil {
 		t.Fatalf("load control schema: %v", err)

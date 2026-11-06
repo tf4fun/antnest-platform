@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://antnest.local/contracts/admin-console/runtime-resources.schema.json",
+  "$id": "https://schemas.antnest.dev/admin-console/runtime-resources.schema.json",
   "title": "Console Runtime resource bounds",
   "$defs": {
     "resource_input": {

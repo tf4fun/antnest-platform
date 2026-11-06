@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://antnest.local/contracts/runtime/tunnel-bootstrap.schema.json",
+  "$id": "https://schemas.antnest.dev/runtime/tunnel-bootstrap.schema.json",
   "title": "Runtime private tunnel bootstrap descriptor, revision 1",
   "type": "object",
   "additionalProperties": false,

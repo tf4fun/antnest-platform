@@ -22,6 +22,11 @@
       "maximum": 100
     },
     "cursor": {
+      "allOf": [
+        {
+          "$ref": "../common/pagination.schema.json#/$defs/cursor"
+        }
+      ],
       "type": "string",
       "minLength": 1
     }
@@ -30,7 +35,7 @@
     "run_id"
   ],
   "additionalProperties": false,
-  "$id": "https://antnest.local/contracts/agent-acp/list-execution-events-request.schema.json",
+  "$id": "https://schemas.antnest.dev/agent-acp/list-execution-events-request.schema.json",
   "title": "Administrative audit event request",
   "description": "Execution messages and permission records use separate cursors and ordering."
 }

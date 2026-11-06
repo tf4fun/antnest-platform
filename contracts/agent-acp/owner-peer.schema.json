@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://antnest.dev/contracts/agent-acp/owner-peer.schema.json",
+  "$id": "https://schemas.antnest.dev/agent-acp/owner-peer.schema.json",
   "title": "ACP private owner peer coordination, version 1",
   "$defs": {
     "uuid": {
@@ -306,7 +306,7 @@
                 },
                 "allOf": [
                   {
-                    "$ref": "https://antnest.local/contracts/common/error.schema.json"
+                    "$ref": "https://schemas.antnest.dev/common/error.schema.json"
                   }
                 ]
               }
@@ -365,7 +365,7 @@
                 },
                 "allOf": [
                   {
-                    "$ref": "https://antnest.local/contracts/common/error.schema.json"
+                    "$ref": "https://schemas.antnest.dev/common/error.schema.json"
                   }
                 ]
               }

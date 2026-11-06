@@ -5,6 +5,9 @@ deployable components. It contains wire contracts, schemas and shared
 fixtures, not generated application models, persistence records, or reusable
 business code.
 
+Shared field naming, pagination, precondition and idempotency conventions
+are defined in [CONVENTIONS.md](CONVENTIONS.md).
+
 [OIDC account linking](identity/oidc-linking.md) defines the revision-16 Identity,
 revision-20 Gateway and revision-52 Console contract for #61. Binding ownership,
 SCIM pairing and exact-ID notices precede their separate service and integration

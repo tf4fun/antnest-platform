@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://antnest.dev/contracts/agent-acp/errors.schema.json",
+  "$id": "https://schemas.antnest.dev/agent-acp/errors.schema.json",
   "title": "ACP error classification catalog",
   "type": "object",
   "additionalProperties": false,
@@ -565,7 +565,7 @@
             },
             "allOf": [
               {
-                "$ref": "https://antnest.local/contracts/common/error.schema.json"
+                "$ref": "https://schemas.antnest.dev/common/error.schema.json"
               }
             ]
           }
@@ -644,7 +644,7 @@
           },
           "allOf": [
             {
-              "$ref": "https://antnest.local/contracts/common/error.schema.json"
+              "$ref": "https://schemas.antnest.dev/common/error.schema.json"
             }
           ]
         }

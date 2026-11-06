@@ -74,6 +74,11 @@
       }
     },
     "next_cursor": {
+      "allOf": [
+        {
+          "$ref": "../common/pagination.schema.json#/$defs/nullable_cursor"
+        }
+      ],
       "type": [
         "string",
         "null"
@@ -85,7 +90,7 @@
     "next_cursor"
   ],
   "additionalProperties": false,
-  "$id": "https://antnest.local/contracts/agent-acp/execution-audit-list.schema.json",
+  "$id": "https://schemas.antnest.dev/agent-acp/execution-audit-list.schema.json",
   "title": "Administrative audit list",
   "description": "Current persisted Run summaries, including retained historical Agents."
 }

@@ -1,13 +1,17 @@
 import { readFileSync } from "node:fs";
 
 export function withCommonErrorSchema(validator) {
-  validator.addSchema(
-    JSON.parse(
-      readFileSync(
-        new URL("../../contracts/common/error.schema.json", import.meta.url),
-        "utf8",
+  for (const name of ["error", "pagination", "precondition", "idempotency"])
+    validator.addSchema(
+      JSON.parse(
+        readFileSync(
+          new URL(
+            `../../contracts/common/${name}.schema.json`,
+            import.meta.url,
+          ),
+          "utf8",
+        ),
       ),
-    ),
-  );
+    );
   return validator;
 }

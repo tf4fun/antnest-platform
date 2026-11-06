@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://antnest.local/agent-controller/control-api.schema.json",
+  "$id": "https://schemas.antnest.dev/agent-controller/control-api.schema.json",
   "title": "Antnest Agent Controller lifecycle messages",
   "$defs": {
     "runtime_barrier_recovery_policy": {
@@ -1798,6 +1798,11 @@
           }
         },
         "next_cursor": {
+          "allOf": [
+            {
+              "$ref": "../common/pagination.schema.json#/$defs/nullable_cursor"
+            }
+          ],
           "type": ["string", "null"],
           "minLength": 1,
           "maxLength": 2048
@@ -2118,7 +2123,7 @@
       }
     },
     "error": {
-      "$ref": "https://antnest.local/contracts/common/error.schema.json",
+      "$ref": "https://schemas.antnest.dev/common/error.schema.json",
       "type": "object",
       "additionalProperties": false,
       "required": ["code", "category", "message", "retryable", "request_id"],
@@ -2307,6 +2312,11 @@
           "maximum": 200
         },
         "cursor": {
+          "allOf": [
+            {
+              "$ref": "../common/pagination.schema.json#/$defs/cursor"
+            }
+          ],
           "type": "string",
           "minLength": 1,
           "maxLength": 2048

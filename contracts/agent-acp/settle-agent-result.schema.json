@@ -21,7 +21,7 @@
     "outcome"
   ],
   "additionalProperties": false,
-  "$id": "https://antnest.local/contracts/agent-acp/settle-agent-result.schema.json",
+  "$id": "https://schemas.antnest.dev/agent-acp/settle-agent-result.schema.json",
   "title": "Agent lifecycle settlement result",
   "description": "Local quiescence alone does not prove Runtime foreground calls stopped; see execution-api.md."
 }

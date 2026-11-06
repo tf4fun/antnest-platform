@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://antnest.local/contracts/egress/tunnel-key-request.schema.json",
+  "$id": "https://schemas.antnest.dev/egress/tunnel-key-request.schema.json",
   "title": "Private RC generation tunnel key registration, revision 1",
   "type": "object",
   "additionalProperties": false,

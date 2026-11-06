@@ -1,5 +1,6 @@
 {
-  "$id": "https://antnest.local/contracts/admin-console/live-model-semantics.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.antnest.dev/admin-console/live-model-semantics.schema.json",
   "title": "Live model semantics",
   "type": "object",
   "additionalProperties": false,
