@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { test } from "node:test";
+import { withCommonErrorSchema } from "../../support/common-error-schema.mjs";
 
 const requireAcp = createRequire(
   new URL("../../../services/agent-acp-service/package.json", import.meta.url),
@@ -11,7 +12,10 @@ const read = (base) => (name) =>
   JSON.parse(readFileSync(new URL(base + name, import.meta.url)));
 const readEgress = read("../../../contracts/egress/");
 const readController = read("../../../contracts/agent-controller/");
-const ajv = () => new Ajv2020({ formats: { "date-time": true, uri: true } });
+const ajv = () =>
+  withCommonErrorSchema(
+    new Ajv2020({ formats: { "date-time": true, uri: true } }),
+  );
 
 const v1Allow = { schema_version: 1, action: "allow_all" };
 const v1Deny = { schema_version: 1, action: "deny_all" };
