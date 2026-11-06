@@ -36,6 +36,11 @@ type machineControlContract struct {
 	Schemas struct {
 		Messages string `json:"messages"`
 	} `json:"schemas"`
+	Conventions struct {
+		Pagination   string `json:"pagination"`
+		Precondition string `json:"precondition"`
+		Idempotency  string `json:"idempotency"`
+	} `json:"conventions"`
 	Status    controlContractRoute                       `json:"status"`
 	Resources map[string]map[string]controlContractRoute `json:"resources"`
 	Enums     map[string][]string                        `json:"enums"`
@@ -106,6 +111,11 @@ func TestMachineControlContractMatchesRegisteredBoundary(t *testing.T) {
 	if contract.MediaTypes.Request != "application/json" ||
 		contract.MediaTypes.Response != "application/json" {
 		t.Fatalf("control contract media types = %+v", contract.MediaTypes)
+	}
+	if contract.Conventions.Pagination != "../common/pagination.schema.json" ||
+		contract.Conventions.Precondition != "../common/precondition.schema.json" ||
+		contract.Conventions.Idempotency != "../common/idempotency.schema.json" {
+		t.Fatalf("control contract conventions = %+v", contract.Conventions)
 	}
 
 	endpoint, err := newBusinessHandler(t,
