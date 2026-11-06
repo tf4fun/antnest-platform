@@ -31,6 +31,9 @@ func TestProviderCredentialRoutesNeverCapturePayload(t *testing.T) {
 					t.Fatal(err)
 				}
 				body := `{"request_id":"test","organization_id":"org-1","credential":{"method":"api_key","api_key":"stage2-model-secret"}}`
+				if strings.HasSuffix(path, "/credentials") {
+					body = strings.TrimSuffix(body, "}") + `,"expected_version":"credential-1"}`
+				}
 				if strings.Contains(path, "discover-models") {
 					body = `{"organization_id":"org-1"}`
 				}

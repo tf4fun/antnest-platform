@@ -139,7 +139,7 @@ it("saves edited custom rules as a spec document at the recorded version", async
       default: "deny",
       rules: [{ action: "allow", domains: ["api.github.com"], ports: [443] }],
     },
-    expected_resource_version: 7,
+    expected_version: "7",
   });
   expect(new Headers(init?.headers).get("Idempotency-Key")).toBeTruthy();
   expect(
@@ -202,7 +202,7 @@ it("orders, adds and removes draft rules without sending until save", async () =
   if (!command) throw new Error("missing command");
   expect(JSON.parse(String(command[1]?.body))).toEqual({
     spec: expected.spec,
-    expected_resource_version: 7,
+    expected_version: "7",
   });
 });
 
@@ -405,6 +405,6 @@ it("round-trips explicit tcp protocol and equal port ranges through the editor",
   if (!command) throw new Error("missing command");
   expect(JSON.parse(String(command[1]?.body))).toEqual({
     spec,
-    expected_resource_version: 7,
+    expected_version: "7",
   });
 });

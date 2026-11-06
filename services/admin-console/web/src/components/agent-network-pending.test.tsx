@@ -57,7 +57,7 @@ it("saves a desired policy while preserving the pending attachment", async () =>
   expect(fetch).toHaveBeenCalledTimes(2);
   expect(JSON.parse(fetch.mock.calls[1]![1].body as string)).toEqual({
     action: "allow_all",
-    expected_resource_version: 7,
+    expected_version: "7",
   });
 });
 

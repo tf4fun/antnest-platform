@@ -106,6 +106,11 @@ export type AuditPermission = z.infer<typeof permissionSchema>;
 export type AuditPage<T> = { items: T[]; next_cursor: string | null };
 
 const positionSchema = z.discriminatedUnion("kind", [
+  z.strictObject({
+    kind: z.literal("permission_hash"),
+    at: timestamp,
+    id: z.string().regex(/^[a-f0-9]{64}$/u),
+  }),
   z.strictObject({ kind: z.literal("time"), at: timestamp, id: opaqueId }),
   z.strictObject({
     kind: z.literal("sequence"),
@@ -114,6 +119,7 @@ const positionSchema = z.discriminatedUnion("kind", [
 ]);
 export type AuditPosition = z.infer<typeof positionSchema>;
 export type AuditTimePosition = Extract<AuditPosition, { kind: "time" }>;
+export type AuditPermissionPosition = Exclude<AuditPosition, { kind: "sequence" }>;
 const cursorSchema = z.strictObject({ scope: z.string(), position: positionSchema });
 
 // Validated UTC timestamps use PostgreSQL's microsecond precision, not JS milliseconds.

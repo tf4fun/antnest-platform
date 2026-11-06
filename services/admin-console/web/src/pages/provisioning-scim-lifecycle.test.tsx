@@ -36,7 +36,7 @@ function fixture(options: {
       if (options.refreshFails && reads > 1) return Response.json({ message: "Inventory unavailable" }, { status: 503 });
       return Response.json({ tokens: options.tokens ?? [token] });
     }
-    if (url.pathname === "/api/admin/directory/identity-providers") return Response.json({ providers: [] });
+    if (url.pathname === "/api/admin/directory/identity-providers") return Response.json({ items: [], next_cursor: null });
     throw new Error(`Unexpected request: ${url.pathname}`);
   }));
   render(<ProvisioningPage systemAdministrator={false} />);

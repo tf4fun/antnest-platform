@@ -24,8 +24,8 @@ const agent = (id: string, view: string): Agent => ({
   activation_state: view === "deleted" ? undefined : "enabled", runtime_state: view === "deleted" ? "absent" : "available",
 });
 const inventories = [
-  { name: "Providers", component: <ModelsPage />, path: "/api/admin/provider-connections", cursor: "after_id", next: "next_after_id", row: provider, list: "Model providers", view: "" },
-  { name: "Templates", component: <TemplatesPage />, path: "/api/admin/templates", cursor: "after_id", next: "next_after_id", row: template, list: "Agent templates", view: "" },
+  { name: "Providers", component: <ModelsPage />, path: "/api/admin/provider-connections", cursor: "cursor", next: "next_cursor", row: provider, list: "Model providers", view: "" },
+  { name: "Templates", component: <TemplatesPage />, path: "/api/admin/templates", cursor: "cursor", next: "next_cursor", row: template, list: "Agent templates", view: "" },
   ...["current", "deleted"].map((view) => ({
     name: `${view} Agents`, component: <AgentsPage />, path: "/api/admin/agents", cursor: "cursor", next: "next_cursor",
     row: (id: string) => agent(id, view), list: view === "deleted" ? "Deleted Agents" : "Current Agents", view,
@@ -43,11 +43,11 @@ function mockInventory(inventory: Inventory, page: (url: URL) => Response | Prom
     }
     switch (url.pathname) {
       case "/api/admin/model-catalog": return Response.json({ revision: "test", providers: [] });
-      case "/api/admin/model-profiles": return Response.json({ items: [model("model")] });
-      case "/api/admin/templates": return Response.json({ items: [template("template")] });
+      case "/api/admin/model-profiles": return Response.json({ items: [model("model")], next_cursor: null });
+      case "/api/admin/templates": return Response.json({ items: [template("template")], next_cursor: null });
       case "/api/admin/template-defaults": return Response.json({ runtime_image_ref: template("template").runtime.image_ref });
       case "/api/admin/directory": return Response.json({ users: [], groups: [] });
-      case "/api/admin/agents": return Response.json({ items: [agent("other-view-agent", url.searchParams.get("view") ?? "current")] });
+      case "/api/admin/agents": return Response.json({ items: [agent("other-view-agent", url.searchParams.get("view") ?? "current")], next_cursor: null });
       default: throw new Error(`Unexpected request: ${url}`);
     }
   }));
@@ -104,7 +104,7 @@ describe.each(inventories)("$name inventory pagination", (inventory) => {
     expect(rows(inventory)).toHaveLength(1);
     expect(requests).toHaveLength(3);
     expect(requests[2]!.toString()).toBe(requests[1]!.toString());
-    await act(async () => { respond(Response.json({ items: [inventory.row("first"), inventory.row("second")] })); });
+    await act(async () => { respond(Response.json({ items: [inventory.row("first"), inventory.row("second")], next_cursor: null })); });
     await waitFor(() => expect(rows(inventory)).toHaveLength(2));
     expect(screen.queryByRole("button", { name: /Load more|Retry/ })).toBeNull();
     expect(screen.queryByText("Page temporarily unavailable")).toBeNull();
@@ -139,7 +139,7 @@ describe("Deleted Agent initial read", () => {
     let attempts = 0;
     const requests = mockInventory(inventory, () => ++attempts === 1
       ? Response.json({ message: "Deleted records unavailable" }, { status: 503 })
-      : Response.json({ items: [agent("retained-agent", "deleted")] }));
+      : Response.json({ items: [agent("retained-agent", "deleted")], next_cursor: null }));
     render(<AgentsPage />);
     fireEvent.click(await screen.findByRole("tab", { name: "Deleted" }));
     fireEvent.click(await screen.findByRole("button", { name: "Retry deleted records" }));

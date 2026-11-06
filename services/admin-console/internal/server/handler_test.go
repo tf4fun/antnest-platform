@@ -672,12 +672,12 @@ func TestOverviewAggregatesAuthoritativeReadsAndPresentationDefaults(t *testing.
 		} `json:"agents"`
 		ModelProfiles struct {
 			Data struct {
-				NextAfterID string `json:"next_after_id"`
+				NextCursor string `json:"next_cursor"`
 			} `json:"data"`
 		} `json:"model_profiles"`
 		Templates struct {
 			Data struct {
-				NextAfterID string `json:"next_after_id"`
+				NextCursor string `json:"next_cursor"`
 			} `json:"data"`
 		} `json:"templates"`
 		Defaults struct {
@@ -689,8 +689,8 @@ func TestOverviewAggregatesAuthoritativeReadsAndPresentationDefaults(t *testing.
 		t.Fatalf("overview=%#v calls=%d", payload, len(backend.calls))
 	}
 	if payload.Agents.Data.NextCursor != "agent-next" ||
-		payload.ModelProfiles.Data.NextAfterID != "model-next" ||
-		payload.Templates.Data.NextAfterID != "template-next" {
+		payload.ModelProfiles.Data.NextCursor != "model-next" ||
+		payload.Templates.Data.NextCursor != "template-next" {
 		t.Fatalf("overview continuation metadata was not preserved: %#v", payload)
 	}
 }
