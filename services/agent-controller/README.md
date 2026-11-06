@@ -11,6 +11,13 @@ leases. Resource creation completes separately from executable availability:
 an Agent becomes runnable only after independent healthy Runtime observation
 publishes its execution binding.
 
+The internal HTTP boundary follows the shared contract conventions in
+[`contracts/CONVENTIONS.md`](../../contracts/CONVENTIONS.md): paginated
+catalog lists accept `cursor` (plus the one-release `after_id` alias), and
+preconditioned mutations accept canonical `expected_version` or a single
+strong `If-Match` token while one-release legacy names remain as deprecated
+input aliases.
+
 Before opening an Egress attachment, Controller reads RC's current inspection,
 checks the target Runtime revision, and binds its management-network IPv4.
 Observation reconciles a changed address on an already-open attachment before

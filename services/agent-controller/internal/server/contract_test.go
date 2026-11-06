@@ -77,17 +77,18 @@ type machineControlContract struct {
 }
 
 type controlContractRoute struct {
-	Method        string   `json:"method"`
-	Path          string   `json:"path"`
-	Request       string   `json:"request"`
-	Response      string   `json:"response"`
-	Query         []string `json:"query"`
-	Headers       []string `json:"headers"`
-	SuccessStatus int      `json:"success_status"`
-	ContentType   string   `json:"content_type"`
-	Event         string   `json:"event"`
-	EventID       string   `json:"event_id"`
-	Data          string   `json:"data"`
+	Method          string   `json:"method"`
+	Path            string   `json:"path"`
+	Request         string   `json:"request"`
+	Response        string   `json:"response"`
+	Query           []string `json:"query"`
+	DeprecatedQuery []string `json:"deprecated_query"`
+	Headers         []string `json:"headers"`
+	SuccessStatus   int      `json:"success_status"`
+	ContentType     string   `json:"content_type"`
+	Event           string   `json:"event"`
+	EventID         string   `json:"event_id"`
+	Data            string   `json:"data"`
 }
 
 type machineControlSchema struct {
@@ -136,6 +137,11 @@ func TestMachineControlContractMatchesRegisteredBoundary(t *testing.T) {
 			expected[route.pattern] = struct{}{}
 		}
 	}
+	deprecatedQueryRoutes := map[string][]string{
+		"GET /internal/provider-connections": {"after_id"},
+		"GET /internal/model-profiles":       {"after_id"},
+		"GET /internal/agent-templates":      {"after_id"},
+	}
 	seen := make(map[string]struct{}, len(expected))
 	for resource, operations := range contract.Resources {
 		for operation, route := range operations {
@@ -149,6 +155,9 @@ func TestMachineControlContractMatchesRegisteredBoundary(t *testing.T) {
 			seen[key] = struct{}{}
 			if route.SuccessStatus < 200 || route.SuccessStatus >= 300 {
 				t.Fatalf("route %s success status = %d", key, route.SuccessStatus)
+			}
+			if want := deprecatedQueryRoutes[key]; !slices.Equal(route.DeprecatedQuery, want) {
+				t.Fatalf("route %s deprecated_query = %v, want %v", key, route.DeprecatedQuery, want)
 			}
 			for _, reference := range []string{route.Request, route.Response, route.Data} {
 				if reference != "" {
@@ -945,6 +954,11 @@ func compileControlSchema(t *testing.T, path string) *jsonschema.Compiler {
 	readContractJSON(t, filepath.Join(repositoryRoot(t), "contracts/common/pagination.schema.json"), &paginationContract)
 	if err := compiler.AddResource("https://schemas.antnest.dev/common/pagination.schema.json", paginationContract); err != nil {
 		t.Fatalf("load common pagination contract: %v", err)
+	}
+	var preconditionContract any
+	readContractJSON(t, filepath.Join(repositoryRoot(t), "contracts/common/precondition.schema.json"), &preconditionContract)
+	if err := compiler.AddResource("https://schemas.antnest.dev/common/precondition.schema.json", preconditionContract); err != nil {
+		t.Fatalf("load common precondition contract: %v", err)
 	}
 	if err := compiler.AddResource(controlSchemaID, document); err != nil {
 		t.Fatalf("load control schema: %v", err)

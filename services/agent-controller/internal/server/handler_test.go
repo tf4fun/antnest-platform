@@ -181,7 +181,7 @@ func TestCatalogHandlerListsCurrentTemplatesWithNullableCursor(t *testing.T) {
 	}
 	var payload struct {
 		Items       []map[string]any `json:"items"`
-		NextAfterID *string          `json:"next_after_id"`
+		NextAfterID *string          `json:"next_cursor"`
 	}
 	if err := json.Unmarshal(response.Body.Bytes(), &payload); err != nil {
 		t.Fatalf("decode response: %v", err)
@@ -699,6 +699,7 @@ type catalogServiceStub struct {
 	templateView        application.TemplateView
 	getModelErr         error
 	templatePage        application.TemplatePage
+	providerPage        *application.ProviderConnectionPage
 	listInput           application.ListCatalogInput
 
 	templateRevisionOrganizationID string

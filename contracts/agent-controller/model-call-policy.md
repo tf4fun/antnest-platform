@@ -45,8 +45,13 @@ arithmetic before charging; the floating-point reporting total is not a ledger.
 The GET/PUT `/internal/model-call-policy` routes use the existing verified
 workload and caller context and organization administrator authorization. GET
 does not create a policy. Missing policy is revision zero with empty caps and
-`unknown_cost=allow`. PUT replaces the entire policy, requires `expected_revision`
-and the original idempotency request, and increments the policy revision.
+`unknown_cost=allow`. PUT replaces the entire policy, requires the optimistic-concurrency
+precondition and the original idempotency request, and increments the policy
+revision. The canonical precondition is `expected_version`, an unsigned
+decimal string; exactly one strong `If-Match` token may permanently replace
+the body field. For one release the numeric `expected_revision` also remains
+accepted as a deprecated input alias — a request carrying more than one form
+is rejected even when the values agree.
 The body actor must match the verified caller, and the requested organization
 must be authorized by that context. Neither field grants authority. Reusing an
 idempotency key with different policy content must conflict rather than replace

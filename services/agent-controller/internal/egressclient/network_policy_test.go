@@ -59,11 +59,17 @@ func TestPolicyAssignmentWritePreservesCASAndDoesNotReadAfterAcknowledgement(t *
 		if r.Method != http.MethodPut || r.URL.Path != "/internal/agent-policy-assignments/agent-1" {
 			t.Errorf("request=%s %s", r.Method, r.URL)
 		}
-		var input ports.SetNetworkPolicy
+		var input struct {
+			ports.NetworkPolicyReference
+			ExpectedVersion string `json:"expected_version"`
+		}
 		if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
 			t.Error(err)
 		}
-		requests = append(requests, input)
+		if input.ExpectedVersion != "7" {
+			t.Fatalf("wire CAS=%q", input.ExpectedVersion)
+		}
+		requests = append(requests, ports.SetNetworkPolicy{NetworkPolicyReference: input.NetworkPolicyReference, ExpectedResourceVersion: 7})
 		if err := json.NewEncoder(w).Encode(ports.NetworkPolicyAssignment{AgentID: "agent-1", NetworkPolicyReference: mutation.NetworkPolicyReference, ResourceVersion: 8}); err != nil {
 			t.Error(err)
 		}

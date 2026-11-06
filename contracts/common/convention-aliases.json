@@ -217,33 +217,6 @@
   },
   {
     "file": "agent-controller/control-api.schema.json",
-    "pointer": "/$defs/agent_template_list",
-    "field": "$pagination",
-    "replacement": "next_cursor",
-    "kind": "pending_migration",
-    "reason": "agent-controller owner migration tracked by issue #68; legacy wire shape remains until its service batch.",
-    "remove_after": "next_release"
-  },
-  {
-    "file": "agent-controller/control-api.schema.json",
-    "pointer": "/$defs/agent_template_list/properties/next_after_id",
-    "field": "next_after_id",
-    "replacement": "next_cursor",
-    "kind": "pending_migration",
-    "reason": "agent-controller owner migration tracked by issue #68; legacy wire shape remains until its service batch.",
-    "remove_after": "next_release"
-  },
-  {
-    "file": "agent-controller/control-api.schema.json",
-    "pointer": "/$defs/agent_template_list/required/1",
-    "field": "next_after_id",
-    "replacement": "next_cursor",
-    "kind": "pending_migration",
-    "reason": "agent-controller owner migration tracked by issue #68; legacy wire shape remains until its service batch.",
-    "remove_after": "next_release"
-  },
-  {
-    "file": "agent-controller/control-api.schema.json",
     "pointer": "/$defs/model_profile_event_list",
     "field": "$pagination",
     "replacement": "next_after_revision",
@@ -253,47 +226,38 @@
   },
   {
     "file": "agent-controller/control-api.schema.json",
-    "pointer": "/$defs/model_profile_list",
-    "field": "$pagination",
-    "replacement": "next_cursor",
-    "kind": "pending_migration",
-    "reason": "agent-controller owner migration tracked by issue #68; legacy wire shape remains until its service batch.",
+    "pointer": "/$defs/set_agent_network_policy_request/allOf/0/oneOf/0/not/properties/expected_resource_version",
+    "field": "expected_resource_version",
+    "replacement": "expected_version",
+    "reason": "Controller accepts only as a one-release input alias for expected_version/cursor; rejects multiple forms.",
+    "kind": "deprecated_alias",
     "remove_after": "next_release"
   },
   {
     "file": "agent-controller/control-api.schema.json",
-    "pointer": "/$defs/model_profile_list/properties/next_after_id",
-    "field": "next_after_id",
-    "replacement": "next_cursor",
-    "kind": "pending_migration",
-    "reason": "agent-controller owner migration tracked by issue #68; legacy wire shape remains until its service batch.",
+    "pointer": "/$defs/set_agent_network_policy_request/allOf/0/oneOf/0/not/required/0",
+    "field": "expected_resource_version",
+    "replacement": "expected_version",
+    "reason": "Controller accepts only as a one-release input alias for expected_version/cursor; rejects multiple forms.",
+    "kind": "deprecated_alias",
     "remove_after": "next_release"
   },
   {
     "file": "agent-controller/control-api.schema.json",
-    "pointer": "/$defs/model_profile_list/required/1",
-    "field": "next_after_id",
-    "replacement": "next_cursor",
-    "kind": "pending_migration",
-    "reason": "agent-controller owner migration tracked by issue #68; legacy wire shape remains until its service batch.",
+    "pointer": "/$defs/set_agent_network_policy_request/allOf/0/oneOf/1/properties/expected_resource_version",
+    "field": "expected_resource_version",
+    "replacement": "expected_version",
+    "reason": "Controller accepts only as a one-release input alias for expected_version/cursor; rejects multiple forms.",
+    "kind": "deprecated_alias",
     "remove_after": "next_release"
   },
   {
     "file": "agent-controller/control-api.schema.json",
-    "pointer": "/$defs/provider_connection_list",
-    "field": "$pagination",
-    "replacement": "next_cursor",
-    "kind": "pending_migration",
-    "reason": "agent-controller owner migration tracked by issue #68; legacy wire shape remains until its service batch.",
-    "remove_after": "next_release"
-  },
-  {
-    "file": "agent-controller/control-api.schema.json",
-    "pointer": "/$defs/provider_connection_list/properties/next_after_id",
-    "field": "next_after_id",
-    "replacement": "next_cursor",
-    "kind": "pending_migration",
-    "reason": "agent-controller owner migration tracked by issue #68; legacy wire shape remains until its service batch.",
+    "pointer": "/$defs/set_agent_network_policy_request/allOf/0/oneOf/1/required/0",
+    "field": "expected_resource_version",
+    "replacement": "expected_version",
+    "reason": "Controller accepts only as a one-release input alias for expected_version/cursor; rejects multiple forms.",
+    "kind": "deprecated_alias",
     "remove_after": "next_release"
   },
   {
@@ -301,17 +265,44 @@
     "pointer": "/$defs/set_agent_network_policy_request/properties/expected_resource_version",
     "field": "expected_resource_version",
     "replacement": "expected_version",
-    "kind": "pending_migration",
-    "reason": "agent-controller owner migration tracked by issue #68; legacy wire shape remains until its service batch.",
+    "kind": "deprecated_alias",
+    "reason": "Controller accepts only as a one-release input alias for expected_version/cursor; rejects multiple forms.",
     "remove_after": "next_release"
   },
   {
     "file": "agent-controller/control-api.schema.json",
-    "pointer": "/$defs/set_agent_network_policy_request/required/3",
-    "field": "expected_resource_version",
+    "pointer": "/$defs/set_model_call_policy_request/allOf/0/oneOf/0/not/properties/expected_revision",
+    "field": "expected_revision",
     "replacement": "expected_version",
-    "kind": "pending_migration",
-    "reason": "agent-controller owner migration tracked by issue #68; legacy wire shape remains until its service batch.",
+    "reason": "Controller accepts only as a one-release input alias for expected_version/cursor; rejects multiple forms.",
+    "kind": "deprecated_alias",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "agent-controller/control-api.schema.json",
+    "pointer": "/$defs/set_model_call_policy_request/allOf/0/oneOf/0/not/required/0",
+    "field": "expected_revision",
+    "replacement": "expected_version",
+    "reason": "Controller accepts only as a one-release input alias for expected_version/cursor; rejects multiple forms.",
+    "kind": "deprecated_alias",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "agent-controller/control-api.schema.json",
+    "pointer": "/$defs/set_model_call_policy_request/allOf/0/oneOf/1/properties/expected_revision",
+    "field": "expected_revision",
+    "replacement": "expected_version",
+    "reason": "Controller accepts only as a one-release input alias for expected_version/cursor; rejects multiple forms.",
+    "kind": "deprecated_alias",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "agent-controller/control-api.schema.json",
+    "pointer": "/$defs/set_model_call_policy_request/allOf/0/oneOf/1/required/0",
+    "field": "expected_revision",
+    "replacement": "expected_version",
+    "reason": "Controller accepts only as a one-release input alias for expected_version/cursor; rejects multiple forms.",
+    "kind": "deprecated_alias",
     "remove_after": "next_release"
   },
   {
@@ -319,44 +310,35 @@
     "pointer": "/$defs/set_model_call_policy_request/properties/expected_revision",
     "field": "expected_revision",
     "replacement": "expected_version",
-    "kind": "pending_migration",
-    "reason": "agent-controller owner migration tracked by issue #68; legacy wire shape remains until its service batch.",
-    "remove_after": "next_release"
-  },
-  {
-    "file": "agent-controller/control-api.schema.json",
-    "pointer": "/$defs/set_model_call_policy_request/required/3",
-    "field": "expected_revision",
-    "replacement": "expected_version",
-    "kind": "pending_migration",
-    "reason": "agent-controller owner migration tracked by issue #68; legacy wire shape remains until its service batch.",
+    "kind": "deprecated_alias",
+    "reason": "Controller accepts only as a one-release input alias for expected_version/cursor; rejects multiple forms.",
     "remove_after": "next_release"
   },
   {
     "file": "agent-controller/control-contract.json",
-    "pointer": "/resources/agent_templates/list/query/1",
+    "pointer": "/resources/agent_templates/list/deprecated_query/0",
     "field": "after_id",
     "replacement": "cursor",
-    "kind": "pending_migration",
-    "reason": "agent-controller owner migration tracked by issue #68; legacy wire shape remains until its service batch.",
+    "kind": "deprecated_alias",
+    "reason": "Controller accepts only as a one-release input alias for expected_version/cursor; rejects multiple forms.",
     "remove_after": "next_release"
   },
   {
     "file": "agent-controller/control-contract.json",
-    "pointer": "/resources/model_profiles/list/query/1",
+    "pointer": "/resources/model_profiles/list/deprecated_query/0",
     "field": "after_id",
     "replacement": "cursor",
-    "kind": "pending_migration",
-    "reason": "agent-controller owner migration tracked by issue #68; legacy wire shape remains until its service batch.",
+    "kind": "deprecated_alias",
+    "reason": "Controller accepts only as a one-release input alias for expected_version/cursor; rejects multiple forms.",
     "remove_after": "next_release"
   },
   {
     "file": "agent-controller/control-contract.json",
-    "pointer": "/resources/provider_connections/list/query/1",
+    "pointer": "/resources/provider_connections/list/deprecated_query/0",
     "field": "after_id",
     "replacement": "cursor",
-    "kind": "pending_migration",
-    "reason": "agent-controller owner migration tracked by issue #68; legacy wire shape remains until its service batch.",
+    "kind": "deprecated_alias",
+    "reason": "Controller accepts only as a one-release input alias for expected_version/cursor; rejects multiple forms.",
     "remove_after": "next_release"
   },
   {
@@ -388,20 +370,47 @@
   },
   {
     "file": "agent-controller/model-call-policy.schema.json",
-    "pointer": "/$defs/policy_update_request/properties/expected_revision",
+    "pointer": "/$defs/policy_update_request/allOf/0/oneOf/0/not/properties/expected_revision",
     "field": "expected_revision",
     "replacement": "expected_version",
-    "kind": "pending_migration",
-    "reason": "agent-controller owner migration tracked by issue #68; legacy wire shape remains until its service batch.",
+    "reason": "Controller accepts only as a one-release input alias for expected_version/cursor; rejects multiple forms.",
+    "kind": "deprecated_alias",
     "remove_after": "next_release"
   },
   {
     "file": "agent-controller/model-call-policy.schema.json",
-    "pointer": "/$defs/policy_update_request/required/3",
+    "pointer": "/$defs/policy_update_request/allOf/0/oneOf/0/not/required/0",
     "field": "expected_revision",
     "replacement": "expected_version",
-    "kind": "pending_migration",
-    "reason": "agent-controller owner migration tracked by issue #68; legacy wire shape remains until its service batch.",
+    "reason": "Controller accepts only as a one-release input alias for expected_version/cursor; rejects multiple forms.",
+    "kind": "deprecated_alias",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "agent-controller/model-call-policy.schema.json",
+    "pointer": "/$defs/policy_update_request/allOf/0/oneOf/1/properties/expected_revision",
+    "field": "expected_revision",
+    "replacement": "expected_version",
+    "reason": "Controller accepts only as a one-release input alias for expected_version/cursor; rejects multiple forms.",
+    "kind": "deprecated_alias",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "agent-controller/model-call-policy.schema.json",
+    "pointer": "/$defs/policy_update_request/allOf/0/oneOf/1/required/0",
+    "field": "expected_revision",
+    "replacement": "expected_version",
+    "reason": "Controller accepts only as a one-release input alias for expected_version/cursor; rejects multiple forms.",
+    "kind": "deprecated_alias",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "agent-controller/model-call-policy.schema.json",
+    "pointer": "/$defs/policy_update_request/properties/expected_revision",
+    "field": "expected_revision",
+    "replacement": "expected_version",
+    "kind": "deprecated_alias",
+    "reason": "Controller accepts only as a one-release input alias for expected_version/cursor; rejects multiple forms.",
     "remove_after": "next_release"
   },
   {
@@ -469,20 +478,47 @@
   },
   {
     "file": "agent-controller/runtime-barrier-recovery.schema.json",
-    "pointer": "/$defs/policy_update_request/properties/expected_revision",
+    "pointer": "/$defs/policy_update_request/allOf/0/oneOf/0/not/properties/expected_revision",
     "field": "expected_revision",
     "replacement": "expected_version",
-    "kind": "pending_migration",
-    "reason": "agent-controller owner migration tracked by issue #68; legacy wire shape remains until its service batch.",
+    "reason": "Controller accepts only as a one-release input alias for expected_version/cursor; rejects multiple forms.",
+    "kind": "deprecated_alias",
     "remove_after": "next_release"
   },
   {
     "file": "agent-controller/runtime-barrier-recovery.schema.json",
-    "pointer": "/$defs/policy_update_request/required/3",
+    "pointer": "/$defs/policy_update_request/allOf/0/oneOf/0/not/required/0",
     "field": "expected_revision",
     "replacement": "expected_version",
-    "kind": "pending_migration",
-    "reason": "agent-controller owner migration tracked by issue #68; legacy wire shape remains until its service batch.",
+    "reason": "Controller accepts only as a one-release input alias for expected_version/cursor; rejects multiple forms.",
+    "kind": "deprecated_alias",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "agent-controller/runtime-barrier-recovery.schema.json",
+    "pointer": "/$defs/policy_update_request/allOf/0/oneOf/1/properties/expected_revision",
+    "field": "expected_revision",
+    "replacement": "expected_version",
+    "reason": "Controller accepts only as a one-release input alias for expected_version/cursor; rejects multiple forms.",
+    "kind": "deprecated_alias",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "agent-controller/runtime-barrier-recovery.schema.json",
+    "pointer": "/$defs/policy_update_request/allOf/0/oneOf/1/required/0",
+    "field": "expected_revision",
+    "replacement": "expected_version",
+    "reason": "Controller accepts only as a one-release input alias for expected_version/cursor; rejects multiple forms.",
+    "kind": "deprecated_alias",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "agent-controller/runtime-barrier-recovery.schema.json",
+    "pointer": "/$defs/policy_update_request/properties/expected_revision",
+    "field": "expected_revision",
+    "replacement": "expected_version",
+    "kind": "deprecated_alias",
+    "reason": "Controller accepts only as a one-release input alias for expected_version/cursor; rejects multiple forms.",
     "remove_after": "next_release"
   },
   {
@@ -868,8 +904,8 @@
     "pointer": "/$defs/change_page/properties/nextCursor",
     "field": "nextCursor",
     "replacement": "next_cursor",
-    "kind": "pending_migration",
-    "reason": "skill-learning owner migration tracked by issue #68; legacy wire shape remains until its service batch.",
+    "kind": "deprecated_alias",
+    "reason": "Controller accepts only as a one-release input alias for expected_version/cursor; rejects multiple forms.",
     "remove_after": "next_release"
   },
   {
@@ -877,8 +913,8 @@
     "pointer": "/$defs/change_page/properties/olderCursor",
     "field": "olderCursor",
     "replacement": "older_cursor",
-    "kind": "pending_migration",
-    "reason": "skill-learning owner migration tracked by issue #68; legacy wire shape remains until its service batch.",
+    "kind": "deprecated_alias",
+    "reason": "Controller accepts only as a one-release input alias for expected_version/cursor; rejects multiple forms.",
     "remove_after": "next_release"
   },
   {
@@ -886,8 +922,8 @@
     "pointer": "/$defs/change_page/properties/sealedCursor",
     "field": "sealedCursor",
     "replacement": "sealed_cursor",
-    "kind": "pending_migration",
-    "reason": "skill-learning owner migration tracked by issue #68; legacy wire shape remains until its service batch.",
+    "kind": "deprecated_alias",
+    "reason": "Controller accepts only as a one-release input alias for expected_version/cursor; rejects multiple forms.",
     "remove_after": "next_release"
   },
   {
@@ -895,8 +931,8 @@
     "pointer": "/$defs/change_page/required/1",
     "field": "nextCursor",
     "replacement": "next_cursor",
-    "kind": "pending_migration",
-    "reason": "skill-learning owner migration tracked by issue #68; legacy wire shape remains until its service batch.",
+    "kind": "deprecated_alias",
+    "reason": "Controller accepts only as a one-release input alias for expected_version/cursor; rejects multiple forms.",
     "remove_after": "next_release"
   },
   {
@@ -904,8 +940,8 @@
     "pointer": "/$defs/change_page/required/2",
     "field": "olderCursor",
     "replacement": "older_cursor",
-    "kind": "pending_migration",
-    "reason": "skill-learning owner migration tracked by issue #68; legacy wire shape remains until its service batch.",
+    "kind": "deprecated_alias",
+    "reason": "Controller accepts only as a one-release input alias for expected_version/cursor; rejects multiple forms.",
     "remove_after": "next_release"
   },
   {
@@ -913,8 +949,44 @@
     "pointer": "/$defs/change_page/required/3",
     "field": "sealedCursor",
     "replacement": "sealed_cursor",
-    "kind": "pending_migration",
-    "reason": "skill-learning owner migration tracked by issue #68; legacy wire shape remains until its service batch.",
+    "kind": "deprecated_alias",
+    "reason": "Controller accepts only as a one-release input alias for expected_version/cursor; rejects multiple forms.",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "skill-learning/learning-api.schema.json",
+    "pointer": "/$defs/policy_mutation_request/allOf/0/oneOf/0/not/properties/expected_revision",
+    "field": "expected_revision",
+    "replacement": "expected_version",
+    "reason": "Controller accepts only as a one-release input alias for expected_version/cursor; rejects multiple forms.",
+    "kind": "deprecated_alias",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "skill-learning/learning-api.schema.json",
+    "pointer": "/$defs/policy_mutation_request/allOf/0/oneOf/0/not/required/0",
+    "field": "expected_revision",
+    "replacement": "expected_version",
+    "reason": "Controller accepts only as a one-release input alias for expected_version/cursor; rejects multiple forms.",
+    "kind": "deprecated_alias",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "skill-learning/learning-api.schema.json",
+    "pointer": "/$defs/policy_mutation_request/allOf/0/oneOf/1/properties/expected_revision",
+    "field": "expected_revision",
+    "replacement": "expected_version",
+    "reason": "Controller accepts only as a one-release input alias for expected_version/cursor; rejects multiple forms.",
+    "kind": "deprecated_alias",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "skill-learning/learning-api.schema.json",
+    "pointer": "/$defs/policy_mutation_request/allOf/0/oneOf/1/required/0",
+    "field": "expected_revision",
+    "replacement": "expected_version",
+    "reason": "Controller accepts only as a one-release input alias for expected_version/cursor; rejects multiple forms.",
+    "kind": "deprecated_alias",
     "remove_after": "next_release"
   },
   {
@@ -922,17 +994,8 @@
     "pointer": "/$defs/policy_mutation_request/properties/expected_revision",
     "field": "expected_revision",
     "replacement": "expected_version",
-    "kind": "pending_migration",
-    "reason": "skill-learning owner migration tracked by issue #68; legacy wire shape remains until its service batch.",
-    "remove_after": "next_release"
-  },
-  {
-    "file": "skill-learning/learning-api.schema.json",
-    "pointer": "/$defs/policy_mutation_request/required/3",
-    "field": "expected_revision",
-    "replacement": "expected_version",
-    "kind": "pending_migration",
-    "reason": "skill-learning owner migration tracked by issue #68; legacy wire shape remains until its service batch.",
+    "kind": "deprecated_alias",
+    "reason": "Controller accepts only as a one-release input alias for expected_version/cursor; rejects multiple forms.",
     "remove_after": "next_release"
   },
   {

@@ -2,7 +2,6 @@ package server
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"log/slog"
 	"net/http"
@@ -41,13 +40,8 @@ func (h *handler) setAgentNetworkPolicy(response http.ResponseWriter, request *h
 	if _, ok := strictQuery(response, request, map[string]struct{}{}); !ok {
 		return
 	}
-	var raw json.RawMessage
-	if !decodeJSON(response, request, &raw) {
-		return
-	}
 	var input application.SetAgentNetworkPolicyInput
-	if err := json.Unmarshal(raw, &input); err != nil {
-		writeJSON(response, http.StatusBadRequest, errorResponse{Code: apierror.InvalidRequest, Message: "Network policy request is invalid"})
+	if !decodeJSON(response, request, &input) {
 		return
 	}
 	input.AgentID = request.PathValue("agent_id")

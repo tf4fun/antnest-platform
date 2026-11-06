@@ -160,7 +160,6 @@
         "request_id",
         "organization_id",
         "actor_principal_id",
-        "expected_revision",
         "unknown_cost",
         "run_caps",
         "daily",
@@ -179,7 +178,20 @@
         "expected_revision": {
           "type": "integer",
           "minimum": 0,
-          "maximum": 9007199254740991
+          "maximum": 9007199254740991,
+          "deprecated": true
+        },
+        "expected_version": {
+          "allOf": [
+            {
+              "$ref": "../common/precondition.schema.json#/$defs/expected_version"
+            },
+            {
+              "type": "string",
+              "pattern": "^(0|[1-9][0-9]*)$",
+              "maxLength": 20
+            }
+          ]
         },
         "unknown_cost": {
           "enum": ["allow", "deny"]
@@ -193,7 +205,23 @@
         "monthly": {
           "$ref": "#/$defs/period_caps"
         }
-      }
+      },
+      "allOf": [
+        {
+          "oneOf": [
+            {
+              "required": ["expected_version"],
+              "properties": {"expected_version": true},
+              "not": {"required": ["expected_revision"], "properties": {"expected_revision": true}}
+            },
+            {
+              "required": ["expected_revision"],
+              "properties": {"expected_revision": true},
+              "not": {"required": ["expected_version"], "properties": {"expected_version": true}}
+            }
+          ]
+        }
+      ]
     }
   }
 }

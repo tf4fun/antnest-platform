@@ -504,7 +504,14 @@
           "$ref": "#/$defs/id"
         },
         "expected_version": {
-          "$ref": "#/$defs/id"
+          "allOf": [
+            {
+              "$ref": "../common/precondition.schema.json#/$defs/expected_version"
+            },
+            {
+              "$ref": "#/$defs/id"
+            }
+          ]
         },
         "credential": {
           "$ref": "#/$defs/provider_credential_input"
@@ -581,8 +588,13 @@
             "$ref": "#/$defs/provider_connection"
           }
         },
-        "next_after_id": {
-          "$ref": "#/$defs/id"
+        "next_cursor": {
+          "allOf": [
+            {
+              "$ref": "../common/pagination.schema.json#/$defs/cursor"
+            }
+          ],
+          "type": "string"
         }
       }
     },
@@ -681,8 +693,7 @@
       "required": [
         "request_id",
         "organization_id",
-        "actor_principal_id",
-        "expected_resource_version"
+        "actor_principal_id"
       ],
       "properties": {
         "request_id": {
@@ -706,7 +717,20 @@
         },
         "expected_resource_version": {
           "type": "integer",
-          "minimum": 1
+          "minimum": 1,
+          "deprecated": true
+        },
+        "expected_version": {
+          "allOf": [
+            {
+              "$ref": "../common/precondition.schema.json#/$defs/expected_version"
+            },
+            {
+              "type": "string",
+              "pattern": "^(0|[1-9][0-9]*)$",
+              "maxLength": 20
+            }
+          ]
         }
       },
       "oneOf": [
@@ -722,6 +746,22 @@
               {"required": ["revision"]}
             ]
           }
+        }
+      ],
+      "allOf": [
+        {
+          "oneOf": [
+            {
+              "required": ["expected_version"],
+              "properties": {"expected_version": true},
+              "not": {"required": ["expected_resource_version"], "properties": {"expected_resource_version": true}}
+            },
+            {
+              "required": ["expected_resource_version"],
+              "properties": {"expected_resource_version": true},
+              "not": {"required": ["expected_version"], "properties": {"expected_version": true}}
+            }
+          ]
         }
       ]
     },
@@ -1044,8 +1084,25 @@
           "$ref": "#/$defs/model_display_name"
         },
         "expected_version": {
-          "type": "integer",
-          "minimum": 1
+          "oneOf": [
+            {
+              "allOf": [
+                {
+                  "$ref": "../common/precondition.schema.json#/$defs/expected_version"
+                },
+                {
+                  "type": "string",
+                  "pattern": "^(0|[1-9][0-9]*)$",
+                  "maxLength": 20
+                }
+              ]
+            },
+            {
+              "type": "integer",
+              "minimum": 1,
+              "deprecated": true
+            }
+          ]
         },
         "model": {
           "$ref": "#/$defs/model_parameters"
@@ -1108,7 +1165,7 @@
     "model_profile_list": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["items", "next_after_id"],
+      "required": ["items", "next_cursor"],
       "properties": {
         "items": {
           "type": "array",
@@ -1116,7 +1173,12 @@
             "$ref": "#/$defs/model_profile"
           }
         },
-        "next_after_id": {
+        "next_cursor": {
+          "allOf": [
+            {
+              "$ref": "../common/pagination.schema.json#/$defs/nullable_cursor"
+            }
+          ],
           "type": ["string", "null"]
         }
       }
@@ -1449,7 +1511,7 @@
     "agent_template_list": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["items", "next_after_id"],
+      "required": ["items", "next_cursor"],
       "properties": {
         "items": {
           "type": "array",
@@ -1457,7 +1519,12 @@
             "$ref": "#/$defs/agent_template"
           }
         },
-        "next_after_id": {
+        "next_cursor": {
+          "allOf": [
+            {
+              "$ref": "../common/pagination.schema.json#/$defs/nullable_cursor"
+            }
+          ],
           "type": ["string", "null"]
         }
       }
@@ -2484,7 +2551,6 @@
         "request_id",
         "organization_id",
         "actor_principal_id",
-        "expected_revision",
         "unknown_cost",
         "run_caps",
         "daily",
@@ -2503,7 +2569,20 @@
         "expected_revision": {
           "type": "integer",
           "minimum": 0,
-          "maximum": 9007199254740991
+          "maximum": 9007199254740991,
+          "deprecated": true
+        },
+        "expected_version": {
+          "allOf": [
+            {
+              "$ref": "../common/precondition.schema.json#/$defs/expected_version"
+            },
+            {
+              "type": "string",
+              "pattern": "^(0|[1-9][0-9]*)$",
+              "maxLength": 20
+            }
+          ]
         },
         "unknown_cost": {
           "enum": ["allow", "deny"]
@@ -2517,7 +2596,23 @@
         "monthly": {
           "$ref": "#/$defs/period_caps"
         }
-      }
+      },
+      "allOf": [
+        {
+          "oneOf": [
+            {
+              "required": ["expected_version"],
+              "properties": {"expected_version": true},
+              "not": {"required": ["expected_revision"], "properties": {"expected_revision": true}}
+            },
+            {
+              "required": ["expected_revision"],
+              "properties": {"expected_revision": true},
+              "not": {"required": ["expected_version"], "properties": {"expected_version": true}}
+            }
+          ]
+        }
+      ]
     },
     "execution_credential_request": {
       "type": "object",
