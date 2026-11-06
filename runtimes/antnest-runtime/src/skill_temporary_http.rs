@@ -178,8 +178,13 @@ async fn handle(
             },
         );
         match result {
-            Ok(installed)=>private_json(Json(json!({"action":signed_action,"request_id":ticket.request_id,"job_id":ticket.job_id,"execution_id":state.status.execution_id(),"outcome":"installed","temporary_path":installed.temporary_path,"content_digest":installed.content_digest,"artifact_digest":installed.artifact_digest,"unpacked_size":installed.unpacked_size,"effect_state":"settled","runtime_call_stopped":true})).into_response()),
-            Err(error)=>executor_failure(error),
+            Ok(installed) => installed_response(
+                &ticket.request_id,
+                &ticket.job_id,
+                state.status.execution_id(),
+                installed,
+            ),
+            Err(error) => executor_failure(error),
         }
     } else {
         if content_type.split(';').next().map(str::trim) != Some("application/json") {
@@ -211,8 +216,12 @@ async fn handle(
             if result.is_ok() { "released" } else { "failed" },
         );
         match result {
-            Ok(_)=>private_json(Json(json!({"action":signed_action,"request_id":ticket.request_id,"job_id":ticket.job_id,"execution_id":state.status.execution_id(),"outcome":"released","effect_state":"settled","runtime_call_stopped":true})).into_response()),
-            Err(error)=>executor_failure(error),
+            Ok(_) => released_response(
+                &ticket.request_id,
+                &ticket.job_id,
+                state.status.execution_id(),
+            ),
+            Err(error) => executor_failure(error),
         }
     }
 }
@@ -262,11 +271,31 @@ fn executor_failure(error: ToolError) -> Response {
         error.code != ToolErrorCode::ChildProcessContainmentUnproven,
     )
 }
+fn installed_response(
+    request_id: &str,
+    job_id: &str,
+    execution_id: &str,
+    installed: crate::skill_temporary::TemporaryInstalled,
+) -> Response {
+    private_json(Json(json!({"action":"temporary_install","request_id":request_id,"job_id":job_id,"execution_id":execution_id,"outcome":"installed","temporary_path":installed.temporary_path,"content_digest":installed.content_digest,"artifact_digest":installed.artifact_digest,"unpacked_size":installed.unpacked_size,"effect_state":"settled","runtime_call_stopped":true})).into_response())
+}
+fn released_response(request_id: &str, job_id: &str, execution_id: &str) -> Response {
+    private_json(Json(json!({"action":"temporary_release","request_id":request_id,"job_id":job_id,"execution_id":execution_id,"outcome":"released","effect_state":"settled","runtime_call_stopped":true})).into_response())
+}
 fn failure(status: StatusCode, code: &str, effect: ToolEffectState, stopped: bool) -> Response {
+    failure_with_request_id(status, code, effect, stopped, "")
+}
+fn failure_with_request_id(
+    status: StatusCode,
+    code: &str,
+    effect: ToolEffectState,
+    stopped: bool,
+    request_id: &str,
+) -> Response {
     let envelope = crate::api_errors_gen::envelope(
         code,
         "Temporary Skill request did not complete",
-        "",
+        request_id,
         status.is_server_error(),
     );
     let mut value = envelope.clone();
@@ -291,3 +320,7 @@ fn private_json(mut response: Response) -> Response {
 #[cfg(test)]
 #[path = "skill_temporary_common_error_tests.rs"]
 mod skill_temporary_common_error_tests;
+
+#[cfg(test)]
+#[path = "skill_temporary_http_golden_tests.rs"]
+mod skill_temporary_http_golden_tests;

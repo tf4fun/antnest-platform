@@ -1,0 +1,20 @@
+{
+  "category": "forbidden",
+  "code": "temporary_disabled",
+  "details": {
+    "effect_state": "none",
+    "runtime_call_stopped": true
+  },
+  "error": {
+    "category": "forbidden",
+    "code": "temporary_disabled",
+    "effect_state": "none",
+    "message": "Temporary Skill request did not complete",
+    "request_id": "request-golden-1",
+    "retryable": false,
+    "runtime_call_stopped": true
+  },
+  "message": "Temporary Skill request did not complete",
+  "request_id": "request-golden-1",
+  "retryable": false
+}
