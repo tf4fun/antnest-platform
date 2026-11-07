@@ -76,11 +76,11 @@ test("catalog fixture uses current Provider ownership, malformed-image rejection
       }
       const url = new URL(path, "http://fixture");
       if (!url.search) return { body: { items } };
-      const second = url.searchParams.has("after_id");
+      const second = url.searchParams.has("cursor");
       return {
         body: {
           items: [items[second ? 1 : 0]],
-          ...(!second ? { next_after_id: items[0][id] } : {}),
+          next_cursor: second ? null : items[0][id],
         },
       };
     },
