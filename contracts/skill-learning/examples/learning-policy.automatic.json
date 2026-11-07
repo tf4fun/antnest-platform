@@ -1,0 +1,18 @@
+{
+  "activation_cut_at": "2026-09-01T00:00:00Z",
+  "agent_id": "agent-1",
+  "limits": {
+    "daily_model_input_tokens": 320000,
+    "daily_model_output_tokens": 80000,
+    "daily_reviews": 20
+  },
+  "mode": "automatic",
+  "organization_id": "org-1",
+  "owner_principal_id": "owner-1",
+  "pinned_paths": [],
+  "revision": "d15b10febb6f965e67a63553b559e3567e07deca79834687d4f38dbb69c3b192",
+  "scope": {
+    "adopted_paths": [],
+    "auto_generated_personal": true
+  }
+}

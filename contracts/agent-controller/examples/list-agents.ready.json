@@ -1,0 +1,30 @@
+{
+  "items": [
+    {
+      "access_revision": "access-1",
+      "activation_state": "enabled",
+      "active_operation_request_id": "request-1",
+      "agent_id": "agent-1",
+      "agent_spec_revision": "spec-1",
+      "aggregate_sequence": 2,
+      "created_at": "2026-09-01T00:00:00Z",
+      "desired_state": "enabled",
+      "executable_execution_revision": "execution-1",
+      "failure_code": "example",
+      "failure_stage": "publish",
+      "last_successful_execution_revision": "execution-1",
+      "lifecycle_state": "created",
+      "name": "Agent",
+      "organization_id": "org-1",
+      "owner_user_id": "user-1",
+      "runtime": {
+        "mcp_endpoint": "http://runtime:8091/mcp",
+        "runtime_execution_id": "runtime-execution-1",
+        "runtime_revision": "rtv_11111111111111111111111111111111"
+      },
+      "runtime_state": "available",
+      "updated_at": "2026-09-01T00:00:00Z"
+    }
+  ],
+  "next_cursor": null
+}

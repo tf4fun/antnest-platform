@@ -102,12 +102,10 @@ func TestExecutionV2ClientRejectsMalformedDigests(t *testing.T) {
 		`{"organization_id":"org-1","schema_version":3,"revision":3,"digest":"` + hex + `","providers":[],"models":[],"agents":[],"organization_budget_digest":null}`,
 		`{"organization_id":"org-1","schema_version":0,"revision":0,"digest":"` + hex + `","providers":[],"models":[],"agents":[],"organization_budget_digest":null}`,
 		`{"organization_id":"org-1","schema_version":2,"revision":3,"digest":"short","providers":[],"models":[],"agents":[],"organization_budget_digest":null}`,
-		`{"organization_id":"org-1","schema_version":2,"revision":3,"digest":"` + hex + `","providers":[],"models":[],"agents":[],"organization_budget_digest":null,"extra":1}`,
 		`{"organization_id":"org-1","schema_version":2,"revision":3,"digest":"` + hex + `","models":[],"agents":[],"organization_budget_digest":null}`,
 		`{"organization_id":"org-1","schema_version":null,"revision":3,"digest":"` + hex + `","providers":[],"models":[],"agents":[],"organization_budget_digest":null}`,
 		`{"organization_id":"org-1","schema_version":2,"revision":null,"digest":"` + hex + `","providers":[],"models":[],"agents":[],"organization_budget_digest":null}`,
 		`{"organization_id":"org-1","schema_version":2,"revision":3,"digest":"` + hex + `","providers":null,"models":[],"agents":[],"organization_budget_digest":null}`,
-		`{"organization_id":"org-1","schema_version":2,"revision":3,"digest":"` + hex + `","providers":[],"models":[],"agents":[],"organization_budget_digest":null,"unexpected":1}`,
 	}...) {
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "application/json")

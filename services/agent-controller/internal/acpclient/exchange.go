@@ -48,7 +48,6 @@ func (client *Client) exchange(ctx context.Context, method string, payload, resu
 		return failure("invalid_response", true, nil)
 	}
 	decoder := json.NewDecoder(bytes.NewReader(responseBody))
-	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(result); err != nil {
 		return failure("invalid_response", true, nil)
 	}

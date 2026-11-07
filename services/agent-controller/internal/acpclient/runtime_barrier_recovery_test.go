@@ -236,7 +236,44 @@ func TestGetRuntimeBarrierRequiresEveryResponseField(t *testing.T) {
 	}
 }
 
-func TestGetRuntimeBarrierRejectsUnknownFieldsAndCaseAliases(t *testing.T) {
+func TestGetRuntimeBarrierToleratesResponseExtensions(t *testing.T) {
+	for _, scenario := range []struct {
+		name  string
+		apply func(document map[string]any)
+	}{
+		{"top-level extension", func(document map[string]any) {
+			document["unknown"] = "synthetic-private-field"
+		}},
+		{"nested barrier extension", func(document map[string]any) {
+			document["barrier"].(map[string]any)["unknown"] = "synthetic-private-field"
+		}},
+		{"top-level case alias", func(document map[string]any) {
+			document["Organization_ID"] = "org1"
+		}},
+		{"barrier case alias", func(document map[string]any) {
+			document["barrier"].(map[string]any)["Barrier_ID"] = "barrier1"
+		}},
+	} {
+		t.Run(scenario.name, func(t *testing.T) {
+			document := runtimeBarrierDocument(t)
+			scenario.apply(document)
+			response := runtimeBarrierJSON(t, document)
+			client := newClient(t, func(writer http.ResponseWriter, _ *http.Request) {
+				writeResponse(t, writer, http.StatusOK, response)
+			})
+			result, err := client.GetRuntimeBarrier(context.Background(), runtimeBarrierQuery())
+			require.NoError(t, err)
+			require.Equal(t, ports.RuntimeBarrierResult{
+				OrganizationID: "org1", AgentID: "agent1", RuntimeRevision: "runtime1",
+				Barrier: &ports.RuntimeBarrier{
+					BarrierID: "barrier1", Reason: "runtime_barrier_required", RuntimeExecutionID: "retained-execution1",
+				},
+			}, result)
+		})
+	}
+}
+
+func TestGetRuntimeBarrierRejectsCaseAliases(t *testing.T) {
 	for _, nested := range []bool{false, true} {
 		fields := []string{"organization_id", "agent_id", "runtime_revision", "barrier"}
 		prefix := "top-level"
@@ -244,33 +281,18 @@ func TestGetRuntimeBarrierRejectsUnknownFieldsAndCaseAliases(t *testing.T) {
 			fields = []string{"barrier_id", "reason", "runtime_execution_id"}
 			prefix = "barrier"
 		}
-		for _, field := range append(fields, "unknown") {
+		for _, field := range fields {
 			t.Run(prefix+"/"+field, func(t *testing.T) {
 				document := runtimeBarrierDocument(t)
 				target := document
 				if nested {
 					target = document["barrier"].(map[string]any)
 				}
-				if field == "unknown" {
-					target["unknown"] = "synthetic-private-field"
-				} else {
-					target[strings.ToUpper(field)] = target[field]
-					delete(target, field)
-				}
+				target[strings.ToUpper(field)] = target[field]
+				delete(target, field)
 				assertInvalidRuntimeBarrierResponse(t, runtimeBarrierJSON(t, document), "application/json")
 			})
 		}
-	}
-	for _, nested := range []bool{false, true} {
-		t.Run(map[bool]string{false: "top-level valid plus case alias", true: "barrier valid plus case alias"}[nested], func(t *testing.T) {
-			document := runtimeBarrierDocument(t)
-			if nested {
-				document["barrier"].(map[string]any)["Barrier_ID"] = "barrier1"
-			} else {
-				document["Organization_ID"] = "org1"
-			}
-			assertInvalidRuntimeBarrierResponse(t, runtimeBarrierJSON(t, document), "application/json")
-		})
 	}
 }
 

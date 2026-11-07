@@ -330,3 +330,18 @@ private tunnel keys. RC alone privately prepares those with Egress. The shared
 [transport contract](../../docs/authenticated-runtime-tunnel.md) owns framing
 and coordinated deployment; this Controller batch records local consumption,
 with actual cross-service lifecycle acceptance reserved for integration.
+
+## Golden examples and N-1 rollout
+
+Captured producer outputs live under `contracts/agent-acp/examples/` and
+`contracts/agent-controller/examples/`, enumerated by
+[`contracts/golden-manifest.json`](../../contracts/golden-manifest.json). Test
+suites rewrite them only on explicit `-update`; otherwise a mismatch fails.
+The preserved `*.n-1-*.json` files capture the pre-marker producer output and
+are never regenerated.
+
+The legacy execution snapshot emits `schema_version` 1 and downstream response
+parsers tolerate unknown fields recursively. Consumers deploy first: the
+previous ACP parser rejects the new marker, so Controller may only rely on
+`schema_version` 1 after the ACP change accepting unknown response fields has
+shipped. The v2 publication keeps `schema_version` 2.

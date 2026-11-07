@@ -1,0 +1,19 @@
+{
+  "events": [
+    {
+      "agent_id": "agent-1",
+      "aggregate_sequence": 2,
+      "data": {
+        "kind": "ready"
+      },
+      "event_id": "event-1",
+      "event_type": "agent_ready",
+      "global_sequence": 1,
+      "occurred_at": "2026-09-01T00:00:00Z",
+      "operation_request_id": "request-1",
+      "schema_version": 1,
+      "trace_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    }
+  ],
+  "next_sequence": 1
+}

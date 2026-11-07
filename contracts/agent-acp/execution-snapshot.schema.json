@@ -12,6 +12,9 @@
       "exclusiveMinimum": 0,
       "maximum": 9007199254740991
     },
+    "schema_version": {
+      "const": 1
+    },
     "organization_budget": {
       "type": "object",
       "properties": {

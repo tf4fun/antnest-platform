@@ -1,0 +1,67 @@
+{
+  "agents": [
+    {
+      "accepting_runs": false,
+      "access_revision": "access-1",
+      "agent_id": "agent-1",
+      "agent_spec_revision": null,
+      "authorization_revision": 1,
+      "context_policy_version": "context-v1",
+      "default_authorization": {
+        "mode": "auto",
+        "tool_rules": []
+      },
+      "default_model_profile_id": "model-1",
+      "execution_revision": null,
+      "failover": "before_output",
+      "max_model_requests": 8,
+      "model_retry": {
+        "base_ms": 200,
+        "cap_ms": 30000,
+        "max": 2
+      },
+      "operation_id": null,
+      "principal_ids": [
+        "owner-1"
+      ],
+      "runtime": {
+        "mcp_endpoint": "http://antnest-runtime-agent-1:8093/mcp",
+        "runtime_execution_id": "boot-1",
+        "runtime_revision": "rtv_11111111111111111111111111111111"
+      },
+      "skill_instructions": [],
+      "system_prompt": "Organization assistant",
+      "unavailable_reason": "agent_unavailable"
+    }
+  ],
+  "models": [
+    {
+      "connection_id": "provider-1",
+      "context_window": 8192,
+      "display_name": "Current model",
+      "enabled": true,
+      "max_output_tokens": 1024,
+      "model": "current-model",
+      "model_profile_id": "model-1",
+      "model_profile_revision": 1,
+      "supports_images": false
+    }
+  ],
+  "organization_id": "org-1",
+  "providers": [
+    {
+      "base_url": "https://api.deepseek.com",
+      "connection_id": "provider-1",
+      "credential": {
+        "method": "api_key",
+        "secret": "synthetic-current-secret"
+      },
+      "credential_revision": "credential-current",
+      "enabled": true,
+      "provider_key": "deepseek",
+      "request_protocol": "openai_chat_completions"
+    }
+  ],
+  "revision": 3,
+  "schema_version": 1
+}

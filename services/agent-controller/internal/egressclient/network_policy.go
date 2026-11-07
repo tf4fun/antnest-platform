@@ -14,7 +14,7 @@ import (
 	"regexp"
 	"strconv"
 
-	"github.com/tf4fun/antnest-platform/modules/service-authentication/serviceauth"
+	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/responsejson"
 
 	"go.opentelemetry.io/otel/attribute"
 
@@ -110,7 +110,7 @@ func (client *Client) PutPolicyRevision(ctx context.Context, ref ports.NetworkPo
 			SchemaVersion int    `json:"schema_version"`
 			Digest        string `json:"digest"`
 		}
-		if err := serviceauth.DecodeObject(payload, &metadata); err != nil {
+		if err := responsejson.Decode(payload, &metadata); err != nil {
 			return dependencyFailure("invalid_response", true)
 		}
 		canonical, err := json.Marshal(spec)
@@ -144,13 +144,13 @@ func decodePolicyRevision(payload []byte) (ports.NetworkPolicyRevision, error) {
 		Digest   string          `json:"digest"`
 	}
 	var revision ports.NetworkPolicyRevision
-	if err := serviceauth.DecodeObject(payload, &wire); err != nil {
+	if err := responsejson.Decode(payload, &wire); err != nil {
 		return revision, dependencyFailure("invalid_response", true)
 	}
 	revision.PolicyID = wire.PolicyID
 	revision.Revision = wire.Revision
 	revision.Digest = wire.Digest
-	if err := json.Unmarshal(wire.Spec, &revision.Spec); err != nil {
+	if err := responsejson.Decode(wire.Spec, &revision.Spec); err != nil {
 		return revision, dependencyFailure("invalid_response", true)
 	}
 	if !revision.Valid() || !revision.Spec.Valid() || !policyDigestPattern.MatchString(revision.Digest) {

@@ -10,7 +10,7 @@ import (
 )
 
 func BuildExecutionSnapshot(ctx context.Context, source ports.ExecutionSource, opener ports.CredentialOpener) (ports.ExecutionSnapshot, error) {
-	return buildExecutionSnapshot(ctx, source, 0, opener)
+	return buildExecutionSnapshot(ctx, source, 1, opener)
 }
 
 func BuildExecutionSnapshotV2(ctx context.Context, source ports.ExecutionSource) (ports.ExecutionSnapshot, error) {

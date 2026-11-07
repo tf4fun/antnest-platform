@@ -1,1 +1,56 @@
-[]
+[
+  {
+    "file": "agent-acp/examples/execution-snapshot.n-1-preparing.json",
+    "schema": "agent-acp/execution-snapshot.schema.json",
+    "producer": "agent-controller",
+    "consumers": ["agent-acp-service"]
+  },
+  {
+    "file": "agent-acp/examples/execution-snapshot.n-1-ready.json",
+    "schema": "agent-acp/execution-snapshot.schema.json",
+    "producer": "agent-controller",
+    "consumers": ["agent-acp-service"]
+  },
+  {
+    "file": "agent-acp/examples/execution-snapshot.preparing.json",
+    "schema": "agent-acp/execution-snapshot.schema.json",
+    "producer": "agent-controller",
+    "consumers": ["agent-acp-service"]
+  },
+  {
+    "file": "agent-acp/examples/execution-snapshot.ready.json",
+    "schema": "agent-acp/execution-snapshot.schema.json",
+    "producer": "agent-controller",
+    "consumers": ["agent-acp-service"]
+  },
+  {
+    "file": "agent-acp/examples/execution-snapshot.v2.json",
+    "schema": "agent-acp/execution-publication-v2.schema.json#/$defs/snapshot",
+    "producer": "agent-controller",
+    "consumers": ["agent-acp-service"]
+  },
+  {
+    "file": "agent-controller/examples/get-agent.ready.json",
+    "schema": "agent-controller/control-api.schema.json#/$defs/agent",
+    "producer": "agent-controller",
+    "consumers": ["admin-console"]
+  },
+  {
+    "file": "agent-controller/examples/list-agents.ready.json",
+    "schema": "agent-controller/control-api.schema.json#/$defs/agent_list",
+    "producer": "agent-controller",
+    "consumers": ["admin-console"]
+  },
+  {
+    "file": "agent-controller/examples/list-events.ready.json",
+    "schema": "agent-controller/control-api.schema.json#/$defs/event_list",
+    "producer": "agent-controller",
+    "consumers": ["admin-console"]
+  },
+  {
+    "file": "skill-learning/examples/learning-policy.automatic.json",
+    "schema": "skill-learning/learning-api.schema.json#/$defs/policy",
+    "producer": "agent-controller",
+    "consumers": ["agent-acp-service", "admin-console"]
+  }
+]

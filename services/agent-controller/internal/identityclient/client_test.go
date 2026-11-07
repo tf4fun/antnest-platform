@@ -115,11 +115,10 @@ func TestResolvePrincipalRejectsInvalidSuccessEnvelope(t *testing.T) {
 	t.Parallel()
 
 	tests := map[string]string{
-		"mismatched user":       `{"principal":{"user_id":"user-2","organization_id":"org-1","membership_id":"membership-1","active":true}}`,
-		"missing membership":    `{"principal":{"user_id":"user-1","organization_id":"org-1","membership_id":"","active":true}}`,
-		"invalid membership":    `{"principal":{"user_id":"user-1","organization_id":"org-1","membership_id":"membership/1","active":true}}`,
-		"missing active":        `{"principal":{"user_id":"user-1","organization_id":"org-1","membership_id":"membership-1"}}`,
-		"unexpected role field": `{"principal":{"user_id":"user-1","organization_id":"org-1","membership_id":"membership-1","system_role":"user","active":true}}`,
+		"mismatched user":    `{"principal":{"user_id":"user-2","organization_id":"org-1","membership_id":"membership-1","active":true}}`,
+		"missing membership": `{"principal":{"user_id":"user-1","organization_id":"org-1","membership_id":"","active":true}}`,
+		"invalid membership": `{"principal":{"user_id":"user-1","organization_id":"org-1","membership_id":"membership/1","active":true}}`,
+		"missing active":     `{"principal":{"user_id":"user-1","organization_id":"org-1","membership_id":"membership-1"}}`,
 	}
 	for name, payload := range tests {
 		name, payload := name, payload

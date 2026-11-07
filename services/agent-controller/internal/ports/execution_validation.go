@@ -15,7 +15,7 @@ var executionIdentifier = regexp.MustCompile(`^[a-zA-Z0-9_./:-]{1,200}$`)
 
 func (snapshot ExecutionSnapshot) Validate() error {
 	if !executionIdentifier.MatchString(snapshot.OrganizationID) || !executionRevision(snapshot.Revision) ||
-		(snapshot.SchemaVersion != 0 && snapshot.SchemaVersion != 2) ||
+		(snapshot.SchemaVersion != 0 && snapshot.SchemaVersion != 1 && snapshot.SchemaVersion != 2) ||
 		snapshot.Providers == nil || snapshot.Models == nil || snapshot.Agents == nil {
 		return ErrInvalidExecutionConfiguration
 	}

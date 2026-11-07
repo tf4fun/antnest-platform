@@ -164,7 +164,6 @@ func decodeFailure(payload []byte, status int) error {
 
 func decodeStrictJSON(payload []byte, target any) error {
 	decoder := json.NewDecoder(bytes.NewReader(payload))
-	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(target); err != nil {
 		return err
 	}
