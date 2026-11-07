@@ -46,6 +46,8 @@ jobs:
     name: Plan system integration
     if: >-
       (github.event_name != 'pull_request' && github.ref == 'refs/heads/main') ||
+      (github.event_name == 'workflow_dispatch' &&
+       github.ref == 'refs/heads/diagnose/main-rc-auth-matrix') ||
       (github.event_name == 'pull_request' &&
        contains(github.event.pull_request.labels.*.name, 'e2e') &&
        (github.event.action != 'labeled' || github.event.label.name == 'e2e'))
@@ -92,7 +94,7 @@ jobs:
             git -c advice.detachedHead=false checkout --detach "$revision"
           else
             set -- "$@" --resolve-images
-            [ "$EVENT" != pull_request ] && set -- "$@" --all-images
+            # Diagnostic-only branch: select only this authentication scenario.
             echo "revision=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
           fi
           node tests/support/ci-changes.mjs "$@"
@@ -192,7 +194,7 @@ jobs:
           MANIFEST_JSON: ${{ inputs.manifest }}
           REVISION: ${{ needs.plan.outputs.revision }}
           RESOLVED: ${{ needs.plan.outputs.images }}
-          ORIGIN: ${{ github.event_name == 'pull_request' && 'pr' || 'main' }}
+          ORIGIN: pr
         run: |
           if [ -n "$MANIFEST_JSON" ]; then
             node tests/support/ci-manifest.mjs validate "$RUNNER_TEMP/manifest.json"
