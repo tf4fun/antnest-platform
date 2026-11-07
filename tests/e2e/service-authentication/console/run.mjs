@@ -426,6 +426,7 @@ export async function runConsoleAcceptance({
         "?limit=1&limit=2",
         "?limit=1&scope=self",
         "?limit=1&organization_id=org-2",
+        "?limit=1&cursor=",
         "?limit=1&after_id=",
       ])
         await request(sessionPath + query, { status: 400 });
@@ -473,27 +474,27 @@ export async function runConsoleAcceptance({
           Cookie: "browser=secret",
         },
       });
-      assert.equal(first.sessions.length, 1);
-      assert.equal(first.sessions[0].id, "public-session-01");
-      assert.equal(first.sessions[0].organization_id, "org-1");
+      assert.equal(first.items.length, 1);
+      assert.equal(first.items[0].id, "public-session-01");
+      assert.equal(first.items[0].organization_id, "org-1");
       assert.equal(
-        first.sessions[0].user_agent_hint,
+        first.items[0].user_agent_hint,
         "<img src=x onerror=alert(1)> Synthetic browser",
       );
-      assert.equal(first.next_after_id, "public-session-01");
+      assert.equal(first.next_cursor, "public-session-01");
       assert.deepEqual(
         await safeSessionRequest(sessionPath + "?limit=1"),
         first,
         "inventory reads must preserve activity and both deadlines",
       );
       const second = await safeSessionRequest(
-        sessionPath + "?limit=1&after_id=" + first.next_after_id,
+        sessionPath + "?limit=1&cursor=" + first.next_cursor,
       );
       assert.deepEqual(
-        second.sessions.map((row) => row.id),
+        second.items.map((row) => row.id),
         ["public-session-02"],
       );
-      assert.equal(second.next_after_id, undefined);
+      assert.equal(second.next_cursor, null);
       const org2Context = callerContext(fixture, {
         org: "org-2",
         mbr: "member-2",
@@ -503,7 +504,7 @@ export async function runConsoleAcceptance({
         context: org2Context,
       });
       assert.deepEqual(
-        org2.sessions.map((row) => row.id),
+        org2.items.map((row) => row.id),
         ["public-session-03"],
       );
       for (const [user, status] of [
@@ -539,7 +540,7 @@ export async function runConsoleAcceptance({
       );
       assert.deepEqual(revoked, { revoked_count: 2, current_revoked: false });
       assert.deepEqual(
-        (await safeSessionRequest(sessionPath + "?limit=100")).sessions,
+        (await safeSessionRequest(sessionPath + "?limit=100")).items,
         [],
       );
       assert.deepEqual(

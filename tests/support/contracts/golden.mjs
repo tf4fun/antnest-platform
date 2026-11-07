@@ -130,16 +130,18 @@ function registry() {
     for (const entry of readManifest()) {
       const key = entry.schema.split("#", 1)[0];
       referencedDocuments.add(
-        key.startsWith(CANONICAL_BASE)
-          ? key.slice(CANONICAL_BASE.length)
-          : key,
+        key.startsWith(CANONICAL_BASE) ? key.slice(CANONICAL_BASE.length) : key,
       );
     }
     for (const [key, document] of documents) {
       const schemaLike =
         key.endsWith(".schema.json") ||
         (isObject(document) && "$schema" in document);
-      if (schemaLike && isObject(document) && typeof document.$id === "string") {
+      if (
+        schemaLike &&
+        isObject(document) &&
+        typeof document.$id === "string"
+      ) {
         ajv.addSchema(document);
         continue;
       }

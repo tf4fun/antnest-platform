@@ -18,32 +18,32 @@ export async function externalIdentityChecks({
   const path = "/api/session/external-identities";
   const before = (await call("/api/session")).value;
   const first = (await call(`${path}?limit=1`)).value;
-  assert.equal(first.bindings.length, 1);
+  assert.equal(first.items.length, 1);
   assert.equal(first.notices.length, 1);
-  assert.equal(first.next_after_id, "binding-1");
+  assert.equal(first.next_cursor, "binding-1");
   assert.equal(first.next_notice_after_id, "notice-1");
   const second = (
     await call(
-      `${path}?limit=1&after_id=${first.next_after_id}&notice_after_id=${first.next_notice_after_id}`,
+      `${path}?limit=1&cursor=${first.next_cursor}&notice_after_id=${first.next_notice_after_id}`,
     )
   ).value;
-  assert.equal(second.bindings[0].id, "binding-2");
-  assert.equal(second.bindings[0].organization_id, "other-organization");
-  assert.equal(second.bindings[0].provider_enabled, false);
-  assert.equal(second.bindings[0].subject, "  opaque 界 😀 \t");
+  assert.equal(second.items[0].id, "binding-2");
+  assert.equal(second.items[0].organization_id, "other-organization");
+  assert.equal(second.items[0].provider_enabled, false);
+  assert.equal(second.items[0].subject, "  opaque 界 😀 \t");
   assert.equal(second.notices[0].membership_id, "historical-membership");
   assert.equal(second.notices[0].binding_id, "old-binding");
-  const independent = (await call(`${path}?limit=1&after_id=binding-3`)).value;
-  assert.deepEqual(independent.bindings, []);
-  assert.equal(independent.next_after_id, undefined);
+  const independent = (await call(`${path}?limit=1&cursor=binding-3`)).value;
+  assert.deepEqual(independent.items, []);
+  assert.equal(independent.next_cursor, null);
   assert.equal(independent.notices[0].id, "notice-1");
   assert.equal(independent.next_notice_after_id, "notice-1");
   const all = (await call(`${path}?limit=100`)).value;
-  assert.equal(all.bindings.length, 3);
+  assert.equal(all.items.length, 3);
   assert.equal(all.notices.length, 3);
-  assert.equal(all.next_after_id, undefined);
+  assert.equal(all.next_cursor, null);
   assert.equal(all.next_notice_after_id, undefined);
-  assert(all.bindings[2].revoked_at);
+  assert(all.items[2].revoked_at);
   checks += 4;
 
   await call(`${path}?limit=1&scope=organization`, { status: 400 });

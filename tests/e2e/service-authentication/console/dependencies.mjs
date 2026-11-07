@@ -4,6 +4,7 @@ import { createServer } from "node:http";
 import { createHash, createPublicKey, verify } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { createOIDCFixture } from "./oidc-fixture.mjs";
+import { networkPolicyFixture } from "./network-policy-fixture.mjs";
 import {
   passwordCases,
   passwordCaseEmail,
@@ -177,7 +178,7 @@ for (const [service, port] of Object.entries(fixture.ports)) {
           const revoke = path.endsWith("revoke-user-sessions");
           const allowed = revoke
             ? ["actor_principal_id", "user_id", "scope", "mode", "request_id"]
-            : ["actor_principal_id", "user_id", "scope", "limit", "after_id"];
+            : ["actor_principal_id", "user_id", "scope", "limit", "cursor"];
           if (
             r.method !== "POST" ||
             body.scope !== "organization" ||
@@ -239,76 +240,25 @@ for (const [service, port] of Object.entries(fixture.ports)) {
               sid: "private-session-canary",
             });
           }
-          const scanned = visible.filter(
-            (row) => row.id > (body.after_id ?? ""),
-          );
+          const scanned = visible.filter((row) => row.id > (body.cursor ?? ""));
           const page = scanned.slice(0, body.limit);
           return json(w, {
-            sessions: page,
-            ...(scanned.length > body.limit
-              ? { next_after_id: page.at(-1).id }
-              : {}),
+            items: page,
+            next_cursor: scanned.length > body.limit ? page.at(-1).id : null,
             token: "private-token-canary",
           });
         }
       }
       if (service === "agent-controller") {
         if (path === "/internal/agents/agent-1/network-policy") {
-          const network = stats.networkPolicy;
-          const query = new URL(r.url, "http://fixture").searchParams;
-          assert.equal(claims.org, "org-1");
-          assert.equal(claims.agt, "agent-1");
-          network.calls.push({
-            method: r.method,
-            contextDigest: createHash("sha256").update(token).digest("hex"),
-            attachment: { ...network.attachment },
-            assignmentVersion: network.assignmentVersion,
-          });
-          if (r.method === "GET") {
-            assert.deepEqual([...query], [["organization_id", claims.org]]);
-            return json(w, {
-              agent_id: "agent-1",
-              policy: {
-                policy_id: "builtin/" + network.action.replace("_", "-"),
-                revision: 1,
-                resource_version: network.assignmentVersion,
-                spec: { schema_version: 1, action: network.action },
-                digest: "sha256:" + "a".repeat(64),
-              },
-              attachment: {
-                ...network.attachment,
-                tunnel_key_id: "private-network-canary",
-              },
-              organization_id: "private-network-canary",
-            });
-          }
-          assert.equal(r.method, "PUT");
-          assert.equal(query.size, 0);
-          assert.deepEqual(Object.keys(body).sort(), [
-            "actor_principal_id",
-            "expected_resource_version",
-            "organization_id",
-            "policy_id",
-            "request_id",
-            "revision",
-          ]);
-          assert.equal(body.organization_id, claims.org);
-          assert.equal(body.actor_principal_id, claims.sub);
-          assert.match(body.request_id, /^network-policy-/u);
-          assert.equal(body.policy_id, "builtin/allow-all");
-          assert.equal(body.revision, 1);
-          assert.equal(
-            body.expected_resource_version,
-            network.assignmentVersion,
-          );
-          network.action = "allow_all";
-          network.assignmentVersion++;
-          return json(w, {
-            agent_id: "agent-1",
-            policy_id: body.policy_id,
-            revision: 1,
-            resource_version: network.assignmentVersion,
-            credential_ref: "private-network-canary",
+          return networkPolicyFixture({
+            network: stats.networkPolicy,
+            r,
+            w,
+            body,
+            claims,
+            token,
+            json,
           });
         }
         if (
@@ -429,7 +379,7 @@ for (const [service, port] of Object.entries(fixture.ports)) {
         return json(w, { items: [], next_cursor: null });
       if (service === "skill-registry") {
         if (path === "/internal/skills")
-          return json(w, { items: [], next_after_id: null });
+          return json(w, { items: [], next_cursor: null });
         if (path === "/internal/skill-discovery/search")
           return json(w, { items: [] });
       }

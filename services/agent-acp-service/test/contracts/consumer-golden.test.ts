@@ -4,8 +4,8 @@ import { ControllerLearningPolicyClient } from "../../src/adapters/controller-le
 import { parseExecutionAuthority } from "../../src/domain/execution-publication-v2.js";
 
 interface SharedGoldenHelpers {
-  loadGolden(area: string, file: string): unknown;
-  withFutureFields(value: unknown): unknown;
+  loadGolden: (area: string, file: string) => unknown;
+  withFutureFields: (value: unknown) => unknown;
 }
 
 const helpers = (await import(

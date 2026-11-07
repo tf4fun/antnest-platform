@@ -98,7 +98,7 @@ export async function exerciseExternalIdentities({
   const chooser = await organization("list-external-identity-providers", {
     limit: 100,
   });
-  const choice = chooser.providers.find((p) => p.id === provider.id);
+  const choice = chooser.items.find((p) => p.id === provider.id);
   assert.equal(choice.link_policy, "none");
   assert.deepEqual(choice.link_domains, []);
   assert.equal(choice.authoritative, false);
@@ -243,14 +243,7 @@ export async function exerciseExternalIdentities({
   }
   await restart();
   const persisted = await inventory(restoredSession);
-  assert.deepEqual(
-    persisted.bindings.find((b) => b.id === binding.id),
-    restored,
-  );
-  assert.deepEqual(
-    persisted.notices.filter((n) => n.binding_id === binding.id),
-    [newNotice],
-  );
+  assertRestoredBinding(persisted, restored, newNotice);
 
   // An isolated Membership has just this Provider; seed loss of the local
   // credential, then use only production controls and signed OIDC callbacks.
@@ -320,4 +313,15 @@ export async function exerciseExternalIdentities({
     scope:
       "Identity-owned binding RPC, PostgreSQL and signed HTTPS IdP callbacks; browser consumers remain pending",
   };
+}
+
+export function assertRestoredBinding(persisted, restored, newNotice) {
+  assert.deepEqual(
+    persisted.items.find((b) => b.id === restored.id),
+    restored,
+  );
+  assert.deepEqual(
+    persisted.notices.filter((n) => n.binding_id === restored.id),
+    [newNotice],
+  );
 }
