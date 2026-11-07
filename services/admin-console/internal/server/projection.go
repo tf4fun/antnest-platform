@@ -630,11 +630,27 @@ func projectCreateAgent(payload []byte) ([]byte, error) {
 }
 
 func projectAgentEvent(payload []byte) ([]byte, error) {
-	return projectPayload[agentEventProjectionSource](payload)
+	var source agentEventProjectionSource
+	if err := json.Unmarshal(payload, &source); err != nil {
+		return nil, fmt.Errorf("decode internal response: %w", err)
+	}
+	if source.SchemaVersion != 1 && source.SchemaVersion != 2 {
+		return nil, fmt.Errorf("unsupported event schema_version")
+	}
+	return encodeBrowserResponse(source)
 }
 
 func projectAgentEventList(payload []byte) ([]byte, error) {
-	return projectPayload[agentEventListSource](payload)
+	var source agentEventListSource
+	if err := json.Unmarshal(payload, &source); err != nil {
+		return nil, fmt.Errorf("decode internal response: %w", err)
+	}
+	for _, event := range source.Events {
+		if event.SchemaVersion != 1 && event.SchemaVersion != 2 {
+			return nil, fmt.Errorf("unsupported event schema_version")
+		}
+	}
+	return encodeBrowserResponse(source)
 }
 
 func projectPayload[T any](payload []byte) ([]byte, error) {

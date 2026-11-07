@@ -56,6 +56,14 @@ func (permission *executionAuditPermission) UnmarshalJSON(payload []byte) error 
 	return json.Unmarshal(payload, (*record)(permission))
 }
 
+func (message *executionAuditMessage) UnmarshalJSON(payload []byte) error {
+	if err := requireAuditFields(payload); err != nil {
+		return err
+	}
+	type record executionAuditMessage
+	return json.Unmarshal(payload, (*record)(message))
+}
+
 func requireAuditFields(payload []byte, names ...string) error {
 	var fields map[string]json.RawMessage
 	if err := json.Unmarshal(payload, &fields); err != nil {
@@ -64,6 +72,12 @@ func requireAuditFields(payload []byte, names ...string) error {
 	for _, name := range names {
 		if _, exists := fields[name]; !exists {
 			return fmt.Errorf("missing audit field %s", name)
+		}
+	}
+	if raw, present := fields["schema_version"]; present {
+		var version int
+		if json.Unmarshal(raw, &version) != nil || version != 1 {
+			return fmt.Errorf("unsupported audit schema_version")
 		}
 	}
 	return nil
@@ -77,6 +91,9 @@ type executionAuditPage[T any] struct {
 
 func readExecutionAuditPage[T any](payload []byte) (executionAuditPage[T], error) {
 	var page executionAuditPage[T]
+	if err := requireAuditFields(payload); err != nil {
+		return page, err
+	}
 	if err := json.Unmarshal(payload, &page); err != nil {
 		return page, err
 	}
