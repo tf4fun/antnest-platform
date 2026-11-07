@@ -78,9 +78,11 @@ but they are not a channel wire contract.
    that the contract does not carry.
 3. Generated code, if introduced, must be reproducible and must not become a
    second manually maintained schema.
-4. There is no legacy wire compatibility layer. Obsolete contracts are deleted
-   when their service is rewritten. Each contract documents whether rollout is
-   fail-fast or follows expand, migrate, contract.
+4. Wire contracts roll N/N-1. Only additive optional fields are compatible in
+   place; anything else ships a new versioned route or schema while the
+   producer keeps serving the previous version and consumers actually decode
+   both shapes for at least one release before the old version retires. An
+   in-place `schema_version` bump does not waive a breaking change.
 5. Internal APIs must verify workload identity and route-specific caller context
    under the [platform authentication contract](platform/service-authentication.md).
    Service enforcement is admitted per owner in its rollout ledger; coordinated
@@ -91,6 +93,31 @@ but they are not a channel wire contract.
 6. The owner proposes changes. Consumers review compatibility and rollout
    semantics before an implementation changes. Change the shared contract
    first, then each owning service, then run cross-service integration.
+
+## Golden Examples
+
+Producer golden examples live under `<area>/examples/` and are enumerated in
+[`golden-manifest.json`](golden-manifest.json): every entry names its schema,
+the producing service and every consumer. Goldens are captured from actual
+producer output, never hand-authored response fixtures. Producers render them
+from synthetic input only, with deterministic identifiers and clocks and
+redacted synthetic credentials. A golden suite rewrites them only on explicit
+opt-in (`UPDATE_GOLDEN=1` or its `-update` flag); without it a mismatch
+fails. Current and preserved N-1 goldens are immutable once recorded, and
+each consumer runs the same file through its real parser. Response parsers
+tolerate unknown fields recursively so additive N+1 fields keep decoding,
+while request schemas stay strict. Golden coverage never weakens authority,
+known-validation or secret checks.
+
+`schema_version` stays optional during the version-1 rollout — its absence
+means the historical N-1 shape — and a v2 publication keeps `schema_version`
+2. Version markers apply to platform-owned event DTOs only, never to the
+external ACP SDK protocol.
+
+`scripts/check-contract-compatibility.mjs` gates pull requests as a
+conservative, syntactic additive-only checker. It is not a general schema
+diff or a semantic-compatibility proof: when a genuinely safe change trips a
+false positive, ship a new version instead of bypassing the gate.
 
 ## Validation
 

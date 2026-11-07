@@ -125,6 +125,7 @@ test-repo:
 	node --test --test-concurrency=1 tests/integration/deployment/dependency-secrets.test.mjs
 	node --test --test-concurrency=1 tests/integration/deployment/e2e-overlays.test.mjs tests/integration/deployment/agent-ui-receipt-gate.test.mjs
 	node --test --test-concurrency=1 tests/support/*.test.mjs tests/support/verification/*.test.mjs
+	node --test --test-concurrency=1 tests/support/contracts/*.test.mjs
 	node --test --test-concurrency=1 tests/e2e/agent-readiness/*.test.mjs
 	node --test --test-concurrency=1 tests/e2e/acp-survivor/*.test.mjs
 	node --test --test-concurrency=1 tests/integration/skill-learning/contracts.test.mjs tests/integration/skill-learning/maintenance-runtime-spec.test.mjs
