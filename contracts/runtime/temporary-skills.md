@@ -13,6 +13,8 @@ themselves.
 The only public model tools remain ordinary Runtime tools. Temporary operations
 never appear in tools/list; tools/call rejects `antnest_skill_temporary_*` names.
 Trusted ACP calls `POST /internal/skill-temporary/install` or `/release`.
+The route entries and per-action body declarations for this endpoint are
+published in [contract.json](contract.json) `routes`.
 
 These endpoints reuse the existing Ed25519 maintenance ticket envelope, verifier
 bootstrap and key rotation rules in the [learning contract](../skill-learning/learning-api.md).

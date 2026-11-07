@@ -64,10 +64,12 @@ async fn temporary_install_response_matches_producer_golden() {
         installed,
     );
     assert_headers(&response, StatusCode::OK);
-    assert_golden(
-        "temporary-install.installed.json",
-        &body_value(response).await,
+    let value = body_value(response).await;
+    crate::http_route_contract_tests::assert_valid(
+        "temporary-skills.schema.json#/$defs/install_reply",
+        &value,
     );
+    assert_golden("temporary-install.installed.json", &value);
 }
 
 #[tokio::test]
@@ -78,10 +80,12 @@ async fn temporary_release_response_matches_producer_golden() {
         "execution-1",
     );
     assert_headers(&response, StatusCode::OK);
-    assert_golden(
-        "temporary-release.released.json",
-        &body_value(response).await,
+    let value = body_value(response).await;
+    crate::http_route_contract_tests::assert_valid(
+        "temporary-skills.schema.json#/$defs/release_reply",
+        &value,
     );
+    assert_golden("temporary-release.released.json", &value);
 }
 
 #[tokio::test]
@@ -94,8 +98,10 @@ async fn temporary_disabled_response_matches_producer_golden() {
         "request-golden-1",
     );
     assert_headers(&response, StatusCode::FORBIDDEN);
-    assert_golden(
-        "temporary-operation.disabled.json",
-        &body_value(response).await,
+    let value = body_value(response).await;
+    crate::http_route_contract_tests::assert_valid(
+        "temporary-skills.schema.json#/$defs/error_reply",
+        &value,
     );
+    assert_golden("temporary-operation.disabled.json", &value);
 }

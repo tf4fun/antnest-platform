@@ -82,6 +82,9 @@ mod tools;
 use lifecycle_error::{BootstrapErrorCode, BootstrapStage, RuntimeErrorCode};
 
 #[cfg(test)]
+#[path = "http_route_contract_tests.rs"]
+mod http_route_contract_tests;
+#[cfg(test)]
 mod information_tests;
 #[cfg(test)]
 mod managed_mcp_tests;

@@ -6,7 +6,6 @@
     "status_path": "/status",
     "mcp_path": "/mcp",
     "kind": "streamable-http",
-    "trusted_internal_hosts": false,
     "host_policy": "owned-alias-and-loopback-with-exact-port",
     "instance_connection_contract": "instance-connection-contract.json",
     "live_status_path": "/status/live",
@@ -151,4 +150,450 @@
   },
   "packet_format": "packet-format.md",
   "packet_fixtures": "packet-fixtures.json"
+,
+  "routes": [
+    {
+      "method": "GET",
+      "path": "/status",
+      "authentication": "workload",
+      "callers": ["runtime-controller", "agent-acp-service"],
+      "caller_context": {
+        "runtime-controller": "none",
+        "agent-acp-service": "none"
+      },
+      "request_body": "none",
+      "responses": {
+        "200": {
+          "body": "runtime-status.schema.json",
+          "content_type": "application/json"
+        },
+        "503": {
+          "body": "runtime-status.schema.json",
+          "content_type": "application/json"
+        }
+      },
+      "error_schema": "../common/error.schema.json",
+      "errors": [
+        {
+          "code": "runtime_unauthorized",
+          "status": 401
+        },
+        {
+          "code": "caller_not_allowed",
+          "status": 403
+        },
+        {
+          "code": "host_not_allowed",
+          "status": 403
+        }
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/status/live",
+      "authentication": "health",
+      "callers": ["local-healthcheck"],
+      "caller_context": {
+        "local-healthcheck": "none"
+      },
+      "request_body": "none",
+      "responses": {
+        "200": {
+          "body": "http.schema.json#/$defs/live_status",
+          "content_type": "application/json"
+        },
+        "503": {
+          "body": "http.schema.json#/$defs/live_status",
+          "content_type": "application/json"
+        }
+      },
+      "error_schema": "../common/error.schema.json",
+      "errors": [
+        {
+          "code": "host_not_allowed",
+          "status": 403
+        }
+      ],
+      "notes": "Identity-free reduced liveness; implicit HEAD shares the same handler."
+    },
+    {
+      "method": "HEAD",
+      "path": "/status/live",
+      "authentication": "health",
+      "callers": ["local-healthcheck"],
+      "caller_context": {
+        "local-healthcheck": "none"
+      },
+      "request_body": "none",
+      "responses": {
+        "200": {
+          "body": "none"
+        },
+        "503": {
+          "body": "none"
+        }
+      },
+      "error_schema": "../common/error.schema.json",
+      "errors": [
+        {
+          "code": "host_not_allowed",
+          "status": 403
+        }
+      ],
+      "notes": "Implicit HEAD served by the GET handler; headers only."
+    },
+    {
+      "method": "*",
+      "path": "/mcp",
+      "authentication": "workload",
+      "callers": ["agent-acp-service"],
+      "caller_context": {
+        "agent-acp-service": "operation"
+      },
+      "execution_fence": "X-Antnest-Expected-Execution-ID",
+      "request_body": "http.schema.json#/$defs/protocol_request",
+      "protocol_methods": {
+        "POST": {
+          "request_body": "http.schema.json#/$defs/protocol_request",
+          "content_type": "application/json",
+          "notes": "JSON-RPC request; replies are application/json or a text/event-stream of protocol_response events",
+          "response_body": "http.schema.json#/$defs/protocol_response",
+          "response_content_types": ["application/json", "text/event-stream"]
+        },
+        "GET": {
+          "request_body": "none",
+          "notes": "SSE observation stream carrying protocol_response events",
+          "response_body": "http.schema.json#/$defs/protocol_message",
+          "response_content_types": ["text/event-stream"]
+        },
+        "DELETE": {
+          "request_body": "none",
+          "notes": "session close; the mounted service may report the session as unsupported"
+        }
+      },
+      "responses": {
+        "200": {
+          "body": "http.schema.json#/$defs/protocol_response",
+          "content_type": "application/json"
+        },
+        "202": {
+          "body": "none"
+        }
+      },
+      "error_schema": "../common/error.schema.json",
+      "errors": [
+        {
+          "code": "runtime_unauthorized",
+          "status": 401
+        },
+        {
+          "code": "caller_not_allowed",
+          "status": 403
+        },
+        {
+          "code": "host_not_allowed",
+          "status": 403
+        },
+        {
+          "code": "invalid_request",
+          "status": 400
+        },
+        {
+          "code": "runtime_execution_mismatch",
+          "status": 409
+        },
+        {
+          "code": "invalid_request",
+          "status": 413
+        },
+        {
+          "code": "unsupported_media_type",
+          "status": 415
+        },
+        {
+          "code": "runtime_unavailable",
+          "status": 503
+        }
+      ],
+      "notes": "Complete authenticated mount. The mounted streamable-http service dispatches POST JSON-RPC, GET observation and DELETE session requests and rejects unsupported methods or paths itself."
+    },
+    {
+      "method": "*",
+      "path": "/mcp/{path...}",
+      "authentication": "workload",
+      "callers": ["agent-acp-service"],
+      "caller_context": {
+        "agent-acp-service": "operation"
+      },
+      "request_body": "http.schema.json#/$defs/protocol_request",
+      "protocol_methods": {
+        "POST": {
+          "request_body": "http.schema.json#/$defs/protocol_request",
+          "content_type": "application/json",
+          "notes": "JSON-RPC request; replies are application/json or a text/event-stream of protocol_response events",
+          "response_body": "http.schema.json#/$defs/protocol_response",
+          "response_content_types": ["application/json", "text/event-stream"]
+        },
+        "GET": {
+          "request_body": "none",
+          "notes": "SSE observation stream carrying protocol_response events",
+          "response_body": "http.schema.json#/$defs/protocol_message",
+          "response_content_types": ["text/event-stream"]
+        },
+        "DELETE": {
+          "request_body": "none",
+          "notes": "session close; the mounted service may report the session as unsupported"
+        }
+      },
+      "responses": {
+        "200": {
+          "body": "http.schema.json#/$defs/protocol_response",
+          "content_type": "application/json"
+        },
+        "202": {
+          "body": "none"
+        }
+      },
+      "error_schema": "../common/error.schema.json",
+      "errors": [
+        {
+          "code": "runtime_unauthorized",
+          "status": 401
+        },
+        {
+          "code": "caller_not_allowed",
+          "status": 403
+        },
+        {
+          "code": "host_not_allowed",
+          "status": 403
+        },
+        {
+          "code": "invalid_request",
+          "status": 400
+        },
+        {
+          "code": "invalid_request",
+          "status": 413
+        },
+        {
+          "code": "unsupported_media_type",
+          "status": 415
+        }
+      ],
+      "notes": "Same mounted service as /mcp for nested paths; the execution fence and managed-health gate apply only to the exact /mcp path."
+    },
+    {
+      "method": "POST",
+      "path": "/internal/skill-maintenance/{action}",
+      "authentication": "workload",
+      "callers": ["agent-acp-service"],
+      "caller_context": {
+        "agent-acp-service": "operation"
+      },
+      "signed_authority": "maintenance_ticket",
+      "request_body": "skill-maintenance.schema.json",
+      "actions": {
+        "digest": {
+          "request_body": "skill-maintenance.schema.json#/$defs/digest_request",
+          "content_type": "application/json"
+        },
+        "install": {
+          "request_body": "skill-maintenance.schema.json#/$defs/install_request",
+          "content_type": "multipart/form-data",
+          "notes": "metadata part follows install_request; the artifact part is a bounded zip binary"
+        }
+      },
+      "responses": {
+        "200": {
+          "body": "skill-maintenance.schema.json#/$defs/maintenance_receipt",
+          "content_type": "application/json"
+        }
+      },
+      "error_schema": "../common/error.schema.json",
+      "errors": [
+        {
+          "code": "runtime_unauthorized",
+          "status": 401
+        },
+        {
+          "code": "maintenance_unauthorized",
+          "status": 401
+        },
+        {
+          "code": "caller_not_allowed",
+          "status": 403
+        },
+        {
+          "code": "host_not_allowed",
+          "status": 403
+        },
+        {
+          "code": "maintenance_disabled",
+          "status": 403
+        },
+        {
+          "code": "unknown_action",
+          "status": 404
+        },
+        {
+          "code": "invalid_request",
+          "status": 400
+        },
+        {
+          "code": "runtime_execution_mismatch",
+          "status": 409
+        },
+        {
+          "code": "request_conflict",
+          "status": 409
+        },
+        {
+          "code": "atomic_skill_replace_unsupported",
+          "status": 409
+        },
+        {
+          "code": "invalid_request",
+          "status": 413
+        },
+        {
+          "code": "body_too_large",
+          "status": 413
+        },
+        {
+          "code": "limit_exceeded",
+          "status": 413
+        },
+        {
+          "code": "unsupported_media_type",
+          "status": 415
+        },
+        {
+          "code": "clock_unavailable",
+          "status": 503
+        },
+        {
+          "code": "maintenance_unavailable",
+          "status": 503
+        },
+        {
+          "code": "runtime_busy",
+          "status": 503
+        },
+        {
+          "code": "outcome_unknown",
+          "status": 503
+        }
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/internal/skill-temporary/{action}",
+      "authentication": "workload",
+      "callers": ["agent-acp-service"],
+      "caller_context": {
+        "agent-acp-service": "operation"
+      },
+      "signed_authority": "maintenance_ticket",
+      "request_body": "temporary-skills.schema.json",
+      "actions": {
+        "install": {
+          "request_body": "temporary-skills.schema.json#/$defs/install_metadata",
+          "content_type": "multipart/form-data",
+          "response_body": "temporary-skills.schema.json#/$defs/install_reply",
+          "notes": "metadata part follows install_metadata; the artifact part is a bounded binary"
+        },
+        "release": {
+          "request_body": "temporary-skills.schema.json#/$defs/release_request",
+          "content_type": "application/json",
+          "response_body": "temporary-skills.schema.json#/$defs/release_reply"
+        }
+      },
+      "responses": {
+        "200": {
+          "body": "temporary-skills.schema.json",
+          "content_type": "application/json"
+        }
+      },
+      "error_schema": "../common/error.schema.json",
+      "errors": [
+        {
+          "code": "runtime_unauthorized",
+          "status": 401
+        },
+        {
+          "code": "temporary_unauthorized",
+          "status": 401
+        },
+        {
+          "code": "caller_not_allowed",
+          "status": 403
+        },
+        {
+          "code": "host_not_allowed",
+          "status": 403
+        },
+        {
+          "code": "temporary_disabled",
+          "status": 403
+        },
+        {
+          "code": "unknown_action",
+          "status": 404
+        },
+        {
+          "code": "body_timed_out",
+          "status": 408
+        },
+        {
+          "code": "invalid_request",
+          "status": 400
+        },
+        {
+          "code": "request_conflict",
+          "status": 409
+        },
+        {
+          "code": "run_closed",
+          "status": 409
+        },
+        {
+          "code": "temporary_scope_busy",
+          "status": 409
+        },
+        {
+          "code": "limit_exceeded",
+          "status": 409
+        },
+        {
+          "code": "invalid_request",
+          "status": 413
+        },
+        {
+          "code": "body_too_large",
+          "status": 413
+        },
+        {
+          "code": "unsupported_media_type",
+          "status": 415
+        },
+        {
+          "code": "clock_unavailable",
+          "status": 503
+        },
+        {
+          "code": "temporary_unavailable",
+          "status": 503
+        },
+        {
+          "code": "runtime_busy",
+          "status": 503
+        },
+        {
+          "code": "outcome_unknown",
+          "status": 503
+        }
+      ]
+    }
+  ]
 }

@@ -75,7 +75,6 @@ struct Transport {
     status_path: String,
     mcp_path: String,
     kind: String,
-    trusted_internal_hosts: bool,
     host_policy: String,
     instance_connection_contract: String,
     live_status_path: String,
@@ -134,7 +133,17 @@ fn shared_contract_matches_runtime_http_surface() {
     assert_eq!(contract.transport.status_path, STATUS_PATH);
     assert_eq!(contract.transport.mcp_path, MCP_PATH);
     assert_eq!(contract.transport.kind, "streamable-http");
-    assert!(!contract.transport.trusted_internal_hosts);
+    let raw: serde_json::Value = serde_json::from_str(include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../contracts/runtime/contract.json"
+    )))
+    .expect("decode raw shared contract");
+    assert!(
+        !raw["transport"]
+            .as_object()
+            .unwrap()
+            .contains_key("trusted_internal_hosts")
+    );
     assert_eq!(
         contract.transport.host_policy,
         "owned-alias-and-loopback-with-exact-port"

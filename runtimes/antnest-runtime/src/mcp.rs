@@ -71,6 +71,16 @@ pub(crate) const MCP_PATH: &str = "/mcp";
 pub(crate) const MAINTENANCE_ROUTE: &str = "/internal/skill-maintenance/{action}";
 pub(crate) const EXPECTED_EXECUTION_HEADER: &str = "X-Antnest-Expected-Execution-ID";
 #[cfg(test)]
+pub(crate) const HTTP_ROUTES: &[(&str, &str)] = &[
+    ("GET", STATUS_PATH),
+    ("GET", STATUS_LIVE_PATH),
+    ("HEAD", STATUS_LIVE_PATH),
+    ("*", MCP_PATH),
+    ("*", "/mcp/{path...}"),
+    ("POST", MAINTENANCE_ROUTE),
+    ("POST", crate::skill_temporary_http::TEMPORARY_ROUTE),
+];
+#[cfg(test)]
 const TOOL_NAMES: [&str; 4] = ["bash", "edit", "read", "write"];
 
 #[derive(JsonSchema, Serialize)]
@@ -557,7 +567,7 @@ struct HttpState {
     managed: Catalog,
 }
 
-async fn status_response(
+pub(crate) async fn status_response(
     mut status: RuntimeStatus,
     managed: Catalog,
 ) -> (StatusCode, Json<RuntimeStatus>) {
@@ -568,7 +578,7 @@ async fn status_response(
     (StatusCode::SERVICE_UNAVAILABLE, Json(status))
 }
 
-async fn live_status(managed: Catalog) -> (StatusCode, Json<serde_json::Value>) {
+pub(crate) async fn live_status(managed: Catalog) -> (StatusCode, Json<serde_json::Value>) {
     let ready = managed.healthy();
     (
         if ready {

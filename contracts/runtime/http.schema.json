@@ -76,6 +76,12 @@
     },
     "common_error": {
       "$ref": "../common/error.schema.json"
+    },
+    "protocol_message": {
+      "oneOf": [
+        {"$ref": "#/$defs/protocol_request"},
+        {"$ref": "#/$defs/protocol_response"}
+      ]
     }
   }
 }
