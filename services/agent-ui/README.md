@@ -471,3 +471,16 @@ specific activity request proven to precede the held response is excluded.
 - [Workspace API](../../contracts/agent-ui/workspace-api.md), [workspace commands](../../contracts/agent-ui/workspace-commands.md), [navigation](../../contracts/agent-ui/workspace-navigation.md).
 - [Skill command contract](../../contracts/agent-acp/skill-commands.md).
 - [Platform design language](../../docs/design-language.md) and [product surfaces](../../docs/product-surfaces.md).
+
+### Golden examples and N-1 rollout
+
+Response parsing is verified against four real Agent ACP producer captures —
+`contracts/agent-acp/examples/workspace-execution.running.json`,
+`workspace-intent.running.json` and
+`contracts/skill-learning/examples/learning-status.blocked.json`,
+`learning-changes.empty.json`. `projectResponse`
+(`web/server/src/adapters/response-projection.ts`) drops additive unknown members while
+all known-field type/enum/refinement checks, union discriminator retention and
+Agent scope assertions (`parseAuthorizedAgentState`, `parseLearningStatus`,
+`parseLearningChanges`) stay unchanged; request and protocol schemas remain
+strict. Deploy consumers first.
