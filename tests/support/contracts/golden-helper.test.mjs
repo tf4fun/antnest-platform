@@ -55,6 +55,26 @@ test("withFutureFields clones the value and stamps every nested object", () => {
   assert.ok(!("x_future_field" in enriched.nested.deeper.list));
 });
 
+test("withFutureFields preserves own __proto__ keys without touching Object.prototype", () => {
+  const parsed = JSON.parse(
+    '{"__proto__":{"flag":true},"nested":{"__proto__":{"n":2}}}',
+  );
+  const enriched = withFutureFields(parsed);
+  assert.deepEqual(enriched["__proto__"], { flag: true, x_future_field: 1 });
+  assert.deepEqual(enriched.nested["__proto__"], { n: 2, x_future_field: 1 });
+  assert.equal(enriched.x_future_field, 1);
+  assert.equal({}.flag, undefined);
+  assert.equal(Object.getPrototypeOf(enriched), Object.prototype);
+});
+
+test("assertGolden mismatches a file containing __proto__ against an unrelated actual", (t) => {
+  const dir = tempDir(t);
+  const file = join(dir, "proto.json");
+  writeFileSync(file, '{"__proto__":{}}\n');
+  assert.throws(() => assertGolden(file, { other: {} }));
+  assert.equal(readFileSync(file, "utf8"), '{"__proto__":{}}\n');
+});
+
 test("withFutureFields returns primitives untouched and enriches array elements", () => {
   assert.equal(withFutureFields(null), null);
   assert.equal(withFutureFields(7), 7);
@@ -191,6 +211,6 @@ test("validateGolden resolves contract descriptor method fragments", async () =>
     validateGolden(
       "identity/identity-contract.json#/methods/list_login_methods/response",
       { methods: "local" },
-    )
+    ),
   );
 });

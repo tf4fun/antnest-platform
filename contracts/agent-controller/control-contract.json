@@ -21,7 +21,28 @@
     "path": "/status",
     "success_status": 200
   },
+  "status_rpc": {
+    "method": "GET",
+    "path": "/rpc/agent-controller/status",
+    "success_status": 200
+  },
   "resources": {
+    "skill_learning_policy": {
+      "get": {
+        "method": "GET",
+        "path": "/internal/agents/{agent_id}/skill-learning-policy",
+        "query": ["organization_id", "principal_id"],
+        "success_status": 200,
+        "response": "../skill-learning/learning-api.schema.json#/$defs/policy"
+      },
+      "set": {
+        "method": "PUT",
+        "path": "/internal/agents/{agent_id}/skill-learning-policy",
+        "success_status": 200,
+        "request": "../skill-learning/learning-api.schema.json#/$defs/policy_mutation_request",
+        "response": "../skill-learning/learning-api.schema.json#/$defs/policy"
+      }
+    },
     "managed_mcp_secrets": {
       "resolve": {
         "method": "POST",

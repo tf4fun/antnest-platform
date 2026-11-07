@@ -23,11 +23,13 @@ const isObject = (value) =>
 export function withFutureFields(value) {
   if (Array.isArray(value)) return value.map(withFutureFields);
   if (isObject(value)) {
-    const enriched = {};
-    for (const [key, entry] of Object.entries(value))
-      enriched[key] = withFutureFields(entry);
-    enriched.x_future_field = 1;
-    return enriched;
+    return Object.fromEntries([
+      ...Object.entries(value).map(([key, entry]) => [
+        key,
+        withFutureFields(entry),
+      ]),
+      ["x_future_field", 1],
+    ]);
   }
   return value;
 }
@@ -80,7 +82,7 @@ function jsonEqual(a, b) {
     const bKeys = Object.keys(b);
     return (
       aKeys.length === bKeys.length &&
-      aKeys.every((key) => key in b && jsonEqual(a[key], b[key]))
+      aKeys.every((key) => Object.hasOwn(b, key) && jsonEqual(a[key], b[key]))
     );
   }
   return Object.is(a, b);
@@ -130,16 +132,18 @@ function registry() {
     for (const entry of readManifest()) {
       const key = entry.schema.split("#", 1)[0];
       referencedDocuments.add(
-        key.startsWith(CANONICAL_BASE)
-          ? key.slice(CANONICAL_BASE.length)
-          : key,
+        key.startsWith(CANONICAL_BASE) ? key.slice(CANONICAL_BASE.length) : key,
       );
     }
     for (const [key, document] of documents) {
       const schemaLike =
         key.endsWith(".schema.json") ||
         (isObject(document) && "$schema" in document);
-      if (schemaLike && isObject(document) && typeof document.$id === "string") {
+      if (
+        schemaLike &&
+        isObject(document) &&
+        typeof document.$id === "string"
+      ) {
         ajv.addSchema(document);
         continue;
       }
