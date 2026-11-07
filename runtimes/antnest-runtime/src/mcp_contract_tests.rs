@@ -403,7 +403,8 @@ fn assert_object_shape(
     required: &[serde_json::Value],
 ) {
     let properties = properties.as_object().expect("schema properties");
-    assert_eq!(object.len(), properties.len());
+    // Optional producer fields may be absent in the retained N-1 capture.
+    assert!(object.len() <= properties.len());
     assert!(object.len() >= required.len());
     assert!(object.keys().all(|name| properties.contains_key(name)));
     assert!(
