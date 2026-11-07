@@ -112,7 +112,7 @@ func TestPasswordAdmissionFlowPreservesBrowserSession(t *testing.T) {
 					{"missing-header", browserRPCFailure{503, passwordBusyJSON, nil}, 503, "", "identity_unavailable"},
 					{"wrong-status", browserRPCFailure{401, passwordBusyJSON, []string{"1"}}, 503, "", "identity_unavailable"},
 					{"duplicate-code", browserRPCFailure{401, strings.TrimSuffix(passwordBusyJSON, "}") + `,"code":"unauthenticated"}`, []string{"1"}}, 503, "", "identity_unavailable"},
-					{"private-extra", browserRPCFailure{503, strings.TrimSuffix(passwordBusyJSON, "}") + `,"token":"private-authority"}`, []string{"1"}}, 503, "", "identity_unavailable"},
+					{"private-extra-projected", browserRPCFailure{503, strings.TrimSuffix(passwordBusyJSON, "}") + `,"token":"private-authority"}`, []string{"1"}}, 503, "1", "credential_busy"},
 				} {
 					t.Run(row.name, func(t *testing.T) {
 						f.mu.Lock()
