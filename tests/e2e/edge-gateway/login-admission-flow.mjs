@@ -174,7 +174,7 @@ export async function verifyLoginAdmission({
     const choices = await fixture.json(
       "/api/admin/directory/identity-providers?limit=50",
     );
-    const providerID = choices.providers.find(
+    const providerID = choices.items.find(
       (row) => row.name === providerName,
     )?.id;
     assert(providerID);
