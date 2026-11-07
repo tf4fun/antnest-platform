@@ -838,14 +838,14 @@ capture, and forwarding to Runtimes.
 ## Service authentication rollout
 
 The [platform authentication contract](../../../contracts/platform/service-authentication.md)
-and this service's [caller catalog](../api/callers.json) require verified
+and this service's [caller catalog](../../../contracts/runtime-controller/callers.json) require verified
 Controller workload identity on the existing lifecycle, Runtime inspection,
 image, observation/SSE and Skill routes. Only the two incarnation registration
 and inspection routes admit the ACP workload, without CCT. Missing, malformed
 or duplicate authority gets 401 and a known disallowed workload gets 403 before
 decoding, journal writes or Docker effects. RC strips unsigned user/CCT hints
 and never authorizes itself on Skill preparation routes. The
-[RC profile](../api/service-authentication.md) also requires strict UTF-8 JSON,
+[RC profile](../../../contracts/runtime-controller/service-authentication.md) also requires strict UTF-8 JSON,
 an explicit private listen IP, a separate loopback health port, and authenticated
 Registry downloads without proxies or redirects. RC owns sealed generation
 credentials and verified receiver volumes (#30), with a Controller-only,

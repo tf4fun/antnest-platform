@@ -47,7 +47,7 @@ identity or physical generation.
 | `ANTNEST_RUNTIME_WORKSPACE_VOLUME_DRIVER`            | no       | Trusted external size-enforcing Docker volume driver; must be set together with the quota option; unset means unbounded local storage |
 | `ANTNEST_RUNTIME_WORKSPACE_QUOTA_OPTION`             | no       | Driver option name receiving the decimal workspace byte limit; must be set together with the driver              |
 
-Workload configuration is mandatory: follow the [exact authentication and listening profile](../api/service-authentication.md) and shared [token/mTLS contract](../../../contracts/platform/service-authentication.md). Existing lifecycle, Runtime inspection, image, observation/SSE and all three Skill preparation routes remain Controller-only. Only incarnation registration and inspection admit the ACP workload, without CCT; raw user/CCT headers authorize neither surface. Registry downloads use receiver-specific sender files and no environment proxy or redirects. Remove the retired `ANTNEST_SKILL_REGISTRY_API_TOKEN`, which now fails startup when nonempty.
+Workload configuration is mandatory: follow the [exact authentication and listening profile](../../../contracts/runtime-controller/service-authentication.md) and shared [token/mTLS contract](../../../contracts/platform/service-authentication.md). Existing lifecycle, Runtime inspection, image, observation/SSE and all three Skill preparation routes remain Controller-only. Only incarnation registration and inspection admit the ACP workload, without CCT; raw user/CCT headers authorize neither surface. Registry downloads use receiver-specific sender files and no environment proxy or redirects. Remove the retired `ANTNEST_SKILL_REGISTRY_API_TOKEN`, which now fails startup when nonempty.
 
 Readiness and `--healthcheck` use the separate loopback port. It exposes no control API, requires trusted TLS/mTLS when configured, and needs no application token. Remote `/status` access is not admitted. The final deployment batch removes the default host-published control port; attaching multiple networks alone does not isolate a listener.
 
@@ -94,7 +94,7 @@ credentials and the member catalog out of payload capture and public evidence.
 This uses the existing RC process, private PostgreSQL migrations 14/15, Docker
 connection and authenticated probe client, with no additional service or image.
 
-The three RC routes are documented in the [control API](../api/control-api.md).
+The three RC routes are documented in the [control API](../../../contracts/runtime-controller/control-api.md).
 Member history returns all registered incarnations for a configured member,
 including registrations from before this upgrade. Pages contain up to 64 tuples
 under a fixed history identifier/revision. Start with a null cursor and follow

@@ -12,6 +12,7 @@ on:
       - tests/support/service-authentication*
       - tests/support/ci-ownership.json
       - contracts/agent-acp/**
+      - contracts/runtime-controller/**
       - contracts/agent-controller/**
       - contracts/egress/**
       - contracts/platform/**
@@ -42,6 +43,7 @@ on:
       - contracts/runtime/**
       - contracts/skill-learning/**
       - contracts/skill-registry/**
+      - contracts/runtime-controller/**
       - go.work
       - go.work.sum
       - .golangci.yml

@@ -66,6 +66,11 @@
     "skill-registry",
     "antnest-runtime"
   ],
+  "runtime-controller": [
+    "runtime-controller",
+    "agent-controller",
+    "agent-acp-service"
+  ],
   "skill-registry": [
     "skill-registry",
     "admin-console",

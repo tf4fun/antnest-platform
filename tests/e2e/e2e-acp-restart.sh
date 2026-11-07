@@ -56,7 +56,7 @@ docker_cmd create --name "$client" $service_hosts --label "com.docker.compose.pr
   -v "$ANTNEST_SERVICE_AUTH_DIRECTORY/admin-console/tokens/agent-controller:/run/auth/console-controller:ro" \
   -v "$root/contracts/identity/identity-contract.json:/app/contracts/identity/identity-contract.json:ro" \
   -v "$root/contracts/agent-controller/control-contract.json:/app/contracts/agent-controller/control-contract.json:ro" \
-  -v "$root/services/runtime-controller/api/control-contract.json:/app/services/runtime-controller/api/control-contract.json:ro" \
+  -v "$root/contracts/runtime-controller/control-contract.json:/app/contracts/runtime-controller/control-contract.json:ro" \
   -v "$root/contracts/agent-acp/agent-execution-state.schema.json:/app/contracts/agent-acp/agent-execution-state.schema.json:ro" \
   -e "ANTNEST_RESTART_RECOVERY_MODE=$recovery_mode" -e "TEST_RUNTIME_IMAGE=$image" -v "$root/tests:/app/tests:ro" -v "$temporary:/checkpoints" "$acp_image" node /app/tests/e2e/acp-restart/client.mjs >/dev/null
 docker_cmd start "$client" >/dev/null

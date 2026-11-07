@@ -126,9 +126,9 @@ test("Agent Controller contract routes match registered callers in both directio
 test("Runtime Controller contract routes match registered callers in both directions", () => {
   const problems = routeParityProblems(
     collectContractRoutes(
-      contractFile("services/runtime-controller/api/control-contract.json"),
+      contractFile("contracts/runtime-controller/control-contract.json"),
     ),
-    callerRoutes("services/runtime-controller/api/callers.json"),
+    callerRoutes("contracts/runtime-controller/callers.json"),
   );
   assert.deepEqual(problems, [], problems.join("; "));
 });

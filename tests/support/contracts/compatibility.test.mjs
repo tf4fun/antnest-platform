@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { compatibilityProblems } from "../../../scripts/check-contract-compatibility.mjs";
+import {
+  compatibilityProblems,
+  schemaRevisionProblems,
+} from "../../../scripts/check-contract-compatibility.mjs";
 
 const clone = (value) => structuredClone(value);
 
@@ -349,5 +352,60 @@ test("problem strings carry the caller-provided label", () => {
   const problems = incompatible(before, after, "example/record.schema.json");
   assert.ok(
     problems.some((problem) => problem.includes("example/record.schema.json")),
+  );
+});
+
+const ID = "https://schemas.antnest.dev/runtime-controller/control-api.schema.json";
+const movedDoc = { $id: ID, type: "object", properties: { a: { type: "string" } } };
+
+test("identical same-id relocation from RC api directory is allowed", () => {
+  const before = new Map([["services/runtime-controller/api/control-api.schema.json", movedDoc]]);
+  const after = new Map([["contracts/runtime-controller/control-api.schema.json", movedDoc]]);
+  assert.deepEqual(schemaRevisionProblems(before, after), []);
+});
+
+test("relocation requires destination, matching id and present id", () => {
+  const oldPath = "services/runtime-controller/api/control-api.schema.json";
+  for (const after of [
+    new Map(),
+    new Map([["contracts/runtime-controller/control-api.schema.json", { ...movedDoc, $id: `${ID}#other` }]]),
+    new Map([["contracts/runtime-controller/control-api.schema.json", { ...movedDoc, $id: undefined }]]),
+    new Map([["contracts/runtime-controller/other.schema.json", movedDoc]]),
+  ]) {
+    assert.notDeepEqual(schemaRevisionProblems(new Map([[oldPath, movedDoc]]), after), []);
+  }
+  const noId = { ...movedDoc };
+  delete noId.$id;
+  assert.notDeepEqual(
+    schemaRevisionProblems(
+      new Map([[oldPath, noId]]),
+      new Map([["contracts/runtime-controller/control-api.schema.json", movedDoc]]),
+    ),
+    [],
+  );
+});
+
+test("tightening or unrelated removal still fails after relocation support", () => {
+  const oldPath = "services/runtime-controller/api/control-api.schema.json";
+  const tightened = {
+    ...movedDoc,
+    properties: { a: { type: "integer" } },
+  };
+  assert.notDeepEqual(
+    schemaRevisionProblems(
+      new Map([[oldPath, movedDoc]]),
+      new Map([["contracts/runtime-controller/control-api.schema.json", tightened]]),
+    ),
+    [],
+  );
+  assert.notDeepEqual(
+    schemaRevisionProblems(
+      new Map([
+        [oldPath, movedDoc],
+        ["contracts/common/other.schema.json", movedDoc],
+      ]),
+      new Map([["contracts/runtime-controller/control-api.schema.json", movedDoc]]),
+    ),
+    [],
   );
 });

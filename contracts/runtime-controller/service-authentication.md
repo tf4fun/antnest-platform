@@ -1,7 +1,7 @@
 # Runtime Controller workload boundary
 
 Control revision 20 uses the existing
-[platform authentication contract](../../../contracts/platform/service-authentication.md).
+[platform authentication contract](../platform/service-authentication.md).
 Lifecycle, Runtime inspection, image, observation/SSE, private Runtime connection
 and Skill preparation routes require the verified `agent-controller` workload.
 Only `POST /internal/acp-incarnations/register` and

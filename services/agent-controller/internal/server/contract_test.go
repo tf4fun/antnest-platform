@@ -961,7 +961,7 @@ func compileControlSchema(t *testing.T, path string) *jsonschema.Compiler {
 		t.Fatalf("load Runtime MCP contract: %v", err)
 	}
 	var runtimeControllerContract any
-	readContractJSON(t, filepath.Join(repositoryRoot(t), "services/runtime-controller/api/control-api.schema.json"), &runtimeControllerContract)
+	readContractJSON(t, filepath.Join(repositoryRoot(t), "contracts/runtime-controller/control-api.schema.json"), &runtimeControllerContract)
 	if err := compiler.AddResource("https://schemas.antnest.dev/runtime-controller/control-api.schema.json", runtimeControllerContract); err != nil {
 		t.Fatalf("load Runtime Controller contract: %v", err)
 	}

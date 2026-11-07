@@ -11,10 +11,11 @@ complete internal JSON-over-HTTP contract consumed by Agent Controller:
 - `runtime-deployment.schema.json`: complete Runtime configuration accepted
   from Agent Controller; physical platform identity remains private.
 
-The service's contract tests read these files directly from this Go module.
-Repository-level contract catalogs may link here, but must not copy or redefine
-the schemas.
-- Error envelopes follow the [common error contract](../../../contracts/common/error.schema.json)
-  with the [Runtime Controller slice](../../../contracts/common/slices/runtime-controller.json);
+This is the centralized language-neutral contract location owned by Runtime
+Controller; the service's producer contract tests read these files from this
+directory. Repository-level contract catalogs may link here, but must not copy
+or redefine the schemas.
+- Error envelopes follow the [common error contract](../common/error.schema.json)
+  with the [Runtime Controller slice](../common/slices/runtime-controller.json);
   the shared owner-incarnation schema gained optional `category`/`request_id`/`details`
   for N-1 producers ahead of the separate ACP implementation batch.

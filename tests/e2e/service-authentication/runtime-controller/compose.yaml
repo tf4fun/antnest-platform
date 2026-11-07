@@ -65,7 +65,7 @@ services:
     command: [node, -e, "setInterval(()=>{},60000)"]
     volumes:
       - ./probe.mjs:/fixture/probe.mjs:ro
-      - ../../../../services/runtime-controller/api/control-contract.json:/fixture/control-contract.json:ro
+      - ../../../../contracts/runtime-controller/control-contract.json:/fixture/control-contract.json:ro
       - ${RC_AUTH_DIRECTORY:?}:/run/auth:ro
     networks: [control]
   egress-fixture:

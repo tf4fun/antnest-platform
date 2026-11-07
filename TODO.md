@@ -20,6 +20,8 @@ Issue 状态最后核对于 2026-10-28：141 个 issue，87 个已关闭，54 �
 
 ## 当前批次
 
+- **#38 Runtime Controller 批次（2026-11-07，依赖 Runtime PR #577）**：7 个 RC 契约文件归位 `contracts/runtime-controller/`，schema 内容／$id 保持不变；生产方、消费方、共享 registry、调用方目录、现有 system 客户端文件路径全部同步（未运行或维护 Docker E2E 场景）。19 个路由显式声明正文／无正文，Go AST 实际 mux 与 contract／caller 双向一致；真实 handler 覆盖全部 19 个成功路由，验证 JSON 请求、响应、204 空正文、SSE event/data/id。补充 schema 同 $id 迁移的 N-1 检查，迁移后收紧仍拒绝。定向本地反馈 Go `TestMachineContract|TestRouteSchema|TestEveryControlJSONRoute|TestRuntimeControllerGolden` 通过，Node 路由／兼容性／ownership／conventions／golden 合计 70/70；10 个 caller catalogs、342 route policies、264 Markdown 链接检查 clean。完整远程准入不等待，下一批 Agent Controller 消费验证。
+
 - **#38 Antnest Runtime 批次（2026-11-07，依赖 Egress PR #576）**：完整发布 7 个 HTTP 边界（含 MCP 根／子路径 mount、GET/HEAD live、maintenance/temporary），区分 JSON、multipart metadata、SSE event 和无正文；保留真实 workload／ticket／精确 MCP execution fence，不修改鉴权。退役 trusted_internal_hosts 描述，维护 schema 保持 Learning N-1 副本一致。Node 路由／正文 TDD 8/8、Rust 聚焦 4/4；临时 Skill producer 输出增加共享 schema 断言。Linux socket MCP＋full/live/HEAD 测试已编写但 macOS 未执行，交远程 CI，不计通过。最小日志在 `artifacts/verification/issue-38-runtime/`。下一批 RC 契约迁移；不等待 CI、不运行 Docker E2E。
 
 - **#38 Runtime Egress 批次（2026-11-07，依赖共享契约 PR #575）**：10 个路由补齐正文／响应／鉴权及逐路由 code/status；ensure 无正文、tunnel registration 为 204。真实 router 覆盖全部成功方法与 400/401/403/404/405/409/413/415 错误，按共享 schema 验证；If-Match-only attachment/release 使用新正文 schema，旧 schema 保留不变。源码路由抽取对 literal／constant 新路由和不支持语法 fail-closed，防止路由表与契约同时漏项。定向 TDD Node 9/9、Rust 17＋3、conventions 170 documents clean，日志在 `artifacts/verification/issue-38-egress/`；离线 JSON Schema 测试依赖禁用默认网络解析。完整准入交远程精确候选 CI，不等待并继续 Runtime。

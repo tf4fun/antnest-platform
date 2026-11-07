@@ -34,7 +34,7 @@ function resourceSchema(file, defPath) {
 
 const schemaFiles = {
   rc: [
-    "services/runtime-controller/api/runtime-deployment.schema.json",
+    "contracts/runtime-controller/runtime-deployment.schema.json",
     ["properties", "resources"],
   ],
   ac: [

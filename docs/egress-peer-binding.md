@@ -10,7 +10,7 @@ protection are implemented by [Phase 2](authenticated-runtime-tunnel.md).
 
 ## Contract and lifecycle
 
-- [RC revision 18](../services/runtime-controller/api/control-contract.json)
+- [RC revision 18](../contracts/runtime-controller/control-contract.json)
   adds `runtime_endpoint` to Runtime inspections. It is the canonical IPv4 from
   Docker's configured management-network attachment, never a hostname resolved
   by Controller. Controller reads the current inspection after the completed

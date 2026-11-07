@@ -14,7 +14,7 @@ import (
 
 func TestEveryControlRouteRejectsMissingCredentialBeforeEffects(t *testing.T) {
 	var contract machineContract
-	readJSONFile(t, filepath.Join(serviceRoot(t), "api/control-contract.json"), &contract)
+	readJSONFile(t, filepath.Join(serviceRoot(t), "../../contracts/runtime-controller/control-contract.json"), &contract)
 	for _, route := range contract.Routes {
 		if route.Path == "/status" {
 			continue
@@ -58,7 +58,7 @@ func TestControlJSONRejectsMissingMediaTypeBeforeEffects(t *testing.T) {
 
 func TestWrongWorkloadCannotUseControllerOrSkillPreparationRoutes(t *testing.T) {
 	var contract machineContract
-	readJSONFile(t, filepath.Join(serviceRoot(t), "api/control-contract.json"), &contract)
+	readJSONFile(t, filepath.Join(serviceRoot(t), "../../contracts/runtime-controller/control-contract.json"), &contract)
 	for _, route := range contract.Routes {
 		if route.Path == "/status" {
 			continue
@@ -80,9 +80,9 @@ func TestWrongWorkloadCannotUseControllerOrSkillPreparationRoutes(t *testing.T) 
 
 func TestEveryControlJSONRouteRejectsAmbiguousMediaAndMalformedJSON(t *testing.T) {
 	var contract machineContract
-	readJSONFile(t, filepath.Join(serviceRoot(t), "api/control-contract.json"), &contract)
+	readJSONFile(t, filepath.Join(serviceRoot(t), "../../contracts/runtime-controller/control-contract.json"), &contract)
 	for _, route := range contract.Routes {
-		if route.RequestBody == "" {
+		if route.RequestBody == "" || route.RequestBody == "none" {
 			continue
 		}
 		t.Run(route.OperationID, func(t *testing.T) {
