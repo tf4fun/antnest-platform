@@ -20,6 +20,8 @@ Issue 状态最后核对于 2026-10-28：141 个 issue，87 个已关闭，54 �
 
 ## 当前批次
 
+- **#48 PR CI 修复接手（2026-11-07，用户明确授权继续处理）**：本条接续并覆盖以下历史“停止／不轮询 CI”交接状态；当前任务为修复全部 14 个堆叠 PR 的精确候选门禁，不合并、不关闭 #48／#83。已修 Controller lint／机器契约登记与路由校验、N-1 RuntimeSpec 可选字段断言、ACP 类型 lint、Gateway unit＋真实 HTTP/TLS component 扩展字段投影、UI bridge 失效夹具，并沿依赖普通合并传播。后续 ACP 修正保留凭据／旧授权字段拒绝，恢复本地公共快照严格解析；普通 budget／retry 响应扩展改断言完整投影结果、输入不变，持久化仍拒绝未知字段。Runtime 修正身份描述符私密字段和 stdio/HTTP 冲突字段拒绝，包含 null 回归，真实 future-field golden 仍解码。定向证据：ACP 9 文件 194 用例＋v2 29 用例／类型检查／lint、Runtime 4 个契约与安全回归／clippy、Gateway HTTP/TLS 36 子用例全部通过；完整准入以最终候选远程 Repository checks／Integration checks 为准，尚不宣称通过。Docker system E2E 继续归专门流程。
+
 - **#48 全部批次已提交，停止等待用户反馈（2026-11-07）**：显式集成 [#574](https://github.com/tf4fun/antnest-platform/pull/574) 已创建，依赖 Controller consumer #573，集成代码提交 `d601d3cb`。共享、各服务与最终集成共 14 个独立 PR 均已交付；本轮未合并 PR、未关闭 issue，不声明远程 CI 通过。以下保留本批审查与定向证据；最终 CI 不查询／不轮询，后续结果由用户通知，Docker E2E 仍归专门流程。
 
 - **#48 显式契约集成与交接（2026-11-07，父批次 Controller PR #573 head `36c178c5`）**：服务批次均已提交；当前 `fix/issue-48-contract-integration` 仅收尾共享契约、根集成测试与交接，不混入新的服务实现。登记真实 producer → consumer 文件证据、冻结 N-1／当前 marker，Learning／Workspace Bridge 原契约套件改读真实捕获；递归 future-field 注入及 golden 比较补 `__proto__` own-key RED→GREEN。路由检查不保留 Controller 三条硬编码例外：在机器契约补登既有 learning-policy GET／PUT 与 RPC health alias，再与 caller catalog 双向比对，并复用实际 Go route discovery／source guard。Egress `e939583a`、Runtime `58e317e6` 指纹修正在原服务 PR，已普通合并传播，不改路由／ACL、不重写历史。
