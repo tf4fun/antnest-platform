@@ -16,5 +16,6 @@
 
 - [ ] Each commit changes one owning service or one contract ([CONTRIBUTING.md](https://github.com/tf4fun/antnest-platform/blob/main/CONTRIBUTING.md#how-changes-are-made)).
 - [ ] New behavior has tests, and docs describe the code as it is.
+- [ ] Contract changes synchronize affected E2E clients, dependency doubles and browser helpers, with fast schema/consumer checks; full system E2E remains post-merge.
 - [ ] `CHANGELOG.md` is updated for user-visible or upgrade-relevant changes.
 - [ ] No credentials, tokens or private data are included; nothing is stored in `.cache/`.
