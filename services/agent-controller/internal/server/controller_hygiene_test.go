@@ -8,8 +8,8 @@ import (
 	"go/token"
 	"net/http"
 	"net/http/httptest"
+	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strconv"
 	"strings"
 	"testing"
@@ -157,8 +157,10 @@ func controllerAPIErrorConstants(t *testing.T) map[string]string {
 
 func controllerHTTPStatusConstants(t *testing.T) map[string]int64 {
 	t.Helper()
+	root, err := exec.Command("go", "env", "GOROOT").Output()
+	require.NoError(t, err)
 	fset := token.NewFileSet()
-	file, err := parser.ParseFile(fset, filepath.Join(runtime.GOROOT(), "src", "net", "http", "status.go"), nil, 0)
+	file, err := parser.ParseFile(fset, filepath.Join(strings.TrimSpace(string(root)), "src", "net", "http", "status.go"), nil, 0)
 	require.NoError(t, err)
 	constants := map[string]int64{}
 	for _, declaration := range file.Decls {
