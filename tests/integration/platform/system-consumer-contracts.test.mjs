@@ -6,6 +6,8 @@ import { withCommonErrorSchema } from "../../support/common-error-schema.mjs";
 import { assertRestoredBinding } from "../../e2e/service-authentication/identity/external-identities-flow.mjs";
 import { linkingProvider } from "../../e2e/edge-gateway/scim-lifecycle-flow.mjs";
 import { networkPolicyFixture } from "../../e2e/service-authentication/console/network-policy-fixture.mjs";
+import { executionPeers } from "../../e2e/service-authentication/controller/execution-fixture.mjs";
+import { validateGolden } from "../../support/contracts/golden.mjs";
 
 const require = createRequire(
   new URL("../../../services/agent-acp-service/package.json", import.meta.url),
@@ -162,5 +164,132 @@ test("Console system double rejects stale CAS, wrong wire type and unsigned scop
       state: "pending",
       resource_version: 2,
     });
+  }
+});
+
+function executionPeer() {
+  const stats = {};
+  let result;
+  const peers = executionPeers({}, stats, (_response, value) => {
+    result = structuredClone(value);
+  });
+  return {
+    stats,
+    setRuntimePhase: peers.setRuntimePhase,
+    call(service, method, path, body = {}) {
+      assert.equal(
+        peers.handle(
+          service,
+          { method, headers: { "idempotency-key": "contract-test" } },
+          {},
+          path,
+          body,
+        ),
+        true,
+      );
+      return result;
+    },
+  };
+}
+
+const networkPath = "/internal/agent-networks/agent-1";
+const attachmentPath = "/internal/agent-network-attachments/agent-1";
+const runtimePath = "/internal/runtimes/agent-1";
+const attachmentSchema = "egress/attachment-state-request.schema.json";
+const revisionSchema =
+  "runtime-controller/control-api.schema.json#/$defs/revision_request";
+
+test("Controller system Egress double accepts schema-valid canonical CAS through pending, open and close", async () => {
+  const peer = executionPeer();
+  peer.call("runtime-controller", "POST", `${runtimePath}/initialize`);
+  peer.setRuntimePhase("starting");
+  const runtime = peer.call("runtime-controller", "GET", runtimePath);
+  let network = peer.call("runtime-egress", "PUT", networkPath);
+  for (const state of ["pending", "open", "closed"]) {
+    const body = {
+      state,
+      expected_version: String(network.attachment_resource_version),
+      ...(state === "open"
+        ? {
+            runtime_endpoint: "10.243.1.20",
+            tunnel_key_id: runtime.tunnel_key_id,
+          }
+        : {}),
+    };
+    await validateGolden(attachmentSchema, body);
+    const before = network.attachment_resource_version;
+    network = peer.call("runtime-egress", "PUT", attachmentPath, body);
+    assert.equal(network.attachment_state, state);
+    assert.equal(network.attachment_resource_version, before + 1);
+    assert.equal(network.runtime_endpoint, body.runtime_endpoint);
+    assert.equal(network.tunnel_key_id, body.tunnel_key_id);
+  }
+});
+
+test("Controller system Egress double rejects stale and noncanonical CAS before mutation", async () => {
+  const peer = executionPeer();
+  const before = peer.call("runtime-egress", "PUT", networkPath);
+  const stale = { state: "pending", expected_version: "2" };
+  await validateGolden(attachmentSchema, stale);
+  for (const body of [
+    stale,
+    { state: "pending", expected_version: 1 },
+    { state: "pending", expected_resource_version: 1 },
+  ]) {
+    assert.throws(() =>
+      peer.call("runtime-egress", "PUT", attachmentPath, body),
+    );
+    assert.deepEqual(peer.call("runtime-egress", "GET", networkPath), before);
+  }
+});
+
+test("Controller system RC double accepts schema-valid canonical disable and preserves completion semantics", async () => {
+  const peer = executionPeer();
+  const created = peer.call(
+    "runtime-controller",
+    "POST",
+    `${runtimePath}/initialize`,
+  );
+  const body = { expected_version: created.target_revision };
+  await validateGolden(revisionSchema, body);
+  const disabled = peer.call(
+    "runtime-controller",
+    "POST",
+    `${runtimePath}/disable`,
+    body,
+  );
+  assert.equal(disabled.kind, "disable_runtime");
+  assert.equal(disabled.state, "completed");
+  assert.equal(disabled.effect, "completed");
+  assert.notEqual(disabled.target_revision, created.target_revision);
+  assert.equal(disabled.inspection.lifecycle_state, "disabled");
+  assert.equal(disabled.inspection.runtime_execution_id, "");
+  assert.equal(disabled.inspection.mcp_endpoint, "");
+  assert.equal(disabled.inspection.runtime_endpoint, undefined);
+  assert.equal(disabled.inspection.tunnel_key_id, undefined);
+});
+
+test("Controller system RC double rejects stale and noncanonical CAS before disabling", async () => {
+  const peer = executionPeer();
+  const created = peer.call(
+    "runtime-controller",
+    "POST",
+    `${runtimePath}/initialize`,
+  );
+  const stale = { expected_version: `rtv_${"0".repeat(32)}` };
+  await validateGolden(revisionSchema, stale);
+  const before = peer.call("runtime-controller", "GET", runtimePath);
+  for (const body of [
+    stale,
+    { expected_version: 1 },
+    { expected_revision: created.target_revision },
+  ]) {
+    assert.throws(() =>
+      peer.call("runtime-controller", "POST", `${runtimePath}/disable`, body),
+    );
+    const after = peer.call("runtime-controller", "GET", runtimePath);
+    // Observation timestamps are sampled on each read.
+    after.observed_at = before.observed_at;
+    assert.deepEqual(after, before);
   }
 });
