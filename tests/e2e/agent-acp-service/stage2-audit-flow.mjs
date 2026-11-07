@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { json, registerFixturePrincipal } from "./stage2-transport.mjs";
 import { gatewayLogin } from "./stage2-gateway.mjs";
 import { stage2Step } from "./stage2-step.mjs";
+import { auditEventsForBrowser } from "./stage2-audit-projection.mjs";
 
 export async function verifyAdministrativeAudit({
   gateway,
@@ -83,11 +84,13 @@ export async function verifyAdministrativeAudit({
         );
         assert.deepEqual(
           events,
-          await rpc("list-execution-events", {
-            run_id: run.run_id,
-            stream,
-            limit: 100,
-          }),
+          auditEventsForBrowser(
+            await rpc("list-execution-events", {
+              run_id: run.run_id,
+              stream,
+              limit: 100,
+            }),
+          ),
         );
         if (stream === "execution") assert(events.items.length > 0);
         streams.push(events);

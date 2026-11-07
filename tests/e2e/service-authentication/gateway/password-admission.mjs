@@ -60,6 +60,8 @@ export const passwordFailures = [
     status: 503,
     body: { ...busy, token: "private-password-canary" },
     retry: ["1"],
+    expected: busy,
+    retryAfter: "1",
   },
   { name: "wrong-busy-delay", status: 503, body: busy, retry: ["2"] },
   {
