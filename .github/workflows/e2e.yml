@@ -46,6 +46,8 @@ jobs:
     name: Plan system integration
     if: >-
       (github.event_name != 'pull_request' && github.ref == 'refs/heads/main') ||
+      (github.event_name == 'workflow_dispatch' &&
+       github.ref == 'refs/heads/diagnose/main-e2e-after-contract-rollout') ||
       (github.event_name == 'pull_request' &&
        contains(github.event.pull_request.labels.*.name, 'e2e') &&
        (github.event.action != 'labeled' || github.event.label.name == 'e2e'))
@@ -92,7 +94,9 @@ jobs:
             git -c advice.detachedHead=false checkout --detach "$revision"
           else
             set -- "$@" --resolve-images
-            [ "$EVENT" != pull_request ] && set -- "$@" --all-images
+            # Diagnostic branch: build only dependencies of the two selected
+            # suites. This branch is never merged and cannot establish release
+            # capability or publish production images.
             echo "revision=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
           fi
           node tests/support/ci-changes.mjs "$@"
