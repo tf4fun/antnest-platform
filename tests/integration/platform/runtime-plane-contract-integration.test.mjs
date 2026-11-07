@@ -1,10 +1,92 @@
 import assert from "node:assert/strict";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import test from "node:test";
 
 const read = (path) =>
   readFileSync(new URL(`../../../${path}`, import.meta.url), "utf8");
 const readJSON = (path) => JSON.parse(read(path));
+
+function builderSchemaProblems(
+  crate,
+  loader,
+  dockerfile = read(`${crate}/Dockerfile`),
+) {
+  const inventory = read(loader).match(/for dir in \[([^\]]+)\]/);
+  assert(inventory, `${loader}: schema directory inventory missing`);
+  const areas = [...inventory[1].matchAll(/"([a-z-]+)"/g)].map((m) => m[1]);
+  assert(areas.length > 0);
+  // Only copies before the actual cargo test command can supply its inputs.
+  const beforeTests = dockerfile.split(/\bcargo test\b/)[0];
+  const copies = [
+    ...beforeTests.matchAll(
+      /^COPY (contracts(?:\/\S+)?) \.\/(contracts(?:\/\S+)?)\s*$/gm,
+    ),
+  ];
+  const documents = new Map();
+  const problems = [];
+  for (const area of areas) {
+    for (const name of readdirSync(
+      new URL(`../../../contracts/${area}/`, import.meta.url),
+    )) {
+      if (!name.endsWith(".schema.json")) continue;
+      const path = `contracts/${area}/${name}`;
+      const document = readJSON(path);
+      documents.set(document.$id, document);
+      const copied = copies.some(
+        ([, source, destination]) =>
+          (path === source || path.startsWith(`${source}/`)) &&
+          `${destination}${path.slice(source.length)}` === path,
+      );
+      if (!copied) problems.push(`builder is missing ${path}`);
+    }
+  }
+  const walk = (value, id) => {
+    if (!value || typeof value !== "object") return;
+    if (typeof value.$ref === "string") {
+      const url = new URL(value.$ref, id);
+      url.hash = "";
+      if (!documents.has(url.href))
+        problems.push(`unregistered schema ${url.href}`);
+    }
+    for (const child of Object.values(value)) walk(child, id);
+  };
+  for (const [id, document] of documents) walk(document, id);
+  return [...new Set(problems)].sort();
+}
+
+for (const [crate, loader] of [
+  [
+    "runtimes/antnest-runtime",
+    "runtimes/antnest-runtime/src/http_route_contract_tests.rs",
+  ],
+  ["services/runtime-egress", "services/runtime-egress/tests/support/mod.rs"],
+]) {
+  test(`${crate} Docker builder contains the schema loader's complete offline input set`, () => {
+    const dockerfile = read(`${crate}/Dockerfile`);
+    assert.deepEqual(builderSchemaProblems(crate, loader, dockerfile), []);
+    const removed = dockerfile.replace(/^COPY contracts\/common .*\n/m, "");
+    assert(
+      builderSchemaProblems(crate, loader, removed).includes(
+        "builder is missing contracts/common/error.schema.json",
+      ),
+    );
+    const misplaced = removed + "\nCOPY contracts/common ./contracts/common\n";
+    assert(
+      builderSchemaProblems(crate, loader, misplaced).includes(
+        "builder is missing contracts/common/error.schema.json",
+      ),
+    );
+    const wrongDestination = dockerfile.replace(
+      "COPY contracts/common ./contracts/common",
+      "COPY contracts/common ./contracts/elsewhere",
+    );
+    assert(
+      builderSchemaProblems(crate, loader, wrongDestination).includes(
+        "builder is missing contracts/common/error.schema.json",
+      ),
+    );
+  });
+}
 
 function testRepoRecipe() {
   const lines = read("Makefile").split("\n");
