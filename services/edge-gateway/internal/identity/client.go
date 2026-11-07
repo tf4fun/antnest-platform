@@ -354,7 +354,7 @@ func (client *Client) doRequestWithCaller(ctx context.Context, method string, ta
 	if output == nil || response.StatusCode == http.StatusNoContent {
 		return nil
 	}
-	if err := json.Unmarshal(payload, output); err != nil {
+	if err := decodeResponseObject(payload, output); err != nil {
 		return fmt.Errorf("decode identity response: %w", err)
 	}
 	return nil

@@ -109,13 +109,80 @@ func TestExternalIdentityClientBindsSelfAuthority(t *testing.T) {
 	}
 }
 
+func TestExternalIdentityClientToleratesExtensionMembers(t *testing.T) {
+	ctx := WithPrincipal(t.Context(), browserCaller(t))
+	input := ExternalIdentityListInput{Limit: 1, AfterID: "binding-1", NoticeAfterID: "notice-3"}
+	baseline, err := externalReplyClient(t, externalJSON(t, externalPageFixture())).ListExternalIdentities(ctx, input)
+	if err != nil {
+		t.Fatalf("baseline decode: %v", err)
+	}
+	for name, edit := range map[string]func(map[string]any){
+		"unknown_top":             func(p map[string]any) { p["user_id"] = "private-user" },
+		"item/user_id":            func(p map[string]any) { p["items"].([]any)[0].(map[string]any)["user_id"] = "must-not-be-projected" },
+		"item/Subject":            func(p map[string]any) { p["items"].([]any)[0].(map[string]any)["Subject"] = "case-alias" },
+		"notice/user_id":          func(p map[string]any) { p["notices"].([]any)[0].(map[string]any)["user_id"] = "must-not-be-projected" },
+		"notice/Subject":          func(p map[string]any) { p["notices"].([]any)[0].(map[string]any)["Subject"] = "case-alias" },
+		"notice/acknowledged_at":  func(p map[string]any) { p["notices"].([]any)[0].(map[string]any)["acknowledged_at"] = nil },
+		"notice/revoked_at":       func(p map[string]any) { p["notices"].([]any)[0].(map[string]any)["revoked_at"] = nil },
+		"notice/provider_enabled": func(p map[string]any) { p["notices"].([]any)[0].(map[string]any)["provider_enabled"] = nil },
+	} {
+		t.Run(name, func(t *testing.T) {
+			payload := externalPageFixture()
+			edit(payload)
+			result, err := externalReplyClient(t, externalJSON(t, payload)).ListExternalIdentities(ctx, input)
+			if err != nil {
+				t.Fatalf("extension member rejected: %v", err)
+			}
+			if !reflect.DeepEqual(result, baseline) {
+				t.Fatalf("result=%+v baseline=%+v", result, baseline)
+			}
+			encoded, err := json.Marshal(result)
+			if err != nil {
+				t.Fatalf("marshal result: %v", err)
+			}
+			for _, canary := range []string{"must-not-be-projected", "case-alias", "private-user"} {
+				if strings.Contains(string(encoded), canary) {
+					t.Fatalf("canary %q leaked into public result", canary)
+				}
+			}
+		})
+	}
+}
+
+func TestExternalIdentityClientToleratesMutationResultExtensions(t *testing.T) {
+	ctx := WithPrincipal(t.Context(), browserCaller(t))
+	unbindInput := ExternalIdentityUnbindInput{RequestID: "request-1", BindingID: "binding-2"}
+	unbindBaseline, err := externalReplyClient(t, `{"revoked_count":1,"current_revoked":true}`).UnbindExternalIdentity(ctx, unbindInput)
+	if err != nil {
+		t.Fatalf("baseline unbind: %v", err)
+	}
+	unbindExtended, err := externalReplyClient(t, `{"revoked_count":1,"current_revoked":true,"token_id":"secret"}`).UnbindExternalIdentity(ctx, unbindInput)
+	if err != nil {
+		t.Fatalf("extended unbind rejected: %v", err)
+	}
+	if !reflect.DeepEqual(unbindExtended, unbindBaseline) {
+		t.Fatalf("unbind=%+v baseline=%+v", unbindExtended, unbindBaseline)
+	}
+	acknowledgeInput := ExternalIdentityAcknowledgeInput{RequestID: "request-1", NoticeIDs: []string{"notice-4"}}
+	acknowledgeBaseline, err := externalReplyClient(t, `{"acknowledged_count":1}`).AcknowledgeExternalIdentityNotices(ctx, acknowledgeInput)
+	if err != nil {
+		t.Fatalf("baseline acknowledge: %v", err)
+	}
+	acknowledgeExtended, err := externalReplyClient(t, `{"acknowledged_count":1,"user_id":"private"}`).AcknowledgeExternalIdentityNotices(ctx, acknowledgeInput)
+	if err != nil {
+		t.Fatalf("extended acknowledge rejected: %v", err)
+	}
+	if !reflect.DeepEqual(acknowledgeExtended, acknowledgeBaseline) {
+		t.Fatalf("acknowledge=%+v baseline=%+v", acknowledgeExtended, acknowledgeBaseline)
+	}
+}
+
 func TestExternalIdentityClientRejectsMalformedInventory(t *testing.T) {
 	type mutation struct {
 		name string
 		edit func(map[string]any)
 	}
 	cases := []mutation{
-		{"unknown_top", func(p map[string]any) { p["user_id"] = "private-user" }},
 		{"binding_limit", func(p map[string]any) { p["items"] = append(p["items"].([]any), p["items"].([]any)[0]) }},
 		{"notice_limit", func(p map[string]any) { p["notices"] = append(p["notices"].([]any), p["notices"].([]any)[0]) }},
 	}
@@ -139,7 +206,6 @@ func TestExternalIdentityClientRejectsMalformedInventory(t *testing.T) {
 			{"id", "bad:id"}, {"provider_id", "/bad"}, {"organization_id", "bad id"}, {"membership_id", "界"},
 			{"provider_name", "\uFEFF"}, {"provider_display_name", " "}, {"organization_slug", "\t"}, {"organization_name", "\n"},
 			{"subject", ""}, {"subject", "bad\x00subject"}, {"subject", strings.Repeat("界", 256)}, {"method", "unknown"}, {"created_at", "yesterday"},
-			{"user_id", "must-not-be-projected"}, {"Subject", "case-alias"},
 		} {
 			cases = append(cases, mutation{fmt.Sprintf("%s/%s/%v", array, pair.key, pair.value), func(p map[string]any) { p[array].([]any)[0].(map[string]any)[pair.key] = pair.value }})
 		}
@@ -156,9 +222,7 @@ func TestExternalIdentityClientRejectsMalformedInventory(t *testing.T) {
 		}
 		cases = append(cases, mutation{key + "/wrong_type", func(p map[string]any) { p["items"].([]any)[0].(map[string]any)[key] = 2 }})
 	}
-	for _, key := range []string{"binding_id", "acknowledged_at", "revoked_at", "provider_enabled"} {
-		cases = append(cases, mutation{"notice/" + key, func(p map[string]any) { p["notices"].([]any)[0].(map[string]any)[key] = nil }})
-	}
+	cases = append(cases, mutation{"notice/binding_id", func(p map[string]any) { p["notices"].([]any)[0].(map[string]any)["binding_id"] = nil }})
 	for _, key := range []string{"next_cursor", "next_notice_after_id"} {
 		for _, value := range []any{nil, "", "bad:id", "a-before-input"} {
 			if key == "next_cursor" && value == nil {
@@ -271,12 +335,12 @@ func TestExternalIdentityClientIndependentPagination(t *testing.T) {
 
 func TestExternalIdentityClientRejectsMalformedMutationResults(t *testing.T) {
 	ctx := WithPrincipal(t.Context(), browserCaller(t))
-	for _, raw := range []string{`{}`, `null`, `{"revoked_count":0}`, `{"current_revoked":false}`, `{"revoked_count":null,"current_revoked":false}`, `{"revoked_count":1,"current_revoked":null}`, `{"revoked_count":-1,"current_revoked":false}`, `{"revoked_count":0,"current_revoked":true}`, `{"revoked_count":1,"current_revoked":true,"token_id":"secret"}`, `{"revoked_count":1,"revoked_count":2,"current_revoked":true}`} {
+	for _, raw := range []string{`{}`, `null`, `{"revoked_count":0}`, `{"current_revoked":false}`, `{"revoked_count":null,"current_revoked":false}`, `{"revoked_count":1,"current_revoked":null}`, `{"revoked_count":-1,"current_revoked":false}`, `{"revoked_count":0,"current_revoked":true}`, `{"revoked_count":1,"revoked_count":2,"current_revoked":true}`} {
 		if _, err := externalReplyClient(t, raw).UnbindExternalIdentity(ctx, ExternalIdentityUnbindInput{RequestID: "request-1", BindingID: "binding-2"}); err == nil {
 			t.Fatalf("malformed unbind admitted: %s", raw)
 		}
 	}
-	for _, raw := range []string{`{}`, `null`, `{"acknowledged_count":null}`, `{"acknowledged_count":-1}`, `{"acknowledged_count":2}`, `{"acknowledged_count":101}`, `{"acknowledged_count":1,"user_id":"private"}`, `{"acknowledged_count":0,"acknowledged_count":1}`} {
+	for _, raw := range []string{`{}`, `null`, `{"acknowledged_count":null}`, `{"acknowledged_count":-1}`, `{"acknowledged_count":2}`, `{"acknowledged_count":101}`, `{"acknowledged_count":0,"acknowledged_count":1}`} {
 		if _, err := externalReplyClient(t, raw).AcknowledgeExternalIdentityNotices(ctx, ExternalIdentityAcknowledgeInput{RequestID: "request-1", NoticeIDs: []string{"notice-4"}}); err == nil {
 			t.Fatalf("malformed acknowledgment admitted: %s", raw)
 		}

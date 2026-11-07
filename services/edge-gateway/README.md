@@ -333,3 +333,16 @@ For administrator network-policy writes, Gateway validates the existing
 canonical match to Console. It rejects stale or ambiguous guards before proxying;
 this check preserves the browser contract without accepting unsigned identity
 as authorization. See the [authentication contract](../../contracts/edge-gateway/service-authentication.md).
+
+### Golden examples and N-1 rollout
+
+Identity response consumers are verified against the three real producer
+captures in `contracts/identity/examples/` (`list-login-methods.member`,
+`local-login.member`, `resolve-access-token.member`). The response decoder
+(`internal/identity/response_json.go`) drops additive unknown members
+recursively — injected private canaries can never project into browser-visible
+typed results — while every known-field check — authority scoping, required
+fields, digest/key validation, exact JSON member casing — stays strict, so
+current and N-1 shapes both decode. Request paths, key files, and the
+`validPasswordSuccess` membership scanner remain strict. Deploy consumers
+before the producer contract evolves; no synthetic N-1 literal is invented.

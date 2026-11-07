@@ -9,8 +9,6 @@ import (
 	"strings"
 	"time"
 	"unicode"
-
-	"github.com/tf4fun/antnest-platform/modules/service-authentication/serviceauth"
 )
 
 // ExternalIdentityDetails is the public binding or immutable notice snapshot.
@@ -144,7 +142,7 @@ func (client *Client) externalIdentityRequest(ctx context.Context, principal Pri
 	if err := client.browserRequest(ctx, principal, method, body, &raw); err != nil {
 		return err
 	}
-	if err := serviceauth.DecodeObject(raw, result); err != nil {
+	if err := decodeResponseObject(raw, result); err != nil {
 		return fmt.Errorf("invalid external identity response: %w", err)
 	}
 	return nil
