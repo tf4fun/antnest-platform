@@ -114,13 +114,13 @@ export async function catalog(admin, image, secrets, skill) {
     ],
   ]) {
     const first = await api(`/api/admin/${path}?limit=1`);
-    assert(first.next_after_id);
+    assert(first.next_cursor);
     assert.equal(first.items.length, 1);
     const second = await api(
-      `/api/admin/${path}?limit=1&after_id=${encodeURIComponent(first.next_after_id)}`,
+      `/api/admin/${path}?limit=1&cursor=${encodeURIComponent(first.next_cursor)}`,
     );
     assert.equal(second.items.length, 1);
-    assert(!second.next_after_id);
+    assert.equal(second.next_cursor, null);
     assert.deepEqual(
       new Set([...first.items, ...second.items].map((item) => item[id])),
       new Set(expected),
