@@ -53,7 +53,7 @@ projections or diagnostic payloads.
 
 The operator's optional `ANTNEST_RUNTIME_ACP_MEMBERS_FILE` is a startup snapshot,
 limited to 64 KiB and 128 members; its closed version-1 format is documented in
-[operations](../docs/operations.md#acp-incarnation-members). Its selectors and
+[operations](../../services/runtime-controller/docs/operations.md#acp-incarnation-members). Its selectors and
 member networks remain private and independent of Runtime management-network
 selection. This reuses RC's current authentication, PostgreSQL migration 14,
 Docker observer and probe client; it adds no service, image or authentication
@@ -101,7 +101,7 @@ RC still holds the local Docker socket and therefore host-equivalent authority.
 Service authentication and image policy reduce remote admission risk; they do not
 contain a compromised RC process. Do not expose the daemon or RC credential to
 Runtime/executor/user workloads. Raw socket compromise is documented in
-[SECURITY.md](../../../SECURITY.md).
+[SECURITY.md](../../SECURITY.md).
 
 A generic method/path socket proxy is insufficient: RC needs Ping/version,
 image inspect, filtered container list/inspect/events, create/start/stop/delete,

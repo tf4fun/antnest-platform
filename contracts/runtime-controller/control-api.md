@@ -292,7 +292,7 @@ Initialize requires no existing Runtime Environment. It:
 4. commits `completed` with lifecycle state `provisioned` and releases the mutation slot;
 5. returns the target revision and image metadata, without asserting health or execution identity.
 
-See [creation and observation](../docs/creation-and-observation.md). Current
+See [creation and observation](../../services/runtime-controller/docs/creation-and-observation.md). Current
 health, MCP endpoint and verified execution ID are obtained through Inspect/List
 and the independent observation flow. Startup failure never rewrites a completed
 creation command.
@@ -521,7 +521,7 @@ One unhealthy Runtime does not make the Controller unready. A Watch-only
 disconnect can make Controller readiness false while lifecycle calls still
 succeed through a reachable Docker API. Docker API unavailability also causes
 actual platform-dependent calls to fail. See
-[operations](../docs/operations.md#observation-dependency-recovery) for startup
+[operations](../../services/runtime-controller/docs/operations.md#observation-dependency-recovery) for startup
 and probe thresholds. The Controller's own `--healthcheck` consumes only the
 HTTP status code.
 
@@ -534,7 +534,7 @@ effects; transient failure leaves the accepted operation running and returns
 rejection returns `tunnel_key_registration_rejected`, preserves the source, and
 never starts a candidate. Generation material is sealed with the RC instance
 master key and copied only into its private bootstrap volume. See
-[the authenticated tunnel design](../../../docs/authenticated-runtime-tunnel.md).
+[the authenticated tunnel design](../../docs/authenticated-runtime-tunnel.md).
 
 ## Failure Semantics
 
