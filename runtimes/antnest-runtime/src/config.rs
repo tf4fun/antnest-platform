@@ -141,13 +141,13 @@ pub(crate) fn load_telemetry() -> crate::telemetry::TelemetryConfig {
 
 impl RuntimeSpecInput {
     pub(crate) fn try_into_runtime_spec(self) -> Result<RuntimeSpec, ConfigError> {
-        if let Some(version) = self.schema_version {
-            if version != 1 {
-                return Err(ConfigError::Invalid {
-                    name: "schema_version",
-                    message: format!("unsupported schema_version {version}"),
-                });
-            }
+        if let Some(version) = self.schema_version
+            && version != 1
+        {
+            return Err(ConfigError::Invalid {
+                name: "schema_version",
+                message: format!("unsupported schema_version {version}"),
+            });
         }
         if let Some(descriptor) = &self.authentication {
             descriptor
