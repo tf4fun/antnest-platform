@@ -16,7 +16,7 @@ Workload authentication and configured Registry transport use the
 [shared Go module](../../modules/service-authentication/README.md), with the
 caller-context forwarding policy for existing dependencies. The private ACP
 incarnation probe sends workload identity only. Existing lifecycle routes remain
-Controller-only; the two [incarnation routes](api/control-api.md#acp-incarnation-registration-and-inspection)
+Controller-only; the two [incarnation routes](../../contracts/runtime-controller/control-api.md#acp-incarnation-registration-and-inspection)
 admit ACP. The Docker boundary and separate Runtime instance credential lifecycle remain unchanged.
 
 Startup rejects published PostgreSQL passwords under the [development secret policy](../../contracts/platform/development-secrets.md). The exact `ANTNEST_ALLOW_PUBLIC_DEV_SECRETS=true` opt-in emits a variable-only WARN; it never restores the retired Registry token.
@@ -145,7 +145,7 @@ See the [shared design](../../docs/authenticated-runtime-tunnel.md).
 
 | Direction   | Interface                                                       | Purpose                                                                                                              |
 | ----------- | --------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
-| Inbound     | Internal JSON-over-HTTP RPC ([control API](api/control-api.md)) | Image resolution, lifecycle commands, Inspect/List, operation queries, observation List/Watch, Skill set preparation |
+| Inbound     | Internal JSON-over-HTTP RPC ([control API](../../contracts/runtime-controller/control-api.md)) | Image resolution, lifecycle commands, Inspect/List, operation queries, observation List/Watch, Skill set preparation |
 | Inbound     | Local-loopback `GET /status`                                    | Liveness and readiness (database, journal/notifications, adapter initialization and cached monitor state)            |
 | Outbound    | Docker Engine API `v1.47` over a Unix socket                    | Containers, volumes, networks, events, image inspection                                                              |
 | Outbound    | Runtime `GET /status`                                           | Bounded verification of Runtime identity and `execution_id`                                                          |
@@ -221,7 +221,7 @@ thresholds. See [operations](docs/operations.md#observation-dependency-recovery)
 
 ## Build and test
 
-Existing lifecycle, Runtime inspection, image, observation and Skill routes require verified Controller workload identity; incarnation registration and inspection require ACP. RC never calls its own API. The [workload boundary](api/service-authentication.md) specifies exact token/mTLS, JSON, listening addresses, Registry transport and Docker socket limitations. The retired `ANTNEST_SKILL_REGISTRY_API_TOKEN` must be removed; any nonempty value fails startup. The [rollout ledger](../../contracts/platform/service-authentication-rollout.json) records the earlier token-profile integration. ACP owner consumers and two-replica integration remain pending.
+Existing lifecycle, Runtime inspection, image, observation and Skill routes require verified Controller workload identity; incarnation registration and inspection require ACP. RC never calls its own API. The [workload boundary](../../contracts/runtime-controller/service-authentication.md) specifies exact token/mTLS, JSON, listening addresses, Registry transport and Docker socket limitations. The retired `ANTNEST_SKILL_REGISTRY_API_TOKEN` must be removed; any nonempty value fails startup. The [rollout ledger](../../contracts/platform/service-authentication-rollout.json) records the earlier token-profile integration. ACP owner consumers and two-replica integration remain pending.
 
 Service-local checks, from `services/runtime-controller`:
 
@@ -312,7 +312,7 @@ and `ANTNEST_TEST_REAL_RUNTIME_IMAGE`.
   classification of an expected missing container.
 - [Crash recovery contract](docs/crash-recovery-contract.md) - opt-in Update
   process-crash component test.
-- [Control API](api/control-api.md) and [API directory](api/README.md) - owned
+- [Control API](../../contracts/runtime-controller/control-api.md) and [API directory](../../contracts/runtime-controller/README.md) - owned
   RPC contract and schemas.
 - [Skill Registry Runtime delivery contract](../../contracts/skill-registry/runtime-delivery-api.md)
   - Skill set preparation and lifecycle consumption.

@@ -545,7 +545,7 @@ test("the implemented manifest freezes the history operation, page size and non-
 test("the implemented history route has exact RC grants, revision 22 aliases and manifest limits", () => {
   const manifest = read(manifestPath);
   assert.equal(manifest.status, "implemented");
-  const callers = read("services/runtime-controller/api/callers.json");
+  const callers = read("contracts/runtime-controller/callers.json");
   assert.deepEqual(
     Object.keys(callers.routes)
       .filter((route) => route.endsWith(` ${routePath}`))
@@ -564,9 +564,7 @@ test("the implemented history route has exact RC grants, revision 22 aliases and
     caller_context: {},
     request_body: "none",
   });
-  const contract = read(
-    "services/runtime-controller/api/control-contract.json",
-  );
+  const contract = read("contracts/runtime-controller/control-contract.json");
   assert.equal(contract.revision, 22);
   const matches = contract.routes.filter((route) => route.path === routePath);
   assert.equal(matches.length, 1);
@@ -601,9 +599,7 @@ test("the implemented history route has exact RC grants, revision 22 aliases and
   );
   assert.deepEqual(Object.keys(route.path_parameters ?? {}), []);
   assert.deepEqual([...route.errors].sort(), [...wire.errors].sort());
-  const schema = read(
-    "services/runtime-controller/api/control-api.schema.json",
-  );
+  const schema = read("contracts/runtime-controller/control-api.schema.json");
   for (const [alias, definition] of [
     ["acp_history_request", "request"],
     ["acp_history_page", "response"],

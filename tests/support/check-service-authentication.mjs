@@ -24,7 +24,7 @@ export const serviceContracts = {
   "agent-ui": "contracts/agent-ui",
   "agent-controller": "contracts/agent-controller",
   "agent-acp-service": "contracts/agent-acp",
-  "runtime-controller": "services/runtime-controller/api",
+  "runtime-controller": "contracts/runtime-controller",
   "skill-registry": "contracts/skill-registry",
   "runtime-egress": "contracts/egress",
   "antnest-runtime": "contracts/runtime",

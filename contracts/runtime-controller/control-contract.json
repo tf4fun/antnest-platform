@@ -5,8 +5,8 @@
   "schemas": {
     "control": "control-api.schema.json",
     "configuration": "runtime-deployment.schema.json",
-    "owner_incarnation": "../../../contracts/agent-acp/owner-incarnation.schema.json",
-    "owner_incarnation_history": "../../../contracts/agent-acp/owner-incarnation-history.schema.json"
+    "owner_incarnation": "../agent-acp/owner-incarnation.schema.json",
+    "owner_incarnation_history": "../agent-acp/owner-incarnation-history.schema.json"
   },
   "headers": {
     "Idempotency-Key": {
@@ -25,7 +25,9 @@
       "operation_id": "registerAcpIncarnation",
       "method": "POST",
       "path": "/internal/acp-incarnations/register",
-      "required_headers": ["Antnest-Service-Authorization"],
+      "required_headers": [
+        "Antnest-Service-Authorization"
+      ],
       "request_body": "control-api.schema.json#/$defs/acp_register_request",
       "request_bytes_max": 4096,
       "response_bytes_max": 8192,
@@ -62,7 +64,9 @@
       "path_parameters": {
         "registration_id": "control-api.schema.json#/$defs/acp_registration_id"
       },
-      "required_headers": ["Antnest-Service-Authorization"],
+      "required_headers": [
+        "Antnest-Service-Authorization"
+      ],
       "response_bytes_max": 8192,
       "deadline_ms": 10000,
       "cache_control": "no-store",
@@ -82,13 +86,16 @@
         "internal_error",
         "route_not_found",
         "method_not_allowed"
-      ]
+      ],
+      "request_body": "none"
     },
     {
       "operation_id": "historyAcpIncarnations",
       "method": "POST",
       "path": "/internal/acp-incarnations/history",
-      "required_headers": ["Antnest-Service-Authorization"],
+      "required_headers": [
+        "Antnest-Service-Authorization"
+      ],
       "request_body": "control-api.schema.json#/$defs/acp_history_request",
       "request_bytes_max": 4096,
       "response_bytes_max": 32768,
@@ -138,7 +145,10 @@
         "internal_error",
         "image_not_allowed"
       ],
-      "required_headers": ["Antnest-Service-Authorization"]
+      "required_headers": [
+        "Antnest-Service-Authorization"
+      ],
+      "request_body": "none"
     },
     {
       "operation_id": "getStatus",
@@ -155,7 +165,8 @@
         }
       },
       "errors": [],
-      "listener": "loopback-health"
+      "listener": "loopback-health",
+      "request_body": "none"
     },
     {
       "operation_id": "listRuntimes",
@@ -175,7 +186,10 @@
         "deadline_exceeded",
         "internal_error"
       ],
-      "required_headers": ["Antnest-Service-Authorization"]
+      "required_headers": [
+        "Antnest-Service-Authorization"
+      ],
+      "request_body": "none"
     },
     {
       "operation_id": "inspectRuntime",
@@ -200,7 +214,10 @@
         "deadline_exceeded",
         "internal_error"
       ],
-      "required_headers": ["Antnest-Service-Authorization"]
+      "required_headers": [
+        "Antnest-Service-Authorization"
+      ],
+      "request_body": "none"
     },
     {
       "operation_id": "prepareRuntimeSkillSet",
@@ -209,7 +226,10 @@
       "path_parameters": {
         "agent_id": "control-api.schema.json#/$defs/agent_id"
       },
-      "required_headers": ["Antnest-Service-Authorization", "Idempotency-Key"],
+      "required_headers": [
+        "Antnest-Service-Authorization",
+        "Idempotency-Key"
+      ],
       "request_body": "control-api.schema.json#/$defs/skill_prepare_request",
       "responses": {
         "202": {
@@ -257,7 +277,10 @@
         "deadline_exceeded",
         "internal_error"
       ],
-      "required_headers": ["Antnest-Service-Authorization"]
+      "required_headers": [
+        "Antnest-Service-Authorization"
+      ],
+      "request_body": "none"
     },
     {
       "operation_id": "releaseRuntimeSkillPreparation",
@@ -267,10 +290,15 @@
         "agent_id": "control-api.schema.json#/$defs/agent_id",
         "request_id": "control-api.schema.json#/$defs/request_id"
       },
-      "required_headers": ["Antnest-Service-Authorization", "Idempotency-Key"],
+      "required_headers": [
+        "Antnest-Service-Authorization",
+        "Idempotency-Key"
+      ],
       "request_body": "control-api.schema.json#/$defs/skill_release_request",
       "responses": {
-        "204": {}
+        "204": {
+          "body": "none"
+        }
       },
       "errors": [
         "service_unauthenticated",
@@ -291,7 +319,10 @@
       "path_parameters": {
         "agent_id": "control-api.schema.json#/$defs/agent_id"
       },
-      "required_headers": ["Antnest-Service-Authorization", "Idempotency-Key"],
+      "required_headers": [
+        "Antnest-Service-Authorization",
+        "Idempotency-Key"
+      ],
       "request_body": "control-api.schema.json#/$defs/initialize_request",
       "responses": {
         "200": {
@@ -336,7 +367,10 @@
       "path_parameters": {
         "agent_id": "control-api.schema.json#/$defs/agent_id"
       },
-      "required_headers": ["Antnest-Service-Authorization", "Idempotency-Key"],
+      "required_headers": [
+        "Antnest-Service-Authorization",
+        "Idempotency-Key"
+      ],
       "request_body": "control-api.schema.json#/$defs/revision_configuration_request",
       "responses": {
         "200": {
@@ -379,7 +413,10 @@
       "path_parameters": {
         "agent_id": "control-api.schema.json#/$defs/agent_id"
       },
-      "required_headers": ["Antnest-Service-Authorization", "Idempotency-Key"],
+      "required_headers": [
+        "Antnest-Service-Authorization",
+        "Idempotency-Key"
+      ],
       "request_body": "control-api.schema.json#/$defs/revision_request",
       "responses": {
         "200": {
@@ -416,7 +453,10 @@
       "path_parameters": {
         "agent_id": "control-api.schema.json#/$defs/agent_id"
       },
-      "required_headers": ["Antnest-Service-Authorization", "Idempotency-Key"],
+      "required_headers": [
+        "Antnest-Service-Authorization",
+        "Idempotency-Key"
+      ],
       "request_body": "control-api.schema.json#/$defs/revision_configuration_request",
       "responses": {
         "200": {
@@ -461,7 +501,10 @@
       "path_parameters": {
         "agent_id": "control-api.schema.json#/$defs/agent_id"
       },
-      "required_headers": ["Antnest-Service-Authorization", "Idempotency-Key"],
+      "required_headers": [
+        "Antnest-Service-Authorization",
+        "Idempotency-Key"
+      ],
       "request_body": "control-api.schema.json#/$defs/revision_request",
       "responses": {
         "200": {
@@ -513,7 +556,10 @@
         "operation_not_found",
         "internal_error"
       ],
-      "required_headers": ["Antnest-Service-Authorization"]
+      "required_headers": [
+        "Antnest-Service-Authorization"
+      ],
+      "request_body": "none"
     },
     {
       "operation_id": "listRuntimeObservations",
@@ -536,7 +582,10 @@
         "observation_cursor_expired",
         "internal_error"
       ],
-      "required_headers": ["Antnest-Service-Authorization"]
+      "required_headers": [
+        "Antnest-Service-Authorization"
+      ],
+      "request_body": "none"
     },
     {
       "operation_id": "watchRuntimeObservations",
@@ -567,7 +616,10 @@
         "observation_cursor_expired",
         "internal_error"
       ],
-      "required_headers": ["Antnest-Service-Authorization"]
+      "required_headers": [
+        "Antnest-Service-Authorization"
+      ],
+      "request_body": "none"
     },
     {
       "operation_id": "resolveRuntimeConnection",
@@ -576,7 +628,9 @@
       "path_parameters": {
         "agent_id": "control-api.schema.json#/$defs/agent_id"
       },
-      "required_headers": ["Antnest-Service-Authorization"],
+      "required_headers": [
+        "Antnest-Service-Authorization"
+      ],
       "request_body": "control-api.schema.json#/$defs/runtime_connection_request",
       "responses": {
         "200": {
@@ -822,82 +876,180 @@
   },
   "operation_error_codes": {
     "tunnel_key_registration_rejected": {
-      "operation_states": ["failed", "unknown"],
-      "effects": ["not_started", "unknown"],
-      "http_statuses": [409, 202],
+      "operation_states": [
+        "failed",
+        "unknown"
+      ],
+      "effects": [
+        "not_started",
+        "unknown"
+      ],
+      "http_statuses": [
+        409,
+        202
+      ],
       "retry_same_request_only": true
     },
     "runtime_not_ready": {
       "historical_only": true,
-      "operation_states": ["failed", "unknown"],
-      "effects": ["completed"],
-      "http_statuses": [500, 202],
+      "operation_states": [
+        "failed",
+        "unknown"
+      ],
+      "effects": [
+        "completed"
+      ],
+      "http_statuses": [
+        500,
+        202
+      ],
       "retry_same_request_only": true
     },
     "runtime_drift": {
-      "operation_states": ["failed", "unknown"],
-      "effects": ["not_started", "unknown"],
-      "http_statuses": [409, 202],
+      "operation_states": [
+        "failed",
+        "unknown"
+      ],
+      "effects": [
+        "not_started",
+        "unknown"
+      ],
+      "http_statuses": [
+        409,
+        202
+      ],
       "retry_same_request_only": true
     },
     "skill_mount_verification_failed": {
-      "operation_states": ["unknown"],
-      "effects": ["unknown"],
-      "http_statuses": [202],
+      "operation_states": [
+        "unknown"
+      ],
+      "effects": [
+        "unknown"
+      ],
+      "http_statuses": [
+        202
+      ],
       "retry_same_request_only": true
     },
     "storage_in_use": {
-      "operation_states": ["failed", "unknown"],
-      "effects": ["not_started", "unknown"],
-      "http_statuses": [409, 202],
+      "operation_states": [
+        "failed",
+        "unknown"
+      ],
+      "effects": [
+        "not_started",
+        "unknown"
+      ],
+      "http_statuses": [
+        409,
+        202
+      ],
       "retry_same_request_only": true
     },
     "storage_not_found": {
-      "operation_states": ["failed", "unknown"],
-      "effects": ["not_started", "unknown"],
-      "http_statuses": [404, 202],
+      "operation_states": [
+        "failed",
+        "unknown"
+      ],
+      "effects": [
+        "not_started",
+        "unknown"
+      ],
+      "http_statuses": [
+        404,
+        202
+      ],
       "retry_same_request_only": true
     },
     "storage_ownership_conflict": {
-      "operation_states": ["failed", "unknown"],
-      "effects": ["not_started", "unknown"],
-      "http_statuses": [409, 202],
+      "operation_states": [
+        "failed",
+        "unknown"
+      ],
+      "effects": [
+        "not_started",
+        "unknown"
+      ],
+      "http_statuses": [
+        409,
+        202
+      ],
       "retry_same_request_only": true
     },
     "platform_unavailable": {
-      "operation_states": ["failed", "unknown"],
-      "effects": ["not_started", "unknown"],
-      "http_statuses": [503, 202],
+      "operation_states": [
+        "failed",
+        "unknown"
+      ],
+      "effects": [
+        "not_started",
+        "unknown"
+      ],
+      "http_statuses": [
+        503,
+        202
+      ],
       "retry_same_request_only": true
     },
     "runtime_capacity_exhausted": {
-      "operation_states": ["failed", "unknown"],
-      "effects": ["not_started", "unknown"],
-      "http_statuses": [503, 202],
+      "operation_states": [
+        "failed",
+        "unknown"
+      ],
+      "effects": [
+        "not_started",
+        "unknown"
+      ],
+      "http_statuses": [
+        503,
+        202
+      ],
       "retry_same_request_only": true
     },
     "instance_receiver_preparation_failed": {
-      "operation_states": ["unknown"],
-      "effects": ["unknown"],
-      "http_statuses": [202],
+      "operation_states": [
+        "unknown"
+      ],
+      "effects": [
+        "unknown"
+      ],
+      "http_statuses": [
+        202
+      ],
       "retry_same_request_only": true
     },
     "instance_mount_verification_failed": {
-      "operation_states": ["unknown"],
-      "effects": ["unknown"],
-      "http_statuses": [202],
+      "operation_states": [
+        "unknown"
+      ],
+      "effects": [
+        "unknown"
+      ],
+      "http_statuses": [
+        202
+      ],
       "retry_same_request_only": true
     },
     "instance_receiver_cleanup_failed": {
-      "operation_states": ["unknown"],
-      "effects": ["unknown"],
-      "http_statuses": [202],
+      "operation_states": [
+        "unknown"
+      ],
+      "effects": [
+        "unknown"
+      ],
+      "http_statuses": [
+        202
+      ],
       "retry_same_request_only": true
     }
   },
   "authentication": {
-    "contract": "../../../contracts/platform/service-authentication.md",
-    "allowed_callers": ["agent-controller", "agent-acp-service"],
+    "contract": "../platform/service-authentication.md",
+    "allowed_callers": [
+      "agent-controller",
+      "agent-acp-service"
+    ],
     "caller_context": "Only incarnation registration and inspection admit agent-acp-service without caller context. Existing control routes require agent-controller and Controller-owned accepted operations; unsigned identity headers grant nothing.",
     "local_health": "GET /status on the separate loopback-only health listener; remote requests are not admitted"
   }

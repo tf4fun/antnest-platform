@@ -15,9 +15,9 @@ const schemaID =
 const schemaPath = "contracts/agent-acp/owner-incarnation.schema.json";
 const manifestPath = "contracts/agent-acp/owner-incarnation-contract.json";
 const controlSchemaPath =
-  "services/runtime-controller/api/control-api.schema.json";
+  "contracts/runtime-controller/control-api.schema.json";
 const controlContractPath =
-  "services/runtime-controller/api/control-contract.json";
+  "contracts/runtime-controller/control-contract.json";
 const controlAliases = {
   acp_register_request: "register_request",
   acp_registration: "registration",
@@ -164,7 +164,7 @@ function controlValidators() {
     "contracts/runtime/managed-mcp.schema.json",
     "contracts/runtime/runtime-spec.schema.json",
     "contracts/skill-registry/runtime-delivery.schema.json",
-    "services/runtime-controller/api/runtime-deployment.schema.json",
+    "contracts/runtime-controller/runtime-deployment.schema.json",
   ])
     ajv.addSchema(read(path));
   ajv.addSchema(schema);
@@ -609,7 +609,7 @@ test("the planned manifest freezes three narrow operations and the error HTTP ma
 });
 
 test("RC grants and the private ACP probe allow only their owning workload callers", () => {
-  const catalog = read("services/runtime-controller/api/callers.json");
+  const catalog = read("contracts/runtime-controller/callers.json");
   for (const [method, path, body] of [
     ["POST", "/internal/acp-incarnations/register", "json"],
     ["GET", "/internal/acp-incarnations/{registration_id}", "none"],
@@ -706,7 +706,7 @@ test("RC revision 22 binds registration and inspection to the frozen shared wire
       assert.equal(route.request_bytes_max, wire.request_bytes_max);
       assert.deepEqual(Object.keys(route.path_parameters ?? {}), []);
     } else {
-      assert.equal(Object.hasOwn(route, "request_body"), false);
+      assert.equal(route.request_body, "none");
       assert.deepEqual(route.path_parameters, {
         registration_id: "control-api.schema.json#/$defs/acp_registration_id",
       });

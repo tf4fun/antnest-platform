@@ -210,7 +210,7 @@ func TestCommonErrorContractCodeParity(t *testing.T) {
 			Status int `json:"status"`
 		} `json:"errors"`
 	}
-	readJSONFile(t, filepath.Join(root, "api/control-contract.json"), &contract)
+	readJSONFile(t, filepath.Join(root, "../../contracts/runtime-controller/control-contract.json"), &contract)
 	for code := range contract.Errors {
 		if got := apierror.New(code, "probe", "req-1").Code; got != code {
 			t.Errorf("contract code %s falls back to %s", code, got)
@@ -241,7 +241,7 @@ func TestCommonErrorActualResponsesMatchContracts(t *testing.T) {
 			t.Fatalf("load %s: %v", rel, err)
 		}
 	}
-	schemaDoc, err := os.ReadFile(filepath.Join(root, "api", "control-api.schema.json"))
+	schemaDoc, err := os.ReadFile(filepath.Join(root, "../../contracts/runtime-controller", "control-api.schema.json"))
 	if err != nil {
 		t.Fatal(err)
 	}

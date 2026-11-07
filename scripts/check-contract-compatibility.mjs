@@ -106,33 +106,48 @@ const git = (...args) =>
     encoding: "utf8",
     maxBuffer: 64 * 1024 * 1024,
   });
+const RC_LEGACY_PREFIX = "services/runtime-controller/api/";
+const RC_CANONICAL_PREFIX = "contracts/runtime-controller/";
+
 const schemaPath = (path) =>
   path.endsWith(".schema.json") &&
-  (path.startsWith("contracts/") ||
-    path.startsWith("services/runtime-controller/api/"));
+  (path.startsWith("contracts/") || path.startsWith(RC_LEGACY_PREFIX));
 
-export function checkRevisions(base, head) {
-  const before = new Set(
-    git("ls-tree", "-r", "--name-only", base).split("\n").filter(schemaPath),
-  );
-  const after = new Set(
-    git("ls-tree", "-r", "--name-only", head).split("\n").filter(schemaPath),
-  );
+export function schemaRevisionProblems(before, after) {
   const problems = [];
-  for (const path of [...before].sort()) {
-    if (!after.has(path)) {
+  for (const path of [...before.keys()].sort()) {
+    const oldDoc = before.get(path);
+    let target = path;
+    if (!after.has(target) && path.startsWith(RC_LEGACY_PREFIX)) {
+      const moved = RC_CANONICAL_PREFIX + path.slice(RC_LEGACY_PREFIX.length);
+      const newDoc = after.get(moved);
+      if (
+        newDoc !== undefined &&
+        typeof oldDoc?.$id === "string" &&
+        oldDoc.$id.length > 0 &&
+        oldDoc.$id === newDoc.$id
+      ) {
+        target = moved;
+      }
+    }
+    if (!after.has(target)) {
       problems.push(`${path}: N-1 schema removed`);
       continue;
     }
-    problems.push(
-      ...compatibilityProblems(
-        JSON.parse(git("show", `${base}:${path}`)),
-        JSON.parse(git("show", `${head}:${path}`)),
-        path,
-      ),
-    );
+    problems.push(...compatibilityProblems(oldDoc, after.get(target), path));
   }
   return problems;
+}
+
+export function checkRevisions(base, head) {
+  const collect = (tree) =>
+    new Map(
+      git("ls-tree", "-r", "--name-only", tree)
+        .split("\n")
+        .filter(schemaPath)
+        .map((path) => [path, JSON.parse(git("show", `${tree}:${path}`))]),
+    );
+  return schemaRevisionProblems(collect(base), collect(head));
 }
 
 if (

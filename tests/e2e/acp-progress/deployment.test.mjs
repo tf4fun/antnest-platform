@@ -67,7 +67,7 @@ const names = [
 const contracts = [
   "contracts/identity/identity-contract.json",
   "contracts/agent-controller/control-contract.json",
-  "services/runtime-controller/api/control-contract.json",
+  "contracts/runtime-controller/control-contract.json",
 ];
 const state = () => ({
   Running: true,

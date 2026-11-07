@@ -245,7 +245,7 @@ try {
     "-v",
     `${root}/contracts:/app/contracts:ro`,
     "-v",
-    `${root}/services/runtime-controller/api/control-contract.json:/app/services/runtime-controller/api/control-contract.json:ro`,
+    `${root}/contracts/runtime-controller/control-contract.json:/app/contracts/runtime-controller/control-contract.json:ro`,
     image,
     "node",
     "-e",

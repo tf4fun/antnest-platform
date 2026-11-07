@@ -8,7 +8,7 @@
     "agent-ui": "contracts/agent-ui/callers.json",
     "agent-controller": "contracts/agent-controller/callers.json",
     "agent-acp-service": "contracts/agent-acp/callers.json",
-    "runtime-controller": "services/runtime-controller/api/callers.json",
+    "runtime-controller": "contracts/runtime-controller/callers.json",
     "skill-registry": "contracts/skill-registry/callers.json",
     "runtime-egress": "contracts/egress/callers.json"
   },

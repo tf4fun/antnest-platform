@@ -438,16 +438,6 @@ export async function main() {
   const documents = await loadContracts(
     new URL("../contracts/", import.meta.url),
   );
-  const runtimeControllerApi = fileURLToPath(
-    new URL("../services/runtime-controller/api/", import.meta.url),
-  );
-  for (const name of await readdir(runtimeControllerApi)) {
-    if (!name.endsWith(".schema.json")) continue;
-    documents.set(
-      `runtime-controller/${name}`,
-      JSON.parse(await readFile(join(runtimeControllerApi, name), "utf8")),
-    );
-  }
   let aliases = [];
   try {
     aliases = JSON.parse(

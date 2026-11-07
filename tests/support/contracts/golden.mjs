@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { existsSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -117,17 +117,6 @@ function registry() {
       validateFormats: false,
     });
     const documents = await loadContracts(contractsRoot);
-    const apiDir = fileURLToPath(
-      new URL("../../../services/runtime-controller/api/", import.meta.url),
-    );
-    if (existsSync(apiDir))
-      for (const name of readdirSync(apiDir)) {
-        if (!name.endsWith(".schema.json")) continue;
-        documents.set(
-          `runtime-controller/${name}`,
-          JSON.parse(readFileSync(resolve(apiDir, name), "utf8")),
-        );
-      }
     const referencedDocuments = new Set();
     for (const entry of readManifest()) {
       const key = entry.schema.split("#", 1)[0];

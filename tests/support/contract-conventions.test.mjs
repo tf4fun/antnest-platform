@@ -1,7 +1,5 @@
 import assert from "node:assert/strict";
-import { existsSync, readdirSync, readFileSync } from "node:fs";
-import { join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { existsSync, readFileSync } from "node:fs";
 import test from "node:test";
 import {
   checkConventions,
@@ -257,16 +255,8 @@ test("repository contracts satisfy the conventions", async () => {
   assert(docs.has("agent-ui/workspace-api.schema.json"));
   assert(docs.has("agent-ui/workspace-api.json"));
   assert(!docs.has("agent-ui/workspace-api.md"));
-  const rcApi = fileURLToPath(
-    new URL("../../services/runtime-controller/api/", import.meta.url),
-  );
-  for (const name of readdirSync(rcApi)) {
-    if (!name.endsWith(".schema.json")) continue;
-    docs.set(
-      `runtime-controller/${name}`,
-      JSON.parse(readFileSync(join(rcApi, name), "utf8")),
-    );
-  }
+  assert(docs.has("runtime-controller/control-api.schema.json"));
+  assert(docs.has("runtime-controller/runtime-deployment.schema.json"));
   const aliases = JSON.parse(
     readFileSync(
       new URL(

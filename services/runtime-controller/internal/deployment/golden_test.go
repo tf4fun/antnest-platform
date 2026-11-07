@@ -54,7 +54,7 @@ func contractCompiler(t *testing.T) *jsonschema.Compiler {
 	t.Helper()
 	compiler := jsonschema.NewCompiler()
 	compiler.AssertFormat()
-	for _, dir := range []string{"../../../../contracts", "../../api"} {
+	for _, dir := range []string{"../../../../contracts"} {
 		if err := filepath.WalkDir(dir, func(path string, entry fs.DirEntry, err error) error {
 			if err != nil || entry.IsDir() || !strings.HasSuffix(entry.Name(), ".schema.json") {
 				return err

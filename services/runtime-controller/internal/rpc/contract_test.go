@@ -106,9 +106,9 @@ func TestDeletedAgentRejectsSkillPreparation(t *testing.T) {
 func TestMachineContractCoversRegisteredHTTPBoundary(t *testing.T) {
 	root := serviceRoot(t)
 	var contract machineContract
-	readJSONFile(t, filepath.Join(root, "api/control-contract.json"), &contract)
+	readJSONFile(t, filepath.Join(root, "../../contracts/runtime-controller/control-contract.json"), &contract)
 	var schema controlSchema
-	readJSONFile(t, filepath.Join(root, "api/control-api.schema.json"), &schema)
+	readJSONFile(t, filepath.Join(root, "../../contracts/runtime-controller/control-api.schema.json"), &schema)
 
 	expectedRoutes := map[string][]string{
 		"POST /internal/acp-incarnations/register":                                        {"200"},
@@ -190,7 +190,7 @@ func TestMachineContractCoversRegisteredHTTPBoundary(t *testing.T) {
 			}
 			assertKnownSchemaReference(t, schema, definition.Schema)
 		}
-		if route.RequestBody != "" {
+		if route.RequestBody != "" && route.RequestBody != "none" {
 			assertKnownSchemaReference(t, schema, route.RequestBody)
 		}
 		for _, code := range route.Errors {
@@ -224,7 +224,7 @@ func TestMachineContractCoversRegisteredHTTPBoundary(t *testing.T) {
 func TestMachineSSEContractMatchesWireFraming(t *testing.T) {
 	root := serviceRoot(t)
 	var contract machineContract
-	readJSONFile(t, filepath.Join(root, "api/control-contract.json"), &contract)
+	readJSONFile(t, filepath.Join(root, "../../contracts/runtime-controller/control-contract.json"), &contract)
 	var watch contractReply
 	for _, route := range contract.Routes {
 		if route.Method == "GET" && route.Path == "/internal/runtime-observations/watch" {
@@ -257,7 +257,7 @@ func TestMachineSSEContractMatchesWireFraming(t *testing.T) {
 func TestMachineSchemaMatchesGoWireTypes(t *testing.T) {
 	root := serviceRoot(t)
 	var schema controlSchema
-	readJSONFile(t, filepath.Join(root, "api/control-api.schema.json"), &schema)
+	readJSONFile(t, filepath.Join(root, "../../contracts/runtime-controller/control-api.schema.json"), &schema)
 	now := time.Date(2026, 8, 30, 0, 0, 0, 0, time.UTC)
 	inspection := deployment.Environment{
 		AgentID: "agent-1", RuntimeRevision: testRuntimeRevision,
@@ -401,8 +401,8 @@ func assertRevisionRequestSchema(t *testing.T, name string, value any) {
 	compiler := jsonschema.NewCompiler()
 	compiler.AssertFormat()
 	for id, rel := range map[string]string{
-		"https://schemas.antnest.dev/runtime-controller/control-api.schema.json":        "api/control-api.schema.json",
-		"https://schemas.antnest.dev/runtime-controller/runtime-deployment.schema.json": "api/runtime-deployment.schema.json",
+		"https://schemas.antnest.dev/runtime-controller/control-api.schema.json":        "../../contracts/runtime-controller/control-api.schema.json",
+		"https://schemas.antnest.dev/runtime-controller/runtime-deployment.schema.json": "../../contracts/runtime-controller/runtime-deployment.schema.json",
 		"https://schemas.antnest.dev/common/precondition.schema.json":                   "../../contracts/common/precondition.schema.json",
 		"https://schemas.antnest.dev/skill-registry/runtime-delivery.schema.json":       "../../contracts/skill-registry/runtime-delivery.schema.json",
 		"https://schemas.antnest.dev/runtime/managed-mcp.schema.json":                   "../../contracts/runtime/managed-mcp.schema.json",

@@ -54,7 +54,7 @@ func TestNativeHTTPControlAdmission(t *testing.T) {
 		}
 	}
 	var contract machineContract
-	readJSONFile(t, filepath.Join(serviceRoot(t), "api/control-contract.json"), &contract)
+	readJSONFile(t, filepath.Join(serviceRoot(t), "../../contracts/runtime-controller/control-contract.json"), &contract)
 	for _, route := range contract.Routes {
 		if route.Path == "/status" {
 			continue

@@ -41,7 +41,7 @@ cluster network. Before exposing a deployment, understand these boundaries:
   listener. These limits do not contain a compromised RC process. A useful
   socket proxy needs resource-scope, create-payload and archive-target checks;
   broad method/path filtering alone is insufficient. See the
-  [RC assessment](services/runtime-controller/api/service-authentication.md#docker-socket-assessment).
+  [RC assessment](contracts/runtime-controller/service-authentication.md#docker-socket-assessment).
   RC-issued Runtime instance credentials, native admission and private Controller
   to ACP relay are implemented. Compose uses separate control and management
   interfaces; real native Runtime, MCP, learning and rebuild acceptance has passed.

@@ -300,7 +300,7 @@ test("RC Skill preparation routes authorize only the actual Controller client", 
   const policy = JSON.parse(
     readFileSync(
       new URL(
-        "../../services/runtime-controller/api/callers.json",
+        "../../contracts/runtime-controller/callers.json",
         import.meta.url,
       ),
       "utf8",

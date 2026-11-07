@@ -52,7 +52,7 @@ func TestHistoricalReadinessFailureRemainsReadableAndReplayable(t *testing.T) {
 		t.Fatalf("historical replay changed: %d %+v", replay.Code, failure)
 	}
 	var contract machineContract
-	readJSONFile(t, filepath.Join(serviceRoot(t), "api/control-contract.json"), &contract)
+	readJSONFile(t, filepath.Join(serviceRoot(t), "../../contracts/runtime-controller/control-contract.json"), &contract)
 	definition := contract.OperationErrorCodes[failure.Code]
 	if !slices.Contains(definition.HTTPStatuses, replay.Code) || !slices.Contains(definition.OperationStates, string(operation.State)) || !slices.Contains(definition.Effects, string(operation.Effect)) {
 		t.Fatalf("historical failure missing from operation contract: %+v", definition)

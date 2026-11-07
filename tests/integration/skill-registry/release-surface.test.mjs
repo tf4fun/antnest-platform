@@ -8,7 +8,7 @@ const json = async (path) =>
 
 test("released Runtime Controller contract has no legacy Skill migration routes or errors", async () => {
   const contract = await json(
-    "services/runtime-controller/api/control-contract.json",
+    "contracts/runtime-controller/control-contract.json",
   );
   assert.deepEqual(
     contract.routes.filter((route) =>
@@ -43,7 +43,7 @@ test("released Controller contract has no legacy Skill migration resources or er
 });
 
 for (const path of [
-  "services/runtime-controller/api/control-api.schema.json",
+  "contracts/runtime-controller/control-api.schema.json",
   "contracts/agent-controller/control-api.schema.json",
 ]) {
   test(`${path} exports no retired legacy Skill DTOs`, async () => {

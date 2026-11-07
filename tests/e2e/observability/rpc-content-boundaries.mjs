@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import identity from "../../../contracts/identity/identity-contract.json" with { type: "json" };
 import controller from "../../../contracts/agent-controller/control-contract.json" with { type: "json" };
-import runtime from "../../../services/runtime-controller/api/control-contract.json" with { type: "json" };
+import runtime from "../../../contracts/runtime-controller/control-contract.json" with { type: "json" };
 import { tag, traceTopology } from "./trace-tree.mjs";
 
 // These are protocol registrations, not a heuristic that treats any JSON URL

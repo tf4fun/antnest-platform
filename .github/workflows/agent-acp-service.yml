@@ -8,6 +8,7 @@ on:
       - services/agent-acp-service/**
       - tests/integration/agent-acp-service/**
       - contracts/agent-acp/**
+      - contracts/runtime-controller/**
       - contracts/agent-controller/**
       - contracts/identity/**
       - contracts/platform/**
@@ -31,6 +32,7 @@ on:
       - contracts/runtime/**
       - contracts/skill-learning/**
       - contracts/skill-registry/**
+      - contracts/runtime-controller/**
       - tests/support/ci-ownership.json
       - .nvmrc
       - .github/workflows/agent-acp-service.yml

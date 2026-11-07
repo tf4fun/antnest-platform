@@ -13,7 +13,7 @@ private implementation details.
 
 The complete machine-readable route, header, status, error, and message
 contract is `control-contract.json` plus `control-api.schema.json`, whose ACP
-aliases reference the [shared incarnation schema](../../../contracts/agent-acp/owner-incarnation.schema.json).
+aliases reference the [shared incarnation schema](../agent-acp/owner-incarnation.schema.json).
 
 All JSON decoders reject unknown fields. Lifecycle Agent and request identifiers
 use 1-200 deployment-safe ASCII bytes. Lifecycle and Skill mutations carry
@@ -96,9 +96,9 @@ the complete stopped response with its registration/member/incarnation binding;
 HTTP 404, a failed probe, a transport error or lease expiry is not a stop proof.
 UTC observation timestamps are diagnostics and do not grant authority by age.
 
-The [incarnation manifest](../../../contracts/agent-acp/owner-incarnation-contract.json)
+The [incarnation manifest](../agent-acp/owner-incarnation-contract.json)
 retains registration/inspection error and status mappings. Member history has a
-separate [wire contract](../../../contracts/agent-acp/owner-incarnation-history.md).
+separate [wire contract](../agent-acp/owner-incarnation-history.md).
 Its closed request accepts at most 4KiB; the response accepts at most 32KiB and
 contains at most 64 entries. It shares the ten-second total deadline, workload
 authentication, no-store and payload suppression described above.
@@ -125,7 +125,7 @@ the Agent lock. An absent instance returns 404, stale binding 409
 `runtime_connection_stale`, and unavailable verification 503
 `runtime_connection_unavailable`. Only the 503 failure is retryable.
 
-The [shared schema](../../../contracts/runtime/instance-connection.schema.json)
+The [shared schema](../runtime/instance-connection.schema.json)
 defines the private response. It returns ACP's per-instance token alongside the
 exact current binding; RC's status token is never exported. All responses use
 `Cache-Control: no-store`; request and response content capture is unconditionally
@@ -182,7 +182,7 @@ invariant permits only one `running` or `unknown` operation per Agent.
 ## Runtime Configuration
 
 Optional `configuration.mcp_servers` configures required stdio MCP processes in
-Runtime, using the [shared RuntimeSpec](../../../contracts/runtime/runtime-spec.schema.json)
+Runtime, using the [shared RuntimeSpec](../runtime/runtime-spec.schema.json)
 shape: `[{"id":"docs","command":"node","args":["/workspace/mcp/docs.js"],"env":{}}]`.
 Executables must already be present in the selected image or workspace. Omit
 the array (or send `[]`) for no managed servers. Limits: eight unique server
@@ -234,7 +234,7 @@ in the lifecycle operation. An invalid reference returns non-retryable
 inspection failure returns retryable `skill_preflight_unavailable`. The preparation
 endpoint returns retryable `skill_cleanup_in_progress` while an old physical
 set is being removed and non-retryable `skill_preparation_closed` after Delete
-has begun. Refer to the [delivery contract](../../../contracts/skill-registry/runtime-delivery-api.md)
+has begun. Refer to the [delivery contract](../skill-registry/runtime-delivery-api.md)
 for the complete preparation and recovery flow.
 
 The Controller injects Agent identity, internal generation, Runtime listener,
@@ -292,7 +292,7 @@ Initialize requires no existing Runtime Environment. It:
 4. commits `completed` with lifecycle state `provisioned` and releases the mutation slot;
 5. returns the target revision and image metadata, without asserting health or execution identity.
 
-See [creation and observation](../docs/creation-and-observation.md). Current
+See [creation and observation](../../services/runtime-controller/docs/creation-and-observation.md). Current
 health, MCP endpoint and verified execution ID are obtained through Inspect/List
 and the independent observation flow. Startup failure never rewrites a completed
 creation command.
@@ -521,7 +521,7 @@ One unhealthy Runtime does not make the Controller unready. A Watch-only
 disconnect can make Controller readiness false while lifecycle calls still
 succeed through a reachable Docker API. Docker API unavailability also causes
 actual platform-dependent calls to fail. See
-[operations](../docs/operations.md#observation-dependency-recovery) for startup
+[operations](../../services/runtime-controller/docs/operations.md#observation-dependency-recovery) for startup
 and probe thresholds. The Controller's own `--healthcheck` consumes only the
 HTTP status code.
 
@@ -534,7 +534,7 @@ effects; transient failure leaves the accepted operation running and returns
 rejection returns `tunnel_key_registration_rejected`, preserves the source, and
 never starts a candidate. Generation material is sealed with the RC instance
 master key and copied only into its private bootstrap volume. See
-[the authenticated tunnel design](../../../docs/authenticated-runtime-tunnel.md).
+[the authenticated tunnel design](../../docs/authenticated-runtime-tunnel.md).
 
 ## Failure Semantics
 
@@ -590,7 +590,7 @@ labels or deployment digests. MCP cache HOME/TMPDIR/XDG directories use a separa
 `resources.tmpfs_bytes` across all servers. Runtime creates UID-owned 0700
 children. This cache resets on container restart. The bootstrap volume survives ordinary container
 restarts; it is excluded from workspace backup and rebuilt from Controller on
-restore. See the [shared contract](../../../contracts/runtime/managed-mcp-secrets.md).
+restore. See the [shared contract](../runtime/managed-mcp-secrets.md).
 
 `resources.tmpfs_bytes` is the size limit of each mount, not a single combined
 budget for `/tmp` and MCP HOME. All MCP servers share the HOME mount without
@@ -602,11 +602,11 @@ limit; insufficient memory can trigger OOM before the filesystem size limits.
 
 ## Errors
 
-HTTP error bodies emit the [common error envelope](../../../contracts/common/error.schema.json)
+HTTP error bodies emit the [common error envelope](../common/error.schema.json)
 (`code`, `category`, `message`, `retryable`, `request_id`) with the
-[Runtime Controller slice](../../../contracts/common/slices/runtime-controller.json) of
+[Runtime Controller slice](../common/slices/runtime-controller.json) of
 emitted codes. `acp_incarnation_error` composes the shared
-[owner-incarnation](../../../contracts/agent-acp/owner-incarnation.schema.json) error
+[owner-incarnation](../agent-acp/owner-incarnation.schema.json) error
 with the common envelope; the shared owner schema accepts the optional
 `category`/`request_id` pair and optional `details` so legacy
 three-field producers stay valid until the ACP producer batch.

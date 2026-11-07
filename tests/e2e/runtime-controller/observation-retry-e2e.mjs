@@ -23,7 +23,7 @@ const { Ajv2020 } = requireAcp("ajv/dist/2020.js");
 const api = JSON.parse(
   readFileSync(
     new URL(
-      "../../../services/runtime-controller/api/control-api.schema.json",
+      "../../../contracts/runtime-controller/control-api.schema.json",
       import.meta.url,
     ),
   ),

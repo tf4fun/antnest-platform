@@ -68,7 +68,7 @@ to be online or a projection to succeed.
 | Existing implementation                                                                                                                                                                    | Boundary                                                                                       |
 | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------- |
 | Template revisions are immutable; `skill_refs` resolve to exact versions and are frozen. [Controller contract](../contracts/agent-controller/control-api.md) / [schema](../contracts/agent-controller/control-api.schema.json) | AgentSpec copies the frozen references; publishing a Skill or template revision does not change existing Agents |
-| RC has independent set preparation, idempotent requests, revision CAS, and interruption recovery. [Lifecycle contract](../services/runtime-controller/api/control-api.md)                   | Prepare runs before Environment lifecycle changes; lifecycle only consumes ready sets          |
+| RC has independent set preparation, idempotent requests, revision CAS, and interruption recovery. [Lifecycle contract](../contracts/runtime-controller/control-api.md)                   | Prepare runs before Environment lifecycle changes; lifecycle only consumes ready sets          |
 | Docker mounts prepared read-only volumes by Agent and set identity. [Adapter](../services/runtime-controller/internal/platform/docker/driver.go)                                           | Each Agent has its own volume; same-set reuse, rematerialization, and deletion cleanup exist   |
 | Runtime scans system and personal directories; file tools reject writes to the system root. [Discovery](../runtimes/antnest-runtime/src/information.rs) / [File roots](../runtimes/antnest-runtime/src/roots.rs) | Reuses the existing discovery path; delivery format and read-only behavior are verified        |
 | ACP refreshes the catalog summary on every Run and reads Skill bodies on demand; legacy body concatenation is removed. [Context builder](../services/agent-acp-service/src/application/context-builder.ts) | Rejects non-empty legacy fields so there is a single delivery path                             |
@@ -853,7 +853,7 @@ download failures out of this path. It does not silently retry on top of the
 original failed receipt. `unknown` is used only for side effects that cannot
 be confirmed. A Registry 503 must not be turned into an artificial uncertain
 Runtime state.
-See the [existing failure semantics](../services/runtime-controller/api/control-api.md).
+See the [existing failure semantics](../contracts/runtime-controller/control-api.md).
 
 Normal Runs and restarts of the original container use the mounted copy and do
 not depend on the Registry. After a rebuild completes, only old sets that are
