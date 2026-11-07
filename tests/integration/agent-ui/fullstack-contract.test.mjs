@@ -918,13 +918,21 @@ test("ACP receipts and embedded observations share the required failure classifi
   const fixtures = json(
     "../../support/fixtures/agent-acp/bridge-receipts.json",
   );
+  const capturedExecution = json(
+    "../../../contracts/agent-acp/examples/workspace-execution.running.json",
+  );
+  const capturedIntent = json(
+    "../../../contracts/agent-acp/examples/workspace-intent.running.json",
+  );
+  assert.equal(
+    observation(capturedExecution),
+    true,
+    JSON.stringify(observation.errors),
+  );
+  assert.equal(receipt(capturedIntent), true, JSON.stringify(receipt.errors));
   const execution = (value) => ({
-    sessionId: "session-1",
-    appendVersion: 2,
-    outputWatermark: 4,
-    activeRunId: null,
+    ...capturedExecution,
     recentReceipts: [value],
-    configurationRevision: "a".repeat(64),
   });
   for (const fixture of fixtures.valid) {
     assert.equal(receipt(fixture.receipt), true, fixture.name);

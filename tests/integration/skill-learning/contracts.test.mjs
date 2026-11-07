@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { test } from "node:test";
+import { loadGolden } from "../../support/contracts/golden.mjs";
 
 const requireFromAcp = createRequire(
   new URL("../../../services/agent-acp-service/package.json", import.meta.url),
@@ -126,50 +127,43 @@ for (const [group, kids] of Object.entries(maintenanceKidFixtures)) {
 }
 
 test("learning status exposes one bounded blocker without maintenance authority or process arguments", () => {
-  const status = { agentId: agent, blocked: null };
+  const status = loadGolden("skill-learning", "learning-status.blocked.json");
   assert(accepts("learning_status", status));
+  const changes = loadGolden("skill-learning", "learning-changes.empty.json");
+  assert(accepts("change_page", changes));
+  const baseline = { agentId: agent, blocked: null };
+  assert(accepts("learning_status", baseline));
   const blocked = {
     reason: "writer_present",
     skillName: "fix-timeouts",
     sourceSessionId: "session-1",
   };
-  assert(accepts("learning_status", { ...status, blocked }));
+  assert(accepts("learning_status", { ...baseline, blocked }));
   assert.equal(
     accepts("learning_status", {
-      ...status,
+      ...baseline,
       blocked: { ...blocked, command: "bash secret" },
     }),
     false,
   );
   assert.equal(
     accepts("learning_status", {
-      ...status,
+      ...baseline,
       blocked: { ...blocked, stopUrl: "/kill" },
     }),
     false,
   );
   assert.equal(
-    accepts("learning_status", { ...status, blocked: { reason: "arbitrary" } }),
+    accepts("learning_status", {
+      ...baseline,
+      blocked: { reason: "arbitrary" },
+    }),
     false,
   );
 });
 
 test("automatic policy stays Agent-scoped, bounded, and separate from the off switch", () => {
-  const policy = {
-    organization_id: org,
-    agent_id: agent,
-    owner_principal_id: owner,
-    revision,
-    mode: "automatic",
-    activation_cut_at: "2026-09-29T00:00:00Z",
-    scope: { auto_generated_personal: true, adopted_paths: [] },
-    pinned_paths: [],
-    limits: {
-      daily_reviews: 20,
-      daily_model_input_tokens: 320000,
-      daily_model_output_tokens: 80000,
-    },
-  };
+  const policy = loadGolden("skill-learning", "learning-policy.automatic.json");
   assert(accepts("policy", policy));
   assert.equal(
     accepts("policy", {

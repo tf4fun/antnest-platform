@@ -207,6 +207,6 @@
     "file": "skill-learning/examples/learning-policy.automatic.json",
     "schema": "skill-learning/learning-api.schema.json#/$defs/policy",
     "producer": "agent-controller",
-    "consumers": ["agent-acp-service", "admin-console"]
+    "consumers": ["agent-acp-service"]
   }
 ]

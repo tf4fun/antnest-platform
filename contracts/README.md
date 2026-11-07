@@ -110,9 +110,15 @@ while request schemas stay strict. Golden coverage never weakens authority,
 known-validation or secret checks.
 
 `schema_version` stays optional during the version-1 rollout — its absence
-means the historical N-1 shape — and a v2 publication keeps `schema_version`
-2. Version markers apply to platform-owned event DTOs only, never to the
-external ACP SDK protocol.
+means the historical N-1 shape — on execution snapshots, RuntimeSpec, RC
+observations, and ACP audit envelopes/rows; a v2 publication keeps
+`schema_version` 2. Agent Controller `agent_event` rows instead REQUIRE
+`schema_version` 1 or 2 (unversioned events are rejected). Version markers
+apply to platform-owned documents and event DTOs, never to the external ACP SDK
+protocol. Response tolerance never weakens request or security checks.
+
+The producer→consumer evidence matrix and rolling N/N-1 deployment rules are
+in [`contract-rollout.md`](contract-rollout.md).
 
 `scripts/check-contract-compatibility.mjs` gates pull requests as a
 conservative, syntactic additive-only checker. It is not a general schema
