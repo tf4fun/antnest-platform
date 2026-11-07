@@ -156,20 +156,26 @@ describe("execution budget publication", () => {
     },
   );
 
-  it("rejects extra budget wire fields instead of dropping them from complete snapshots", () => {
+  it("projects budget response extensions without changing the known budget", () => {
+    const projectsWire = (input: unknown): void => {
+      const before = structuredClone(input);
+      expect(validator(input)).toBe(false);
+      expect(parseExecutionConfiguration(input)).toEqual(publication());
+      expect(input).toEqual(before);
+    };
     const base = publication();
-    rejectsWire({
+    projectsWire({
       ...base,
       agents: base.agents.map((agent) => ({
         ...agent,
         run_budget: { ...agent.run_budget, extra: true },
       })),
     });
-    rejectsWire({
+    projectsWire({
       ...base,
       organization_budget: { ...base.organization_budget, extra: true },
     });
-    rejectsWire({
+    projectsWire({
       ...base,
       organization_budget: {
         ...base.organization_budget,
@@ -177,7 +183,7 @@ describe("execution budget publication", () => {
       },
     });
     for (const period of ["daily", "monthly"] as const)
-      rejectsWire({
+      projectsWire({
         ...base,
         organization_budget: {
           ...base.organization_budget,
