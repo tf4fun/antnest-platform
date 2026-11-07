@@ -121,7 +121,7 @@ func TestLearningPolicyGolden(t *testing.T) {
 	require.NoError(t, err)
 
 	policy := domain.DefaultSkillLearningPolicy("org-1", "agent-1", "owner-1", time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC))
-	boundary, err := withBusinessLearningRoutes(t, http.NotFoundHandler(), &learningPolicyServiceStub{policy: policy})
+	boundary, err := newBusinessLearningHandler(t, &learningPolicyServiceStub{policy: policy})
 	if err != nil {
 		t.Fatalf("new learning boundary: %v", err)
 	}

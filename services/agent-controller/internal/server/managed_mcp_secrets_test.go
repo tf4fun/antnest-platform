@@ -24,7 +24,7 @@ func (catalog *secretResolverCatalog) ResolveMCPSecrets(context.Context, ports.M
 func TestManagedMCPBootstrapIsOnlyAvailableToAuthenticatedRC(t *testing.T) {
 	f := newAuthenticationFixture(t)
 	catalog := &secretResolverCatalog{}
-	h, err := NewHandler(catalog, &lifecycleServiceStub{}, &agentConfigurationServiceStub{}, &agentQueryServiceStub{}, &agentEventServiceStub{}, &networkPolicyServiceStub{}, func(context.Context) error { return nil }, f.security)
+	h, err := NewHandler(catalog, &lifecycleServiceStub{}, &agentConfigurationServiceStub{}, &agentQueryServiceStub{}, &agentEventServiceStub{}, &networkPolicyServiceStub{}, &learningPolicyServiceStub{}, func(context.Context) error { return nil }, f.security)
 	if err != nil {
 		t.Fatal(err)
 	}

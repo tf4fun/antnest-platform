@@ -43,7 +43,7 @@ func authenticationErrorEvidence(t *testing.T) map[string]authenticationFailureE
 			f.security.CallerContext = verifier
 		}
 		var err error
-		f.raw, err = NewHandler(&catalogServiceStub{}, &lifecycleServiceStub{}, &agentConfigurationServiceStub{}, &agentQueryServiceStub{}, &agentEventServiceStub{}, &networkPolicyServiceStub{}, func(context.Context) error { return nil }, f.security)
+		f.raw, err = NewHandler(&catalogServiceStub{}, &lifecycleServiceStub{}, &agentConfigurationServiceStub{}, &agentQueryServiceStub{}, &agentEventServiceStub{}, &networkPolicyServiceStub{}, &learningPolicyServiceStub{}, func(context.Context) error { return nil }, f.security)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -142,12 +142,8 @@ func TestControllerEveryCatalogRouteDeniesForeignWorkloads(t *testing.T) {
 		t.Fatal(err)
 	}
 	f := newAuthenticationFixture(t)
-	base, err := NewHandler(&catalogServiceStub{}, &lifecycleServiceStub{}, &agentConfigurationServiceStub{}, &agentQueryServiceStub{},
-		&agentEventServiceStub{}, &networkPolicyServiceStub{}, func(context.Context) error { return nil }, f.security)
-	if err != nil {
-		t.Fatal(err)
-	}
-	f.raw, err = WithSkillLearningPolicyRoutes(base, &learningPolicyServiceStub{}, f.security)
+	f.raw, err = NewHandler(&catalogServiceStub{}, &lifecycleServiceStub{}, &agentConfigurationServiceStub{}, &agentQueryServiceStub{},
+		&agentEventServiceStub{}, &networkPolicyServiceStub{}, &learningPolicyServiceStub{}, func(context.Context) error { return nil }, f.security)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -295,7 +291,7 @@ func TestControllerAmbiguousJSONCannotReachBusiness(t *testing.T) {
 }
 
 func TestControllerConstructorRequiresAuthentication(t *testing.T) {
-	if _, err := NewHandler(&catalogServiceStub{}, &lifecycleServiceStub{}, &agentConfigurationServiceStub{}, &agentQueryServiceStub{}, &agentEventServiceStub{}, &networkPolicyServiceStub{}, func(context.Context) error { return nil }); err == nil {
+	if _, err := NewHandler(&catalogServiceStub{}, &lifecycleServiceStub{}, &agentConfigurationServiceStub{}, &agentQueryServiceStub{}, &agentEventServiceStub{}, &networkPolicyServiceStub{}, &learningPolicyServiceStub{}, func(context.Context) error { return nil }); err == nil {
 		t.Fatal("unauthenticated constructor accepted")
 	}
 }
