@@ -243,14 +243,7 @@ export async function exerciseExternalIdentities({
   }
   await restart();
   const persisted = await inventory(restoredSession);
-  assert.deepEqual(
-    persisted.bindings.find((b) => b.id === binding.id),
-    restored,
-  );
-  assert.deepEqual(
-    persisted.notices.filter((n) => n.binding_id === binding.id),
-    [newNotice],
-  );
+  assertRestoredBinding(persisted, restored, newNotice);
 
   // An isolated Membership has just this Provider; seed loss of the local
   // credential, then use only production controls and signed OIDC callbacks.
@@ -320,4 +313,15 @@ export async function exerciseExternalIdentities({
     scope:
       "Identity-owned binding RPC, PostgreSQL and signed HTTPS IdP callbacks; browser consumers remain pending",
   };
+}
+
+export function assertRestoredBinding(persisted, restored, newNotice) {
+  assert.deepEqual(
+    persisted.items.find((b) => b.id === restored.id),
+    restored,
+  );
+  assert.deepEqual(
+    persisted.notices.filter((n) => n.binding_id === restored.id),
+    [newNotice],
+  );
 }
