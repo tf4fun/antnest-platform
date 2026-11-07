@@ -2,6 +2,7 @@ package server
 
 import (
 	"bytes"
+	"context"
 	"crypto/ed25519"
 	"crypto/rand"
 	"crypto/sha256"
@@ -16,6 +17,7 @@ import (
 
 	"github.com/tf4fun/antnest-platform/modules/service-authentication/callercontext"
 	"github.com/tf4fun/antnest-platform/modules/service-authentication/serviceauth"
+	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/domain"
 )
 
 // Test-only signing at the business fixture preserves existing domain tests.
@@ -77,28 +79,28 @@ func newAuthenticationFixture(t *testing.T) *businessFixture {
 }
 
 func newBusinessHandler(t *testing.T, catalog CatalogService, lifecycle LifecycleService, configuration AgentConfigurationService,
-	queries AgentQueryService, events AgentEventService, network NetworkPolicyService, health HealthCheck) (http.Handler, error) {
+	queries AgentQueryService, events AgentEventService, network NetworkPolicyService, health HealthCheck,
+	learning ...SkillLearningPolicyService) (http.Handler, error) {
 	f := newAuthenticationFixture(t)
 	var err error
-	f.raw, err = NewHandler(catalog, lifecycle, configuration, queries, events, network, health, f.security)
+	policy := SkillLearningPolicyService(&learningPolicyServiceStub{
+		policy: domain.DefaultSkillLearningPolicy("org-1", "contract-fixture", "user-1", time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)),
+	})
+	if len(learning) > 0 {
+		policy = learning[0]
+	}
+	f.raw, err = NewHandler(catalog, lifecycle, configuration, queries, events, network, policy, health, f.security)
 	if err != nil {
 		return nil, err
 	}
 	return f, nil
 }
 
-func withBusinessLearningRoutes(t *testing.T, base http.Handler, service SkillLearningPolicyService) (http.Handler, error) {
-	f := newAuthenticationFixture(t)
-	if previous, ok := base.(*businessFixture); ok {
-		f = previous
-		base = previous.raw
-	}
-	raw, err := WithSkillLearningPolicyRoutes(base, service, f.security)
-	if err != nil {
-		return nil, err
-	}
-	f.raw = raw
-	return f, nil
+func newBusinessLearningHandler(t *testing.T, service SkillLearningPolicyService) (http.Handler, error) {
+	return newBusinessHandler(t,
+		&catalogServiceStub{}, &lifecycleServiceStub{}, &agentConfigurationServiceStub{},
+		&agentQueryServiceStub{}, &agentEventServiceStub{}, &networkPolicyServiceStub{},
+		func(context.Context) error { return nil }, service)
 }
 
 func (f *businessFixture) sign(overrides map[string]any) string {

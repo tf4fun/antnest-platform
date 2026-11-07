@@ -428,7 +428,7 @@ func TestRuntimeBarrierRecoveryPolicyHTTPPreservesBaseRoutes(t *testing.T) {
 	f := newAuthenticationFixture(t)
 	queries := &agentQueryServiceStub{}
 	base, err := NewHandler(&catalogServiceStub{}, &lifecycleServiceStub{}, &agentConfigurationServiceStub{}, queries,
-		&agentEventServiceStub{}, &networkPolicyServiceStub{}, func(context.Context) error { return nil }, f.security)
+		&agentEventServiceStub{}, &networkPolicyServiceStub{}, &learningPolicyServiceStub{}, func(context.Context) error { return nil }, f.security)
 	require.NoError(t, err)
 	stub := &runtimeBarrierRecoveryPolicyServiceStub{}
 	f.raw, err = WithRuntimeBarrierRecoveryPolicyRoutes(base, stub, f.security)

@@ -647,7 +647,9 @@ higher global sequence can never become visible before a lower one. Each
 service instance maintains one dedicated PostgreSQL `LISTEN` connection and
 fans wake-up hints out in process; SSE clients never reserve business-pool
 connections. The journal remains authoritative if notifications are delayed,
-duplicated, or missed during listener reconnection.
+duplicated, or missed during listener reconnection. Global replay reads order
+and resume on `agent_events.global_sequence`, whose primary key already
+provides the ordered index; a duplicate secondary index is not maintained.
 
 Historical v1 event payload `data` remains retained audit detail rather than a
 cross-service patch format. The two v2 binding/readiness events additionally

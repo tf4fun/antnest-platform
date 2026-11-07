@@ -60,6 +60,7 @@ var (
 		{version: 34, name: "model_call_policy_management", sql: mustMigration("migrations/0034_model_call_policy.sql")},
 		{version: 35, name: "lifecycle_reliability", sql: mustMigration("migrations/0035_lifecycle_reliability.sql")},
 		{version: 36, name: "model_profile_events", sql: mustMigration("migrations/0036_model_profile_events.sql")},
+		{version: 37, name: "drop_redundant_event_replay_index", sql: mustMigration("migrations/0037_drop_redundant_event_replay_index.sql")},
 	}
 )
 

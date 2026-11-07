@@ -34,7 +34,7 @@ func newCredentialResolveBoundary(t *testing.T, catalog CatalogService) (*busine
 	t.Helper()
 	f := newAuthenticationFixture(t)
 	resolver, _ := catalog.(*executionCredentialResolverCatalog)
-	handler, err := NewHandler(catalog, &lifecycleServiceStub{}, &agentConfigurationServiceStub{}, &agentQueryServiceStub{}, &agentEventServiceStub{}, &networkPolicyServiceStub{}, func(context.Context) error { return nil }, f.security)
+	handler, err := NewHandler(catalog, &lifecycleServiceStub{}, &agentConfigurationServiceStub{}, &agentQueryServiceStub{}, &agentEventServiceStub{}, &networkPolicyServiceStub{}, &learningPolicyServiceStub{}, func(context.Context) error { return nil }, f.security)
 	if err != nil {
 		t.Fatal(err)
 	}

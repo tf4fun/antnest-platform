@@ -87,11 +87,7 @@ func TestControllerRetiredGatewayRejectedBeforeContextAndBusiness(t *testing.T) 
 			}
 			queries := &countedWorkspaceQueries{}
 			f.raw, err = NewHandler(&catalogServiceStub{}, &lifecycleServiceStub{}, &agentConfigurationServiceStub{}, queries,
-				&agentEventServiceStub{}, &networkPolicyServiceStub{}, func(context.Context) error { return nil }, f.security)
-			if err != nil {
-				t.Fatal(err)
-			}
-			f.raw, err = WithSkillLearningPolicyRoutes(f.raw, &learningPolicyServiceStub{}, f.security)
+				&agentEventServiceStub{}, &networkPolicyServiceStub{}, &learningPolicyServiceStub{}, func(context.Context) error { return nil }, f.security)
 			if err != nil {
 				t.Fatal(err)
 			}

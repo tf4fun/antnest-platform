@@ -60,8 +60,8 @@ const modelItemRevision = ajv.compile(
   snapshotSchema.properties.models.items.properties.model_profile_revision,
 );
 
-test("control revision 49 and admin version 60 declare the live model surface", () => {
-  assert.equal(control.revision, 49);
+test("control revision 50 and admin version 60 declare the live model surface", () => {
+  assert.equal(control.revision, 50);
   assert.equal(admin.version, 60);
   const upstream = control.resources.model_profiles.usage;
   assert.equal(

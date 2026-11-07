@@ -96,6 +96,21 @@ func TestMigrationRecordRejectsNameOrChecksumDrift(t *testing.T) {
 	}
 }
 
+func TestControllerHygieneMigrationDropsRedundantReplayIndex(t *testing.T) {
+	t.Parallel()
+
+	final := schemaMigrations[len(schemaMigrations)-1]
+	if final.version != 37 || final.name != "drop_redundant_event_replay_index" {
+		t.Fatalf("final schema migration = %+v", final)
+	}
+	if !strings.Contains(final.sql, "DROP INDEX IF EXISTS agent_controller.agent_events_global_replay_idx;") {
+		t.Fatalf("migration 0037 does not drop the redundant replay index:\n%s", final.sql)
+	}
+	if !strings.Contains(initialSchemaSQL, "global_sequence BIGINT PRIMARY KEY") {
+		t.Fatal("agent_events global_sequence primary key was not retained")
+	}
+}
+
 func TestMigrationHistoryMustBeAnExactPrefix(t *testing.T) {
 	t.Parallel()
 
