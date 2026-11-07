@@ -275,12 +275,8 @@ func run(ctx context.Context, environment serviceauth.LookupEnv) (resultErr erro
 	security := server.Security{Authentication: cfg.Authentication.Config.Receiver, CallerContext: verifier}
 	handler, err := server.NewHandler(
 		catalog, commands, application.NewAgentConfigurationService(repository, identity, systemClock{}), queries, events,
-		application.NewNetworkPolicyService(repository, egress), repository.Ping, security,
+		application.NewNetworkPolicyService(repository, egress), application.NewSkillLearningPolicyService(repository, identity), repository.Ping, security,
 	)
-	if err != nil {
-		return classifyFailure("service_composition", err)
-	}
-	handler, err = server.WithSkillLearningPolicyRoutes(handler, application.NewSkillLearningPolicyService(repository, identity), security)
 	if err != nil {
 		return classifyFailure("service_composition", err)
 	}

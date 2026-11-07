@@ -618,6 +618,8 @@ func TestMachineControlContractValidatesActualHTTPErrorBoundary(t *testing.T) {
 		{code: "cleanup_failed", err: &ports.DependencyError{Service: "runtime-egress", Code: "cleanup_failed"}, method: http.MethodPut, path: "/internal/agents/agent-1/network-policy", body: networkMutationJSON},
 		{code: "dependency_invalid_response", err: &ports.DependencyError{Service: "runtime-egress", Code: "invalid_response"}, method: http.MethodPut, path: "/internal/agents/agent-1/network-policy", body: networkMutationJSON},
 		{code: "request_id_conflict", err: ports.ErrRequestConflict},
+		{code: "policy_revision_conflict", err: ports.ErrConcurrentChange, method: http.MethodPut, path: "/internal/agents/agent-1/skill-learning-policy", body: learningPolicyMutationJSON},
+		{code: "request_id_conflict", err: ports.ErrRequestConflict, method: http.MethodPut, path: "/internal/agents/agent-1/skill-learning-policy", body: learningPolicyMutationJSON},
 		{code: "reference_not_found", err: application.ErrInvalidReference},
 		{code: "reference_disabled", err: ports.ErrDisabledReference},
 		{code: "resource_in_use", err: &ports.CatalogReferenceConflict{References: []ports.CatalogReference{{Kind: "template", ResourceID: "template-1"}}}},
@@ -649,7 +651,7 @@ func TestMachineControlContractValidatesActualHTTPErrorBoundary(t *testing.T) {
 				&catalogServiceStub{getModelErr: test.err}, lifecycle, &agentConfigurationServiceStub{err: test.err}, &agentQueryServiceStub{},
 				&agentEventServiceStub{}, &networkPolicyServiceStub{err: test.err},
 
-				func(context.Context) error { return nil })
+				func(context.Context) error { return nil }, &learningPolicyServiceStub{err: test.err})
 
 			if err != nil {
 				t.Fatalf("new control boundary: %v", err)
@@ -685,6 +687,9 @@ func TestMachineControlContractValidatesActualHTTPErrorBoundary(t *testing.T) {
 				t.Fatalf("error content type=%q", mediaType)
 			}
 			assertControlResponseSchema(t, compiler, contract.Errors.Response, response.Body.Bytes())
+			if strings.HasSuffix(path, "/skill-learning-policy") && response.Header().Get("Cache-Control") != "no-store" {
+				t.Fatalf("policy error missed no-store: %q", response.Header().Get("Cache-Control"))
+			}
 			seen[test.code] = struct{}{}
 		})
 	}
@@ -1173,8 +1178,8 @@ func sampleModelCallPolicyInput() application.SetModelCallPolicyInput {
 	}
 }
 
-// Compose the same wrappers as main, including the separately contracted Skill
-// routes, so the manifest is checked against the handler actually served.
+// Compose the same wrappers as main so the manifest is checked against the
+// handler actually served.
 func composeControlPolicyFixture(t *testing.T, endpoint http.Handler) *businessFixture {
 	t.Helper()
 	fixture, ok := endpoint.(*businessFixture)
@@ -1182,10 +1187,6 @@ func composeControlPolicyFixture(t *testing.T, endpoint http.Handler) *businessF
 		t.Fatalf("unexpected control fixture %T", endpoint)
 	}
 	var err error
-	fixture.raw, err = WithSkillLearningPolicyRoutes(fixture.raw, &learningPolicyServiceStub{policy: domain.DefaultSkillLearningPolicy("org-1", "contract-fixture", "user-1", time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC))}, fixture.security)
-	if err != nil {
-		t.Fatal(err)
-	}
 	fixture.raw, err = WithRuntimeBarrierRecoveryPolicyRoutes(fixture.raw,
 		&runtimeBarrierRecoveryPolicyServiceStub{policy: domain.RuntimeBarrierRecoveryPolicy{OrganizationID: "org-1", Revision: 1, Mode: "manual", CooldownMS: 300000}}, fixture.security)
 	if err != nil {

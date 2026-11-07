@@ -2,6 +2,7 @@ package application
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -101,4 +102,29 @@ func TestSkillLearningPolicyServiceAllowsOwnerToPinWithoutGrantingMaintenance(t 
 	require.Equal(t, []string{".antnest/skills/known"}, result.PinnedPaths)
 	require.Empty(t, result.Scope.AdoptedPaths)
 	require.Equal(t, "pin-1", store.write.RequestID)
+}
+
+func TestSkillLearningPolicyServicePropagatesStoreConflictSentinels(t *testing.T) {
+	base := domain.DefaultSkillLearningPolicy("org-1", "agent-1", "user-1", time.Unix(1, 0))
+	for _, test := range []struct {
+		name  string
+		cause error
+		want  error
+		other error
+	}{
+		{"request replay", fmt.Errorf("wrapped: %w", ports.ErrRequestConflict), ports.ErrRequestConflict, ports.ErrConcurrentChange},
+		{"stale revision", fmt.Errorf("wrapped: %w", ports.ErrConcurrentChange), ports.ErrConcurrentChange, ports.ErrRequestConflict},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			store := &learningPolicyStoreStub{agent: agentConfigurationAgent(), policy: base, writeErr: test.cause}
+			service := NewSkillLearningPolicyService(store, agentConfigurationIdentity())
+			_, err := service.Set(t.Context(), SetSkillLearningPolicyInput{
+				RequestID: "change-1", OrganizationID: "org-1", AgentID: "agent-1", ActorPrincipalID: "user-1",
+				ExpectedRevision: base.Revision, Mode: base.Mode, Scope: base.Scope,
+				PinnedPaths: []string{}, Limits: base.Limits,
+			})
+			require.ErrorIs(t, err, test.want)
+			require.NotErrorIs(t, err, test.other)
+		})
+	}
 }

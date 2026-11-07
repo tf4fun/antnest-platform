@@ -163,7 +163,7 @@ func newRuntimeBarrierProjectionHandlerFixture(t *testing.T, projection *ports.R
 	f := newAuthenticationFixture(t)
 	var err error
 	f.raw, err = NewHandler(&catalogServiceStub{}, &lifecycleServiceStub{}, &agentConfigurationServiceStub{}, queries,
-		&agentEventServiceStub{}, &networkPolicyServiceStub{}, func(context.Context) error { return nil }, f.security)
+		&agentEventServiceStub{}, &networkPolicyServiceStub{}, &learningPolicyServiceStub{}, func(context.Context) error { return nil }, f.security)
 	require.NoError(t, err)
 	return f, queries
 }
