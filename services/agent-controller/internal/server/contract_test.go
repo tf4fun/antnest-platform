@@ -5,6 +5,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -12,6 +15,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -41,6 +45,7 @@ type machineControlContract struct {
 		Precondition string `json:"precondition"`
 		Idempotency  string `json:"idempotency"`
 	} `json:"conventions"`
+	StatusRPC controlContractRoute                       `json:"status_rpc"`
 	Status    controlContractRoute                       `json:"status"`
 	Resources map[string]map[string]controlContractRoute `json:"resources"`
 	Enums     map[string][]string                        `json:"enums"`
@@ -137,6 +142,9 @@ func TestMachineControlContractMatchesRegisteredBoundary(t *testing.T) {
 			expected[route.pattern] = struct{}{}
 		}
 	}
+	for _, pattern := range composedControlLiteralRoutes(t) {
+		expected[pattern] = struct{}{}
+	}
 	deprecatedQueryRoutes := map[string][]string{
 		"GET /internal/provider-connections": {"after_id"},
 		"GET /internal/model-profiles":       {"after_id"},
@@ -191,6 +199,13 @@ func TestMachineControlContractMatchesRegisteredBoundary(t *testing.T) {
 	statusPattern := composedControlPattern(t, fixture.raw, statusRequest)
 	if statusPattern != statusKey {
 		t.Fatalf("status route %s is registered as %q", statusKey, statusPattern)
+	}
+	if contract.StatusRPC.Method != http.MethodGet || contract.StatusRPC.Path != "/rpc/agent-controller/status" || contract.StatusRPC.SuccessStatus != http.StatusOK {
+		t.Fatalf("RPC status contract = %+v", contract.StatusRPC)
+	}
+	statusRequest = httptest.NewRequest(contract.StatusRPC.Method, contract.StatusRPC.Path, nil)
+	if got := composedControlPattern(t, fixture.raw, statusRequest); got != contract.StatusRPC.Method+" "+contract.StatusRPC.Path {
+		t.Fatalf("RPC status route is registered as %q", got)
 	}
 	assertKnownControlSchemaReference(t, schema, contract.Errors.Response)
 	if len(contract.Errors.StatusByCode) == 0 ||
@@ -434,6 +449,12 @@ func TestMachineControlContractValidatesSuccessfulHTTPBoundary(t *testing.T) {
 	composeControlPolicyFixture(t, boundary)
 	runtimeInput := sampleTemplateView().Runtime
 	requestBodies := map[string]any{
+		"PUT /internal/agents/{agent_id}/skill-learning-policy": map[string]any{
+			"request_id": "learning-policy-1", "organization_id": "org-1", "actor_principal_id": "user-1",
+			"expected_version": strings.Repeat("a", 64), "mode": "automatic",
+			"scope":        map[string]any{"auto_generated_personal": true, "adopted_paths": []string{}},
+			"pinned_paths": []string{}, "limits": map[string]int{"daily_reviews": 20, "daily_model_input_tokens": 320000, "daily_model_output_tokens": 80000},
+		},
 		"PUT /internal/runtime-barrier-recovery-policy":                       sampleRuntimeBarrierRecoveryPolicyInput(),
 		"PUT /internal/model-call-policy":                                     sampleModelCallPolicyInput(),
 		"POST /internal/managed-mcp-secrets/resolve":                          ports.MCPTemplateSource{OrganizationID: "org-1", TemplateID: "template-1", Revision: 1},
@@ -838,7 +859,11 @@ func assertKnownControlSchemaReference(
 	t *testing.T, schema machineControlSchema, reference string,
 ) {
 	t.Helper()
-	const prefix = "control-api.schema.json#/$defs/"
+	prefix := "control-api.schema.json#/$defs/"
+	if strings.HasPrefix(reference, "../skill-learning/learning-api.schema.json#/$defs/") {
+		prefix = "../skill-learning/learning-api.schema.json#/$defs/"
+		readContractJSON(t, filepath.Join(repositoryRoot(t), "contracts/skill-learning/learning-api.schema.json"), &schema)
+	}
 	if !strings.HasPrefix(reference, prefix) {
 		t.Fatalf("unknown control schema reference %q", reference)
 	}
@@ -960,6 +985,11 @@ func compileControlSchema(t *testing.T, path string) *jsonschema.Compiler {
 	if err := compiler.AddResource("https://schemas.antnest.dev/common/precondition.schema.json", preconditionContract); err != nil {
 		t.Fatalf("load common precondition contract: %v", err)
 	}
+	var learningContract any
+	readContractJSON(t, filepath.Join(repositoryRoot(t), "contracts/skill-learning/learning-api.schema.json"), &learningContract)
+	if err := compiler.AddResource("https://schemas.antnest.dev/skill-learning/learning-api.schema.json", learningContract); err != nil {
+		t.Fatalf("load Skill learning contract: %v", err)
+	}
 	if err := compiler.AddResource(controlSchemaID, document); err != nil {
 		t.Fatalf("load control schema: %v", err)
 	}
@@ -973,11 +1003,14 @@ func assertControlResponseSchema(
 	t *testing.T, compiler *jsonschema.Compiler, reference string, payload []byte,
 ) {
 	t.Helper()
-	const prefix = "control-api.schema.json"
+	prefix, schemaID := "control-api.schema.json", controlSchemaID
+	if strings.HasPrefix(reference, "../skill-learning/learning-api.schema.json#/$defs/") {
+		prefix, schemaID = "../skill-learning/learning-api.schema.json", "https://schemas.antnest.dev/skill-learning/learning-api.schema.json"
+	}
 	if !strings.HasPrefix(reference, prefix+"#/$defs/") {
 		t.Fatalf("unknown control response schema %q", reference)
 	}
-	definition, err := compiler.Compile(controlSchemaID + strings.TrimPrefix(reference, prefix))
+	definition, err := compiler.Compile(schemaID + strings.TrimPrefix(reference, prefix))
 	if err != nil {
 		t.Fatalf("compile response schema %q: %v", reference, err)
 	}
@@ -1130,7 +1163,7 @@ func composeControlPolicyFixture(t *testing.T, endpoint http.Handler) *businessF
 		t.Fatalf("unexpected control fixture %T", endpoint)
 	}
 	var err error
-	fixture.raw, err = WithSkillLearningPolicyRoutes(fixture.raw, &learningPolicyServiceStub{}, fixture.security)
+	fixture.raw, err = WithSkillLearningPolicyRoutes(fixture.raw, &learningPolicyServiceStub{policy: domain.DefaultSkillLearningPolicy("org-1", "contract-fixture", "user-1", time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC))}, fixture.security)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1164,4 +1197,47 @@ func composedControlPattern(t *testing.T, endpoint http.Handler, request *http.R
 	}
 	t.Fatal("control routing exceeded composition depth")
 	return ""
+}
+
+// Include literal routes from composed production muxes, rather than keeping a
+// second hard-coded list of exceptions next to the machine manifest.
+func composedControlLiteralRoutes(t *testing.T) []string {
+	t.Helper()
+	files, err := filepath.Glob(filepath.Join(repositoryRoot(t), "services/agent-controller/internal/server/*.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var patterns []string
+	for _, path := range files {
+		if strings.HasSuffix(path, "_test.go") {
+			continue
+		}
+		file, err := parser.ParseFile(token.NewFileSet(), path, nil, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		ast.Inspect(file, func(node ast.Node) bool {
+			call, ok := node.(*ast.CallExpr)
+			if !ok || len(call.Args) == 0 {
+				return true
+			}
+			selector, ok := call.Fun.(*ast.SelectorExpr)
+			if !ok || (selector.Sel.Name != "Handle" && selector.Sel.Name != "HandleFunc") {
+				return true
+			}
+			literal, ok := call.Args[0].(*ast.BasicLit)
+			if !ok || literal.Kind != token.STRING {
+				return true
+			}
+			pattern, err := strconv.Unquote(literal.Value)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if strings.Contains(pattern, " /internal/") {
+				patterns = append(patterns, pattern)
+			}
+			return true
+		})
+	}
+	return patterns
 }
