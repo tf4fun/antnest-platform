@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/netip"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -81,11 +82,11 @@ func (client *Client) SetAgentNetworkAttachment(
 		return ports.NetworkAttachment{}, dependencyFailure("invalid_request", false)
 	}
 	payload, err := json.Marshal(struct {
-		State                   string `json:"state"`
-		ExpectedResourceVersion uint64 `json:"expected_resource_version"`
-		RuntimeEndpoint         string `json:"runtime_endpoint,omitempty"`
-		TunnelKeyID             string `json:"tunnel_key_id,omitempty"`
-	}{State: state, ExpectedResourceVersion: expectedResourceVersion, RuntimeEndpoint: runtimeEndpoint, TunnelKeyID: tunnelKeyID})
+		State           string `json:"state"`
+		ExpectedVersion string `json:"expected_version"`
+		RuntimeEndpoint string `json:"runtime_endpoint,omitempty"`
+		TunnelKeyID     string `json:"tunnel_key_id,omitempty"`
+	}{State: state, ExpectedVersion: strconv.FormatUint(expectedResourceVersion, 10), RuntimeEndpoint: runtimeEndpoint, TunnelKeyID: tunnelKeyID})
 	if err != nil || expectedResourceVersion == 0 {
 		return ports.NetworkAttachment{}, dependencyFailure("invalid_request", false)
 	}
@@ -244,8 +245,8 @@ func resourceVersionBody(expectedResourceVersion uint64) (io.Reader, error) {
 		return nil, fmt.Errorf("expected resource version must be positive")
 	}
 	payload, err := json.Marshal(struct {
-		ExpectedResourceVersion uint64 `json:"expected_resource_version"`
-	}{ExpectedResourceVersion: expectedResourceVersion})
+		ExpectedVersion string `json:"expected_version"`
+	}{ExpectedVersion: strconv.FormatUint(expectedResourceVersion, 10)})
 	if err != nil {
 		return nil, err
 	}

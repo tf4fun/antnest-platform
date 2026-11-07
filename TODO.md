@@ -20,6 +20,8 @@ Issue 状态最后核对于 2026-10-28：141 个 issue，87 个已关闭，54 �
 
 ## 当前批次
 
+- **#38 Agent Controller 消费批次（2026-11-07，依赖 RC PR #578）**：实际 Egress/RC client 捕获请求与共享 producer schema 对照，TDD 复现 4 个 attachment/release case＋4 个 RC mutation 使用退役别名；当前输出改为字符串 `expected_version`（含 uint64 最大值无损），生产方 N-1 输入别名保留。覆盖 AC 拥有的全部 8 个 Egress 路由、5 个 RC mutation；每个依赖响应替身独立校验共享 schema，已有 current/N-1 producer golden 在真实解码前校验且未知扩展字段兼容断言保留。同步根目录 Go component 依赖替身，不改用户入口 legacy 测试或业务鉴权。RED 后 GREEN，两个受影响 client package 测试通过；完整 component 准入交远程 CI，继续最后显式集成批次。
+
 - **#38 Runtime Controller 批次（2026-11-07，依赖 Runtime PR #577）**：7 个 RC 契约文件归位 `contracts/runtime-controller/`，schema 内容／$id 保持不变；生产方、消费方、共享 registry、调用方目录、现有 system 客户端文件路径全部同步（未运行或维护 Docker E2E 场景）。19 个路由显式声明正文／无正文，Go AST 实际 mux 与 contract／caller 双向一致；真实 handler 覆盖全部 19 个成功路由，验证 JSON 请求、响应、204 空正文、SSE event/data/id。补充 schema 同 $id 迁移的 N-1 检查，迁移后收紧仍拒绝。定向本地反馈 Go `TestMachineContract|TestRouteSchema|TestEveryControlJSONRoute|TestRuntimeControllerGolden` 通过，Node 路由／兼容性／ownership／conventions／golden 合计 70/70；10 个 caller catalogs、342 route policies、264 Markdown 链接检查 clean。完整远程准入不等待，下一批 Agent Controller 消费验证。
 
 - **#38 Antnest Runtime 批次（2026-11-07，依赖 Egress PR #576）**：完整发布 7 个 HTTP 边界（含 MCP 根／子路径 mount、GET/HEAD live、maintenance/temporary），区分 JSON、multipart metadata、SSE event 和无正文；保留真实 workload／ticket／精确 MCP execution fence，不修改鉴权。退役 trusted_internal_hosts 描述，维护 schema 保持 Learning N-1 副本一致。Node 路由／正文 TDD 8/8、Rust 聚焦 4/4；临时 Skill producer 输出增加共享 schema 断言。Linux socket MCP＋full/live/HEAD 测试已编写但 macOS 未执行，交远程 CI，不计通过。最小日志在 `artifacts/verification/issue-38-runtime/`。下一批 RC 契约迁移；不等待 CI、不运行 Docker E2E。

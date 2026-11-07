@@ -19,7 +19,7 @@ func TestAttachmentOpenForwardsOnlyCanonicalRuntimePeer(t *testing.T) {
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			t.Fatal(err)
 		}
-		if body["state"] != "open" || body["runtime_endpoint"] != "10.243.1.20" || body["expected_resource_version"] != float64(7) {
+		if body["state"] != "open" || body["runtime_endpoint"] != "10.243.1.20" || body["expected_version"] != "7" {
 			t.Fatal(body)
 		}
 		w.Header().Set("Content-Type", "application/json")

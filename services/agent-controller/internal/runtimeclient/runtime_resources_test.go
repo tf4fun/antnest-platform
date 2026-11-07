@@ -99,8 +99,8 @@ func TestRuntimeResourcesReachTheWireOnEveryMutation(t *testing.T) {
 	if update["cpu_millis"] != float64(2500) || update["workspace_bytes"] != float64(67108864) {
 		t.Fatalf("explicit limits not preserved: %+v", update)
 	}
-	if update := bodies["/internal/runtimes/agent-1/update"]; update["expected_revision"] != "rtv_11111111111111111111111111111111" {
-		t.Fatalf("expected_revision lost: %+v", update)
+	if update := bodies["/internal/runtimes/agent-1/update"]; update["expected_version"] != "rtv_11111111111111111111111111111111" {
+		t.Fatalf("expected_version lost: %+v", update)
 	}
 
 	bounds := runtimeConfiguration()

@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/contracttest"
 	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/egressclient"
 	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/identityclient"
 	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/ports"
@@ -30,6 +31,9 @@ func readGoldenDocument(t *testing.T, rel string) map[string]any {
 	t.Helper()
 	contents, err := os.ReadFile(filepath.Join("../../../../contracts", rel))
 	require.NoError(t, err, "read golden %s", rel)
+	if strings.HasPrefix(rel, "runtime/") || strings.HasPrefix(rel, "egress/") {
+		contracttest.ValidateGolden(t, rel, contents)
+	}
 	var document map[string]any
 	require.NoError(t, json.Unmarshal(contents, &document), "parse golden %s", rel)
 	return document

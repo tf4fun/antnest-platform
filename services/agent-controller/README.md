@@ -125,6 +125,12 @@ or password-policy consumer is introduced by this compatibility reference.
 Binding and notice methods remain owned by Identity and its account consumers;
 Controller's existing RPCs do not acquire new request fields or authority.
 
+The Runtime Controller and Egress consumers emit the canonical
+`expected_version` precondition string on mutation requests per
+[`contracts/runtime-controller/`](../../contracts/runtime-controller/) and
+[`contracts/egress/`](../../contracts/egress/); producer legacy aliases are
+preserved inbound for N-1 clients.
+
 Resource identifiers follow the
 [platform resource ID contract](../../contracts/resource-identifiers.md). Create
 and Rebuild generate `agentspec_` IDs, execution revisions use `execution_`,
