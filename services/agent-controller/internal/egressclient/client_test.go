@@ -97,11 +97,11 @@ func TestSetAgentNetworkAttachmentUsesEgressControlContract(t *testing.T) {
 			t.Fatalf("request = %s %s", request.Method, request.URL.Path)
 		}
 		var payload struct {
-			State                   string `json:"state"`
-			ExpectedResourceVersion uint64 `json:"expected_resource_version"`
+			State           string `json:"state"`
+			ExpectedVersion string `json:"expected_version"`
 		}
 		if err := json.NewDecoder(request.Body).Decode(&payload); err != nil ||
-			payload.State != ports.NetworkAttachmentClosed || payload.ExpectedResourceVersion != 7 {
+			payload.State != ports.NetworkAttachmentClosed || payload.ExpectedVersion != "7" {
 			t.Fatalf("attachment request = %+v, %v", payload, err)
 		}
 		response.Header().Set("Content-Type", "application/json")
@@ -139,10 +139,10 @@ func TestReleaseAgentNetworkRequiresQuarantinedAttachment(t *testing.T) {
 			t.Fatalf("request = %s %s", request.Method, request.URL.Path)
 		}
 		var payload struct {
-			ExpectedResourceVersion uint64 `json:"expected_resource_version"`
+			ExpectedVersion string `json:"expected_version"`
 		}
 		if err := json.NewDecoder(request.Body).Decode(&payload); err != nil ||
-			payload.ExpectedResourceVersion != 11 {
+			payload.ExpectedVersion != "11" {
 			t.Fatalf("release request = %+v, %v", payload, err)
 		}
 		response.Header().Set("Content-Type", "application/json")

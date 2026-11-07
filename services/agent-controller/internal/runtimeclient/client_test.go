@@ -93,7 +93,7 @@ func TestUpdateRuntimeUsesExpectedRevisionAndCompleteConfiguration(t *testing.T)
 			t.Fatalf("Idempotency-Key = %q", request.Header.Get("Idempotency-Key"))
 		}
 		var payload struct {
-			ExpectedRevision string                  `json:"expected_revision"`
+			ExpectedRevision string                  `json:"expected_version"`
 			Configuration    runtimeConfigurationDTO `json:"configuration"`
 		}
 		if err := json.NewDecoder(request.Body).Decode(&payload); err != nil {
@@ -152,7 +152,7 @@ func TestDisableRuntimeAcceptsAbsentComputeAndRetainedWorkspaceRevision(t *testi
 			t.Fatalf("Idempotency-Key = %q", request.Header.Get("Idempotency-Key"))
 		}
 		var payload struct {
-			ExpectedRevision string `json:"expected_revision"`
+			ExpectedRevision string `json:"expected_version"`
 		}
 		if err := json.NewDecoder(request.Body).Decode(&payload); err != nil {
 			t.Fatalf("decode request: %v", err)
@@ -209,7 +209,7 @@ func TestEnableRuntimeUsesDisabledRevisionAndCompleteConfiguration(t *testing.T)
 			t.Fatalf("Idempotency-Key = %q", request.Header.Get("Idempotency-Key"))
 		}
 		var payload struct {
-			ExpectedRevision string                  `json:"expected_revision"`
+			ExpectedRevision string                  `json:"expected_version"`
 			Configuration    runtimeConfigurationDTO `json:"configuration"`
 		}
 		if err := json.NewDecoder(request.Body).Decode(&payload); err != nil {
@@ -275,7 +275,7 @@ func TestDeleteRuntimeUsesRevisionFenceAndRequiresDeletedInspection(t *testing.T
 			t.Fatalf("Idempotency-Key = %q", request.Header.Get("Idempotency-Key"))
 		}
 		var payload struct {
-			ExpectedRevision string `json:"expected_revision"`
+			ExpectedRevision string `json:"expected_version"`
 		}
 		if err := json.NewDecoder(request.Body).Decode(&payload); err != nil {
 			t.Fatalf("decode request: %v", err)

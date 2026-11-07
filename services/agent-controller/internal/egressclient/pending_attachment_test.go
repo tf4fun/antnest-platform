@@ -18,7 +18,7 @@ func TestPendingAttachmentUsesVersionedControlContractWithoutPeerMaterial(t *tes
 			if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
 				t.Error(err)
 			}
-			if r.Method != http.MethodPut || len(input) != 2 || input["state"] != "pending" || input["expected_resource_version"] != float64(1) {
+			if r.Method != http.MethodPut || len(input) != 2 || input["state"] != "pending" || input["expected_version"] != "1" {
 				t.Errorf("bad pending mutation: %v %s", input, r.Method)
 			}
 		} else if r.URL.Path != "/internal/agent-networks/agent-1" {

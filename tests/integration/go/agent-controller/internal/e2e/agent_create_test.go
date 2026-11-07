@@ -133,12 +133,12 @@ func testAgentLifecycleAcrossHTTP(t *testing.T, runtimeLost bool, spanRecorder *
 			state := stateForAgent(agentID)
 			if request.Method == http.MethodPut {
 				var payload struct {
-					PolicyID                string `json:"policy_id"`
-					Revision                uint64 `json:"revision"`
-					ExpectedResourceVersion uint64 `json:"expected_resource_version"`
+					PolicyID        string `json:"policy_id"`
+					Revision        uint64 `json:"revision"`
+					ExpectedVersion string `json:"expected_version"`
 				}
 				if err := json.NewDecoder(request.Body).Decode(&payload); err != nil ||
-					payload.ExpectedResourceVersion != state.policyVersion {
+					payload.ExpectedVersion != strconv.FormatUint(state.policyVersion, 10) {
 					t.Fatalf("Egress policy payload = %+v err=%v", payload, err)
 				}
 				state.policyID = payload.PolicyID
@@ -159,10 +159,10 @@ func testAgentLifecycleAcrossHTTP(t *testing.T, runtimeLost bool, spanRecorder *
 				t.Fatalf("Egress attachment request = %s %s", request.Method, request.URL.Path)
 			}
 			var payload struct {
-				State                   string `json:"state"`
-				ExpectedResourceVersion uint64 `json:"expected_resource_version"`
-				RuntimeEndpoint         string `json:"runtime_endpoint,omitempty"`
-				TunnelKeyID             string `json:"tunnel_key_id,omitempty"`
+				State           string `json:"state"`
+				ExpectedVersion string `json:"expected_version"`
+				RuntimeEndpoint string `json:"runtime_endpoint,omitempty"`
+				TunnelKeyID     string `json:"tunnel_key_id,omitempty"`
 			}
 			if err := json.NewDecoder(request.Body).Decode(&payload); err != nil {
 				t.Fatalf("decode Egress attachment payload: %v", err)
@@ -177,9 +177,9 @@ func testAgentLifecycleAcrossHTTP(t *testing.T, runtimeLost bool, spanRecorder *
 			policyMu.Lock()
 			state := stateForAgent(agentID)
 			if payload.State != state.attachmentState {
-				if payload.ExpectedResourceVersion != state.attachmentVersion {
+				if payload.ExpectedVersion != strconv.FormatUint(state.attachmentVersion, 10) {
 					policyMu.Unlock()
-					t.Fatalf("Egress attachment version = %d, want %d", payload.ExpectedResourceVersion, state.attachmentVersion)
+					t.Fatalf("Egress attachment version = %s, want %d", payload.ExpectedVersion, state.attachmentVersion)
 				}
 				state.attachmentState = payload.State
 				state.attachmentVersion++
@@ -338,7 +338,7 @@ func testAgentLifecycleAcrossHTTP(t *testing.T, runtimeLost bool, spanRecorder *
 			executionID = "runtime-execution-rebuilt-e2e"
 			endpoint = "http://runtime-rebuilt-e2e:8091/mcp"
 			var payload struct {
-				ExpectedRevision string `json:"expected_revision"`
+				ExpectedRevision string `json:"expected_version"`
 			}
 			if err := json.NewDecoder(request.Body).Decode(&payload); err != nil ||
 				payload.ExpectedRevision != "rtv_22222222222222222222222222222222" {
@@ -353,7 +353,7 @@ func testAgentLifecycleAcrossHTTP(t *testing.T, runtimeLost bool, spanRecorder *
 			executionID = ""
 			endpoint = ""
 			var payload struct {
-				ExpectedRevision string `json:"expected_revision"`
+				ExpectedRevision string `json:"expected_version"`
 			}
 			if err := json.NewDecoder(request.Body).Decode(&payload); err != nil ||
 				payload.ExpectedRevision != "rtv_33333333333333333333333333333333" {
@@ -368,7 +368,7 @@ func testAgentLifecycleAcrossHTTP(t *testing.T, runtimeLost bool, spanRecorder *
 			executionID = "runtime-execution-enabled-e2e"
 			endpoint = "http://runtime-enabled-e2e:8091/mcp"
 			var payload struct {
-				ExpectedRevision string `json:"expected_revision"`
+				ExpectedRevision string `json:"expected_version"`
 			}
 			if err := json.NewDecoder(request.Body).Decode(&payload); err != nil ||
 				payload.ExpectedRevision != "rtv_44444444444444444444444444444444" {
@@ -383,7 +383,7 @@ func testAgentLifecycleAcrossHTTP(t *testing.T, runtimeLost bool, spanRecorder *
 			executionID = ""
 			endpoint = ""
 			var payload struct {
-				ExpectedRevision string `json:"expected_revision"`
+				ExpectedRevision string `json:"expected_version"`
 			}
 			if err := json.NewDecoder(request.Body).Decode(&payload); err != nil ||
 				payload.ExpectedRevision != "rtv_55555555555555555555555555555555" {

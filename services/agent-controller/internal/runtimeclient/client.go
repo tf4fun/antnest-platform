@@ -91,7 +91,7 @@ func (client *Client) UpdateRuntime(
 		return ports.RuntimeOperation{}, dependencyFailure("invalid_request", false)
 	}
 	payload := struct {
-		ExpectedRevision string                  `json:"expected_revision"`
+		ExpectedRevision string                  `json:"expected_version"`
 		Configuration    runtimeConfigurationDTO `json:"configuration"`
 	}{
 		ExpectedRevision: expectedRevision,
@@ -109,7 +109,7 @@ func (client *Client) DisableRuntime(
 		return ports.RuntimeOperation{}, dependencyFailure("invalid_request", false)
 	}
 	payload := struct {
-		ExpectedRevision string `json:"expected_revision"`
+		ExpectedRevision string `json:"expected_version"`
 	}{ExpectedRevision: expectedRevision}
 	return client.callRuntimeOperation(
 		ctx, requestID, agentID, "disable", "disable_runtime", payload, completionDisabled,
@@ -127,7 +127,7 @@ func (client *Client) EnableRuntime(
 		return ports.RuntimeOperation{}, dependencyFailure("invalid_request", false)
 	}
 	payload := struct {
-		ExpectedRevision string                  `json:"expected_revision"`
+		ExpectedRevision string                  `json:"expected_version"`
 		Configuration    runtimeConfigurationDTO `json:"configuration"`
 	}{
 		ExpectedRevision: expectedRevision,
@@ -145,7 +145,7 @@ func (client *Client) DeleteRuntime(
 		return ports.RuntimeOperation{}, dependencyFailure("invalid_request", false)
 	}
 	payload := struct {
-		ExpectedRevision string `json:"expected_revision"`
+		ExpectedRevision string `json:"expected_version"`
 	}{ExpectedRevision: expectedRevision}
 	return client.callRuntimeOperation(
 		ctx, requestID, agentID, "delete", "delete_runtime", payload, completionDeleted,

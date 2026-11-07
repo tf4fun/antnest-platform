@@ -20,7 +20,11 @@ Issue 状态最后核对于 2026-10-28：141 个 issue，87 个已关闭，54 �
 
 ## 当前批次
 
+- **#38 Controller 消费方同步补漏（2026-11-07）**：审查 #580 的 canonical expected_version 发射变更，发现 auth-controller 的 executionPeers 仍读取两个 legacy 字段，合并后会拒绝真实客户端。同步 attachment 的字符串 CAS 与 disable 的 revision CAS，保留状态／版本／peer／key／完成语义断言。已有 system-consumer-contracts 快速门禁新增 4 项回归：共享 producer schema 合法请求驱动实际替身、pending→open→closed 与 disable 完成、stale／错误类型／旧客户端别名拒绝且状态不变；先 4 RED，再 8/8 GREEN（含原 4 项）。RC／Egress 仍支持 N-1 入站别名，其他 system 客户端的 legacy 输入是兼容验证，未批量替换。4 文件格式修复已在 RC 批次完成，并同步最新 main 已合并 #579；不运行全量 Docker E2E。
+
 - **#38 PR CI 修复接手（2026-11-07，用户明确授权）**：继续处理 #575 → #576 → #577 → #578 → #580 → #581 的精确候选远程 CI，覆盖以下历史停止查询状态。初始结果为 6 个 Integration checks 通过，#578／#580／#581 的 Repository checks 因同 4 个测试文件格式失败；#575 与最新 main 的 TODO 冲突仅为交接记录并发新增，保留双方全部记录并同步已合并 #579。修复将普通 merge 沿依赖传播，最终以每个 head 的 Repository／Integration 远程证据为准；不合并、不关闭 #38／#83。同步审查受影响 system 客户端／替身源码，不安排或运行完整 Docker E2E。 第 2 轮远程格式门禁通过后，RC 旧 owner-incarnation 回归仍要求 GET inspect 缺少 request_body；按本批显式无正文声明改为精确断言 none，保留全部路由／权限／schema／错误／边界断言。定向先复现相同 RED，再 15/15 GREEN。
+
+- **#38 Agent Controller 消费批次（2026-11-07，依赖 RC PR #578）**：实际 Egress/RC client 捕获请求与共享 producer schema 对照，TDD 复现 4 个 attachment/release case＋4 个 RC mutation 使用退役别名；当前输出改为字符串 `expected_version`（含 uint64 最大值无损），生产方 N-1 输入别名保留。覆盖 AC 拥有的全部 8 个 Egress 路由、5 个 RC mutation；每个依赖响应替身独立校验共享 schema，已有 current/N-1 producer golden 在真实解码前校验且未知扩展字段兼容断言保留。同步根目录 Go component 依赖替身，不改用户入口 legacy 测试或业务鉴权。RED 后 GREEN，两个受影响 client package 测试通过；完整 component 准入交远程 CI，继续最后显式集成批次。
 
 - **#38 Runtime Controller 批次（2026-11-07，依赖 Runtime PR #577）**：7 个 RC 契约文件归位 `contracts/runtime-controller/`，schema 内容／$id 保持不变；生产方、消费方、共享 registry、调用方目录、现有 system 客户端文件路径全部同步（未运行或维护 Docker E2E 场景）。19 个路由显式声明正文／无正文，Go AST 实际 mux 与 contract／caller 双向一致；真实 handler 覆盖全部 19 个成功路由，验证 JSON 请求、响应、204 空正文、SSE event/data/id。补充 schema 同 $id 迁移的 N-1 检查，迁移后收紧仍拒绝。定向本地反馈 Go `TestMachineContract|TestRouteSchema|TestEveryControlJSONRoute|TestRuntimeControllerGolden` 通过，Node 路由／兼容性／ownership／conventions／golden 合计 70/70；10 个 caller catalogs、342 route policies、264 Markdown 链接检查 clean。完整远程准入不等待，下一批 Agent Controller 消费验证。
 
