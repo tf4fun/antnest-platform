@@ -2,7 +2,32 @@
   "revision": 9,
   "transport": "json-over-http",
   "trust_boundary": "verified-controller-or-runtime-controller-workload",
-  "status_values": ["ready", "degraded"],
+  "status_values": [
+    "ready",
+    "degraded"
+  ],
+  "precondition": {
+    "forms": [
+      "expected_version",
+      "expected_resource_version",
+      "if_match"
+    ],
+    "cardinality": "exactly_one",
+    "canonical": "expected_version",
+    "deprecated_alias": "expected_resource_version",
+    "note": "Mutations guarded by a resource version accept canonical expected_version or one strong If-Match quoted token in place of the body field; the numeric expected_resource_version remains accepted for one release as a deprecated alias and a request carrying more than one form is rejected."
+  },
+  "error_schema": "../common/error.schema.json",
+  "fallback_errors": [
+    {
+      "code": "route_not_found",
+      "status": 404
+    },
+    {
+      "code": "method_not_allowed",
+      "status": 405
+    }
+  ],
   "builtin_policies": {
     "deny_all": {
       "policy_id": "builtin/deny-all",
@@ -18,57 +43,547 @@
       "method": "PUT",
       "path": "/internal/agent-tunnel-keys/{agent_id}",
       "request_schema": "tunnel-key-request.schema.json",
+      "request_body": "tunnel-key-request.schema.json",
       "caller": "runtime-controller",
-      "content_capture": "never"
+      "authentication": "workload",
+      "content_capture": "never",
+      "responses": {
+        "204": {
+          "body": "none"
+        }
+      },
+      "error_schema": "../common/error.schema.json",
+      "errors": [
+        {
+          "code": "service_unauthenticated",
+          "status": 401
+        },
+        {
+          "code": "caller_not_allowed",
+          "status": 403
+        },
+        {
+          "code": "method_not_allowed",
+          "status": 405
+        },
+        {
+          "code": "invalid_request",
+          "status": 400
+        },
+        {
+          "code": "invalid_request",
+          "status": 413
+        },
+        {
+          "code": "unsupported_media_type",
+          "status": 415
+        },
+        {
+          "code": "agent_network_not_found",
+          "status": 404
+        },
+        {
+          "code": "agent_network_unavailable",
+          "status": 409
+        },
+        {
+          "code": "tunnel_key_conflict",
+          "status": 409
+        },
+        {
+          "code": "attachment_open",
+          "status": 409
+        },
+        {
+          "code": "operation_failed",
+          "status": 503
+        },
+        {
+          "code": "control_plane_unavailable",
+          "status": 503
+        }
+      ]
     },
     {
       "method": "GET",
-      "path": "/status"
+      "path": "/status",
+      "request_body": "none",
+      "caller": "local-healthcheck",
+      "authentication": "health",
+      "responses": {
+        "200": {
+          "body": "control-response.schema.json#/$defs/status",
+          "content_type": "application/json"
+        }
+      },
+      "error_schema": "../common/error.schema.json",
+      "errors": [
+        {
+          "code": "invalid_request",
+          "status": 400
+        },
+        {
+          "code": "method_not_allowed",
+          "status": 405
+        }
+      ]
     },
     {
       "method": "GET",
-      "path": "/internal/agent-networks/{agent_id}"
+      "path": "/internal/agent-networks/{agent_id}",
+      "request_body": "none",
+      "caller": "agent-controller",
+      "authentication": "workload",
+      "responses": {
+        "200": {
+          "body": "control-response.schema.json#/$defs/network",
+          "content_type": "application/json"
+        }
+      },
+      "error_schema": "../common/error.schema.json",
+      "errors": [
+        {
+          "code": "service_unauthenticated",
+          "status": 401
+        },
+        {
+          "code": "caller_not_allowed",
+          "status": 403
+        },
+        {
+          "code": "method_not_allowed",
+          "status": 405
+        },
+        {
+          "code": "invalid_request",
+          "status": 400
+        },
+        {
+          "code": "agent_network_not_found",
+          "status": 404
+        },
+        {
+          "code": "operation_failed",
+          "status": 503
+        },
+        {
+          "code": "control_plane_unavailable",
+          "status": 503
+        }
+      ]
     },
     {
       "method": "PUT",
-      "path": "/internal/agent-networks/{agent_id}"
+      "path": "/internal/agent-networks/{agent_id}",
+      "request_body": "none",
+      "caller": "agent-controller",
+      "authentication": "workload",
+      "responses": {
+        "200": {
+          "body": "control-response.schema.json#/$defs/network",
+          "content_type": "application/json"
+        }
+      },
+      "error_schema": "../common/error.schema.json",
+      "errors": [
+        {
+          "code": "service_unauthenticated",
+          "status": 401
+        },
+        {
+          "code": "caller_not_allowed",
+          "status": 403
+        },
+        {
+          "code": "method_not_allowed",
+          "status": 405
+        },
+        {
+          "code": "invalid_request",
+          "status": 400
+        },
+        {
+          "code": "agent_network_unavailable",
+          "status": 409
+        },
+        {
+          "code": "address_pool_exhausted",
+          "status": 409
+        },
+        {
+          "code": "cleanup_failed",
+          "status": 503
+        },
+        {
+          "code": "operation_failed",
+          "status": 503
+        },
+        {
+          "code": "control_plane_unavailable",
+          "status": 503
+        }
+      ]
     },
     {
       "method": "PUT",
       "path": "/internal/agent-network-attachments/{agent_id}",
-      "request_schema": "attachment-state-request.schema.json"
+      "request_schema": "attachment-state-request.schema.json",
+      "request_body": "attachment-state-body.schema.json",
+      "caller": "agent-controller",
+      "authentication": "workload",
+      "responses": {
+        "200": {
+          "body": "control-response.schema.json#/$defs/network",
+          "content_type": "application/json"
+        }
+      },
+      "error_schema": "../common/error.schema.json",
+      "errors": [
+        {
+          "code": "service_unauthenticated",
+          "status": 401
+        },
+        {
+          "code": "caller_not_allowed",
+          "status": 403
+        },
+        {
+          "code": "method_not_allowed",
+          "status": 405
+        },
+        {
+          "code": "invalid_request",
+          "status": 400
+        },
+        {
+          "code": "invalid_request",
+          "status": 413
+        },
+        {
+          "code": "unsupported_media_type",
+          "status": 415
+        },
+        {
+          "code": "agent_network_not_found",
+          "status": 404
+        },
+        {
+          "code": "agent_network_unavailable",
+          "status": 409
+        },
+        {
+          "code": "resource_version_conflict",
+          "status": 409
+        },
+        {
+          "code": "tunnel_key_unavailable",
+          "status": 409
+        },
+        {
+          "code": "cleanup_failed",
+          "status": 503
+        },
+        {
+          "code": "operation_failed",
+          "status": 503
+        },
+        {
+          "code": "control_plane_unavailable",
+          "status": 503
+        }
+      ]
     },
     {
       "method": "POST",
       "path": "/internal/agent-networks/{agent_id}/release",
-      "request_schema": "resource-version-request.schema.json"
+      "request_schema": "resource-version-request.schema.json",
+      "request_body": "resource-version-body.schema.json",
+      "caller": "agent-controller",
+      "authentication": "workload",
+      "responses": {
+        "200": {
+          "body": "control-response.schema.json#/$defs/network",
+          "content_type": "application/json"
+        }
+      },
+      "error_schema": "../common/error.schema.json",
+      "errors": [
+        {
+          "code": "service_unauthenticated",
+          "status": 401
+        },
+        {
+          "code": "caller_not_allowed",
+          "status": 403
+        },
+        {
+          "code": "method_not_allowed",
+          "status": 405
+        },
+        {
+          "code": "invalid_request",
+          "status": 400
+        },
+        {
+          "code": "invalid_request",
+          "status": 413
+        },
+        {
+          "code": "unsupported_media_type",
+          "status": 415
+        },
+        {
+          "code": "agent_network_not_found",
+          "status": 404
+        },
+        {
+          "code": "agent_network_unavailable",
+          "status": 409
+        },
+        {
+          "code": "resource_version_conflict",
+          "status": 409
+        },
+        {
+          "code": "attachment_open",
+          "status": 409
+        },
+        {
+          "code": "cleanup_failed",
+          "status": 503
+        },
+        {
+          "code": "operation_failed",
+          "status": 503
+        },
+        {
+          "code": "control_plane_unavailable",
+          "status": 503
+        }
+      ]
     },
     {
       "method": "PUT",
-      "path": "/internal/policies/{policy_id}/revisions/{revision}"
+      "path": "/internal/policies/{policy_id}/revisions/{revision}",
+      "request_body": "policy-revision-request.schema.json",
+      "caller": "agent-controller",
+      "authentication": "workload",
+      "responses": {
+        "200": {
+          "body": "control-response.schema.json#/$defs/policy_metadata",
+          "content_type": "application/json"
+        }
+      },
+      "error_schema": "../common/error.schema.json",
+      "errors": [
+        {
+          "code": "service_unauthenticated",
+          "status": 401
+        },
+        {
+          "code": "caller_not_allowed",
+          "status": 403
+        },
+        {
+          "code": "method_not_allowed",
+          "status": 405
+        },
+        {
+          "code": "invalid_request",
+          "status": 400
+        },
+        {
+          "code": "invalid_request",
+          "status": 413
+        },
+        {
+          "code": "unsupported_media_type",
+          "status": 415
+        },
+        {
+          "code": "policy_revision_conflict",
+          "status": 409
+        },
+        {
+          "code": "operation_failed",
+          "status": 503
+        },
+        {
+          "code": "control_plane_unavailable",
+          "status": 503
+        }
+      ]
     },
     {
       "method": "GET",
-      "path": "/internal/policies/{policy_id}/revisions/{revision}"
+      "path": "/internal/policies/{policy_id}/revisions/{revision}",
+      "request_body": "none",
+      "caller": "agent-controller",
+      "authentication": "workload",
+      "responses": {
+        "200": {
+          "body": "control-response.schema.json#/$defs/policy_revision",
+          "content_type": "application/json"
+        }
+      },
+      "error_schema": "../common/error.schema.json",
+      "errors": [
+        {
+          "code": "service_unauthenticated",
+          "status": 401
+        },
+        {
+          "code": "caller_not_allowed",
+          "status": 403
+        },
+        {
+          "code": "method_not_allowed",
+          "status": 405
+        },
+        {
+          "code": "invalid_request",
+          "status": 400
+        },
+        {
+          "code": "policy_revision_not_found",
+          "status": 404
+        },
+        {
+          "code": "operation_failed",
+          "status": 503
+        },
+        {
+          "code": "control_plane_unavailable",
+          "status": 503
+        }
+      ]
     },
     {
       "method": "GET",
-      "path": "/internal/agent-policy-assignments/{agent_id}"
+      "path": "/internal/agent-policy-assignments/{agent_id}",
+      "request_body": "none",
+      "caller": "agent-controller",
+      "authentication": "workload",
+      "responses": {
+        "200": {
+          "body": "control-response.schema.json#/$defs/assignment",
+          "content_type": "application/json"
+        }
+      },
+      "error_schema": "../common/error.schema.json",
+      "errors": [
+        {
+          "code": "service_unauthenticated",
+          "status": 401
+        },
+        {
+          "code": "caller_not_allowed",
+          "status": 403
+        },
+        {
+          "code": "method_not_allowed",
+          "status": 405
+        },
+        {
+          "code": "invalid_request",
+          "status": 400
+        },
+        {
+          "code": "agent_network_not_found",
+          "status": 404
+        },
+        {
+          "code": "operation_failed",
+          "status": 503
+        },
+        {
+          "code": "control_plane_unavailable",
+          "status": 503
+        }
+      ]
     },
     {
       "method": "PUT",
-      "path": "/internal/agent-policy-assignments/{agent_id}"
+      "path": "/internal/agent-policy-assignments/{agent_id}",
+      "request_body": "policy-assignment-request.schema.json",
+      "caller": "agent-controller",
+      "authentication": "workload",
+      "responses": {
+        "200": {
+          "body": "control-response.schema.json#/$defs/assignment",
+          "content_type": "application/json"
+        }
+      },
+      "error_schema": "../common/error.schema.json",
+      "errors": [
+        {
+          "code": "service_unauthenticated",
+          "status": 401
+        },
+        {
+          "code": "caller_not_allowed",
+          "status": 403
+        },
+        {
+          "code": "method_not_allowed",
+          "status": 405
+        },
+        {
+          "code": "invalid_request",
+          "status": 400
+        },
+        {
+          "code": "invalid_request",
+          "status": 413
+        },
+        {
+          "code": "unsupported_media_type",
+          "status": 415
+        },
+        {
+          "code": "agent_network_not_found",
+          "status": 404
+        },
+        {
+          "code": "agent_network_unavailable",
+          "status": 409
+        },
+        {
+          "code": "policy_revision_not_found",
+          "status": 404
+        },
+        {
+          "code": "resource_version_conflict",
+          "status": 409
+        },
+        {
+          "code": "cleanup_failed",
+          "status": 503
+        },
+        {
+          "code": "operation_failed",
+          "status": 503
+        },
+        {
+          "code": "control_plane_unavailable",
+          "status": 503
+        }
+      ]
     }
   ],
   "schemas": {
     "policy": "policy.schema.json",
+    "policy_revision_request": "policy-revision-request.schema.json",
+    "policy_assignment_request": "policy-assignment-request.schema.json",
     "responses": "control-response.schema.json",
     "packet": "../runtime/packet-contract.json",
     "attachment_state_request": "attachment-state-request.schema.json",
     "resource_version_request": "resource-version-request.schema.json",
     "service_token": "../platform/service-token-callers.schema.json",
     "tunnel_key_request": "tunnel-key-request.schema.json",
-    "error": "../common/error.schema.json"
+    "error": "../common/error.schema.json",
+    "attachment_state_body": "attachment-state-body.schema.json",
+    "resource_version_body": "resource-version-body.schema.json"
   },
   "error_codes": [
     "service_unauthenticated",

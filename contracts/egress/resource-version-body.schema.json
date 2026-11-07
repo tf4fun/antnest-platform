@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.antnest.dev/egress/resource-version-body.schema.json",
+  "title": "Runtime Egress Resource Version Request Body",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "expected_resource_version": {
+      "type": "integer",
+      "minimum": 1,
+      "deprecated": true
+    },
+    "expected_version": {
+      "allOf": [
+        {"$ref": "../common/precondition.schema.json#/$defs/expected_version"},
+        {"type": "string", "pattern": "^[1-9][0-9]*$", "maxLength": 20}
+      ]
+    }
+  },
+  "not": {
+    "required": ["expected_version", "expected_resource_version"]
+  }
+}

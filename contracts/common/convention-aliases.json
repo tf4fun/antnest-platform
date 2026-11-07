@@ -1195,5 +1195,59 @@
     "kind": "deprecated_alias",
     "reason": "Egress accepts only as a one-release input alias for expected_version; rejects multiple forms.",
     "remove_after": "next_release"
+  },
+  {
+    "file": "egress/attachment-state-body.schema.json",
+    "pointer": "/properties/expected_resource_version",
+    "field": "expected_resource_version",
+    "replacement": "expected_version",
+    "kind": "deprecated_alias",
+    "reason": "Egress accepts only as a one-release input alias for expected_version; rejects multiple forms.",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "egress/attachment-state-body.schema.json",
+    "pointer": "/not/required/1",
+    "field": "expected_resource_version",
+    "replacement": "expected_version",
+    "kind": "deprecated_alias",
+    "reason": "Egress accepts only as a one-release input alias for expected_version; rejects multiple forms.",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "egress/resource-version-body.schema.json",
+    "pointer": "/properties/expected_resource_version",
+    "field": "expected_resource_version",
+    "replacement": "expected_version",
+    "kind": "deprecated_alias",
+    "reason": "Egress accepts only as a one-release input alias for expected_version; rejects multiple forms.",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "egress/resource-version-body.schema.json",
+    "pointer": "/not/required/1",
+    "field": "expected_resource_version",
+    "replacement": "expected_version",
+    "kind": "deprecated_alias",
+    "reason": "Egress accepts only as a one-release input alias for expected_version; rejects multiple forms.",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "egress/control-contract.json",
+    "pointer": "/precondition/deprecated_alias",
+    "field": "expected_resource_version",
+    "replacement": "expected_version",
+    "kind": "deprecated_alias",
+    "reason": "Descriptor names the deprecated one-release input alias for the Egress precondition contract; requests may still carry it.",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "egress/control-contract.json",
+    "pointer": "/precondition/forms/1",
+    "field": "expected_resource_version",
+    "replacement": "expected_version",
+    "kind": "deprecated_alias",
+    "reason": "Descriptor names the deprecated one-release input alias for the Egress precondition contract; requests may still carry it.",
+    "remove_after": "next_release"
   }
 ]

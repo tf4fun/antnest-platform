@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.antnest.dev/egress/attachment-state-body.schema.json",
+  "title": "Runtime Egress attachment state request body",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["state"],
+  "properties": {
+    "state": {"enum": ["closed", "pending", "open"]},
+    "expected_resource_version": {"type": "integer", "minimum": 1, "deprecated": true},
+    "expected_version": {
+      "allOf": [
+        {"$ref": "../common/precondition.schema.json#/$defs/expected_version"},
+        {"type": "string", "pattern": "^[1-9][0-9]*$", "maxLength": 20}
+      ]
+    },
+    "runtime_endpoint": {"type": ["string", "null"], "format": "ipv4"},
+    "tunnel_key_id": {"type": ["string", "null"], "pattern": "^rtk_[0-9a-f]{32}$"}
+  },
+  "allOf": [
+    {
+      "if": {"properties": {"state": {"const": "open"}}, "required": ["state"]},
+      "then": {
+        "required": ["runtime_endpoint", "tunnel_key_id"],
+        "properties": {"runtime_endpoint": {"type": "string"}, "tunnel_key_id": {"type": "string"}}
+      },
+      "else": {"properties": {"runtime_endpoint": {"type": "null"}, "tunnel_key_id": {"type": "null"}}}
+    }
+  ],
+  "not": {
+    "required": ["expected_version", "expected_resource_version"]
+  }
+}

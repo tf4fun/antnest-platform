@@ -95,3 +95,70 @@ pub async fn service() -> Arc<ControlService<InMemoryRepository, NoopKernel>> {
     service.recover().await.unwrap();
     service
 }
+
+pub mod schemas {
+    use std::sync::OnceLock;
+
+    fn documents() -> &'static [(String, serde_json::Value)] {
+        static DOCS: OnceLock<Vec<(String, serde_json::Value)>> = OnceLock::new();
+        DOCS.get_or_init(|| {
+            let mut docs = Vec::new();
+            for dir in ["egress", "common"] {
+                let path = format!("{}/../../contracts/{dir}", env!("CARGO_MANIFEST_DIR"));
+                let mut names = std::fs::read_dir(&path)
+                    .unwrap()
+                    .map(|entry| entry.unwrap().file_name().into_string().unwrap())
+                    .filter(|name| name.ends_with(".schema.json"))
+                    .collect::<Vec<_>>();
+                names.sort();
+                for name in names {
+                    let text = std::fs::read_to_string(format!("{path}/{name}")).unwrap();
+                    docs.push((
+                        format!("{dir}/{name}"),
+                        serde_json::from_str(&text).unwrap(),
+                    ));
+                }
+            }
+            docs
+        })
+    }
+
+    fn absolute(reference: &str) -> String {
+        let (file, fragment) = match reference.split_once('#') {
+            Some((file, fragment)) => (file, format!("#{fragment}")),
+            None => (reference, String::new()),
+        };
+        let joined = format!("egress/{file}");
+        let mut parts: Vec<&str> = Vec::new();
+        for part in joined.split('/') {
+            match part {
+                ".." => {
+                    parts.pop();
+                }
+                "." | "" => {}
+                _ => parts.push(part),
+            }
+        }
+        format!("https://schemas.antnest.dev/{}{fragment}", parts.join("/"))
+    }
+
+    fn validator(reference: &str) -> jsonschema::Validator {
+        let mut options = jsonschema::options();
+        for (_key, document) in documents() {
+            let id = document["$id"].as_str().unwrap().to_owned();
+            options = options.with_resource(
+                id,
+                jsonschema::Resource::from_contents(document.clone()).unwrap(),
+            );
+        }
+        options
+            .build(&serde_json::json!({"$ref": absolute(reference)}))
+            .unwrap()
+    }
+
+    pub fn assert_valid(reference: &str, document: &serde_json::Value) {
+        if let Err(error) = validator(reference).validate(document) {
+            panic!("{reference} rejected {document}: {error}");
+        }
+    }
+}
