@@ -1,0 +1,9 @@
+{
+  "action": "temporary_release",
+  "effect_state": "settled",
+  "execution_id": "execution-1",
+  "job_id": "run-1",
+  "outcome": "released",
+  "request_id": "release_11111111111111111111111111111111",
+  "runtime_call_stopped": true
+}

@@ -348,6 +348,21 @@ with the [Runtime slice](../../contracts/common/slices/antnest-runtime.json); MC
 add common fields beside the legacy `error_code`/effect members and JSON-RPC `ErrorData.data`
 adapts the envelope without changing outer protocol codes.
 
+### Temporary Skill producer goldens
+
+The temporary Skill HTTP serializers (`installed_response`,
+`released_response`, `failure_with_request_id` in
+`src/skill_temporary_http.rs`) assemble the exact production response bodies
+and are called by the real handler — no mocked wire shape. Three captures in
+`contracts/runtime/examples/` (`temporary-install.installed.json`,
+`temporary-release.released.json`,
+`temporary-operation.disabled.json`, schema
+`runtime/temporary-skills.schema.json` `$defs`) are compared without field normalization; update
+them only via explicit `UPDATE_GOLDEN=1` with fixed correlation IDs in the
+test. The production error fallback still generates its own request ID when
+called without one — the capture factory only fixes IDs for deterministic
+golden comparison.
+
 ### RuntimeSpec N-1 compatibility
 
 `decode_runtime_spec` accepts the Controller producer documents in
