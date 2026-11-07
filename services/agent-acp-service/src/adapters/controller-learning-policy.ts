@@ -73,7 +73,9 @@ export class ControllerLearningPolicyClient {
     } catch {
       throw new LearningPolicyReadError("policy_unavailable");
     }
-    const result = learningPolicySchema.safeParse(projectResponse(learningPolicySchema, parsed));
+    const result = learningPolicySchema.safeParse(
+      projectResponse(learningPolicySchema, parsed, new Set(["caller_selected_authority"])),
+    );
     if (
       !result.success ||
       result.data.organization_id !== scope.organizationId ||
