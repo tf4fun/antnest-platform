@@ -140,7 +140,7 @@ async fn exchange_empty(
         "none" => {
             let bytes = to_bytes(response.into_body(), 1024).await.unwrap();
             assert!(bytes.is_empty(), "{path}");
-            return serde_json::Value::Null;
+            serde_json::Value::Null
         }
         schema => {
             let document = json_body(response).await;
