@@ -28,6 +28,14 @@ Runtime Egress does not accept `baggage` as part of its control contract.
 
 This document describes control contract revision 9.
 
+The machine-readable [control-contract.json](control-contract.json) declares
+for every route its request body (`request_body`, a schema reference or
+`none`), response status/body map (`responses`), reachable error codes
+(`errors` plus shared `fallback_errors`), authentication scheme and the common
+error envelope (`error_schema`). The `precondition` block records that guarded
+mutations accept exactly one of canonical `expected_version`, a strong
+`If-Match` token or the one-release deprecated `expected_resource_version`.
+
 ## Status
 
 `GET /status`

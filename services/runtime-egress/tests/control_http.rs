@@ -14,6 +14,9 @@ struct ControlContract {
     transport: String,
     trust_boundary: String,
     status_values: Vec<String>,
+    precondition: serde_json::Value,
+    error_schema: String,
+    fallback_errors: Vec<ContractErrorEntry>,
     builtin_policies: std::collections::BTreeMap<String, BuiltinPolicy>,
     routes: Vec<ContractRoute>,
     schemas: std::collections::BTreeMap<String, String>,
@@ -26,8 +29,27 @@ struct ContractRoute {
     method: String,
     path: String,
     request_schema: Option<String>,
+    request_body: String,
     caller: Option<String>,
+    authentication: String,
     content_capture: Option<String>,
+    responses: std::collections::BTreeMap<String, ContractResponse>,
+    error_schema: String,
+    errors: Vec<ContractErrorEntry>,
+}
+
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ContractResponse {
+    body: String,
+    content_type: Option<String>,
+}
+
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ContractErrorEntry {
+    code: String,
+    status: u16,
 }
 
 #[derive(serde::Deserialize)]
@@ -84,8 +106,16 @@ fn machine_contract_matches_the_complete_control_surface() {
         "attachment-state-request.schema.json"
     );
     assert_eq!(
+        contract.schemas["attachment_state_body"],
+        "attachment-state-body.schema.json"
+    );
+    assert_eq!(
         contract.schemas["resource_version_request"],
         "resource-version-request.schema.json"
+    );
+    assert_eq!(
+        contract.schemas["resource_version_body"],
+        "resource-version-body.schema.json"
     );
     let state_routes = contract
         .routes
@@ -93,6 +123,129 @@ fn machine_contract_matches_the_complete_control_surface() {
         .filter(|route| route.request_schema.is_some())
         .collect::<Vec<_>>();
     assert_eq!(state_routes.len(), 3);
+    let expected_bodies = [
+        (
+            "PUT",
+            "/internal/agent-tunnel-keys/{agent_id}",
+            "tunnel-key-request.schema.json",
+        ),
+        ("GET", "/status", "none"),
+        ("GET", "/internal/agent-networks/{agent_id}", "none"),
+        ("PUT", "/internal/agent-networks/{agent_id}", "none"),
+        (
+            "PUT",
+            "/internal/agent-network-attachments/{agent_id}",
+            "attachment-state-body.schema.json",
+        ),
+        (
+            "POST",
+            "/internal/agent-networks/{agent_id}/release",
+            "resource-version-body.schema.json",
+        ),
+        (
+            "PUT",
+            "/internal/policies/{policy_id}/revisions/{revision}",
+            "policy-revision-request.schema.json",
+        ),
+        (
+            "GET",
+            "/internal/policies/{policy_id}/revisions/{revision}",
+            "none",
+        ),
+        (
+            "GET",
+            "/internal/agent-policy-assignments/{agent_id}",
+            "none",
+        ),
+        (
+            "PUT",
+            "/internal/agent-policy-assignments/{agent_id}",
+            "policy-assignment-request.schema.json",
+        ),
+    ];
+    assert_eq!(
+        contract
+            .routes
+            .iter()
+            .map(|route| (
+                route.method.as_str(),
+                route.path.as_str(),
+                route.request_body.as_str()
+            ))
+            .collect::<Vec<_>>(),
+        expected_bodies
+    );
+    assert_eq!(
+        contract
+            .routes
+            .iter()
+            .map(|route| (
+                route.method.as_str(),
+                route.responses.keys().next().unwrap().as_str(),
+                route.responses.values().next().unwrap().body.as_str(),
+            ))
+            .collect::<Vec<_>>(),
+        [
+            ("PUT", "204", "none"),
+            ("GET", "200", "control-response.schema.json#/$defs/status"),
+            ("GET", "200", "control-response.schema.json#/$defs/network"),
+            ("PUT", "200", "control-response.schema.json#/$defs/network"),
+            ("PUT", "200", "control-response.schema.json#/$defs/network"),
+            ("POST", "200", "control-response.schema.json#/$defs/network"),
+            (
+                "PUT",
+                "200",
+                "control-response.schema.json#/$defs/policy_metadata"
+            ),
+            (
+                "GET",
+                "200",
+                "control-response.schema.json#/$defs/policy_revision"
+            ),
+            (
+                "GET",
+                "200",
+                "control-response.schema.json#/$defs/assignment"
+            ),
+            (
+                "PUT",
+                "200",
+                "control-response.schema.json#/$defs/assignment"
+            ),
+        ]
+    );
+    assert_eq!(contract.precondition["cardinality"], "exactly_one");
+    assert_eq!(contract.precondition["canonical"], "expected_version");
+    assert_eq!(
+        contract.precondition["deprecated_alias"],
+        "expected_resource_version"
+    );
+    assert_eq!(contract.fallback_errors.len(), 2);
+    for error in &contract.fallback_errors {
+        assert!(contract.error_codes.contains(&error.code));
+        assert!((100..=599).contains(&error.status));
+    }
+    for route in &contract.routes {
+        assert_eq!(route.error_schema, contract.error_schema);
+        for response in route.responses.values() {
+            if response.body != "none" {
+                assert_eq!(response.content_type.as_deref(), Some("application/json"));
+            }
+        }
+        assert!(!route.errors.is_empty());
+        for error in &route.errors {
+            assert!(contract.error_codes.contains(&error.code), "{}", error.code);
+            assert!((100..=599).contains(&error.status));
+        }
+        if route.authentication == "health" {
+            assert!(
+                !route
+                    .errors
+                    .iter()
+                    .any(|error| error.code == "service_unauthenticated")
+            );
+        }
+    }
     assert!(state_routes.iter().any(|route| {
         route.request_schema.as_deref() == Some("attachment-state-request.schema.json")
     }));

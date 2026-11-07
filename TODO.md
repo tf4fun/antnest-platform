@@ -20,6 +20,8 @@ Issue 状态最后核对于 2026-10-28：141 个 issue，87 个已关闭，54 �
 
 ## 当前批次
 
+- **#38 Runtime Egress 批次（2026-11-07，依赖共享契约 PR #575）**：10 个路由补齐正文／响应／鉴权及逐路由 code/status；ensure 无正文、tunnel registration 为 204。真实 router 覆盖全部成功方法与 400/401/403/404/405/409/413/415 错误，按共享 schema 验证；If-Match-only attachment/release 使用新正文 schema，旧 schema 保留不变。源码路由抽取对 literal／constant 新路由和不支持语法 fail-closed，防止路由表与契约同时漏项。定向 TDD Node 9/9、Rust 17＋3、conventions 170 documents clean，日志在 `artifacts/verification/issue-38-egress/`；离线 JSON Schema 测试依赖禁用默认网络解析。完整准入交远程精确候选 CI，不等待并继续 Runtime。
+
 - **#38 共享契约批次（2026-11-07）**：基于 main `ff174f54`（#48 已合并），按共享契约 → Runtime Egress → Antnest Runtime → Runtime Controller → Agent Controller 消费方 → 显式集成拆分独立 PR。先冻结 Egress policy wrapper／assignment／status、Runtime maintenance／HTTP envelope 和路由正文校验接口，不改变服务 wire 行为；ensure-network 为无正文，If-Match 可代替 body precondition，maintenance 保留原 Learning 定义作为 N-1 并校验副本一致。定向先 RED 后 GREEN 31/31，conventions 168 documents clean，JS 格式检查通过，最小日志在 `artifacts/verification/issue-38-contract/`。后续服务路由、真实 handler 验证和 RC 契约迁移尚待各自批次，不宣称 #38 已交付。远程 CI 异步，不合并、不关闭 #38／#83；全部 PR 提交后停止查询，Docker E2E 归专门工作流。
 
 - **#48 PR CI 修复接手（2026-11-07，用户明确授权继续处理）**：本条接续并覆盖以下历史“停止／不轮询 CI”交接状态；当前任务为修复全部 14 个堆叠 PR 的精确候选门禁，不合并、不关闭 #48／#83。已修 Controller lint／机器契约登记与路由校验、N-1 RuntimeSpec 可选字段断言、ACP 类型 lint、Gateway unit＋真实 HTTP/TLS component 扩展字段投影、UI bridge 失效夹具，并沿依赖普通合并传播。后续 ACP 修正保留凭据／旧授权字段拒绝，恢复本地公共快照严格解析；普通 budget／retry 响应扩展改断言完整投影结果、输入不变，持久化仍拒绝未知字段。Runtime 修正身份描述符私密字段和 stdio/HTTP 冲突字段拒绝，包含 null 回归，真实 future-field golden 仍解码。定向证据：ACP 9 文件 194 用例＋v2 29 用例／类型检查／lint、Runtime 4 个契约与安全回归／clippy、Gateway HTTP/TLS 36 子用例全部通过；完整准入以最终候选远程 Repository checks／Integration checks 为准，尚不宣称通过。Docker system E2E 继续归专门流程。
