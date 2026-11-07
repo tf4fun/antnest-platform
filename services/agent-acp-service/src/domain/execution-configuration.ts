@@ -326,9 +326,19 @@ export function isExecutionAccessRevoked(
   );
 }
 
+// Retired authority and private material cannot be treated as future extensions.
+// A declared credential field remains valid only in its schema-defined location.
+export const executionResponseReservedFields: ReadonlySet<string> = new Set([
+  "admission_id",
+  "credential",
+  "credential_directory",
+  "secret",
+  "token",
+]);
+
 export function parseExecutionConfiguration(input: unknown): ExecutionConfigurationV1 {
   const parsed = executionConfigurationSchema.safeParse(
-    projectResponse(executionConfigurationSchema, input),
+    projectResponse(executionConfigurationSchema, input, executionResponseReservedFields),
   );
   if (!parsed.success) {
     throw new DomainError("invalid_execution_configuration", "Invalid execution configuration");
@@ -337,9 +347,9 @@ export function parseExecutionConfiguration(input: unknown): ExecutionConfigurat
 }
 
 export function parsePublicExecutionConfiguration(input: unknown): PublicExecutionConfiguration {
-  const parsed = publicExecutionConfigurationSchema.safeParse(
-    projectResponse(publicExecutionConfigurationSchema, input),
-  );
+  // Storage is our own public representation, not a forward-compatible wire
+  // response. Reject credentials and unexpected data instead of repairing it.
+  const parsed = publicExecutionConfigurationSchema.safeParse(input);
   if (!parsed.success) {
     throw new DomainError(
       "invalid_execution_configuration",
