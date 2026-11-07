@@ -73,8 +73,8 @@ export function executionPeers(fixture, stats, json) {
         if (attachment && r.method === "PUT") {
           const value = network(attachment[1]);
           assert.equal(
-            body.expected_resource_version,
-            value.attachment_resource_version,
+            body.expected_version,
+            String(value.attachment_resource_version),
           );
           assert(["open", "pending", "closed"].includes(body.state));
           const peer = body.runtime_endpoint;
@@ -230,7 +230,7 @@ export function executionPeers(fixture, stats, json) {
         if (disable) {
           const value = runtimes.get(disable[1]);
           assert(value);
-          assert.equal(body.expected_revision, value.runtime_revision);
+          assert.equal(body.expected_version, value.runtime_revision);
           Object.assign(value, {
             runtime_revision: "rtv_" + randomBytes(16).toString("hex"),
             runtime_execution_id: "",
