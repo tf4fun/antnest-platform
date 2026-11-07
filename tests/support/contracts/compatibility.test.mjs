@@ -355,12 +355,21 @@ test("problem strings carry the caller-provided label", () => {
   );
 });
 
-const ID = "https://schemas.antnest.dev/runtime-controller/control-api.schema.json";
-const movedDoc = { $id: ID, type: "object", properties: { a: { type: "string" } } };
+const ID =
+  "https://schemas.antnest.dev/runtime-controller/control-api.schema.json";
+const movedDoc = {
+  $id: ID,
+  type: "object",
+  properties: { a: { type: "string" } },
+};
 
 test("identical same-id relocation from RC api directory is allowed", () => {
-  const before = new Map([["services/runtime-controller/api/control-api.schema.json", movedDoc]]);
-  const after = new Map([["contracts/runtime-controller/control-api.schema.json", movedDoc]]);
+  const before = new Map([
+    ["services/runtime-controller/api/control-api.schema.json", movedDoc],
+  ]);
+  const after = new Map([
+    ["contracts/runtime-controller/control-api.schema.json", movedDoc],
+  ]);
   assert.deepEqual(schemaRevisionProblems(before, after), []);
 });
 
@@ -368,18 +377,33 @@ test("relocation requires destination, matching id and present id", () => {
   const oldPath = "services/runtime-controller/api/control-api.schema.json";
   for (const after of [
     new Map(),
-    new Map([["contracts/runtime-controller/control-api.schema.json", { ...movedDoc, $id: `${ID}#other` }]]),
-    new Map([["contracts/runtime-controller/control-api.schema.json", { ...movedDoc, $id: undefined }]]),
+    new Map([
+      [
+        "contracts/runtime-controller/control-api.schema.json",
+        { ...movedDoc, $id: `${ID}#other` },
+      ],
+    ]),
+    new Map([
+      [
+        "contracts/runtime-controller/control-api.schema.json",
+        { ...movedDoc, $id: undefined },
+      ],
+    ]),
     new Map([["contracts/runtime-controller/other.schema.json", movedDoc]]),
   ]) {
-    assert.notDeepEqual(schemaRevisionProblems(new Map([[oldPath, movedDoc]]), after), []);
+    assert.notDeepEqual(
+      schemaRevisionProblems(new Map([[oldPath, movedDoc]]), after),
+      [],
+    );
   }
   const noId = { ...movedDoc };
   delete noId.$id;
   assert.notDeepEqual(
     schemaRevisionProblems(
       new Map([[oldPath, noId]]),
-      new Map([["contracts/runtime-controller/control-api.schema.json", movedDoc]]),
+      new Map([
+        ["contracts/runtime-controller/control-api.schema.json", movedDoc],
+      ]),
     ),
     [],
   );
@@ -394,7 +418,9 @@ test("tightening or unrelated removal still fails after relocation support", () 
   assert.notDeepEqual(
     schemaRevisionProblems(
       new Map([[oldPath, movedDoc]]),
-      new Map([["contracts/runtime-controller/control-api.schema.json", tightened]]),
+      new Map([
+        ["contracts/runtime-controller/control-api.schema.json", tightened],
+      ]),
     ),
     [],
   );
@@ -404,7 +430,9 @@ test("tightening or unrelated removal still fails after relocation support", () 
         [oldPath, movedDoc],
         ["contracts/common/other.schema.json", movedDoc],
       ]),
-      new Map([["contracts/runtime-controller/control-api.schema.json", movedDoc]]),
+      new Map([
+        ["contracts/runtime-controller/control-api.schema.json", movedDoc],
+      ]),
     ),
     [],
   );
