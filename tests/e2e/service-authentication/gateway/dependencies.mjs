@@ -421,7 +421,7 @@ for (const [service, port] of Object.entries(fixture.ports)) {
           externalFields(
             input,
             ["actor_principal_id", "scope", "limit"],
-            ["after_id", "notice_after_id"],
+            ["cursor", "notice_after_id"],
           );
           if (
             input.scope !== "self" ||
@@ -431,7 +431,7 @@ for (const [service, port] of Object.entries(fixture.ports)) {
           )
             throw Error("external_identity_scope_invalid");
           const bindings = externalBindings.filter(
-            (item) => item.id > (input.after_id ?? ""),
+            (item) => item.id > (input.cursor ?? ""),
           );
           const notices = externalNotices.filter(
             (item) =>
@@ -439,11 +439,12 @@ for (const [service, port] of Object.entries(fixture.ports)) {
               item.id > (input.notice_after_id ?? ""),
           );
           return json(response, {
-            bindings: bindings.slice(0, input.limit),
+            items: bindings.slice(0, input.limit),
             notices: notices.slice(0, input.limit),
-            ...(bindings.length > input.limit
-              ? { next_after_id: bindings[input.limit - 1].id }
-              : {}),
+            next_cursor:
+              bindings.length > input.limit
+                ? bindings[input.limit - 1].id
+                : null,
             ...(notices.length > input.limit
               ? { next_notice_after_id: notices[input.limit - 1].id }
               : {}),
@@ -546,7 +547,7 @@ for (const [service, port] of Object.entries(fixture.ports)) {
             throw Error("invalid_session_scope");
           const rows = [...sessions.values()]
             .filter(live)
-            .filter((session) => session.id > (input.after_id ?? ""))
+            .filter((session) => session.id > (input.cursor ?? ""))
             .sort((a, b) => a.id.localeCompare(b.id));
           const page = rows.slice(0, input.limit).map((session) => ({
             id: session.id,
@@ -561,10 +562,8 @@ for (const [service, port] of Object.entries(fixture.ports)) {
             current: session === current,
           }));
           return json(response, {
-            sessions: page,
-            ...(rows.length > input.limit
-              ? { next_after_id: page.at(-1).id }
-              : {}),
+            items: page,
+            next_cursor: rows.length > input.limit ? page.at(-1).id : null,
           });
         }
         if (path.endsWith("revoke-user-sessions")) {

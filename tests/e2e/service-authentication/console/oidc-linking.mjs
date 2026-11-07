@@ -96,6 +96,7 @@ export async function verifyOIDCLinking({ request, state, fixture }) {
     "?limit=01",
     "?limit=1&scope=self",
     "?limit=1&organization_id=forged",
+    "?limit=1&cursor=",
     "?limit=1&after_id=",
     "?limit=1&limit=2",
   ])
@@ -174,10 +175,10 @@ export async function verifyOIDCLinking({ request, state, fixture }) {
       Authorization: "Bearer private-browser",
     },
   });
-  assert.equal(first.providers[0].id, "provider-1");
-  assert.equal(first.providers[0].enabled, false);
+  assert.equal(first.items[0].id, "provider-1");
+  assert.equal(first.items[0].enabled, false);
   assert.deepEqual(
-    Object.keys(first.providers[0]).sort(),
+    Object.keys(first.items[0]).sort(),
     [
       "id",
       "name",
@@ -189,12 +190,10 @@ export async function verifyOIDCLinking({ request, state, fixture }) {
       "link_policy_review_required",
     ].sort(),
   );
-  assert.equal(first.next_after_id, "provider-1");
-  const second = await safe(
-    chooser + "?limit=1&after_id=" + first.next_after_id,
-  );
+  assert.equal(first.next_cursor, "provider-1");
+  const second = await safe(chooser + "?limit=1&cursor=" + first.next_cursor);
   assert.deepEqual(
-    second.providers.map((row) => row.id),
+    second.items.map((row) => row.id),
     ["provider-2"],
   );
   const legacyInventory = (await safe(tokens)).tokens;
@@ -266,21 +265,21 @@ export async function verifyOIDCLinking({ request, state, fixture }) {
   );
   checks++;
   const bindings = await safe(path("target-member") + "?limit=1");
-  assert.equal(bindings.bindings[0].subject, "  <opaque> é 😀  ");
-  assert.equal(bindings.bindings[0].organization_id, "org-1");
-  assert.equal(bindings.bindings[0].membership_id, "target-member");
+  assert.equal(bindings.items[0].subject, "  <opaque> é 😀  ");
+  assert.equal(bindings.items[0].organization_id, "org-1");
+  assert.equal(bindings.items[0].membership_id, "target-member");
   assert.equal(bindings.notices, undefined);
   const next = await safe(
-    path("target-member") + "?limit=1&after_id=" + bindings.next_after_id,
+    path("target-member") + "?limit=1&cursor=" + bindings.next_cursor,
   );
   assert.deepEqual(
-    next.bindings.map((row) => row.id),
+    next.items.map((row) => row.id),
     ["binding-2"],
   );
   const org2 = callerContext(fixture, { org: "org-2", mbr: "member-2" });
   assert.equal(
     (await safe(path("target-member-2") + "?limit=1", { context: org2 }))
-      .bindings[0].organization_id,
+      .items[0].organization_id,
     "org-2",
   );
   await safe(path("target-member") + "?limit=1", {

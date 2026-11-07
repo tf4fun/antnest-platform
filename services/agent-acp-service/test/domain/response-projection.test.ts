@@ -100,7 +100,7 @@ describe("response projection", () => {
     const records = z.strictObject({
       notes: z.record(z.string(), z.strictObject({ flag: z.boolean() })),
     });
-    const input = JSON.parse(
+    const input: unknown = JSON.parse(
       `{"notes":{"__proto__":{"flag":true,"dropped":1},"regular":{"flag":false,"dropped":2}}}`,
     );
     const projected = projectResponse(records, input) as {
