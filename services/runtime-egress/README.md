@@ -267,3 +267,18 @@ creates fresh ephemeral protocol sessions. Packet forwarding never reads SQL.
 The Egress owning batch covers unit/contract/socket/PostgreSQL/Docker evidence.
 Controller consumption and deployment wiring remain pending in the separate
 [#111 integration batch](../../docs/authenticated-runtime-tunnel.md#delivery-batches-and-evidence).
+
+## Golden examples
+
+Producer outputs are captured by the library test
+`control_producer_goldens`, which serializes the actual control response types
+and compares them against `contracts/egress/examples/`. Rewrite the goldens
+only via explicit opt-in:
+
+    UPDATE_GOLDEN=1 cargo test --manifest-path services/runtime-egress/Cargo.toml --lib control_producer_goldens
+
+Every captured output is registered in
+[`contracts/golden-manifest.json`](../../contracts/golden-manifest.json) and
+validated in CI by the shared offline Ajv checker against
+[`control-response.schema.json`](../../contracts/egress/control-response.schema.json);
+the Rust test itself performs no schema validation.

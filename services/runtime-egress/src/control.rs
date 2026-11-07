@@ -1246,3 +1246,7 @@ mod tests {
 #[cfg(test)]
 #[path = "control/common_error_tests.rs"]
 mod common_error_tests;
+
+#[cfg(test)]
+#[path = "control/golden_tests.rs"]
+mod golden_tests;

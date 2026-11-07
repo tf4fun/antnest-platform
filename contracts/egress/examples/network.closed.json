@@ -1,0 +1,15 @@
+{
+  "agent_id": "agent-1",
+  "attachment_resource_version": 1,
+  "attachment_state": "closed",
+  "egress_endpoint": {
+    "ipv4": "10.20.0.8",
+    "port": 8092
+  },
+  "network_resource_version": 1,
+  "packet_contract_revision": 2,
+  "resolver_ipv4": "100.64.0.1",
+  "state": "active",
+  "tunnel_ipv4": "100.64.0.2",
+  "tunnel_key_id": null
+}

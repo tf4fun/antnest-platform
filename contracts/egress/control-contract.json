@@ -62,6 +62,7 @@
   ],
   "schemas": {
     "policy": "policy.schema.json",
+    "responses": "control-response.schema.json",
     "packet": "../runtime/packet-contract.json",
     "attachment_state_request": "attachment-state-request.schema.json",
     "resource_version_request": "resource-version-request.schema.json",

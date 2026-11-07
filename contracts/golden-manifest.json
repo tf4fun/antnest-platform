@@ -48,6 +48,48 @@
     "consumers": ["admin-console"]
   },
   {
+    "file": "egress/examples/assignment.current.json",
+    "schema": "egress/control-response.schema.json#/$defs/assignment",
+    "producer": "runtime-egress",
+    "consumers": ["agent-controller"]
+  },
+  {
+    "file": "egress/examples/network.closed.json",
+    "schema": "egress/control-response.schema.json#/$defs/network",
+    "producer": "runtime-egress",
+    "consumers": ["agent-controller"]
+  },
+  {
+    "file": "egress/examples/network.open.json",
+    "schema": "egress/control-response.schema.json#/$defs/network",
+    "producer": "runtime-egress",
+    "consumers": ["agent-controller"]
+  },
+  {
+    "file": "egress/examples/policy-metadata.v1.json",
+    "schema": "egress/control-response.schema.json#/$defs/policy_metadata",
+    "producer": "runtime-egress",
+    "consumers": ["agent-controller"]
+  },
+  {
+    "file": "egress/examples/policy-metadata.v2.json",
+    "schema": "egress/control-response.schema.json#/$defs/policy_metadata",
+    "producer": "runtime-egress",
+    "consumers": ["agent-controller"]
+  },
+  {
+    "file": "egress/examples/policy.v1.json",
+    "schema": "egress/control-response.schema.json#/$defs/policy_revision",
+    "producer": "runtime-egress",
+    "consumers": ["agent-controller"]
+  },
+  {
+    "file": "egress/examples/policy.v2.json",
+    "schema": "egress/control-response.schema.json#/$defs/policy_revision",
+    "producer": "runtime-egress",
+    "consumers": ["agent-controller"]
+  },
+  {
     "file": "runtime/examples/rc-inspection.healthy.json",
     "schema": "runtime-controller/control-api.schema.json#/$defs/runtime_inspection",
     "producer": "runtime-controller",
