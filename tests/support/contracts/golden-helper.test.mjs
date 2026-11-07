@@ -191,6 +191,6 @@ test("validateGolden resolves contract descriptor method fragments", async () =>
     validateGolden(
       "identity/identity-contract.json#/methods/list_login_methods/response",
       { methods: "local" },
-    )
+    ),
   );
 });

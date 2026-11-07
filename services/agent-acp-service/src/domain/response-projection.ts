@@ -47,7 +47,7 @@ function projectCandidate(candidates: z.core.$ZodType[], input: unknown): unknow
   for (const candidate of expanded) {
     if (candidate instanceof z.ZodObject) {
       hasObjectShape = true;
-      for (const [name, shape] of Object.entries(candidate.shape)) {
+      for (const [name, shape] of Object.entries<z.core.$ZodType>(candidate.shape)) {
         const declared = fields.get(name);
         if (declared === undefined) fields.set(name, [shape]);
         else declared.push(shape);

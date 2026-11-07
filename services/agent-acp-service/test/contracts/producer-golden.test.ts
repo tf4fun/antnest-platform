@@ -22,8 +22,8 @@ import { serveLearningStatus } from "../../src/transport/learning-status.js";
 import { bindAuthenticatedRequest } from "../../src/transport/trusted-identity.js";
 
 interface SharedGoldenHelpers {
-  assertGolden(path: URL, actual: unknown, options?: { update?: boolean }): void;
-  validateGolden(schema: string, value: unknown): Promise<true>;
+  assertGolden: (path: URL, actual: unknown, options?: { update?: boolean }) => void;
+  validateGolden: (schema: string, value: unknown) => Promise<true>;
 }
 
 const { assertGolden, validateGolden } = (await import(
