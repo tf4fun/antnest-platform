@@ -211,8 +211,11 @@ test("Node Bridge uses official ACP HTTP/SSE with scoped headers and durable met
                   diagnosticKind === "empty"
                     ? null
                     : {
-                        reason: "writer_present",
-                        ...(diagnosticKind === "invalid"
+                        reason:
+                          diagnosticKind === "invalid"
+                            ? "unsupported_reason"
+                            : "writer_present",
+                        ...(diagnosticKind === "extended"
                           ? { command: "private process args" }
                           : {}),
                       },
@@ -440,6 +443,11 @@ test("Node Bridge uses official ACP HTTP/SSE with scoped headers and durable met
       diagnosticKind = kind;
       await assert.rejects(bridge.readLearningStatus());
     }
+    diagnosticKind = "extended";
+    assert.deepEqual(await bridge.readLearningStatus(), {
+      agentId: "agent-1",
+      blocked: { reason: "writer_present" },
+    });
     diagnosticKind = "empty";
     assert.deepEqual(await bridge.readLearningStatus(), {
       agentId: "agent-1",
