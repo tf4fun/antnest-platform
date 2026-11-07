@@ -1,0 +1,9 @@
+{
+  "agentId": "agent-1",
+  "blocked": {
+    "reason": "model_unavailable",
+    "skillName": "docs",
+    "sourceRunId": "run-1",
+    "sourceSessionId": "session-1"
+  }
+}

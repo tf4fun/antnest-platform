@@ -1,5 +1,6 @@
 import { z } from "zod";
 import type { ExecutionConfigurationV2 } from "./execution-publication-v2.js";
+import { projectResponse } from "./response-projection.js";
 import { providerTokenLimitsSchema } from "./provider-token-limits.js";
 import { modelFailoverSchema, modelRetryConfigurationSchema } from "./model-call-policy.js";
 import { organizationBudgetSchema, runBudgetSchema } from "./model-budget.js";
@@ -219,6 +220,7 @@ function validateExecutableRuntime(
 export const executionConfigurationSchema = z.strictObject({
   organization_id: identifier,
   revision,
+  schema_version: z.literal(1).optional(),
   organization_budget: organizationBudgetSchema.optional(),
   providers: z.array(providerConfigurationSchema),
   models: z.array(executionModelSchema),
@@ -242,10 +244,12 @@ export const publicProviderConfigurationSchema = z.discriminatedUnion("enabled",
     credential_revision: identifier.optional(),
   }),
 ]);
-export const publicExecutionConfigurationSchema = executionConfigurationSchema.extend({
-  providers: z.array(publicProviderConfigurationSchema),
-  agents: z.array(agentConfigurationSchema),
-});
+export const publicExecutionConfigurationSchema = executionConfigurationSchema
+  .omit({ schema_version: true })
+  .extend({
+    providers: z.array(publicProviderConfigurationSchema),
+    agents: z.array(agentConfigurationSchema),
+  });
 export type PublicProviderConfiguration = z.infer<typeof publicProviderConfigurationSchema>;
 export type ProviderRouting = Pick<
   ProviderConfiguration,
@@ -322,8 +326,20 @@ export function isExecutionAccessRevoked(
   );
 }
 
+// Retired authority and private material cannot be treated as future extensions.
+// A declared credential field remains valid only in its schema-defined location.
+export const executionResponseReservedFields: ReadonlySet<string> = new Set([
+  "admission_id",
+  "credential",
+  "credential_directory",
+  "secret",
+  "token",
+]);
+
 export function parseExecutionConfiguration(input: unknown): ExecutionConfigurationV1 {
-  const parsed = executionConfigurationSchema.safeParse(input);
+  const parsed = executionConfigurationSchema.safeParse(
+    projectResponse(executionConfigurationSchema, input, executionResponseReservedFields),
+  );
   if (!parsed.success) {
     throw new DomainError("invalid_execution_configuration", "Invalid execution configuration");
   }
@@ -331,6 +347,8 @@ export function parseExecutionConfiguration(input: unknown): ExecutionConfigurat
 }
 
 export function parsePublicExecutionConfiguration(input: unknown): PublicExecutionConfiguration {
+  // Storage is our own public representation, not a forward-compatible wire
+  // response. Reject credentials and unexpected data instead of repairing it.
   const parsed = publicExecutionConfigurationSchema.safeParse(input);
   if (!parsed.success) {
     throw new DomainError(

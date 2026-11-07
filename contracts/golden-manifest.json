@@ -30,6 +30,36 @@
     "consumers": ["agent-acp-service"]
   },
   {
+    "file": "agent-acp/examples/execution-events.permissions.json",
+    "schema": "agent-acp/execution-audit-events.schema.json",
+    "producer": "agent-acp-service",
+    "consumers": ["admin-console"]
+  },
+  {
+    "file": "agent-acp/examples/execution-events.n-1.json",
+    "schema": "agent-acp/execution-audit-events.schema.json",
+    "producer": "agent-acp-service",
+    "consumers": ["admin-console"]
+  },
+  {
+    "file": "agent-acp/examples/execution-events.current.json",
+    "schema": "agent-acp/execution-audit-events.schema.json",
+    "producer": "agent-acp-service",
+    "consumers": ["admin-console"]
+  },
+  {
+    "file": "agent-acp/examples/workspace-execution.running.json",
+    "schema": "agent-acp/workspace-bridge.schema.json#/$defs/executionObservation",
+    "producer": "agent-acp-service",
+    "consumers": ["agent-ui"]
+  },
+  {
+    "file": "agent-acp/examples/workspace-intent.running.json",
+    "schema": "agent-acp/workspace-bridge.schema.json#/$defs/intentReceipt",
+    "producer": "agent-acp-service",
+    "consumers": ["agent-ui"]
+  },
+  {
     "file": "agent-controller/examples/get-agent.ready.json",
     "schema": "agent-controller/control-api.schema.json#/$defs/agent",
     "producer": "agent-controller",
@@ -142,6 +172,18 @@
     "schema": "runtime/runtime-spec.schema.json",
     "producer": "runtime-controller",
     "consumers": ["antnest-runtime"]
+  },
+  {
+    "file": "skill-learning/examples/learning-changes.empty.json",
+    "schema": "skill-learning/learning-api.schema.json#/$defs/change_page",
+    "producer": "agent-acp-service",
+    "consumers": ["agent-ui"]
+  },
+  {
+    "file": "skill-learning/examples/learning-status.blocked.json",
+    "schema": "skill-learning/learning-api.schema.json#/$defs/learning_status",
+    "producer": "agent-acp-service",
+    "consumers": ["agent-ui"]
   },
   {
     "file": "skill-learning/examples/learning-policy.automatic.json",

@@ -76,7 +76,13 @@ export class ExecutionAudits implements ExecutionAuditPort {
       );
       return {
         stream,
-        ...page(rows, limit, scope, (row) => ({ kind: "sequence", sequence: row.sequence })),
+        schema_version: 1 as const,
+        ...page(
+          rows.map((row) => ({ ...row, schema_version: 1 as const })),
+          limit,
+          scope,
+          (row) => ({ kind: "sequence", sequence: row.sequence }),
+        ),
       };
     }
     if (after?.kind === "sequence")
@@ -89,17 +95,23 @@ export class ExecutionAudits implements ExecutionAuditPort {
     );
     return {
       stream,
-      ...page(rows, limit, scope, (row) => {
-        const position = { kind: "time" as const, at: row.created_at, id: row.tool_call_id };
-        if (Buffer.byteLength(auditCursor(scope, position), "utf8") <= 4096) return position;
-        // Preserve provider IDs and ordering; resolve a bounded, run-scoped anchor
-        // from the immutable permission row when its external ID cannot fit.
-        return {
-          kind: "permission_hash" as const,
-          at: row.created_at,
-          id: createHash("sha256").update(row.tool_call_id, "utf8").digest("hex"),
-        };
-      }),
+      schema_version: 1 as const,
+      ...page(
+        rows.map((row) => ({ ...row, schema_version: 1 as const })),
+        limit,
+        scope,
+        (row) => {
+          const position = { kind: "time" as const, at: row.created_at, id: row.tool_call_id };
+          if (Buffer.byteLength(auditCursor(scope, position), "utf8") <= 4096) return position;
+          // Preserve provider IDs and ordering; resolve a bounded, run-scoped anchor
+          // from the immutable permission row when its external ID cannot fit.
+          return {
+            kind: "permission_hash" as const,
+            at: row.created_at,
+            id: createHash("sha256").update(row.tool_call_id, "utf8").digest("hex"),
+          };
+        },
+      ),
     };
   }
 }

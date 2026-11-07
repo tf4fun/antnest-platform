@@ -3,6 +3,7 @@ import {
   learningScopedId,
   type LearningPolicy,
 } from "../domain/learning-policy.js";
+import { projectResponse } from "../domain/response-projection.js";
 
 export type LearningPolicyScope = {
   organizationId: string;
@@ -72,7 +73,9 @@ export class ControllerLearningPolicyClient {
     } catch {
       throw new LearningPolicyReadError("policy_unavailable");
     }
-    const result = learningPolicySchema.safeParse(parsed);
+    const result = learningPolicySchema.safeParse(
+      projectResponse(learningPolicySchema, parsed, new Set(["caller_selected_authority"])),
+    );
     if (
       !result.success ||
       result.data.organization_id !== scope.organizationId ||

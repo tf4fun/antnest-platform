@@ -136,6 +136,24 @@ describe("execution publication v2", () => {
     ).toBe(true);
   });
 
+  it("rejects recognized plaintext credential keys beside valid references", () => {
+    for (const forbidden of ["secret", "method"] as const) {
+      const snapshot = structuredClone(v2Fixture());
+      Object.assign(snapshot.providers[0]!.credential, {
+        [forbidden]: "forbidden",
+        future_field: true,
+      });
+      expect(() => parseExecutionAuthority(snapshot)).toThrow(DomainError);
+      const upsert = structuredClone(v2Fixture().providers[0]!);
+      Object.assign(upsert.credential, { [forbidden]: "forbidden", future_field: true });
+      const deltaInput = {
+        ...deltaFixture(),
+        providers: { upserts: [upsert], deletes: [] },
+      };
+      expect(() => parseExecutionDelta(deltaInput)).toThrow(DomainError);
+    }
+  });
+
   it("rejects delta duplicates, overlaps and stale ordering before mutation", () => {
     const fixture = v2Fixture();
     const provider = fixture.providers[0]!;
@@ -268,6 +286,7 @@ describe("execution publication v2", () => {
     const v1 = parseExecutionConfiguration(executionConfiguration());
     const v2 = parseExecutionAuthority(v2Fixture());
     expect(allowsV1ToV2Upgrade(v1, v2)).toBe(true);
+    expect(allowsV1ToV2Upgrade({ ...v1, schema_version: 1 }, v2)).toBe(true);
     const rotated = structuredClone(v2);
     const rotatedProvider = rotated.providers[0]!;
     if (!("credential_revision" in rotatedProvider))

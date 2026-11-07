@@ -194,6 +194,18 @@ describe("execution publication v2 consumer", () => {
     expect(empty.repository.save).not.toHaveBeenCalled();
   });
 
+  it("reports version 1 digests and rejects v2 deltas against a marked v1 base", async () => {
+    const { directory, repository } = setup();
+    await directory.apply({ ...executionConfiguration(), schema_version: 1 });
+    const digest = await directory.getDigest({ organization_id: "organization-1" });
+    expect(digest.schema_version).toBe(1);
+    const saves = repository.save.mock.calls.length;
+    await expect(directory.applyDelta(delta())).rejects.toMatchObject({
+      code: "configuration_base_mismatch",
+    });
+    expect(repository.save.mock.calls.length).toBe(saves);
+  });
+
   it("serializes concurrent deltas so exactly one commits", async () => {
     const { directory, repository } = setup();
     await directory.apply(v2Fixture());

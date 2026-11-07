@@ -1,5 +1,32 @@
 [
   {
+    "file": "skill-learning/examples/learning-changes.empty.json",
+    "pointer": "/nextCursor",
+    "field": "nextCursor",
+    "replacement": "next_cursor",
+    "kind": "protocol_exception",
+    "reason": "Real producer capture of the existing ACP/Workspace sealed bidirectional change history protocol.",
+    "remove_after": "protocol"
+  },
+  {
+    "file": "skill-learning/examples/learning-changes.empty.json",
+    "pointer": "/olderCursor",
+    "field": "olderCursor",
+    "replacement": "older_cursor",
+    "kind": "protocol_exception",
+    "reason": "Real producer capture of the existing ACP/Workspace sealed bidirectional change history protocol.",
+    "remove_after": "protocol"
+  },
+  {
+    "file": "skill-learning/examples/learning-changes.empty.json",
+    "pointer": "/sealedCursor",
+    "field": "sealedCursor",
+    "replacement": "sealed_cursor",
+    "kind": "protocol_exception",
+    "reason": "Real producer capture of the existing ACP/Workspace sealed bidirectional change history protocol.",
+    "remove_after": "protocol"
+  },
+  {
     "file": "admin-console/admin-contract.json",
     "pointer": "/response_policy/agent_network_policy/deprecated_input/0",
     "field": "expected_resource_version",

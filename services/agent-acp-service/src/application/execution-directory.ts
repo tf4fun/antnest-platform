@@ -166,7 +166,7 @@ export class ExecutionDirectory {
         const current = await this.dependencies.repository.loadAuthority(delta.organization_id);
         if (
           current === null ||
-          !("schema_version" in current) ||
+          current.schema_version !== 2 ||
           current.revision !== delta.base_revision
         )
           throw new DomainError(
@@ -242,7 +242,7 @@ export class ExecutionDirectory {
     publication.assertCurrent();
     return executionDigestResponse({
       organization_id: organizationId,
-      schema_version: "schema_version" in publication.authority ? 2 : 1,
+      schema_version: publication.authority.schema_version === 2 ? 2 : 1,
       revision: publication.authority.revision,
       providers: publication.authority.providers,
       models: publication.authority.models,
