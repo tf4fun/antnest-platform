@@ -74,11 +74,8 @@ export async function exerciseBrowserSessions({ rpc, adminPassword }) {
   const list = { ...actor, scope: "self", limit: 100 };
   const options = { cct: resolved.caller_context };
   const inventory = await rpc("list-user-sessions", list, options);
-  assert.equal(inventory.sessions.length, 2);
-  assert.equal(
-    inventory.sessions.filter((session) => session.current).length,
-    1,
-  );
+  assert.equal(inventory.items.length, 2);
+  assert.equal(inventory.items.filter((session) => session.current).length, 1);
   const publicJSON = JSON.stringify(inventory);
   for (const secret of [
     first.access_token,
@@ -92,13 +89,13 @@ export async function exerciseBrowserSessions({ rpc, adminPassword }) {
       "public inventory exposed private authority",
     );
   }
-  const before = inventory.sessions.find((session) => session.current);
+  const before = inventory.items.find((session) => session.current);
   const currentAccount = await rpc("get-current-account", account, options);
   assert.equal(currentAccount.account.local_password_available, true);
   assert.equal(currentAccount.account.organization_slug, "auth-test");
   const untouched = await rpc("list-user-sessions", list, options);
   assert.equal(
-    untouched.sessions.find((session) => session.current).last_active_at,
+    untouched.items.find((session) => session.current).last_active_at,
     before.last_active_at,
   );
   const activity = await rpc(
@@ -109,12 +106,12 @@ export async function exerciseBrowserSessions({ rpc, adminPassword }) {
   assert.equal(activity.expires_at, first.expires_at);
   const touched = await rpc("list-user-sessions", list, options);
   assert.equal(
-    touched.sessions.find((session) => session.current).idle_expires_at,
+    touched.items.find((session) => session.current).idle_expires_at,
     activity.idle_expires_at,
   );
   assert.equal(
-    touched.sessions.find((session) => !session.current).last_active_at,
-    inventory.sessions.find((session) => !session.current).last_active_at,
+    touched.items.find((session) => !session.current).last_active_at,
+    inventory.items.find((session) => !session.current).last_active_at,
   );
   const revoke = {
     ...actor,
@@ -160,9 +157,9 @@ export async function exerciseBrowserSessions({ rpc, adminPassword }) {
   });
   const replacementOptions = { cct: replacement.caller_context };
   const remaining = await rpc("list-user-sessions", list, replacementOptions);
-  assert.equal(remaining.sessions.length, 2);
+  assert.equal(remaining.items.length, 2);
   assert(
-    remaining.sessions.every(
+    remaining.items.every(
       (session) =>
         session.user_agent_hint === "Identity Docker browser <script>",
     ),
