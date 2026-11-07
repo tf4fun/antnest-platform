@@ -374,13 +374,7 @@ export async function verifySCIMLifecycle({
     const providers = await issuer.client.request(
       "/api/admin/directory/identity-providers?limit=50",
     );
-    const provider = providers.body.providers.find(
-      (row) => row.name === "linking-acceptance",
-    );
-    assert(
-      provider,
-      "real limited provider chooser must contain the existing linking fixture",
-    );
+    const provider = linkingProvider(providers.body);
     const a = await issue(issuer, `SCIM lifecycle ${suffix}`, 90, provider.id);
     evidence.issuer = {
       user_id: create.body.user.id,
@@ -785,4 +779,13 @@ export async function verifySCIMLifecycle({
     "SCIM lifecycle cleanup or diagnostic archive incomplete",
   );
   return evidence;
+}
+
+export function linkingProvider(page) {
+  const provider = page.items.find((row) => row.name === "linking-acceptance");
+  assert(
+    provider,
+    "real limited provider chooser must contain the existing linking fixture",
+  );
+  return provider;
 }
