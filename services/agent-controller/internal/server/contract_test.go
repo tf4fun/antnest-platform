@@ -111,7 +111,7 @@ func TestMachineControlContractMatchesRegisteredBoundary(t *testing.T) {
 	readStrictContractJSON(t, filepath.Join(root, "contracts/agent-controller/control-contract.json"), &contract)
 	var schema machineControlSchema
 	readContractJSON(t, filepath.Join(root, "contracts/agent-controller/control-api.schema.json"), &schema)
-	if contract.Revision != 49 || contract.Trust != "verified-workload-and-caller-context" || contract.Authentication != "service-authentication.md" {
+	if contract.Revision != 50 || contract.Trust != "verified-workload-and-caller-context" || contract.Authentication != "service-authentication.md" {
 		t.Fatalf("control contract revision = %d", contract.Revision)
 	}
 	if contract.MediaTypes.Request != "application/json" ||
@@ -564,11 +564,30 @@ func TestMachineControlContractValidatesSuccessfulHTTPBoundary(t *testing.T) {
 		}
 	}
 
-	status := httptest.NewRecorder()
-	boundary.ServeHTTP(status, httptest.NewRequest(contract.Status.Method, contract.Status.Path, nil))
-	if status.Code != contract.Status.SuccessStatus ||
-		strings.Split(status.Header().Get("Content-Type"), ";")[0] != contract.MediaTypes.Response {
-		t.Fatalf("status boundary code=%d content_type=%q body=%s", status.Code, status.Header().Get("Content-Type"), status.Body.String())
+	for _, route := range []controlContractRoute{contract.Status, contract.StatusRPC} {
+		response := httptest.NewRecorder()
+		boundary.ServeHTTP(response, httptest.NewRequest(route.Method, route.Path, nil))
+		if response.Code != route.SuccessStatus ||
+			strings.Split(response.Header().Get("Content-Type"), ";")[0] != contract.MediaTypes.Response {
+			t.Fatalf("status boundary %s code=%d content_type=%q body=%s", route.Path, response.Code, response.Header().Get("Content-Type"), response.Body.String())
+		}
+		assertControlResponseSchema(t, compiler, route.Response, response.Body.Bytes())
+	}
+
+	unhealthy, err := newBusinessHandler(t,
+		catalog, reliability, &agentConfigurationServiceStub{}, queries, events, &networkPolicyServiceStub{},
+		func(context.Context) error { return errors.New("synthetic readiness failure") },
+	)
+	if err != nil {
+		t.Fatalf("new unhealthy control boundary: %v", err)
+	}
+	for _, route := range []controlContractRoute{contract.Status, contract.StatusRPC} {
+		response := httptest.NewRecorder()
+		unhealthy.ServeHTTP(response, httptest.NewRequest(route.Method, route.Path, nil))
+		if response.Code != http.StatusServiceUnavailable {
+			t.Fatalf("status boundary %s unhealthy code=%d body=%s", route.Path, response.Code, response.Body.String())
+		}
+		assertControlResponseSchema(t, compiler, route.Response, response.Body.Bytes())
 	}
 }
 

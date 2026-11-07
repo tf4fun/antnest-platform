@@ -321,11 +321,18 @@ Agent Controller provides `GET /internal/agents/{agent_id}/skill-learning-policy
 `policy_mutation_request` body. These are trusted internal routes; the caller
 supplies its verified identity, while Controller checks it against the stored
 Agent owner and organization. The path, rather than body, selects the Agent.
-An owner-scoped read returns `policy`; mutation requires stable `request_id`
-and `expected_revision`, returns the resulting `policy`, and replays the same
-request ID with the same payload without another revision. A changed payload
-for that ID or stale revision is 409. Cross-owner, deleted or unknown Agents do
-not reveal policy contents. The operation rejects unknown/pinned/disallowed
+Both routes are catalogued in the Controller
+[control contract](../agent-controller/control-contract.json). An owner-scoped
+read returns `policy`; mutation requires stable `request_id` and the canonical
+`expected_version` precondition — the deprecated `expected_revision` alias is
+still accepted for N-1 callers — returns the resulting `policy`, and replays
+the same request ID with the same payload without another revision. The two
+409 rejections are distinct and both are non-retryable: a changed payload for
+that ID is `request_id_conflict`, and the caller reviews the changed payload
+before resubmitting under a new request ID; a stale expected revision is
+`policy_revision_conflict`, and the caller reloads the policy and submits a
+new request with the current `expected_version`. Cross-owner, deleted or
+unknown Agents do not reveal policy contents. The operation rejects unknown/pinned/disallowed
 paths and checks Agent access. ACP reads through an authenticated service call,
 not from browser-provided scope. All policy changes are checked again just
 before install. Disabling/revoking maintenance cancels uninstalled
@@ -471,8 +478,12 @@ sent, rendered, closed or read is never approval.
 
 ## 6. Errors and required outcomes
 
-Private errors use bounded JSON `{error:{code,message,retryable}}`, no
-candidate bytes, prompt, command text, token or private key. Invalid request,
+Private errors on the Runtime maintenance boundary use bounded JSON
+`{error:{code,message,retryable}}`, no candidate bytes, prompt, command text,
+token or private key. That nested envelope applies to the Runtime private
+maintenance routes only; Controller's policy routes return the flat
+[common error](../common/error.schema.json) shape
+`{code,category,message,retryable,request_id}`. Invalid request,
 ticket or capability is 400/401/403 according to parsing/authentication;
 stale execution, changed policy, base/target digest or request replay conflict
 is 409. Unsupported atomic filesystem operation is a specific 409;

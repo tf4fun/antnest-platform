@@ -20,6 +20,8 @@ Issue 状态最后核对于 2026-10-28：141 个 issue，87 个已关闭，54 �
 
 ## 当前批次
 
+- **#47 共享契约批次（2026-11-07）**：基于已合入 #38 的 main `df6ea06c`，按共享契约 → Agent Controller → 显式集成拆分。目录 revision 50 补齐两个 status 正文 schema 与真实 ready／not_ready 输出验证；已有学习策略目录、三个遗漏错误码与 activation_state 条件定义经回归确认，不重复修改 wire 行为。保留 `set-agent-authorization`，明确 Agent UI owner settings 后续 [#582](https://github.com/tf4fun/antnest-platform/issues/582)；退役 Run 文档移出 contracts 并保留至服务历史。新契约检查先 5 RED／5 GREEN，修正后 10/10，真实目录／成功 HTTP 两项 Go 定向通过；最小日志在 `artifacts/verification/issue-47-contract/`。后续收拢学习策略路由、静态错误防漂移、HTTP 生命周期覆盖及冗余索引迁移尚待 Controller 批次；事件组织字段／按组织索引仍归 #78。远程 CI 异步，不等待、不合并、不关闭 #47／#83；全部 PR 提交后停止查询，Docker E2E 保持独立流程所有权。既有 `artifacts/recovery/` 保持原样。
+
 - **#38 Controller 消费方同步补漏（2026-11-07）**：审查 #580 的 canonical expected_version 发射变更，发现 auth-controller 的 executionPeers 仍读取两个 legacy 字段，合并后会拒绝真实客户端。同步 attachment 的字符串 CAS 与 disable 的 revision CAS，保留状态／版本／peer／key／完成语义断言。已有 system-consumer-contracts 快速门禁新增 4 项回归：共享 producer schema 合法请求驱动实际替身、pending→open→closed 与 disable 完成、stale／错误类型／旧客户端别名拒绝且状态不变；先 4 RED，再 8/8 GREEN（含原 4 项）。RC／Egress 仍支持 N-1 入站别名，其他 system 客户端的 legacy 输入是兼容验证，未批量替换。4 文件格式修复已在 RC 批次完成，并同步最新 main 已合并 #579；不运行全量 Docker E2E。
 
 - **#38 PR CI 修复接手（2026-11-07，用户明确授权）**：继续处理 #575 → #576 → #577 → #578 → #580 → #581 的精确候选远程 CI，覆盖以下历史停止查询状态。初始结果为 6 个 Integration checks 通过，#578／#580／#581 的 Repository checks 因同 4 个测试文件格式失败；#575 与最新 main 的 TODO 冲突仅为交接记录并发新增，保留双方全部记录并同步已合并 #579。修复将普通 merge 沿依赖传播，最终以每个 head 的 Repository／Integration 远程证据为准；不合并、不关闭 #38／#83。同步审查受影响 system 客户端／替身源码，不安排或运行完整 Docker E2E。 第 2 轮远程格式门禁通过后，RC 旧 owner-incarnation 回归仍要求 GET inspect 缺少 request_body；按本批显式无正文声明改为精确断言 none，保留全部路由／权限／schema／错误／边界断言。定向先复现相同 RED，再 15/15 GREEN。

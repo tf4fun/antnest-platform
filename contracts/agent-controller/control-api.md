@@ -1,7 +1,7 @@
 # Agent Controller Lifecycle And Management Contract
 
 This contract is owned by Agent Controller and transported as authenticated internal
-JSON over HTTP. This document describes control contract revision 42, the
+JSON over HTTP. This document describes control contract revision 50, the
 `revision` value in [`control-contract.json`](control-contract.json).
 
 This contract manages ModelProfiles, Templates, Agents, lifecycle operations,
@@ -17,7 +17,10 @@ Gateway authentication and raw identity hints never replace this check.
 owner authorization and a revision CAS. It does not modify Session overrides.
 `POST /rpc/agent-controller/list-workspace-agents` lists the authenticated
 principal's management projection. Both methods belong to this management
-contract, not a Run admission contract.
+contract, not a Run admission contract. `set-agent-authorization` stays
+Controller-owned; owner-facing Agent settings remain the Agent UI follow-up
+[#582](https://github.com/tf4fun/antnest-platform/issues/582), which this
+contract does not implement.
 
 Controller no longer exposes `resolve-agent-access`, `get-session-configuration`,
 `acquire-run`, `resolve-credential` or `finish-run`. ACP consumes the current
@@ -612,6 +615,20 @@ and already registered Runtime targets, cannot be published within the
 deployment budget. The resource mutation, command receipt and configuration
 revision are rolled back together. Reduce the proposed configuration or review
 the shared deployment limit; blind retries cannot resolve the rejection.
+
+Four more stable codes cover policy and preparation rejections, all with
+`retryable=false`. `preparation_not_found` uses HTTP 404 when the request ID
+names no preparation intent inside the caller's organization; the caller must
+establish the correct lifecycle request and organization — typically the
+lifecycle command that owns the intent — rather than blindly retrying the same
+unknown lookup.
+`policy_revision_conflict` uses HTTP 409 for a stale policy precondition:
+reload the policy and submit a new request carrying the current canonical
+`expected_version`; the N-1 alias `expected_revision` remains accepted.
+`request_id_conflict` uses HTTP 409 when a request ID replays with a changed
+payload: after reviewing the difference, resubmit under a new request ID.
+`configuration_conflict` uses HTTP 409 when stored configuration no longer
+admits the mutation: reload the current defaults before resubmitting.
 
 The machine-readable route catalog is in
 [`control-contract.json`](control-contract.json), and message definitions are
