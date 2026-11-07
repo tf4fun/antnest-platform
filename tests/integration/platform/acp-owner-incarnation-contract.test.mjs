@@ -706,7 +706,7 @@ test("RC revision 22 binds registration and inspection to the frozen shared wire
       assert.equal(route.request_bytes_max, wire.request_bytes_max);
       assert.deepEqual(Object.keys(route.path_parameters ?? {}), []);
     } else {
-      assert.equal(Object.hasOwn(route, "request_body"), false);
+      assert.equal(route.request_body, "none");
       assert.deepEqual(route.path_parameters, {
         registration_id: "control-api.schema.json#/$defs/acp_registration_id",
       });
