@@ -18,6 +18,7 @@ import type { RuntimeSkillMaintenanceSigner } from "./runtime-skill-maintenance-
 import type { RuntimeBinding } from "../domain/types.js";
 import type { RuntimeConnectionAuthority } from "../ports/runtime-connections.js";
 import { runtimeAdmissionDenial } from "../domain/runtime-admission-error.js";
+import { projectResponse } from "../domain/response-projection.js";
 
 const statusSchema = z.object({
   status: z.literal("ready"),
@@ -70,7 +71,9 @@ export class RuntimeSkillTemporaryClient implements TemporarySkillRuntime {
       `multipart/form-data; boundary=${boundary}`,
       operation,
     );
-    const result = temporaryInstalledSchema.safeParse(raw);
+    const result = temporaryInstalledSchema.safeParse(
+      projectResponse(temporaryInstalledSchema, raw),
+    );
     if (
       !result.success ||
       result.data.request_id !== requestId ||
@@ -123,13 +126,16 @@ export class RuntimeSkillTemporaryClient implements TemporarySkillRuntime {
       for (;;) {
         try {
           const result = temporaryReleasedSchema.parse(
-            await this.dispatch(
-              scope,
-              "temporary_release",
-              requestId,
-              body,
-              "application/json",
-              operation,
+            projectResponse(
+              temporaryReleasedSchema,
+              await this.dispatch(
+                scope,
+                "temporary_release",
+                requestId,
+                body,
+                "application/json",
+                operation,
+              ),
             ),
           );
           if (
@@ -213,7 +219,7 @@ export class RuntimeSkillTemporaryClient implements TemporarySkillRuntime {
         if (response.headers.get("cache-control") !== "no-store")
           throw new TemporarySkillFailure("unknown", false);
         if (!response.ok) {
-          const error = temporaryErrorSchema.safeParse(raw);
+          const error = temporaryErrorSchema.safeParse(projectResponse(temporaryErrorSchema, raw));
           if (!error.success) throw new TemporarySkillFailure("unknown", false);
           throw new TemporarySkillFailure(
             error.data.error.effect_state,
