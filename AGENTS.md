@@ -29,6 +29,15 @@ including Docker-backed PostgreSQL or Temporal component checks. CI triggers
 and release-capability criteria remain unchanged, and unexecuted E2E must
 never be reported as passed.
 
+A shared contract change must inventory and synchronize every affected consumer,
+including system E2E clients, authenticated dependency doubles, browser helpers,
+and pagination fixtures. This source synchronization is part of PR delivery
+even though full Docker E2E runs after merge. Exercise reusable doubles against
+the published producer schema in fast repository contract checks, so retired
+client and double fields cannot validate each other. Record any intentionally
+deferred consumer in the owning issue before declaring the contract delivered;
+do not add full E2E to every PR or weaken system assertions to hide drift.
+
 Every CI suite has one kind: `component` suites gate pull requests, `system`
 suites run on main, and `stress` suites run nightly. Do not use the retired
 Tier A/B/C terms.
