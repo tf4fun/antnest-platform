@@ -1,7 +1,11 @@
 import { z } from "zod";
 
-export function projectResponse(schema: z.ZodType, input: unknown): unknown {
-  return projectCandidate([schema], input);
+export function projectResponse(
+  schema: z.ZodType,
+  input: unknown,
+  reservedFields: ReadonlySet<string> = new Set(),
+): unknown {
+  return projectCandidate([schema], input, reservedFields);
 }
 
 function expand(candidate: z.core.$ZodType, out: z.core.$ZodType[]): void {
@@ -27,7 +31,11 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
-function projectCandidate(candidates: z.core.$ZodType[], input: unknown): unknown {
+function projectCandidate(
+  candidates: z.core.$ZodType[],
+  input: unknown,
+  reservedFields: ReadonlySet<string>,
+): unknown {
   const expanded: z.core.$ZodType[] = [];
   for (const candidate of candidates) expand(candidate, expanded);
 
@@ -36,7 +44,7 @@ function projectCandidate(candidates: z.core.$ZodType[], input: unknown): unknow
       .filter((candidate): candidate is z.ZodArray => candidate instanceof z.ZodArray)
       .map((candidate) => candidate.element);
     if (elements.length === 0) return input;
-    return input.map((item) => projectCandidate(elements, item));
+    return input.map((item) => projectCandidate(elements, item, reservedFields));
   }
 
   if (!isRecord(input)) return input;
@@ -62,9 +70,13 @@ function projectCandidate(candidates: z.core.$ZodType[], input: unknown): unknow
   for (const [key, value] of Object.entries(input)) {
     const declared = fields.get(key);
     if (declared !== undefined) {
-      entries.push([key, projectCandidate(declared, value)]);
+      entries.push([key, projectCandidate(declared, value, reservedFields)]);
+    } else if (hasObjectShape && reservedFields.has(key)) {
+      // Leave forbidden credential/authority members visible to the strict
+      // validator; compatibility must not erase evidence of an invalid DTO.
+      entries.push([key, value]);
     } else if (!hasObjectShape && recordValues.length > 0) {
-      entries.push([key, projectCandidate(recordValues, value)]);
+      entries.push([key, projectCandidate(recordValues, value, reservedFields)]);
     }
   }
   return Object.fromEntries(entries);
