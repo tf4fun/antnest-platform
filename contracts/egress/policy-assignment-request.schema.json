@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.antnest.dev/egress/policy-assignment-request.schema.json",
+  "title": "Runtime Egress policy assignment request",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["policy_id", "revision"],
+  "properties": {
+    "policy_id": {
+      "$ref": "control-response.schema.json#/$defs/identifier"
+    },
+    "revision": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "expected_version": {
+      "allOf": [
+        {"$ref": "../common/precondition.schema.json#/$defs/expected_version"},
+        {"type": "string", "pattern": "^[1-9][0-9]*$", "maxLength": 20}
+      ]
+    },
+    "expected_resource_version": {
+      "type": "integer",
+      "minimum": 1,
+      "deprecated": true
+    }
+  },
+  "not": {
+    "required": ["expected_version", "expected_resource_version"]
+  }
+}

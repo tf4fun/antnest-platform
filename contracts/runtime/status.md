@@ -4,6 +4,13 @@
 It requires RC-issued Runtime workload authority and permits only RC and ACP.
 Anonymous Docker health uses `GET/HEAD /status/live`, which returns only `status`
 with 200/503 and never exposes Agent, generation, execution or tool identity.
+The reduced body follows the `live_status` definition in
+[http.schema.json](http.schema.json), which also carries the
+`protocol_request`, `protocol_error` and `protocol_response` JSON-RPC envelopes
+used on `/mcp` plus a reference to the common error envelope. Signed Skill
+maintenance request metadata and receipts on
+`POST /internal/skill-maintenance/{action}` follow
+[skill-maintenance.schema.json](skill-maintenance.schema.json).
 See the [instance connection contract](instance-connection.md). Full identity
 verification must not use the reduced liveness response.
 The `test_features` array is mandatory in Runtime responses, including unavailable

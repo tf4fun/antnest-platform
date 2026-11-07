@@ -1177,5 +1177,23 @@
     "kind": "protocol_exception",
     "reason": "Finite bounded discovery/resolution result, not a continuation list.",
     "remove_after": "protocol"
+  },
+  {
+    "file": "egress/policy-assignment-request.schema.json",
+    "pointer": "/properties/expected_resource_version",
+    "field": "expected_resource_version",
+    "replacement": "expected_version",
+    "kind": "deprecated_alias",
+    "reason": "Egress accepts only as a one-release input alias for expected_version; rejects multiple forms.",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "egress/policy-assignment-request.schema.json",
+    "pointer": "/not/required/1",
+    "field": "expected_resource_version",
+    "replacement": "expected_version",
+    "kind": "deprecated_alias",
+    "reason": "Egress accepts only as a one-release input alias for expected_version; rejects multiple forms.",
+    "remove_after": "next_release"
   }
 ]
