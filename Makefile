@@ -131,6 +131,7 @@ test-repo:
 	node --test --test-concurrency=1 tests/integration/skill-learning/contracts.test.mjs tests/integration/skill-learning/maintenance-runtime-spec.test.mjs
 	node --test --test-concurrency=1 tests/integration/skill-registry/discovery-contract.test.mjs tests/integration/skill-registry/prepare-auth.test.mjs
 	node --test --test-concurrency=1 tests/integration/runtime-tools/*.test.mjs
+	node --test --test-concurrency=1 tests/integration/runtime-egress/route-body-contract.test.mjs tests/integration/runtime-controller/route-body-contract.test.mjs
 	node --test --test-concurrency=1 tests/integration/platform/*.test.mjs
 	node --test --test-concurrency=1 tests/integration/admin-console/*.test.mjs
 	node --test --test-concurrency=1 tests/e2e/service-authentication/identity/*.test.mjs
