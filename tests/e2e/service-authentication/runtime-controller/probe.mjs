@@ -118,7 +118,9 @@ if (mode === "request") {
     const common = {
       path,
       method: route.method,
-      ...(route.request_body ? { body: {} } : {}),
+      ...(route.request_body && route.request_body !== "none"
+        ? { body: {} }
+        : {}),
       headers: {
         "Idempotency-Key": "auth-request",
         "X-Antnest-Principal-ID": "pretend-controller",
@@ -160,7 +162,9 @@ if (mode === "request") {
       );
       req.setTimeout(5000, () => req.destroy(new Error("probe timed out")));
       req.once("error", reject);
-      req.end(route.request_body ? "{}" : undefined);
+      req.end(
+        common.body === undefined ? undefined : JSON.stringify(common.body),
+      );
     });
     assert.equal(duplicateStatus, 401, route.operation_id);
     checks++;

@@ -8,6 +8,7 @@ COPY tests/integration/runtime-egress ./tests/integration/runtime-egress
 COPY tests/support/egress-auth.rs ./tests/support/egress-auth.rs
 COPY contracts/runtime ./contracts/runtime
 COPY contracts/egress ./contracts/egress
+COPY contracts/common ./contracts/common
 COPY contracts/platform ./contracts/platform
 WORKDIR /src/services/runtime-egress
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
