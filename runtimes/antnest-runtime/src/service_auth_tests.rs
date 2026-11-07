@@ -131,6 +131,7 @@ fn receiver_directory_checks_opened_files_permissions_owner_and_complete_digest(
     fs::write(&tunnel_path, tunnel_raw).unwrap();
     fs::set_permissions(&tunnel_path, fs::Permissions::from_mode(0o600)).unwrap();
     let descriptor = BootstrapDescriptor {
+        _reserved: Default::default(),
         tunnel: tunnel_descriptor,
         connection_id: "rci_00000000000000000000000000000001".into(),
         callers_file: crate::service_auth::CALLERS_FILE.into(),
