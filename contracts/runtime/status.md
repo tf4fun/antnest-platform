@@ -11,7 +11,10 @@ used on `/mcp` plus a reference to the common error envelope. Signed Skill
 maintenance request metadata and receipts on
 `POST /internal/skill-maintenance/{action}` follow
 [skill-maintenance.schema.json](skill-maintenance.schema.json).
-See the [instance connection contract](instance-connection.md). Full identity
+The machine-readable route entries for this surface, including per-route
+request bodies, responses and reachable error codes, are declared in
+[contract.json](contract.json) `routes`. See the
+[instance connection contract](instance-connection.md). Full identity
 verification must not use the reduced liveness response.
 The `test_features` array is mandatory in Runtime responses, including unavailable
 responses. Its values come from the binary's compiled features, never from an
