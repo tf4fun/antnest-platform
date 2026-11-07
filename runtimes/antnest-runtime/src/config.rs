@@ -490,6 +490,12 @@ mod tests {
             serde_json::to_value(spec.authentication().unwrap()).unwrap(),
             descriptor
         );
+        value["authentication"]["x_future_field"] = serde_json::json!({"enabled": true});
+        let extended = decode_runtime_spec(&value.to_string()).unwrap();
+        assert_eq!(
+            serde_json::to_value(extended.authentication().unwrap()).unwrap(),
+            descriptor
+        );
         for (name, invalid) in [
             ("connection_id", serde_json::json!("rci_wrong")),
             ("callers_file", serde_json::json!("/workspace/callers.json")),
@@ -499,6 +505,13 @@ mod tests {
             value["authentication"] = descriptor.clone();
             value["authentication"][name] = invalid;
             assert!(decode_runtime_spec(&value.to_string()).is_err(), "{name}");
+        }
+        for field in ["token", "secret", "credential", "value"] {
+            for invalid in [serde_json::Value::Null, serde_json::json!("private-canary")] {
+                value["authentication"] = descriptor.clone();
+                value["authentication"][field] = invalid;
+                assert!(decode_runtime_spec(&value.to_string()).is_err(), "{field}");
+            }
         }
         let duplicate = serde_json::to_string(&descriptor).unwrap().replace(
             "\"callers_file\":",

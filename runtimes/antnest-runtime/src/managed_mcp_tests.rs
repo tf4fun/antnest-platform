@@ -66,6 +66,8 @@ fn managed_secrets_bootstrap_accepts_descriptors_and_never_inline_values() {
     assert!(validate_servers(vec![input]).is_ok());
     for invalid in [
         json!({"value":"private-canary"}),
+        json!({"set":true,"fingerprint":"hmac-sha256:0123456789abcdef0123456789abcdef","value":"private-canary"}),
+        json!({"set":true,"fingerprint":"hmac-sha256:0123456789abcdef0123456789abcdef","token":null}),
         json!({"keep":true}),
         json!({"set":false,"fingerprint":"hmac-sha256:0123456789abcdef0123456789abcdef"}),
     ] {
@@ -94,12 +96,29 @@ fn managed_config_is_bounded_and_redacts_command_and_credentials() {
     ] {
         assert!(validate_servers(vec![serde_json::from_value(value).unwrap()]).is_err());
     }
-    assert!(
-        serde_json::from_value::<ServerInput>(json!({
-            "id": "docs", "command": "node", "url": "http://child"
-        }))
-        .is_err()
+    for field in ["url", "headers", "transport"] {
+        for invalid in [serde_json::Value::Null, json!("http://child")] {
+            let mut value = json!({"id": "docs", "command": "node"});
+            value[field] = invalid;
+            assert!(
+                serde_json::from_value::<ServerInput>(value).is_err(),
+                "{field}"
+            );
+        }
+    }
+    let baseline = json!({"id":"docs","command":"node","secret_env":{
+        "API_KEY":{"set":true,"fingerprint":"hmac-sha256:0123456789abcdef0123456789abcdef"}
+    }});
+    let mut extended = baseline.clone();
+    extended["x_future_field"] = json!(true);
+    extended["secret_env"]["API_KEY"]["x_future_field"] = json!({"enabled": true});
+    let projected: ServerInput = serde_json::from_value(extended).unwrap();
+    let original: ServerInput = serde_json::from_value(baseline).unwrap();
+    assert_eq!(
+        serde_json::to_value(&projected).unwrap(),
+        serde_json::to_value(original).unwrap()
     );
+    assert!(validate_servers(vec![projected]).is_ok());
 }
 
 #[test]

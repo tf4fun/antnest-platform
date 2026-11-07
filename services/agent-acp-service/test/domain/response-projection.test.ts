@@ -118,4 +118,24 @@ describe("response projection", () => {
     const request = { organization_id: "org-1", revision: 2, providers: [], x_future_field: 1 };
     expect(responseSchema.safeParse(request).success).toBe(false);
   });
+
+  it("preserves reserved keys for rejection without rejecting declared credentials", () => {
+    const reserved = new Set(["credential", "secret", "token"]);
+    const baseline = {
+      organization_id: "org-1",
+      revision: 2,
+      providers: [{ enabled: true, credential: { ref: "p", version: "r" }, endpoint: "https://a" }],
+    };
+    expect(responseSchema.parse(projectResponse(responseSchema, baseline, reserved))).toEqual(
+      baseline,
+    );
+    for (const name of reserved) {
+      for (const value of [null, "private-canary"]) {
+        const input = { ...baseline, metadata: { label: "x", score: null, [name]: value } };
+        expect(
+          responseSchema.safeParse(projectResponse(responseSchema, input, reserved)).success,
+        ).toBe(false);
+      }
+    }
+  });
 });
