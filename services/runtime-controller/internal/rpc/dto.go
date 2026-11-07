@@ -201,6 +201,7 @@ func operationFromDomain(value deployment.Operation) operationDTO {
 
 type observationDTO struct {
 	Sequence           uint64                     `json:"sequence"`
+	SchemaVersion      int                        `json:"schema_version"`
 	AgentID            string                     `json:"agent_id,omitempty"`
 	RuntimeRevision    deployment.RuntimeRevision `json:"runtime_revision,omitempty"`
 	RuntimeExecutionID string                     `json:"runtime_execution_id,omitempty"`
@@ -211,7 +212,7 @@ type observationDTO struct {
 
 func observationFromDomain(value deployment.Observation) observationDTO {
 	return observationDTO{
-		Sequence: value.Sequence, AgentID: value.AgentID,
+		Sequence: value.Sequence, SchemaVersion: 1, AgentID: value.AgentID,
 		RuntimeRevision: value.RuntimeRevision, RuntimeExecutionID: value.RuntimeExecutionID,
 		Kind: value.Kind, DiagnosticSummary: value.DiagnosticSummary, ObservedAt: value.ObservedAt,
 	}

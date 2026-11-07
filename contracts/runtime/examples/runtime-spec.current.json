@@ -1,0 +1,32 @@
+{
+  "agent_id": "agent-1",
+  "authentication": {
+    "callers_file": "/run/antnest-auth/callers.json",
+    "connection_id": "rci_22222222222222222222222222222222",
+    "receiver_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "tunnel": {
+      "key_id": "rtk_0123456789abcdef0123456789abcdef",
+      "keys_digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "keys_file": "/run/antnest-auth/tunnel.json"
+    }
+  },
+  "filesystem": {
+    "system_skills": "/skills",
+    "workspace": "/workspace"
+  },
+  "generation": 7,
+  "listen": {
+    "host": "0.0.0.0",
+    "port": 8093
+  },
+  "network": {
+    "egress_endpoint": {
+      "ipv4": "10.20.0.8",
+      "port": 8092
+    },
+    "packet_contract_revision": 2,
+    "resolver_ipv4": "100.64.0.1",
+    "tunnel_ipv4": "100.64.0.2"
+  },
+  "schema_version": 1
+}

@@ -1,0 +1,13 @@
+{
+  "agent_id": "agent-1",
+  "health": "healthy",
+  "lifecycle_state": "provisioned",
+  "mcp_endpoint": "http://antnest-runtime-agent-1:8093/mcp",
+  "observed_at": "2026-09-01T00:00:00Z",
+  "phase": "running",
+  "restart_count": 0,
+  "runtime_endpoint": "10.243.1.20",
+  "runtime_execution_id": "boot-1",
+  "runtime_revision": "rtv_0123456789abcdef0123456789abcdef",
+  "tunnel_key_id": "rtk_0123456789abcdef0123456789abcdef"
+}

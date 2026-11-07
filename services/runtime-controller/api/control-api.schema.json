@@ -421,6 +421,10 @@
         "observed_at": {
           "type": "string",
           "format": "date-time"
+        },
+        "schema_version": {
+          "type": "integer",
+          "const": 1
         }
       }
     },
@@ -461,6 +465,10 @@
         "observed_at": {
           "type": "string",
           "format": "date-time"
+        },
+        "schema_version": {
+          "type": "integer",
+          "const": 1
         }
       }
     },
@@ -506,6 +514,10 @@
         "observed_at": {
           "type": "string",
           "format": "date-time"
+        },
+        "schema_version": {
+          "type": "integer",
+          "const": 1
         }
       }
     },

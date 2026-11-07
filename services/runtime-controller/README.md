@@ -332,3 +332,18 @@ Error envelopes follow the [common error contract](../../contracts/common/error.
 with the [Runtime Controller slice](../../contracts/common/slices/runtime-controller.json); the
 shared owner-incarnation schema accepts the optional metadata pair until the pending ACP
 producer batch.
+
+## Golden examples and N-1 rollout
+
+Captured producer outputs live under `contracts/runtime/examples/`, enumerated
+by [`contracts/golden-manifest.json`](../../contracts/golden-manifest.json).
+Tests rewrite them only on explicit `-update`; otherwise a mismatch fails. The
+frozen `*.n-1.json` files capture the pre-marker producer output and are never
+regenerated.
+
+Resolved `runtime_spec` now declares `schema_version` 1 and observation
+envelopes declare `schema_version` 1; a missing marker reads as legacy. Runtime
+consumers deploy first: the current Runtime denies the unknown field, so the
+Runtime change accepting `schema_version` must ship before relying on the
+marker. Persisted deployment digest and observation domain identity are
+unchanged — `omitempty` keeps historical documents byte-identical.

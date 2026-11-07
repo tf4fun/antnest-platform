@@ -1,0 +1,27 @@
+{
+  "latest_sequence": 3,
+  "next_sequence": 3,
+  "observations": [
+    {
+      "kind": "reconciled",
+      "observed_at": "2026-09-01T00:00:00Z",
+      "sequence": 1
+    },
+    {
+      "agent_id": "agent-1",
+      "kind": "updated",
+      "observed_at": "2026-09-01T00:00:00Z",
+      "runtime_revision": "rtv_0123456789abcdef0123456789abcdef",
+      "sequence": 2
+    },
+    {
+      "agent_id": "agent-1",
+      "kind": "healthy",
+      "observed_at": "2026-09-01T00:00:00Z",
+      "runtime_execution_id": "boot-1",
+      "runtime_revision": "rtv_0123456789abcdef0123456789abcdef",
+      "sequence": 3
+    }
+  ],
+  "oldest_sequence": 1
+}
