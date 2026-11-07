@@ -5,6 +5,7 @@ import { DomainError } from "./errors.js";
 import { projectResponse } from "./response-projection.js";
 import {
   executionModelSchema,
+  executionResponseReservedFields,
   parseExecutionConfiguration,
   privateAgentConfigurationSchema,
   providerFieldsSchema,
@@ -131,7 +132,9 @@ export function parseExecutionDelta(input: unknown): ExecutionDelta {
       ? (providers as Record<string, unknown>).upserts
       : undefined,
   );
-  const parsed = executionDeltaSchema.safeParse(projectResponse(executionDeltaSchema, input));
+  const parsed = executionDeltaSchema.safeParse(
+    projectResponse(executionDeltaSchema, input, executionResponseReservedFields),
+  );
   if (!parsed.success)
     throw new DomainError("invalid_execution_configuration", "Invalid execution delta");
   if (parsed.data.revision <= parsed.data.base_revision)
@@ -177,7 +180,7 @@ export function parseExecutionConfigurationV2(input: unknown): ExecutionConfigur
       : undefined,
   );
   const parsed = executionConfigurationV2Schema.safeParse(
-    projectResponse(executionConfigurationV2Schema, input),
+    projectResponse(executionConfigurationV2Schema, input, executionResponseReservedFields),
   );
   if (!parsed.success)
     throw new DomainError("invalid_execution_configuration", "Invalid execution configuration");
