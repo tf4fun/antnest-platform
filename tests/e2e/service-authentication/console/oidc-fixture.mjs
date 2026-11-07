@@ -80,8 +80,8 @@ export function createOIDCFixture(stats) {
       "oidc_provider_id",
       "expires_in_days",
     ],
-    "list-external-identity-providers": ["limit", "after_id"],
-    "list-external-identities": ["scope", "membership_id", "limit", "after_id"],
+    "list-external-identity-providers": ["limit", "cursor"],
+    "list-external-identities": ["scope", "membership_id", "limit", "cursor"],
     "bind-external-identity": [
       "membership_id",
       "request_id",
@@ -155,17 +155,15 @@ export function createOIDCFixture(stats) {
       bound_at: "2026-10-11T01:00:00Z",
       revoked_at: null,
     });
-    const page = (key, rows) => {
+    const page = (rows) => {
       assert(
         Number.isInteger(body.limit) && body.limit >= 1 && body.limit <= 100,
       );
-      const scanned = rows.filter((row) => row.id > (body.after_id ?? ""));
+      const scanned = rows.filter((row) => row.id > (body.cursor ?? ""));
       const selected = scanned.slice(0, body.limit);
       return reply({
-        [key]: selected,
-        ...(scanned.length > body.limit
-          ? { next_after_id: selected.at(-1).id }
-          : {}),
+        items: selected,
+        next_cursor: scanned.length > body.limit ? selected.at(-1).id : null,
       });
     };
     switch (operation) {
@@ -230,10 +228,7 @@ export function createOIDCFixture(stats) {
           authoritative: provider.authoritative,
           link_policy_review_required: provider.link_policy_review_required,
         };
-        return page("providers", [
-          row,
-          { ...row, id: "provider-2", name: "second" },
-        ]);
+        return page([row, { ...row, id: "provider-2", name: "second" }]);
       }
       case "list-external-identities": {
         if (body.membership_id === "unavailable")
@@ -245,7 +240,7 @@ export function createOIDCFixture(stats) {
         if (body.membership_id === "private-field")
           row.notice = "private-notice-canary";
         if (body.membership_id === "invalid-subject") row.subject = null;
-        return page("bindings", [row, binding("binding-2")]);
+        return page([row, binding("binding-2")]);
       }
       case "bind-external-identity":
         assert(body.request_id.startsWith("external-identities-"));

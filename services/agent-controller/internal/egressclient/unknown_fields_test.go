@@ -22,10 +22,10 @@ func TestPolicyResponsesTolerateUnknownResponseFields(t *testing.T) {
 		`"ports":[{"from":443,"to":443,"future_port":true}],"future_rule":true}],"future_spec":{"nested":1}},` +
 		`"digest":"` + egressSpecDigest(t, spec) + `","future_top":{"cursor":"opaque"}}`
 	client := policyTestClient(t, func(w http.ResponseWriter, r *http.Request) {
-		switch {
-		case r.Method == http.MethodPut:
+		switch r.Method {
+		case http.MethodPut:
 			_, _ = io.WriteString(w, metadata)
-		case r.Method == http.MethodGet:
+		case http.MethodGet:
 			_, _ = io.WriteString(w, revision)
 		default:
 			t.Errorf("unexpected request %s %s", r.Method, r.URL)
