@@ -137,7 +137,6 @@ describe("model retry publication and immutable Run snapshot", () => {
     ["cap_ms", "capMs", false],
     ["cap_ms", "capMs", null],
     ["cap_ms", "capMs", 199],
-    ["unexpected", "unexpected", "must-not-be-dropped"],
   ] as const)(
     "rejects an invalid %s value %j in both wire and storage shapes",
     (wireField, storedField, value) => {
@@ -147,6 +146,18 @@ describe("model retry publication and immutable Run snapshot", () => {
       );
     },
   );
+
+  it("projects a future retry response field while keeping stored snapshots strict", () => {
+    const extended = configurations({ ...wirePolicy, unexpected: "future-extension" });
+    const baseline = configurations(wirePolicy);
+    const before = structuredClone(extended);
+    expect(parseExecutionConfiguration(extended.private)).toEqual(baseline.private);
+    expect(() => parsePublicExecutionConfiguration(extended.public)).toThrow();
+    expect(() =>
+      parseStoredRunSnapshot(storedWithPolicy({ ...storedPolicy, unexpected: "future-extension" })),
+    ).toThrow();
+    expect(extended).toEqual(before);
+  });
 
   it.each([
     ["max", "max"],

@@ -15,6 +15,30 @@ pub(crate) struct ServerInput {
     pub(crate) env: BTreeMap<String, String>,
     #[serde(default)]
     pub(crate) secret_env: BTreeMap<String, SecretDescriptor>,
+    #[serde(flatten, skip_serializing)]
+    _reserved: ReservedTransportFields,
+}
+
+#[derive(Clone, Deserialize)]
+struct ReservedTransportFields {
+    #[serde(
+        default,
+        rename = "url",
+        deserialize_with = "crate::service_auth::reject_reserved_field"
+    )]
+    _url: (),
+    #[serde(
+        default,
+        rename = "headers",
+        deserialize_with = "crate::service_auth::reject_reserved_field"
+    )]
+    _headers: (),
+    #[serde(
+        default,
+        rename = "transport",
+        deserialize_with = "crate::service_auth::reject_reserved_field"
+    )]
+    _transport: (),
 }
 
 #[derive(Clone, Deserialize, Serialize)]
@@ -22,6 +46,8 @@ pub(crate) struct SecretDescriptor {
     #[serde(deserialize_with = "true_only")]
     pub(crate) set: bool,
     pub(crate) fingerprint: String,
+    #[serde(flatten, skip_serializing)]
+    _reserved: crate::service_auth::ReservedCredentialFields,
 }
 
 fn true_only<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<bool, D::Error> {
