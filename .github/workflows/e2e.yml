@@ -196,7 +196,7 @@ jobs:
           MANIFEST_JSON: ${{ inputs.manifest }}
           REVISION: ${{ needs.plan.outputs.revision }}
           RESOLVED: ${{ needs.plan.outputs.images }}
-          ORIGIN: ${{ github.event_name == 'pull_request' && 'pr' || 'main' }}
+          ORIGIN: pr
         run: |
           if [ -n "$MANIFEST_JSON" ]; then
             node tests/support/ci-manifest.mjs validate "$RUNNER_TEMP/manifest.json"
