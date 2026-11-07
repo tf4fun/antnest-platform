@@ -1,0 +1,16 @@
+{
+  "activity_interval_ms": 30000,
+  "caller_context": "eyJhbGciOiJFZERTQSIsImtpZCI6ImdvbGRlbi10ZXN0IiwidHlwIjoiYW50bmVzdC1jY3Qrand0In0.eyJpc3MiOiJhbnRuZXN0Oi8vc2VydmljZS9pZGVudGl0eS1zZXJ2aWNlIiwic3ViIjoidXNlci0xIiwib3JnIjoib3JnLTEiLCJtYnIiOiJtZW1iZXJzaGlwLTEiLCJzeXNfcm9sZSI6InVzZXIiLCJvcmdfcm9sZSI6Im1lbWJlciIsInNpZCI6InNlc3Npb24tMSIsImF1ZCI6WyJhZG1pbi1jb25zb2xlIiwiaWRlbnRpdHktc2VydmljZSIsImFnZW50LWNvbnRyb2xsZXIiLCJza2lsbC1yZWdpc3RyeSIsImFnZW50LWFjcC1zZXJ2aWNlIl0sImlhdCI6NDA5MTkwNDAwMCwiZXhwIjo0MDkxOTA0MDYwLCJqdGkiOiJhdXRodG9rZW5fMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTEifQ.fVX7BgriEgSljfUfegVmg7Pmn-zdVICG9FKV4eqLA0qpA_ef7bvgAIbUFa54lcvDOFJm_xtu_pH_fWLT0smSDQ",
+  "expires_at": "2099-09-01T01:00:00Z",
+  "idle_expires_at": "2099-09-01T00:30:00Z",
+  "principal": {
+    "active": true,
+    "membership_id": "membership-1",
+    "organization_id": "org-1",
+    "organization_name": "Engineering",
+    "organization_role": "member",
+    "organization_slug": "engineering",
+    "system_role": "user",
+    "user_id": "user-1"
+  }
+}

@@ -126,17 +126,29 @@ function registry() {
           JSON.parse(readFileSync(resolve(apiDir, name), "utf8")),
         );
       }
+    const referencedDocuments = new Set();
+    for (const entry of readManifest()) {
+      const key = entry.schema.split("#", 1)[0];
+      referencedDocuments.add(
+        key.startsWith(CANONICAL_BASE) ? key.slice(CANONICAL_BASE.length) : key,
+      );
+    }
     for (const [key, document] of documents) {
       const schemaLike =
         key.endsWith(".schema.json") ||
         (isObject(document) && "$schema" in document);
       if (
-        !schemaLike ||
-        !isObject(document) ||
-        typeof document.$id !== "string"
-      )
+        schemaLike &&
+        isObject(document) &&
+        typeof document.$id === "string"
+      ) {
+        ajv.addSchema(document);
         continue;
-      ajv.addSchema(document);
+      }
+      if (!isObject(document) || schemaLike || !referencedDocuments.has(key))
+        continue;
+      if (typeof document.$id === "string") ajv.addSchema(document);
+      else ajv.addSchema(document, `${CANONICAL_BASE}${key}`);
     }
     return ajv;
   })();

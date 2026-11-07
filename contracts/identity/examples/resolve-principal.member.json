@@ -1,0 +1,8 @@
+{
+  "principal": {
+    "active": true,
+    "membership_id": "membership-1",
+    "organization_id": "org-1",
+    "user_id": "user-1"
+  }
+}

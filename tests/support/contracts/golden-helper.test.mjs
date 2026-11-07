@@ -11,7 +11,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { assertGolden, loadGolden, withFutureFields } from "./golden.mjs";
+import {
+  assertGolden,
+  loadGolden,
+  validateGolden,
+  withFutureFields,
+} from "./golden.mjs";
 
 const root = fileURLToPath(new URL("../../..", import.meta.url));
 
@@ -172,4 +177,20 @@ test("assertGolden ignores ambient UPDATE_GOLDEN unless the caller opts in", (t)
     ),
   );
   assert.deepEqual(JSON.parse(readFileSync(stale, "utf8")), { a: 2 });
+});
+
+test("validateGolden resolves contract descriptor method fragments", async () => {
+  assert.equal(
+    await validateGolden(
+      "identity/identity-contract.json#/methods/list_login_methods/response",
+      { methods: [] },
+    ),
+    true,
+  );
+  await assert.rejects(() =>
+    validateGolden(
+      "identity/identity-contract.json#/methods/list_login_methods/response",
+      { methods: "local" },
+    ),
+  );
 });
