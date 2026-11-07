@@ -1054,3 +1054,59 @@ test("an invalid current password is a business error and does not invalidate th
   );
   assert(gateway.error.codes.includes("invalid_current_password"));
 });
+
+// Exercise the actual system-test double against the producer's published schema.
+// A consumer and a double using the same retired fields must not agree silently.
+for (const operation of [
+  "list-external-identity-providers",
+  "list-external-identities",
+]) {
+  test(`Console system double follows Identity ${operation} pagination`, async () => {
+    const { createOIDCFixture } =
+      await import("../../e2e/service-authentication/console/oidc-fixture.mjs");
+    const serve = createOIDCFixture({});
+    const validate = methodValidator(
+      operation.replaceAll("-", "_"),
+      "response",
+    );
+    const validateRequest = methodValidator(
+      operation.replaceAll("-", "_"),
+      "request",
+    );
+    const body = {
+      actor_principal_id: "admin",
+      limit: 1,
+      ...(operation === "list-external-identities"
+        ? { scope: "organization", membership_id: "target-member" }
+        : {}),
+    };
+    const page = (input) => {
+      assert(validateRequest(input), JSON.stringify(validateRequest.errors));
+      let result;
+      assert.equal(
+        serve({
+          path: `/rpc/identity/${operation}`,
+          r: { method: "POST" },
+          w: { setHeader() {} },
+          body: input,
+          claims: { sub: "admin", org: "org-1" },
+          token: "synthetic-context",
+          json(_response, value, status = 200) {
+            assert.equal(status, 200);
+            result = value;
+          },
+        }),
+        true,
+      );
+      assert(validate(result), JSON.stringify(validate.errors));
+      return result;
+    };
+    const first = page(body);
+    assert.equal(first.items.length, 1);
+    assert.equal(typeof first.next_cursor, "string");
+    const last = page({ ...body, cursor: first.next_cursor });
+    assert.equal(last.items.length, 1);
+    assert.notEqual(last.items[0].id, first.items[0].id);
+    assert.equal(last.next_cursor, null);
+  });
+}

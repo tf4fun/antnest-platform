@@ -35,7 +35,7 @@ func TestGatewayPasswordAdmissionFailureProjectionAndRecovery(t *testing.T) {
 			{"wrong-code", browserRPCFailure{429, passwordBusyJSON, []string{"1"}}, 503, "", ""},
 			{"private-message", browserRPCFailure{503, strings.Replace(passwordBusyJSON, "Password verification is busy", "private-password-canary", 1), []string{"1"}}, 503, "", ""},
 			{"duplicate-code", browserRPCFailure{401, strings.TrimSuffix(passwordBusyJSON, "}") + `,"code":"unauthenticated"}`, []string{"1"}}, 503, "", ""},
-			{"unknown-member", browserRPCFailure{503, strings.TrimSuffix(passwordBusyJSON, "}") + `,"token":"private-authority"}`, []string{"1"}}, 503, "", ""},
+			{"unknown-member-projected", browserRPCFailure{503, strings.TrimSuffix(passwordBusyJSON, "}") + `,"token":"private-authority"}`, []string{"1"}}, 503, passwordBusyJSON, "1"},
 			{"trailing-body", browserRPCFailure{503, passwordBusyJSON + "{}", []string{"1"}}, 503, "", ""},
 		} {
 			t.Run(route.rpc+"/"+row.name, func(t *testing.T) {
@@ -51,6 +51,9 @@ func TestGatewayPasswordAdmissionFailureProjectionAndRecovery(t *testing.T) {
 				retries := w.Header().Values("Retry-After")
 				if row.retry == "" && len(retries) != 0 || row.retry != "" && (len(retries) != 1 || retries[0] != row.retry) {
 					t.Fatal("retry header was dropped, duplicated or accepted without validation")
+				}
+				if strings.Contains(w.Body.String(), "private-authority") {
+					t.Fatal("unknown response authority leaked into public failure")
 				}
 				want := row.body
 				if want == "" {
