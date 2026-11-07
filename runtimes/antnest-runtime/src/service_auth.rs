@@ -54,12 +54,35 @@ pub(crate) enum AdmissionError {
 pub(crate) struct ConfigError;
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
 pub(crate) struct BootstrapDescriptor {
     pub(crate) tunnel: crate::tunnel_auth::Descriptor,
     pub(crate) connection_id: String,
     pub(crate) callers_file: String,
     pub(crate) receiver_digest: String,
+    #[serde(flatten, skip_serializing)]
+    pub(crate) _reserved: ReservedCredentialFields,
+}
+
+// These names carry private material, not additive public metadata. Keep
+// rejecting them even when the surrounding response accepts future fields.
+#[derive(Clone, Debug, Default, Deserialize)]
+pub(crate) struct ReservedCredentialFields {
+    #[serde(default, rename = "token", deserialize_with = "reject_reserved_field")]
+    _token: (),
+    #[serde(default, rename = "secret", deserialize_with = "reject_reserved_field")]
+    _secret: (),
+    #[serde(
+        default,
+        rename = "credential",
+        deserialize_with = "reject_reserved_field"
+    )]
+    _credential: (),
+    #[serde(default, rename = "value", deserialize_with = "reject_reserved_field")]
+    _value: (),
+}
+
+pub(crate) fn reject_reserved_field<'de, D: Deserializer<'de>>(_: D) -> Result<(), D::Error> {
+    Err(serde::de::Error::custom("reserved field is not allowed"))
 }
 
 impl BootstrapDescriptor {

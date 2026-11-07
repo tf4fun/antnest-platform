@@ -347,3 +347,15 @@ Error envelopes follow the [common error contract](../../contracts/common/error.
 with the [Runtime slice](../../contracts/common/slices/antnest-runtime.json); MCP tool results
 add common fields beside the legacy `error_code`/effect members and JSON-RPC `ErrorData.data`
 adapts the envelope without changing outer protocol codes.
+
+### RuntimeSpec N-1 compatibility
+
+`decode_runtime_spec` accepts the Controller producer documents in
+`contracts/runtime/examples/` (`runtime-spec.current.json` and the frozen
+`runtime-spec.n-1.json` baseline — never regenerated). The reader accepts the
+current `schema_version: 1` marker and the absent legacy form, ignores additive
+object members at every level of the bootstrap document, and rejects any other
+version marker, while all known-field validation (identity, endpoints,
+authentication digests, key IDs, fixed file paths) and the JSON body scanner
+stay strict. Deploy this consumer before the Runtime Controller emission in
+PR #562 rolls out so the new marker is already accepted when it arrives.

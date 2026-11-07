@@ -23,10 +23,15 @@ pub(crate) enum ConfigError {
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
 pub(crate) struct RuntimeSpecInput {
     pub(crate) agent_id: String,
     pub(crate) generation: u64,
+    #[serde(
+        default,
+        deserialize_with = "present_schema_version",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub(crate) schema_version: Option<u32>,
     pub(crate) listen: SocketAddressInput,
     pub(crate) network: NetworkSpecInput,
     pub(crate) filesystem: FilesystemSpecInput,
@@ -39,13 +44,11 @@ pub(crate) struct RuntimeSpecInput {
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
 pub(crate) struct SkillMaintenanceVerifiersInput {
     pub(crate) keys: Vec<SkillMaintenanceVerifierInput>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
 pub(crate) struct SkillMaintenanceVerifierInput {
     pub(crate) kid: String,
     pub(crate) algorithm: String,
@@ -53,7 +56,6 @@ pub(crate) struct SkillMaintenanceVerifierInput {
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
 pub(crate) struct NetworkSpecInput {
     pub(crate) packet_contract_revision: u32,
     pub(crate) egress_endpoint: Ipv4EndpointInput,
@@ -62,21 +64,18 @@ pub(crate) struct NetworkSpecInput {
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
 pub(crate) struct SocketAddressInput {
     pub(crate) host: String,
     pub(crate) port: u16,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
 pub(crate) struct Ipv4EndpointInput {
     pub(crate) ipv4: String,
     pub(crate) port: u16,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
 pub(crate) struct FilesystemSpecInput {
     pub(crate) workspace: String,
     pub(crate) system_skills: String,
@@ -97,6 +96,13 @@ pub(crate) fn load() -> Result<RuntimeSpec, ConfigError> {
             message: error.to_string(),
         })?;
     Ok(spec.with_receiver(receiver))
+}
+
+fn present_schema_version<'de, D>(deserializer: D) -> Result<Option<u32>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    u32::deserialize(deserializer).map(Some)
 }
 
 fn decode_runtime_spec(encoded: &str) -> Result<RuntimeSpec, ConfigError> {
@@ -135,6 +141,14 @@ pub(crate) fn load_telemetry() -> crate::telemetry::TelemetryConfig {
 
 impl RuntimeSpecInput {
     pub(crate) fn try_into_runtime_spec(self) -> Result<RuntimeSpec, ConfigError> {
+        if let Some(version) = self.schema_version
+            && version != 1
+        {
+            return Err(ConfigError::Invalid {
+                name: "schema_version",
+                message: format!("unsupported schema_version {version}"),
+            });
+        }
         if let Some(descriptor) = &self.authentication {
             descriptor
                 .validate()
@@ -296,6 +310,10 @@ pub(crate) fn parse_endpoint(value: &str) -> Result<UdpEndpoint, ConfigError> {
 }
 
 #[cfg(test)]
+#[path = "config_golden_tests.rs"]
+mod config_golden_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
@@ -310,14 +328,14 @@ mod tests {
     }
 
     #[test]
-    fn runtime_spec_rejects_unknown_fields_and_invalid_json() {
+    fn runtime_spec_accepts_extensions_but_rejects_invalid_json() {
         let mut value = serde_json::to_value(valid_input()).unwrap();
         value
             .as_object_mut()
             .unwrap()
             .insert("legacy_network_mode".into(), serde_json::json!("allow"));
 
-        assert!(decode_runtime_spec(&value.to_string()).is_err());
+        assert!(decode_runtime_spec(&value.to_string()).is_ok());
         assert!(decode_runtime_spec("not-json").is_err());
     }
 
@@ -433,6 +451,7 @@ mod tests {
         RuntimeSpecInput {
             agent_id: "agent-config-test".into(),
             authentication: None,
+            schema_version: None,
             mcp_servers: Vec::new(),
             skill_maintenance_verifiers: SkillMaintenanceVerifiersInput::default(),
             generation: 7,
@@ -471,6 +490,12 @@ mod tests {
             serde_json::to_value(spec.authentication().unwrap()).unwrap(),
             descriptor
         );
+        value["authentication"]["x_future_field"] = serde_json::json!({"enabled": true});
+        let extended = decode_runtime_spec(&value.to_string()).unwrap();
+        assert_eq!(
+            serde_json::to_value(extended.authentication().unwrap()).unwrap(),
+            descriptor
+        );
         for (name, invalid) in [
             ("connection_id", serde_json::json!("rci_wrong")),
             ("callers_file", serde_json::json!("/workspace/callers.json")),
@@ -480,6 +505,13 @@ mod tests {
             value["authentication"] = descriptor.clone();
             value["authentication"][name] = invalid;
             assert!(decode_runtime_spec(&value.to_string()).is_err(), "{name}");
+        }
+        for field in ["token", "secret", "credential", "value"] {
+            for invalid in [serde_json::Value::Null, serde_json::json!("private-canary")] {
+                value["authentication"] = descriptor.clone();
+                value["authentication"][field] = invalid;
+                assert!(decode_runtime_spec(&value.to_string()).is_err(), "{field}");
+            }
         }
         let duplicate = serde_json::to_string(&descriptor).unwrap().replace(
             "\"callers_file\":",

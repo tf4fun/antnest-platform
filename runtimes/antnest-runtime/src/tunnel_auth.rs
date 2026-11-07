@@ -17,7 +17,6 @@ use zeroize::{Zeroize as _, Zeroizing};
 
 pub(crate) const KEYS_FILE: &str = "/run/antnest-auth/tunnel.json";
 #[derive(Clone, Debug, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
 pub(crate) struct Descriptor {
     pub(crate) key_id: String,
     pub(crate) keys_file: String,

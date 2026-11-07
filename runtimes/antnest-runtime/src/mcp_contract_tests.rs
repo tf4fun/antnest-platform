@@ -266,6 +266,7 @@ fn shared_contract_matches_runtime_http_surface() {
 fn assert_runtime_spec_shape(schema: &serde_json::Value) {
     let input = RuntimeSpecInput {
         authentication: Some(crate::service_auth::BootstrapDescriptor {
+            _reserved: Default::default(),
             tunnel: crate::tunnel_auth_tests::fixture().0,
             connection_id: "rci_00000000000000000000000000000001".into(),
             callers_file: crate::service_auth::CALLERS_FILE.into(),
@@ -292,6 +293,7 @@ fn assert_runtime_spec_shape(schema: &serde_json::Value) {
             workspace: "/workspace".into(),
             system_skills: "/skills".into(),
         },
+        schema_version: None,
     };
     let required = schema["required"].as_array().expect("RuntimeSpec required");
     let encoded = serde_json::to_value(input).expect("encode RuntimeSpec input");
@@ -373,6 +375,7 @@ fn assert_runtime_spec_shape(schema: &serde_json::Value) {
 fn valid_input() -> RuntimeSpecInput {
     RuntimeSpecInput {
         authentication: None,
+        schema_version: None,
         mcp_servers: Vec::new(),
         skill_maintenance_verifiers: SkillMaintenanceVerifiersInput::default(),
         agent_id: "agent-1".into(),
