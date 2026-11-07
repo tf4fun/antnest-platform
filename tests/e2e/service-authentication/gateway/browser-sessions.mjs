@@ -120,7 +120,7 @@ export async function browserSessionChecks({
   assert.equal(account.local_password_available, true);
   assert.equal(account.user_id, first.principal.user_id);
   const original = (await request("/api/session/sessions?limit=100")).value
-    .sessions;
+    .items;
   assert.equal(original.length, 1);
   assert.equal(original[0].current, true);
   assert.equal(original[0].user_agent_hint, initial.hint);
@@ -152,24 +152,23 @@ export async function browserSessionChecks({
   const afterTouch = (await request("/api/session")).value;
   assert.equal(afterTouch.idle_expires_at, touched.idle_expires_at);
   const afterReads = (await request("/api/session/sessions?limit=100")).value
-    .sessions[0];
+    .items[0];
   assert.equal(afterReads.idle_expires_at, touched.idle_expires_at);
   checks++;
 
   const other = await login();
   const page = (await request("/api/session/sessions?limit=1")).value;
-  assert.equal(page.sessions.length, 1);
-  assert(page.next_after_id);
+  assert.equal(page.items.length, 1);
+  assert(page.next_cursor);
   const next = (
     await request(
-      `/api/session/sessions?limit=1&after_id=${encodeURIComponent(page.next_after_id)}`,
+      `/api/session/sessions?limit=1&cursor=${encodeURIComponent(page.next_cursor)}`,
     )
   ).value;
-  assert.equal(next.sessions.length, 1);
-  assert.notEqual(page.sessions[0].id, next.sessions[0].id);
+  assert.equal(next.items.length, 1);
+  assert.notEqual(page.items[0].id, next.items[0].id);
   assert.equal(
-    [page.sessions[0], next.sessions[0]].filter((session) => session.current)
-      .length,
+    [page.items[0], next.items[0]].filter((session) => session.current).length,
     1,
   );
   checks++;
@@ -284,7 +283,7 @@ export async function browserSessionChecks({
   });
   const rotated = (
     await request("/api/session/sessions?limit=100", { session: replacement })
-  ).value.sessions;
+  ).value.items;
   assert.equal(rotated.length, 1);
   assert.equal(rotated[0].current, true);
   assert.equal(rotated[0].user_agent_hint, initial.hint);

@@ -419,7 +419,7 @@ export async function verifyOIDCLinking({
     const choices = await fixture.json(
       "/api/admin/directory/identity-providers?limit=50",
     );
-    const providerID = choices.providers.find(
+    const providerID = choices.items.find(
       (row) => row.name === providerName,
     )?.id;
     assert(providerID);
@@ -429,7 +429,7 @@ export async function verifyOIDCLinking({
     const empty = await fixture.json(
       `/api/admin/directory/memberships/${created.membership.id}/external-identities?limit=50`,
     );
-    assert.deepEqual(empty.bindings, []);
+    assert.deepEqual(empty.items, []);
     phase("default-none-denies-asserted-organization-administrator-email", {
       realSignedCallback: true,
       systemAdministrator: false,
@@ -547,8 +547,8 @@ export async function verifyOIDCLinking({
     const tombstones = await fixture.json(
       `/api/admin/directory/memberships/${created.membership.id}/external-identities?limit=50`,
     );
-    assert.equal(tombstones.bindings[0].id, bound.id);
-    assert(tombstones.bindings[0].revoked_at);
+    assert.equal(tombstones.items[0].id, bound.id);
+    assert(tombstones.items[0].revoked_at);
     const restored = await organizationBinding(
       system.page,
       created.membership,
@@ -670,8 +670,8 @@ export async function verifyOIDCLinking({
     assert.equal(account.source, "scim");
     assert.equal(account.local_password_available, false);
     const scimInventory = await inventory(scimSession.client);
-    assert.equal(scimInventory.bindings.length, 1);
-    const scimBinding = scimInventory.bindings[0];
+    assert.equal(scimInventory.items.length, 1);
+    const scimBinding = scimInventory.items[0];
     assert.equal(scimBinding.subject, opaqueSubject);
     assert.equal(scimBinding.method, "scim");
     const scimPanel = await externalDialog(scimSession.page, true);
