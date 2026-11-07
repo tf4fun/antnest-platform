@@ -267,6 +267,7 @@ describe("administrative audit RPC boundary", () => {
       await (await test.post(eventsPath, { run_id: "run-1" })).json(),
     ).toEqual({
       stream: "execution",
+      schema_version: 1,
       items: [],
       next_cursor: null,
     });
@@ -274,7 +275,12 @@ describe("administrative audit RPC boundary", () => {
       await (
         await test.post(eventsPath, { run_id: "run-1", stream: "permissions" })
       ).json(),
-    ).toEqual({ stream: "permissions", items: [], next_cursor: null });
+    ).toEqual({
+      stream: "permissions",
+      schema_version: 1,
+      items: [],
+      next_cursor: null,
+    });
     expect(test.repository.permissions).toHaveBeenCalledOnce();
     expect(test.unexpected).not.toHaveBeenCalled();
   });
