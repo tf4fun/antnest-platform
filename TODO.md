@@ -20,6 +20,10 @@ Issue 状态最后核对于 2026-10-28：141 个 issue，87 个已关闭，54 �
 
 ## 当前批次
 
+- **main E2E 契约同步跟进（2026-11-07，用户报告“e2e 又失败了”）**：已接手 main `ff174f54` 的 system-e2e run `42335559300`，23 个系统组中仅 Service authentication／Agent lifecycle 失败，分别定位到 Gateway password-admission 的 unknown-field 旧负例与 stage2 audit 内部／浏览器 DTO 直接比较。Gateway 扩展字段正确投影为 credential_busy 并保留 Retry-After；更新场景 oracle，完整业务／凭据过滤／单次调用／会话保留断言不变。stage2 只在比对前校验并剥离 ACP envelope／row 的 schema_version，opaque payload／request、顺序、内容、分页和重启前后比对保留。新增快速回归直接读取真实 ACP 当前、N-1、permissions golden，5 用例＋lint／格式检查通过；Gateway 精确 main 镜像先复现相同 110-check 失败，修正后 243 checks 通过且 cleaned=true。stage2 定向实景运行中，完整准入交新 PR 精确候选 CI。本批不更改生产服务或工作流，不把局部结果当作完整 main E2E 或发布能力。
+
+- **#48 全部 PR 已合并（2026-11-07 03:47 UTC，用户授权“全部合并”）**：#560–#565、#567–#574 共 14 个 PR 已按依赖顺序以 merge commit 合入 `main`，最终提交 `ff174f54f02602cb048de97c3797e14440012e34`。合并前逐个核对精确 head 的 Repository checks／Integration checks，28 项必需检查全部通过；合并后核对所有 PR 的 merged 状态与 main 基线，最终 main 文件树与已通过 CI 的集成候选 `35dbe12413fad372010639e0e7664244cdaa72ed` 完全一致。用户随后授权关闭 #48，已于 2026-11-07 04:22 UTC 标记 completed 并关闭；#83 保持开放。以下为历史交接记录，本条覆盖其停止、待 CI、待合并状态。Docker system E2E 仍归专门流程，本批未执行或据此声明发布能力。
+
 - **#48 PR CI 修复接手（2026-11-07，用户明确授权继续处理）**：本条接续并覆盖以下历史“停止／不轮询 CI”交接状态；当前任务为修复全部 14 个堆叠 PR 的精确候选门禁，不合并、不关闭 #48／#83。已修 Controller lint／机器契约登记与路由校验、N-1 RuntimeSpec 可选字段断言、ACP 类型 lint、Gateway unit＋真实 HTTP/TLS component 扩展字段投影、UI bridge 失效夹具，并沿依赖普通合并传播。后续 ACP 修正保留凭据／旧授权字段拒绝，恢复本地公共快照严格解析；普通 budget／retry 响应扩展改断言完整投影结果、输入不变，持久化仍拒绝未知字段。Runtime 修正身份描述符私密字段和 stdio/HTTP 冲突字段拒绝，包含 null 回归，真实 future-field golden 仍解码。定向证据：ACP 9 文件 194 用例＋v2 29 用例／类型检查／lint、Runtime 4 个契约与安全回归／clippy、Gateway HTTP/TLS 36 子用例全部通过；完整准入以最终候选远程 Repository checks／Integration checks 为准，尚不宣称通过。Docker system E2E 继续归专门流程。
 
 - **#48 全部批次已提交，停止等待用户反馈（2026-11-07）**：显式集成 [#574](https://github.com/tf4fun/antnest-platform/pull/574) 已创建，依赖 Controller consumer #573，集成代码提交 `d601d3cb`。共享、各服务与最终集成共 14 个独立 PR 均已交付；本轮未合并 PR、未关闭 issue，不声明远程 CI 通过。以下保留本批审查与定向证据；最终 CI 不查询／不轮询，后续结果由用户通知，Docker E2E 仍归专门流程。
