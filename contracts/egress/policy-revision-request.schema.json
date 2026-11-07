@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.antnest.dev/egress/policy-revision-request.schema.json",
+  "title": "Runtime Egress policy revision request",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["spec"],
+  "properties": {
+    "spec": {
+      "$ref": "policy.schema.json"
+    }
+  }
+}

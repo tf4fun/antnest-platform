@@ -50,7 +50,9 @@ recovery and packet initialization complete, so an externally observable
 `starting` state would be fiction. `/status` deliberately returns HTTP 200 in
 both states; callers inspect `control_plane_ready` before issuing mutations.
 When degraded, the last published packet snapshot may continue forwarding,
-while control mutations fail with a retryable stable error.
+while control mutations fail with a retryable stable error. The response body
+follows the `status` definition in
+[control-response.schema.json](control-response.schema.json).
 
 ## Agent Network
 
@@ -205,6 +207,10 @@ cleanup check.
 { "spec": { "schema_version": 1, "action": "allow_all" } }
 ```
 
+Its strict request follows
+[policy-revision-request.schema.json](policy-revision-request.schema.json): a
+single `spec` member carrying the policy document.
+
 `revision` is a positive integer. A new revision is immutable. Repeating the
 same `(policy_id, revision, canonical spec)` is idempotent; reusing the key for
 different content returns `policy_revision_conflict`.
@@ -307,6 +313,11 @@ metadata-only shape.
   "expected_version": "1"
 }
 ```
+
+Its strict request follows
+[policy-assignment-request.schema.json](policy-assignment-request.schema.json):
+the body carries `policy_id`, `revision` and at most one precondition field,
+because the strong `If-Match` header is an external alternative.
 
 Ensure creates the initial deny assignment at resource version 1. Callers use
 the assignment's current version; this operation cannot create an assignment

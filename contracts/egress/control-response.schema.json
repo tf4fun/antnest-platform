@@ -146,6 +146,31 @@
           "minimum": 1
         }
       }
+    },
+    "status": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "data_plane_ready",
+        "control_plane_ready",
+        "snapshot_revision"
+      ],
+      "properties": {
+        "status": {
+          "enum": ["ready", "degraded"]
+        },
+        "data_plane_ready": {
+          "type": "boolean"
+        },
+        "control_plane_ready": {
+          "type": "boolean"
+        },
+        "snapshot_revision": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
     }
   }
 }

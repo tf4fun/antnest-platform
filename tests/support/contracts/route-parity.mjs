@@ -38,3 +38,85 @@ export function routeParityProblems(declaredRoutes, registeredRoutes) {
       problems.push(`registered route has no contract: ${route}`);
   return problems.sort();
 }
+
+const HTTP_STATUS = /^\d{3}$/;
+
+const isHttpStatus = (key) =>
+  HTTP_STATUS.test(key) && Number(key) >= 100 && Number(key) <= 599;
+
+const isBodyReference = (value) =>
+  typeof value === "string" && value.length > 0;
+
+const isValidResponseEntry = (entry) =>
+  isObject(entry) &&
+  Object.keys(entry).every((key) => key === "body" || key === "content_type") &&
+  isBodyReference(entry.body) &&
+  (entry.content_type === undefined ||
+    (typeof entry.content_type === "string" && entry.content_type.length > 0));
+
+const isValidErrorEntry = (entry) =>
+  isObject(entry) &&
+  Object.keys(entry).every((key) => key === "code" || key === "status") &&
+  typeof entry.code === "string" &&
+  entry.code.length > 0 &&
+  Number.isInteger(entry.status) &&
+  entry.status >= 100 &&
+  entry.status <= 599;
+
+export function routeBodyProblems(routes) {
+  const problems = [];
+  if (!Array.isArray(routes)) return ["routes must be an array"];
+  const seen = new Set();
+  routes.forEach((route, index) => {
+    const declared =
+      isObject(route) &&
+      typeof route.method === "string" &&
+      typeof route.path === "string";
+    const label = declared
+      ? `${route.method} ${route.path}`
+      : `route[${index}]`;
+    if (!isObject(route)) {
+      problems.push(`route ${label}: route must declare method and path`);
+      return;
+    }
+    if (!declared)
+      problems.push(`route ${label}: route must declare method and path`);
+    else if (seen.has(label)) problems.push(`duplicate route: ${label}`);
+    else seen.add(label);
+    const requestBody =
+      route.request_body !== undefined
+        ? route.request_body
+        : route.request_schema;
+    if (requestBody === undefined)
+      problems.push(`route ${label}: missing request body declaration`);
+    else if (!isBodyReference(requestBody))
+      problems.push(`route ${label}: invalid request body reference`);
+    const responses = route.responses;
+    if (!isObject(responses) || Object.keys(responses).length === 0) {
+      problems.push(`route ${label}: missing responses`);
+    } else {
+      for (const [status, entry] of Object.entries(responses)) {
+        if (!isHttpStatus(status))
+          problems.push(
+            `route ${label}: invalid response status ${JSON.stringify(status)}`,
+          );
+        else if (!isValidResponseEntry(entry))
+          problems.push(
+            `route ${label}: invalid response body for status ${status}`,
+          );
+      }
+    }
+    if (route.errors !== undefined) {
+      if (!Array.isArray(route.errors))
+        problems.push(`route ${label}: invalid errors`);
+      else
+        route.errors.forEach((entry, entryIndex) => {
+          if (!isValidErrorEntry(entry))
+            problems.push(
+              `route ${label}: invalid error entry at index ${entryIndex}`,
+            );
+        });
+    }
+  });
+  return problems.sort();
+}

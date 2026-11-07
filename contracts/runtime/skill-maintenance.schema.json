@@ -1,0 +1,339 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.antnest.dev/runtime/skill-maintenance.schema.json",
+  "title": "Runtime skill maintenance requests and receipts",
+  "$defs": {
+    "id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200
+    },
+    "request_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[!-~]+$"
+    },
+    "package_path": {
+      "type": "string",
+      "maxLength": 96,
+      "pattern": "^\\.antnest/skills/[a-z0-9]+(-[a-z0-9]+)*$"
+    },
+    "digest": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "install_request": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "action",
+        "request_id",
+        "job_id",
+        "generation",
+        "package_path",
+        "expected_base_digest",
+        "target_digest",
+        "artifact_digest",
+        "package_rules_version"
+      ],
+      "properties": {
+        "action": {
+          "const": "install"
+        },
+        "request_id": {
+          "$ref": "#/$defs/request_id"
+        },
+        "job_id": {
+          "$ref": "#/$defs/id"
+        },
+        "generation": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "package_path": {
+          "$ref": "#/$defs/package_path"
+        },
+        "expected_base_digest": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/digest"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "target_digest": {
+          "$ref": "#/$defs/digest"
+        },
+        "artifact_digest": {
+          "$ref": "#/$defs/digest"
+        },
+        "package_rules_version": {
+          "const": 1
+        }
+      }
+    },
+    "digest_request": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "action",
+        "request_id",
+        "job_id",
+        "generation",
+        "package_path"
+      ],
+      "properties": {
+        "action": {
+          "const": "digest"
+        },
+        "request_id": {
+          "$ref": "#/$defs/request_id"
+        },
+        "job_id": {
+          "$ref": "#/$defs/id"
+        },
+        "generation": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "package_path": {
+          "$ref": "#/$defs/package_path"
+        }
+      }
+    },
+    "maintenance_receipt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "request_id",
+        "action",
+        "execution_id",
+        "outcome",
+        "observed_digest"
+      ],
+      "properties": {
+        "request_id": {
+          "$ref": "#/$defs/request_id"
+        },
+        "action": {
+          "enum": [
+            "install",
+            "digest"
+          ]
+        },
+        "execution_id": {
+          "$ref": "#/$defs/id"
+        },
+        "outcome": {
+          "enum": [
+            "applied",
+            "conflict",
+            "observed",
+            "blocked",
+            "preempted"
+          ]
+        },
+        "observed_digest": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/digest"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "conflict_reason": {
+          "enum": [
+            "base_changed",
+            "target_exists",
+            "content_changed_during_activation"
+          ]
+        },
+        "blocked_reason": {
+          "enum": [
+            "foreground_running",
+            "managed_call_in_flight",
+            "background_task_running",
+            "writers_unknown"
+          ]
+        },
+        "blocked_subject_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^(bash|managed|unknown):[A-Za-z0-9._-]+$"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "action": {
+                "const": "install"
+              }
+            },
+            "required": [
+              "action"
+            ]
+          },
+          "then": {
+            "properties": {
+              "outcome": {
+                "enum": [
+                  "applied",
+                  "conflict",
+                  "blocked",
+                  "preempted"
+                ]
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "outcome": {
+                "enum": [
+                  "observed",
+                  "blocked",
+                  "preempted"
+                ]
+              },
+              "blocked_reason": {
+                "const": "foreground_running"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "outcome": {
+                "const": "applied"
+              }
+            },
+            "required": [
+              "outcome"
+            ]
+          },
+          "then": {
+            "properties": {
+              "observed_digest": {
+                "$ref": "#/$defs/digest"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "outcome": {
+                "enum": [
+                  "blocked",
+                  "preempted"
+                ]
+              }
+            },
+            "required": [
+              "outcome"
+            ]
+          },
+          "then": {
+            "properties": {
+              "observed_digest": {
+                "type": "null"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "outcome": {
+                "const": "conflict"
+              }
+            },
+            "required": [
+              "outcome"
+            ]
+          },
+          "then": {
+            "properties": {
+              "conflict_reason": true
+            },
+            "required": [
+              "conflict_reason"
+            ]
+          },
+          "else": {
+            "not": {
+              "properties": {
+                "conflict_reason": true
+              },
+              "required": [
+                "conflict_reason"
+              ]
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "outcome": {
+                "const": "blocked"
+              }
+            },
+            "required": [
+              "outcome"
+            ]
+          },
+          "then": {
+            "properties": {
+              "blocked_reason": true
+            },
+            "required": [
+              "blocked_reason"
+            ]
+          },
+          "else": {
+            "not": {
+              "properties": {
+                "blocked_reason": true
+              },
+              "required": [
+                "blocked_reason"
+              ]
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "blocked_reason": {
+                "enum": [
+                  "background_task_running",
+                  "managed_call_in_flight"
+                ]
+              }
+            },
+            "required": [
+              "blocked_reason"
+            ]
+          },
+          "then": {
+            "properties": {
+              "blocked_subject_id": true
+            },
+            "required": [
+              "blocked_subject_id"
+            ]
+          }
+        }
+      ]
+    }
+  }
+}

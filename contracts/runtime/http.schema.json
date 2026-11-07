@@ -1,0 +1,81 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.antnest.dev/runtime/http.schema.json",
+  "title": "Antnest Runtime HTTP surface",
+  "$defs": {
+    "live_status": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status"],
+      "properties": {
+        "status": {
+          "enum": ["ready", "unavailable"]
+        }
+      }
+    },
+    "protocol_request": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["jsonrpc", "method"],
+      "properties": {
+        "jsonrpc": {
+          "const": "2.0"
+        },
+        "method": {
+          "type": "string",
+          "minLength": 1
+        },
+        "params": {
+          "type": ["object", "array"]
+        },
+        "id": {
+          "type": ["string", "integer"]
+        }
+      }
+    },
+    "protocol_error": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["code", "message"],
+      "properties": {
+        "code": {
+          "type": "integer"
+        },
+        "message": {
+          "type": "string"
+        },
+        "data": true
+      }
+    },
+    "protocol_response": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["jsonrpc", "id"],
+      "properties": {
+        "jsonrpc": {
+          "const": "2.0"
+        },
+        "id": {
+          "type": ["string", "integer", "null"]
+        },
+        "result": true,
+        "error": {
+          "$ref": "#/$defs/protocol_error"
+        }
+      },
+      "oneOf": [
+        {
+          "required": ["result"],
+          "not": {"required": ["error"]}
+        },
+        {
+          "required": ["error"],
+          "not": {"required": ["result"]}
+        }
+      ]
+    },
+    "common_error": {
+      "$ref": "../common/error.schema.json"
+    }
+  }
+}
