@@ -139,7 +139,8 @@ async function readinessFixture(initialReadiness?: Readiness, holdInitial = fals
 
   vi.stubGlobal("EventSource", TestEventSource);
   const fetch = vi.fn((input: RequestInfo | URL, init: RequestInit = {}) => {
-    const path = new URL(typeof input === "string" ? input : input instanceof URL ? input.href : input.url, "http://localhost").pathname;
+    const url = new URL(typeof input === "string" ? input : input instanceof URL ? input.href : input.url, "http://localhost");
+    const path = url.pathname;
     const method = init.method ?? "GET";
     requests.push({ path, method });
     const run = async () => {
@@ -163,8 +164,14 @@ async function readinessFixture(initialReadiness?: Readiness, holdInitial = fals
       const progress = path.match(/^\/api\/admin\/operations\/create-(agent-[12])$/);
       if (progress) return Response.json(operation(progress[1]!));
       if (path === "/api/admin/templates") return Response.json({ items: [] });
-      if (path === "/api/admin/directory/members?limit=50") return Response.json({ items: [], next_cursor: null });
-      if (path === "/api/admin/directory/groups?limit=50") return Response.json({ items: [], next_cursor: null });
+      if (path === "/api/admin/directory/members") {
+        expect([...url.searchParams]).toEqual([["limit", "50"]]);
+        return Response.json({ items: [], next_cursor: null });
+      }
+      if (path === "/api/admin/directory/groups") {
+        expect([...url.searchParams]).toEqual([["limit", "50"]]);
+        return Response.json({ items: [], next_cursor: null });
+      }
       unexpected.push(path);
       return Response.json({ code: "unexpected_request" }, { status: 503 });
     };
