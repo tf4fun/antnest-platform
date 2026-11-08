@@ -280,3 +280,5 @@ projection while existing declared-field type/enum/required checks stay
 unchanged; opaque `payload` and `request` user data passes through verbatim and is never
 interpreted as protocol markers. Deploy consumers before producers evolve the
 wire further; no synthetic N-1 fixture is invented.
+
+Public organization/user/agent references follow the [shared opaque-ID grammar](../../contracts/common/ids.schema.json); the `*.ids-v2.schema.json` revisions publish the updated shapes.
