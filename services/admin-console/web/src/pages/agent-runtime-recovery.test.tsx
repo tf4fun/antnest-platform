@@ -136,7 +136,9 @@ function mockWorkflow() {
         case "/api/admin/agents/agent-1/events":
         case "/api/admin/agents/agent-2/events": return state.eventsRead();
         case "/api/admin/templates": return Response.json({ items: [latestTemplate] });
-        case "/api/admin/directory": return Response.json({ users: [member], groups: [] });
+        case "/api/admin/directory/members": return Response.json({ items: [member], next_cursor: null });
+
+        case "/api/admin/directory/groups": return Response.json({ items: [], next_cursor: null });
         case operationPath: return state.operationRead();
         case `/api/admin/agent-skill-preparations/${requestID}`:
           return Response.json({ code: "not_found", message: "No Skill preparation" }, { status: 404 });

@@ -41,7 +41,9 @@ function application(
         email: "admin@example.com", display_name: "Test administrator", source: "local",
         local_password_available: localPasswordAvailable,
       } });
-      case "/api/admin/directory": return Response.json({ users: [], groups: [] });
+      case "/api/admin/directory/members?limit=50": return Response.json({ items: [], next_cursor: null });
+
+      case "/api/admin/directory/groups?limit=50": return Response.json({ items: [], next_cursor: null });
       case "/api/session/login-methods": return Response.json({ methods: [] });
       case "/api/session/login": return Response.json(session);
       default: throw new Error(`Unexpected request: ${init.method} ${input}`);
@@ -89,7 +91,7 @@ it.each([false, true])("keeps external logins reachable for OIDC-only accounts w
 it("rebuilds the same-user private page after password replacement", async () => {
   const request = application(async () => new Response(null, { status: 204 }));
   await screen.findByRole("heading", { name: "Directory" });
-  const reads = () => request.mock.calls.filter(([path]) => path === "/api/admin/directory").length;
+  const reads = () => request.mock.calls.filter(([path]) => path === "/api/admin/directory/members?limit=50").length;
   expect(reads()).toBe(1);
   fireEvent.click(await screen.findByRole("button", { name: "Change local password" }));
   for (const name of ["Current password", "New password", "Confirm new password"]) {
@@ -125,7 +127,7 @@ it("does not reinstall a validated response after the session owner has already 
   const request = application(async () => new Response(null, { status: 204 }));
   await screen.findByRole("heading", { name: "Welcome back" });
   expect(screen.queryByRole("heading", { name: "Directory" })).toBeNull();
-  expect(request.mock.calls.filter(([path]) => path === "/api/admin/directory")).toHaveLength(0);
+  expect(request.mock.calls.filter(([path]) => path === "/api/admin/directory/members?limit=50")).toHaveLength(0);
 });
 
 it.each(["invalid_current_password", "unauthenticated"])("handles password command %s through the real API and session owner", async (code) => {

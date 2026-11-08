@@ -121,6 +121,8 @@ func (h *handler) routes() {
 	h.registerBrowserSessionRoutes()
 	h.registerExternalIdentityRoutes()
 	h.mux.HandleFunc("GET /api/admin/directory", h.withPrincipal(h.directory))
+	h.mux.HandleFunc("GET /api/admin/directory/members", h.withPrincipal(h.directoryMembers))
+	h.mux.HandleFunc("GET /api/admin/directory/groups", h.withPrincipal(h.directoryGroups))
 	h.mux.HandleFunc("POST /api/admin/directory/users", h.withPrincipal(h.createLocalUser))
 	h.mux.HandleFunc("POST /api/admin/directory/memberships/{membership_id}", h.withPrincipal(h.updateMembership))
 	h.mux.HandleFunc("POST /api/admin/directory/users/{user_id}/active", h.withPrincipal(h.setUserActive))

@@ -89,6 +89,33 @@ export type Directory = {
   groups: DirectoryGroup[];
 };
 
+export type DirectoryMemberQuery = {
+  cursor?: string;
+  limit?: number;
+  q?: string;
+  role?: "admin" | "member";
+  active?: boolean;
+  source?: "local" | "scim";
+};
+
+export type DirectoryGroupQuery = {
+  cursor?: string;
+  limit?: number;
+  q?: string;
+  active?: boolean;
+  source?: "local" | "scim";
+};
+
+export type DirectoryMemberPage = {
+  items: DirectoryMember[];
+  next_cursor: string | null;
+};
+
+export type DirectoryGroupPage = {
+  items: DirectoryGroup[];
+  next_cursor: string | null;
+};
+
 export type OIDCLinkPolicy = "none" | "verified_email_in_domains" | "verified_email";
 export type OIDCPolicy = {
   link_policy: OIDCLinkPolicy;

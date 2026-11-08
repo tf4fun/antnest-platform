@@ -52,7 +52,7 @@ const token = {
 
 test("Console retains its lifecycle routes with the Identity19 producer", () => {
   const catalog = read("admin-console/admin-contract.json");
-  assert.equal(catalog.version, 60);
+  assert.equal(catalog.version, 61);
   assert.equal(catalog.response_policy.account_security.identity_revision, 19);
   for (const [route, field, definition, valid] of [
     [
@@ -74,7 +74,14 @@ test("Console retains its lifecycle routes with the Identity19 producer", () => 
       { token, credential: "one-time-secret" },
     ],
   ]) {
-    const reference = catalog.routes[route][field];
+    const kind = field === "request_schema" ? "request" : "response";
+    const wrapper = `${route}_${kind}`;
+    assert.equal(
+      catalog.routes[route][field],
+      `admin-api.schema.json#/$defs/${wrapper}`,
+    );
+    const reference = read("admin-console/admin-api.schema.json").$defs[wrapper]
+      .$ref;
     assert.equal(reference, `scim-lifecycle.schema.json#/$defs/${definition}`);
     const validate = schema(reference);
     assert(validate(valid));

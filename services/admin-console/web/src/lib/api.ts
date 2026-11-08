@@ -20,7 +20,10 @@ import type {
   CreateAgentResult,
   CurrentAccountResult,
   Directory,
+  DirectoryGroup,
+  DirectoryGroupQuery,
   DirectoryMember,
+  DirectoryMemberQuery,
   DirectoryMembership,
   ExternalIdentity,
   ExternalIdentityBindInput,
@@ -381,6 +384,159 @@ async function unbindExternalIdentity(path: string, allowLockout: boolean): Prom
   return result;
 }
 
+const directoryFields = (value: unknown, allowlist: readonly string[]): Record<string, unknown> => {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new Error("directory record is invalid");
+  }
+  for (const key of Object.keys(value)) {
+    if (!allowlist.includes(key)) throw new Error(`directory field ${key} is not allowed`);
+  }
+  return value as Record<string, unknown>;
+};
+
+const directoryString = (record: Record<string, unknown>, field: string): string => {
+  const value = record[field];
+  if (typeof value !== "string" || value === "") throw new Error(`directory ${field} is invalid`);
+  return value;
+};
+
+const directoryBoolean = (record: Record<string, unknown>, field: string): boolean => {
+  const value = record[field];
+  if (typeof value !== "boolean") throw new Error(`directory ${field} is invalid`);
+  return value;
+};
+
+const directoryCursor = (value: unknown): string | null => {
+  if (value === null) return null;
+  if (typeof value !== "string" || value === "") {
+    throw new Error("directory next_cursor is invalid");
+  }
+  if (new TextEncoder().encode(value).length > 4096) {
+    throw new Error("directory next_cursor is invalid");
+  }
+  for (const char of value) {
+    const code = char.codePointAt(0) ?? 0;
+    if (code < 0x20 || code === 0x7f) throw new Error("directory next_cursor is invalid");
+  }
+  return value;
+};
+
+const directoryTimestamp = (record: Record<string, unknown>, field: string): string => {
+  const value = directoryString(record, field);
+  if (Number.isNaN(Date.parse(value))) throw new Error(`directory ${field} is invalid`);
+  return value;
+};
+
+const directoryEmail = (value: string): string => {
+  const at = value.indexOf("@");
+  if (at < 1 || at !== value.lastIndexOf("@") || at === value.length - 1 ||
+      /[\s]/.test(value)) {
+    throw new Error("directory email is invalid");
+  }
+  return value;
+};
+
+const USER_FIELDS = ["id", "system_role", "active", "created_at", "updated_at"] as const;
+const MEMBERSHIP_FIELDS = [
+  "id", "user_id", "email", "display_name", "role", "source", "active", "created_at", "updated_at",
+] as const;
+const GROUP_FIELDS = ["display_name", "source", "active", "created_at", "updated_at"] as const;
+
+function decodeDirectoryMember(raw: unknown): DirectoryMember {
+  const record = directoryFields(raw, ["user", "membership"]);
+  const user = directoryFields(record.user, USER_FIELDS);
+  const membership = directoryFields(record.membership, MEMBERSHIP_FIELDS);
+  const member: DirectoryMember = {
+    user: {
+      id: directoryString(user, "id"),
+      system_role: directoryString(user, "system_role"),
+      active: directoryBoolean(user, "active"),
+      created_at: directoryTimestamp(user, "created_at"),
+      updated_at: directoryTimestamp(user, "updated_at"),
+    },
+    membership: {
+      id: directoryString(membership, "id"),
+      user_id: directoryString(membership, "user_id"),
+      email: directoryEmail(directoryString(membership, "email")),
+      display_name: directoryString(membership, "display_name"),
+      role: directoryString(membership, "role") as DirectoryMembership["role"],
+      source: directoryString(membership, "source") as DirectoryMembership["source"],
+      active: directoryBoolean(membership, "active"),
+      created_at: directoryTimestamp(membership, "created_at"),
+      updated_at: directoryTimestamp(membership, "updated_at"),
+    },
+  };
+  if (member.user.id !== member.membership.user_id) {
+    throw new Error("directory member user does not match its membership");
+  }
+  if (member.user.system_role !== "user" && member.user.system_role !== "admin") {
+    throw new Error("directory member system_role is invalid");
+  }
+  if (member.membership.role !== "admin" && member.membership.role !== "member") {
+    throw new Error("directory member role is invalid");
+  }
+  if (member.membership.source !== "local" && member.membership.source !== "scim") {
+    throw new Error("directory member source is invalid");
+  }
+  return member;
+}
+
+function decodeDirectoryGroup(raw: unknown): DirectoryGroup {
+  const record = directoryFields(raw, GROUP_FIELDS);
+  const group: DirectoryGroup = {
+    display_name: directoryString(record, "display_name"),
+    source: directoryString(record, "source") as DirectoryGroup["source"],
+    active: directoryBoolean(record, "active"),
+    created_at: directoryTimestamp(record, "created_at"),
+    updated_at: directoryTimestamp(record, "updated_at"),
+  };
+  if (group.source !== "local" && group.source !== "scim") {
+    throw new Error("directory group source is invalid");
+  }
+  return group;
+}
+
+function decodeDirectoryPage<T>(raw: unknown, decode: (item: unknown) => T, limit: number): { items: T[]; next_cursor: string | null } {
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
+    throw new Error("directory page is invalid");
+  }
+  const record = raw as Record<string, unknown>;
+  if (!Array.isArray(record.items) || record.items.length > limit || record.items.length > 200) {
+    throw new Error("directory items are invalid");
+  }
+  const next = directoryCursor(record.next_cursor);
+  if (record.items.length === 0 && next !== null) {
+    throw new Error("an empty directory page must terminate the cursor");
+  }
+  return { items: record.items.map(decode), next_cursor: next };
+}
+
+function directoryQuery(input: DirectoryMemberQuery | DirectoryGroupQuery): string {
+  const parameters = new URLSearchParams();
+  const limit = input.limit === undefined ? 50 : input.limit;
+  if (!Number.isInteger(limit) || limit < 1 || limit > 200) {
+    throw new Error("directory limit is invalid");
+  }
+  parameters.set("limit", String(limit));
+  if (input.cursor !== undefined) {
+    if (input.cursor === "" || input.cursor.length > 4096) {
+      throw new Error("directory cursor is invalid");
+    }
+    parameters.set("cursor", input.cursor);
+  }
+  if (input.q !== undefined) {
+    const prefix = input.q.trim().toLowerCase();
+    if (new TextEncoder().encode(prefix).length > 256) {
+      throw new Error("directory prefix is invalid");
+    }
+    if (prefix !== "") parameters.set("q", prefix);
+  }
+  if ("role" in input && input.role !== undefined) parameters.set("role", input.role);
+  if (input.active !== undefined) parameters.set("active", String(input.active));
+  if (input.source !== undefined) parameters.set("source", input.source);
+  return parameters.toString();
+}
+
 export const api = {
   searchSkillSources: (query: string, signal?: AbortSignal) => request<SkillSourcePage>("/api/admin/skill-sources/search", { method: "POST", body: json({ query, limit: 50 }), signal }),
   previewSkillSource: (selection: SkillSourceSelection, signal?: AbortSignal) => request<SkillSourcePreview>("/api/admin/skill-sources/preview", { method: "POST", body: json(selection), signal }),
@@ -474,6 +630,16 @@ export const api = {
     "/api/session/external-identities/notices/acknowledge", { notice_ids: noticeIDs }),
   overview: (signal?: AbortSignal) => request<Overview>("/api/admin/overview", { signal }),
   directory: () => request<Directory>("/api/admin/directory"),
+  directoryMembers: (input: DirectoryMemberQuery = {}, signal?: AbortSignal) => {
+    const limit = input.limit === undefined ? 50 : input.limit;
+    return request<unknown>(`/api/admin/directory/members?${directoryQuery(input)}`, { signal })
+      .then((raw) => decodeDirectoryPage(raw, decodeDirectoryMember, limit));
+  },
+  directoryGroups: (input: DirectoryGroupQuery = {}, signal?: AbortSignal) => {
+    const limit = input.limit === undefined ? 50 : input.limit;
+    return request<unknown>(`/api/admin/directory/groups?${directoryQuery(input)}`, { signal })
+      .then((raw) => decodeDirectoryPage(raw, decodeDirectoryGroup, limit));
+  },
   createLocalUser: (input: {
     email: string;
     display_name: string;

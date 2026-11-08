@@ -16,7 +16,6 @@ import {
   MobileResourceList,
   PageHeader,
   ResourceFailureNotice,
-  ResourceFailurePage,
   ResourceToolbar,
   SearchField,
 } from "../components/page";
@@ -30,9 +29,30 @@ import { CheckboxField, Field, Input, Select } from "../components/ui/input";
 import { api, errorMessage } from "../lib/api";
 import { dateTime } from "../lib/format";
 import { resourceFailure, type ResourceFailure } from "../lib/resource-failure";
-import type { Directory, DirectoryMember } from "../lib/types";
+import type {
+  DirectoryGroup,
+  DirectoryGroupQuery,
+  DirectoryMember,
+  DirectoryMemberQuery,
+} from "../lib/types";
 
 type DirectoryView = "people" | "groups";
+
+type MemberListState = {
+  items: DirectoryMember[];
+  nextCursor: string | null | undefined;
+  pending: boolean;
+  failure?: ResourceFailure;
+  continuationFailure?: ResourceFailure;
+};
+
+type GroupListState = {
+  items: DirectoryGroup[];
+  nextCursor: string | null | undefined;
+  pending: boolean;
+  failure?: ResourceFailure;
+  continuationFailure?: ResourceFailure;
+};
 
 export function DirectoryPage({
   currentUserID,
@@ -43,10 +63,25 @@ export function DirectoryPage({
   organizationName: string;
   systemAdministrator: boolean;
 }) {
-  const [data, setData] = useState<Directory>();
-  const [loadFailure, setLoadFailure] = useState<ResourceFailure>();
-  const [loadPending, setLoadPending] = useState(true);
-  const readPending = useRef(false);
+  const [memberState, setMemberState] = useState<MemberListState>({
+    items: [], nextCursor: undefined, pending: false,
+  });
+  const [groupState, setGroupState] = useState<GroupListState>({
+    items: [], nextCursor: undefined, pending: false,
+  });
+  const [memberQuery, setMemberQuery] = useState<DirectoryMemberQuery>({});
+  const [groupQuery, setGroupQuery] = useState<DirectoryGroupQuery>({});
+  const memberGeneration = useRef(0);
+  const groupGeneration = useRef(0);
+  const memberAbort = useRef<AbortController | undefined>(undefined);
+  const groupAbort = useRef<AbortController | undefined>(undefined);
+  const memberReadLocked = useRef(false);
+  const groupReadLocked = useRef(false);
+  const groupLoadedQuery = useRef<string | undefined>(undefined);
+  const memberSentinel = useRef<HTMLDivElement>(null);
+  const groupSentinel = useRef<HTMLDivElement>(null);
+  const loadPending = memberState.pending && memberState.nextCursor === undefined;
+  const loadFailure = memberState.nextCursor === undefined ? memberState.failure : undefined;
   const [query, setQuery] = useState("");
   const [view, setView] = useState<DirectoryView>("people");
   const [createOpen, setCreateOpen] = useState(false);
@@ -60,21 +95,134 @@ export function DirectoryPage({
   const [pending, setPending] = useState(false);
   const [successMessage, setSuccessMessage] = useState("");
 
-  const load = useCallback(async () => {
-    if (readPending.current) return;
-    readPending.current = true;
-    setLoadPending(true);
-    try {
-      setData(await api.directory());
-      setLoadFailure(undefined);
-    } catch (cause) {
-      setLoadFailure(resourceFailure(cause));
-    } finally {
-      readPending.current = false;
-      setLoadPending(false);
+  const fetchMembers = useCallback(async (cursor?: string, reset = false) => {
+    if (cursor !== undefined && memberReadLocked.current) return;
+    const generation = ++memberGeneration.current;
+    memberAbort.current?.abort();
+    const controller = new AbortController();
+    memberAbort.current = controller;
+    memberReadLocked.current = true;
+    if (reset) {
+      setMemberState({ items: [], nextCursor: undefined, pending: true });
+    } else {
+      setMemberState((current) => ({
+        ...current,
+        nextCursor: cursor === undefined ? undefined : current.nextCursor,
+        pending: true,
+        continuationFailure: undefined,
+      }));
     }
+    try {
+      const page = await api.directoryMembers(
+        cursor === undefined ? memberQuery : { ...memberQuery, cursor },
+        controller.signal,
+      );
+      if (generation !== memberGeneration.current) return;
+      setMemberState((current) => ({
+        items: cursor === undefined
+          ? page.items
+          : [...current.items, ...page.items.filter(
+              (item) => !current.items.some((known) => known.membership.id === item.membership.id))],
+        nextCursor: page.next_cursor,
+        pending: false,
+        failure: undefined,
+        continuationFailure: undefined,
+      }));
+    } catch (cause) {
+      if (generation !== memberGeneration.current) return;
+      setMemberState((current) => cursor === undefined
+        ? { ...current, pending: false, failure: resourceFailure(cause) }
+        : { ...current, pending: false, continuationFailure: resourceFailure(cause) });
+    } finally {
+      if (generation === memberGeneration.current) memberReadLocked.current = false;
+    }
+  }, [memberQuery]);
+
+  const fetchGroups = useCallback(async (cursor?: string, reset = false) => {
+    if (cursor !== undefined && groupReadLocked.current) return;
+    const generation = ++groupGeneration.current;
+    groupAbort.current?.abort();
+    const controller = new AbortController();
+    groupAbort.current = controller;
+    groupReadLocked.current = true;
+    if (reset) {
+      setGroupState({ items: [], nextCursor: undefined, pending: true });
+    } else {
+      setGroupState((current) => ({
+        ...current,
+        nextCursor: cursor === undefined ? undefined : current.nextCursor,
+        pending: true,
+        continuationFailure: undefined,
+      }));
+    }
+    try {
+      const page = await api.directoryGroups(
+        cursor === undefined ? groupQuery : { ...groupQuery, cursor },
+        controller.signal,
+      );
+      if (generation !== groupGeneration.current) return;
+      setGroupState((current) => ({
+        items: cursor === undefined ? page.items : [...current.items, ...page.items],
+        nextCursor: page.next_cursor,
+        pending: false,
+        failure: undefined,
+        continuationFailure: undefined,
+      }));
+    } catch (cause) {
+      if (generation !== groupGeneration.current) return;
+      setGroupState((current) => cursor === undefined
+        ? { ...current, pending: false, failure: resourceFailure(cause) }
+        : { ...current, pending: false, continuationFailure: resourceFailure(cause) });
+    } finally {
+      if (generation === groupGeneration.current) groupReadLocked.current = false;
+    }
+  }, [groupQuery]);
+
+  const load = useCallback(async () => {
+    await fetchMembers(undefined, false);
+  }, [fetchMembers]);
+
+  useEffect(() => void fetchMembers(undefined, true), [fetchMembers]);
+
+  const groupQueryKey = JSON.stringify(groupQuery);
+  useEffect(() => {
+    if (view !== "groups" || groupLoadedQuery.current === groupQueryKey) return;
+    groupLoadedQuery.current = groupQueryKey;
+    void fetchGroups(undefined, true);
+  }, [view, groupQueryKey, fetchGroups]);
+
+  useEffect(() => () => {
+    memberAbort.current?.abort();
+    groupAbort.current?.abort();
+    memberGeneration.current += 1;
+    groupGeneration.current += 1;
   }, []);
-  useEffect(() => void load(), [load]);
+
+  useEffect(() => {
+    const sentinel = memberSentinel.current;
+    if (view !== "people" || !sentinel || typeof IntersectionObserver === "undefined") return;
+    const observer = new IntersectionObserver((entries) => {
+      if (entries.some((entry) => entry.isIntersecting) &&
+          memberState.nextCursor && !memberState.pending && !memberState.continuationFailure) {
+        void fetchMembers(memberState.nextCursor);
+      }
+    });
+    observer.observe(sentinel);
+    return () => observer.disconnect();
+  }, [view, memberState.nextCursor, memberState.pending, memberState.continuationFailure, fetchMembers]);
+
+  useEffect(() => {
+    const sentinel = groupSentinel.current;
+    if (view !== "groups" || !sentinel || typeof IntersectionObserver === "undefined") return;
+    const observer = new IntersectionObserver((entries) => {
+      if (entries.some((entry) => entry.isIntersecting) &&
+          groupState.nextCursor && !groupState.pending && !groupState.continuationFailure) {
+        void fetchGroups(groupState.nextCursor);
+      }
+    });
+    observer.observe(sentinel);
+    return () => observer.disconnect();
+  }, [view, groupState.nextCursor, groupState.pending, groupState.continuationFailure, fetchGroups]);
 
   async function createUser(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -148,32 +296,57 @@ export function DirectoryPage({
     }
   }
 
-  if (!data) {
-    if (!loadFailure) return <Loading label="Loading directory" />;
-    return (
-      <ResourceFailurePage
-        eyebrow="Organization"
-        failure={loadFailure}
-        pending={loadPending}
-        resource="Directory"
-        returnHref="#overview"
-        returnLabel="Back to Overview"
-        onRetry={() => void load()}
-      />
-    );
+  const members = memberState.items;
+  const groups = groupState.items;
+  const peopleCount = memberState.nextCursor ? `${members.length}+ people` : `${members.length} people`;
+  const groupCount = groupState.nextCursor === undefined
+    ? `${groups.length} groups`
+    : groupState.nextCursor ? `${groups.length}+ groups` : `${groups.length} groups`;
+  const count = view === "people" ? peopleCount : groupCount;
+
+  function submitSearch(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const prefix = query.trim().toLowerCase();
+    if (view === "people") {
+      setMemberQuery((current) => {
+        const next = { ...current };
+        if (prefix === "") delete next.q; else next.q = prefix;
+        return next;
+      });
+    } else {
+      setGroupQuery((current) => {
+        const next = { ...current };
+        if (prefix === "") delete next.q; else next.q = prefix;
+        return next;
+      });
+    }
   }
 
-  const normalized = query.trim().toLowerCase();
-  const members = data.users.filter(({ membership }) =>
-    [membership.display_name, membership.email, membership.role, membership.source]
-      .some((value) => value.toLowerCase().includes(normalized)),
-  );
-  const groups = data.groups.filter((group) =>
-    [group.display_name, group.source].some((value) => value.toLowerCase().includes(normalized)),
-  );
-  const count = view === "people"
-    ? `${members.length} of ${data.users.length} people`
-    : `${groups.length} of ${data.groups.length} groups`;
+  function updateMemberFilter(field: "role" | "active" | "source", value: string) {
+    setMemberQuery((current) => {
+      const next = { ...current };
+      if (field === "role") {
+        if (value === "") delete next.role; else next.role = value as DirectoryMemberQuery["role"];
+      } else if (field === "active") {
+        if (value === "") delete next.active; else next.active = value === "true";
+      } else {
+        if (value === "") delete next.source; else next.source = value as DirectoryMemberQuery["source"];
+      }
+      return next;
+    });
+  }
+
+  function updateGroupFilter(field: "active" | "source", value: string) {
+    setGroupQuery((current) => {
+      const next = { ...current };
+      if (field === "active") {
+        if (value === "") delete next.active; else next.active = value === "true";
+      } else {
+        if (value === "") delete next.source; else next.source = value as DirectoryGroupQuery["source"];
+      }
+      return next;
+    });
+  }
 
   return (
     <div className="grid gap-5">
@@ -201,47 +374,142 @@ export function DirectoryPage({
             role="tab"
             size="sm"
             variant={view === "people" ? "secondary" : "ghost"}
-            onClick={() => { setView("people"); setQuery(""); }}
+            onClick={() => { setView("people"); setQuery(memberQuery.q ?? ""); }}
           >
             <Users className="h-4 w-4" />
-            People <span className="text-muted-foreground">{data.users.length}</span>
+            People <span className="text-muted-foreground">{members.length}</span>
           </Button>
           <Button
             aria-selected={view === "groups"}
             role="tab"
             size="sm"
             variant={view === "groups" ? "secondary" : "ghost"}
-            onClick={() => { setView("groups"); setQuery(""); }}
+            onClick={() => { setView("groups"); setQuery(groupQuery.q ?? ""); }}
           >
             <UsersRound className="h-4 w-4" />
-            Groups <span className="text-muted-foreground">{data.groups.length}</span>
+            Groups <span className="text-muted-foreground">{groups.length}</span>
           </Button>
         </div>
         <div className="flex flex-col items-end gap-1 sm:flex-row sm:items-center sm:gap-3">
-          <SearchField
-            value={query}
-            onChange={(event) => setQuery(event.target.value)}
-            placeholder={view === "people" ? "Search people" : "Search groups"}
-          />
+          <form role="search" onSubmit={submitSearch}>
+            <SearchField
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+              placeholder={view === "people" ? "Search people" : "Search groups"}
+            />
+          </form>
+          {view === "people" ? (
+            <>
+              <Select
+                aria-label="Filter by role"
+                value={memberQuery.role ?? ""}
+                onChange={(event) => updateMemberFilter("role", event.target.value)}
+              >
+                <option value="">All roles</option>
+                <option value="member">Member</option>
+                <option value="admin">Administrator</option>
+              </Select>
+              <Select
+                aria-label="Filter by access"
+                value={memberQuery.active === undefined ? "" : String(memberQuery.active)}
+                onChange={(event) => updateMemberFilter("active", event.target.value)}
+              >
+                <option value="">Any access</option>
+                <option value="true">Active</option>
+                <option value="false">Inactive</option>
+              </Select>
+              <Select
+                aria-label="Filter by source"
+                value={memberQuery.source ?? ""}
+                onChange={(event) => updateMemberFilter("source", event.target.value)}
+              >
+                <option value="">All sources</option>
+                <option value="local">Local</option>
+                <option value="scim">SCIM</option>
+              </Select>
+            </>
+          ) : (
+            <>
+              <Select
+                aria-label="Filter by access"
+                value={groupQuery.active === undefined ? "" : String(groupQuery.active)}
+                onChange={(event) => updateGroupFilter("active", event.target.value)}
+              >
+                <option value="">Any access</option>
+                <option value="true">Active</option>
+                <option value="false">Inactive</option>
+              </Select>
+              <Select
+                aria-label="Filter by source"
+                value={groupQuery.source ?? ""}
+                onChange={(event) => updateGroupFilter("source", event.target.value)}
+              >
+                <option value="">All sources</option>
+                <option value="local">Local</option>
+                <option value="scim">SCIM</option>
+              </Select>
+            </>
+          )}
           <p className="whitespace-nowrap text-xs text-muted-foreground">{count}</p>
         </div>
       </ResourceToolbar>
 
       {view === "people" ? (
-        members.length === 0 ? (
-          <Empty title="No matching people" detail="Try a different name, email, role, or identity source." />
-        ) : (
-          <MemberTable
-            currentUserID={currentUserID}
-            members={members}
-            actionsDisabled={pending || loadPending || Boolean(loadFailure)}
-            systemAdministrator={systemAdministrator}
-            onEdit={(member) => { setEditError(""); setSuccessMessage(""); setEditing(member); }}
-            onSetActive={(member) => { setActivationError(""); setSuccessMessage(""); setActivationTarget(member); }}
-            onSessions={setSessionTarget}
-            onExternalLogins={setExternalIdentityTarget}
-          />
-        )
+        <>
+          {memberState.nextCursor === undefined && memberState.pending && members.length === 0 ? (
+            <Loading label="Loading directory" />
+          ) : members.length === 0 && memberState.failure ? null : members.length === 0 ? (
+            <Empty title="No matching people" detail="Try a different name, email, role, or identity source." />
+          ) : (
+            <MemberTable
+              currentUserID={currentUserID}
+              members={members}
+              actionsDisabled={pending || memberState.pending || Boolean(loadFailure)}
+              systemAdministrator={systemAdministrator}
+              onEdit={(member) => { setEditError(""); setSuccessMessage(""); setEditing(member); }}
+              onSetActive={(member) => { setActivationError(""); setSuccessMessage(""); setActivationTarget(member); }}
+              onSessions={setSessionTarget}
+              onExternalLogins={setExternalIdentityTarget}
+            />
+          )}
+          {memberState.continuationFailure ? (
+            <ResourceFailureNotice
+              failure={memberState.continuationFailure}
+              message={`More people could not be loaded: ${memberState.continuationFailure.message}`}
+              pending={memberState.pending}
+              retryLabel="Retry"
+              onRetry={() => {
+                const cursor = memberState.nextCursor;
+                if (cursor) void fetchMembers(cursor);
+              }}
+            />
+          ) : null}
+          <div ref={memberSentinel} aria-hidden="true" />
+          {memberState.nextCursor ? (
+            <div className="flex justify-center">
+              <Button
+                disabled={memberState.pending}
+                onClick={() => {
+                  const cursor = memberState.nextCursor;
+                  if (cursor) void fetchMembers(cursor);
+                }}
+              >
+                {memberState.pending ? <LoaderCircle className="h-4 w-4 animate-spin" /> : null}
+                Load more
+              </Button>
+            </div>
+          ) : null}
+        </>
+      ) : groupState.nextCursor === undefined && groupState.pending && groups.length === 0 ? (
+        <Loading label="Loading groups" />
+      ) : groups.length === 0 && groupState.failure ? (
+        <ResourceFailureNotice
+          failure={groupState.failure}
+          message={`Groups could not be loaded: ${groupState.failure.message}`}
+          pending={groupState.pending}
+          retryLabel="Retry"
+          onRetry={() => void fetchGroups()}
+        />
       ) : groups.length === 0 ? (
         <Empty
           title="No synchronized groups"
@@ -250,8 +518,8 @@ export function DirectoryPage({
       ) : (
         <>
         <MobileResourceList label="Directory groups">
-          {groups.map((group) => (
-            <MobileResourceItem key={`${group.source}:${group.display_name}:${group.created_at}`}>
+          {groups.map((group, index) => (
+            <MobileResourceItem key={`${index}:${group.source}:${group.display_name}:${group.created_at}`}>
               <div className="flex min-w-0 items-start gap-3">
                 <span className="grid h-9 w-9 shrink-0 place-items-center rounded-md bg-blue-50 text-blue-700">
                   <UsersRound className="h-4 w-4" />
@@ -285,8 +553,8 @@ export function DirectoryPage({
               </tr>
             </thead>
             <tbody className="divide-y divide-border">
-              {groups.map((group) => (
-                <tr className="transition-colors hover:bg-muted/35" key={`${group.source}:${group.display_name}:${group.created_at}`}>
+              {groups.map((group, index) => (
+                <tr className="transition-colors hover:bg-muted/35" key={`${index}:${group.source}:${group.display_name}:${group.created_at}`}>
                   <td className="px-3 py-3.5 font-medium">{group.display_name}</td>
                   <td className="px-3 py-3 capitalize text-muted-foreground">{group.source}</td>
                   <td className="px-3 py-3"><Badge value={group.active ? "active" : "inactive"} /></td>
@@ -296,6 +564,33 @@ export function DirectoryPage({
             </tbody>
           </table>
         </DataTable>
+        {groupState.continuationFailure ? (
+          <ResourceFailureNotice
+            failure={groupState.continuationFailure}
+            message={`More groups could not be loaded: ${groupState.continuationFailure.message}`}
+            pending={groupState.pending}
+            retryLabel="Retry"
+            onRetry={() => {
+              const cursor = groupState.nextCursor;
+              if (cursor) void fetchGroups(cursor);
+            }}
+          />
+        ) : null}
+        <div ref={groupSentinel} aria-hidden="true" />
+        {groupState.nextCursor ? (
+          <div className="flex justify-center">
+            <Button
+              disabled={groupState.pending}
+              onClick={() => {
+                const cursor = groupState.nextCursor;
+                if (cursor) void fetchGroups(cursor);
+              }}
+            >
+              {groupState.pending ? <LoaderCircle className="h-4 w-4 animate-spin" /> : null}
+              Load more
+            </Button>
+          </div>
+        ) : null}
         </>
       )}
 
