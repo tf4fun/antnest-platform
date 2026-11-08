@@ -105,7 +105,15 @@ schema_migrations
 ```
 
 There are no cross-service foreign keys, views, queries, triggers, or shared
-transactions. IDs referenced by other services are opaque strings.
+transactions. IDs referenced by other services are opaque strings validated
+against the shared reference grammar in
+[`../contracts/common/ids.schema.json`](../contracts/common/ids.schema.json)
+(`organizationId`, `userId`, `agentId`: 1–200 characters, first `[A-Za-z0-9]`,
+then `[A-Za-z0-9_.-]`). They are never trimmed, normalized or case-folded, and
+no permission is inferred from a prefix. The `org_`/`user_` generation format
+remains producer-owned per
+[resource-identifiers](../contracts/resource-identifiers.md); that generation
+format is not a reference-format constraint on consumers.
 
 `identity_events` remains a private audit journal. The dedicated
 `principal_revocations` feed is atomically emitted for deactivation/SCIM delete

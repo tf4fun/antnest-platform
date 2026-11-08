@@ -1,0 +1,108 @@
+{
+  "organizationId": {
+    "accept": [
+      "a",
+      "0",
+      "A",
+      "Legacy.ID_9-z",
+      "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "org_0123456789abcdef0123456789abcdef",
+      "ORG_0123456789ABCDEF0123456789ABCDEF",
+      "acme-org.42"
+    ],
+    "reject": [
+      "",
+      "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "_a",
+      "-a",
+      ".a",
+      "a:b",
+      "a/b",
+      "a\\b",
+      "a b",
+      " a",
+      "a ",
+      "a\tb",
+      "a\rb",
+      "a\nb",
+      "a\n",
+      "a\r\n",
+      "a\u0000b",
+      "é",
+      "组织",
+      "🚀",
+      "e\u0301"
+    ]
+  },
+  "userId": {
+    "accept": [
+      "a",
+      "0",
+      "A",
+      "Legacy.ID_9-z",
+      "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "user_0123456789abcdef0123456789abcdef",
+      "USER_0123456789ABCDEF0123456789ABCDEF",
+      "jdoe.1999"
+    ],
+    "reject": [
+      "",
+      "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "_a",
+      "-a",
+      ".a",
+      "a:b",
+      "a/b",
+      "a\\b",
+      "a b",
+      " a",
+      "a ",
+      "a\tb",
+      "a\rb",
+      "a\nb",
+      "a\n",
+      "a\r\n",
+      "a\u0000b",
+      "é",
+      "组织",
+      "🚀",
+      "e\u0301"
+    ]
+  },
+  "agentId": {
+    "accept": [
+      "a",
+      "0",
+      "A",
+      "Legacy.ID_9-z",
+      "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "agent_e94c17c429dc4904d167d643309872e5",
+      "agent_0123456789abcdef0123456789abcdef",
+      "AGENT_0123456789ABCDEF0123456789ABCDEF",
+      "legacy-agent.7"
+    ],
+    "reject": [
+      "",
+      "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "_a",
+      "-a",
+      ".a",
+      "a:b",
+      "a/b",
+      "a\\b",
+      "a b",
+      " a",
+      "a ",
+      "a\tb",
+      "a\rb",
+      "a\nb",
+      "a\n",
+      "a\r\n",
+      "a\u0000b",
+      "é",
+      "组织",
+      "🚀",
+      "e\u0301"
+    ]
+  }
+}
