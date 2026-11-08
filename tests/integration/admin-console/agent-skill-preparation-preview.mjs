@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createDirectoryFixture } from "../../support/admin-directory-fixtures.mjs";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { durablePath } from "../../support/storage.mjs";
@@ -66,6 +67,11 @@ const member = {
   },
 };
 
+const directoryFixture = createDirectoryFixture({
+  users: [member],
+  groups: [],
+});
+
 async function exercise(browser, origin, viewport, label) {
   const context = await browser.newContext({ viewport });
   await prepareConsoleSession(context, origin);
@@ -123,7 +129,6 @@ async function exercise(browser, origin, viewport, label) {
         "/api/admin/execution-synchronization": { synchronization: null },
         "/api/admin/agents": { items: [], next_cursor: null },
         "/api/admin/templates": { items: [template], next_cursor: null },
-        "/api/admin/directory": { users: [member], groups: [] },
         "/api/admin/agent-skill-preparations/by-idempotency-key": {
           request_id: "request-1",
           agent_id: "agent-1",
@@ -138,6 +143,15 @@ async function exercise(browser, origin, viewport, label) {
           updated_at: timestamp,
         },
       };
+      if (
+        route.request().method() === "GET" &&
+        (url.pathname === "/api/admin/directory/members" ||
+          url.pathname === "/api/admin/directory/groups")
+      )
+        return route.fulfill({
+          status: 200,
+          json: await directoryFixture(url),
+        });
       if (!(url.pathname in fixtures))
         unexpected.push(`${route.request().method()} ${url.pathname}`);
       return route.fulfill({

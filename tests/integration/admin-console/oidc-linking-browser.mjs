@@ -1,4 +1,5 @@
 // Built Console assets and API doubles; real Identity admission is separate.
+import { createDirectoryFixture } from "../../support/admin-directory-fixtures.mjs";
 import assert from "node:assert/strict";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -22,6 +23,33 @@ const configuration = "/api/admin/provisioning/oidc-providers";
 const tokenPath = "/api/admin/provisioning/scim-tokens";
 const opaqueSubject = "  <img src=x onerror=alert(1)> é 😀  ";
 const timestamp = "2026-10-11T00:00:00Z";
+const directoryFixture = createDirectoryFixture({
+  users: [
+    {
+      user: {
+        id: "target-user",
+        primary_email: "alex@example.test",
+        system_role: "user",
+        active: true,
+        created_at: timestamp,
+        updated_at: timestamp,
+      },
+      membership: {
+        id: "target-member",
+        user_id: "target-user",
+        organization_id: "org-1",
+        email: "alex@example.test",
+        display_name: "Alex",
+        role: "member",
+        source: "scim",
+        active: true,
+        created_at: timestamp,
+        updated_at: timestamp,
+      },
+    },
+  ],
+  groups: [],
+});
 const binding = {
   id: "binding-1",
   provider_id: "provider-1",
@@ -168,31 +196,11 @@ export async function exerciseExternalIdentities(
       }
       if (path === "/api/session/activity")
         return reply(consoleSessionMetadata);
-      if (path === "/api/admin/directory")
-        return reply({
-          users: [
-            {
-              user: {
-                id: "target-user",
-                primary_email: "alex@example.test",
-                system_role: "user",
-                active: true,
-              },
-              membership: {
-                id: "target-member",
-                user_id: "target-user",
-                organization_id: "org-1",
-                email: "alex@example.test",
-                display_name: "Alex",
-                role: "member",
-                source: "scim",
-                active: true,
-                created_at: timestamp,
-              },
-            },
-          ],
-          groups: [],
-        });
+      if (
+        path === "/api/admin/directory/members" ||
+        path === "/api/admin/directory/groups"
+      )
+        return reply(await directoryFixture(url));
       if (path === self && method === "GET") {
         selfReads++;
         assert.equal(url.searchParams.get("limit"), "50");
