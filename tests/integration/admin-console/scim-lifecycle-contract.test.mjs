@@ -50,10 +50,10 @@ const token = {
   issuer_review_required: false,
 };
 
-test("Console retains its lifecycle routes with the Identity18 producer", () => {
+test("Console retains its lifecycle routes with the Identity19 producer", () => {
   const catalog = read("admin-console/admin-contract.json");
   assert.equal(catalog.version, 60);
-  assert.equal(catalog.response_policy.account_security.identity_revision, 18);
+  assert.equal(catalog.response_policy.account_security.identity_revision, 19);
   for (const [route, field, definition, valid] of [
     [
       "list_scim_tokens",

@@ -169,7 +169,7 @@ test("retirement cannot weaken cached authority, Origin, CSRF or header security
   );
   assert.equal(value.security.csrf_contract, gateway.session_security.contract);
   assert.equal(value.security.identity_revision, cache.identity_revision);
-  assert.equal(value.security.identity_revision, 18);
+  assert.equal(value.security.identity_revision, 19);
   assert.deepEqual(value.cache_admission, {
     outage_seconds: cache.admission.outage_seconds,
     load_calls: cache.admission.load_calls,
