@@ -120,6 +120,15 @@ function AgentInventory() {
     retry: retryTemplates,
   } = useTemplateOptions();
   const [members, setMembers] = useState<DirectoryMember[]>([]);
+  const [membersCursor, setMembersCursor] = useState<string | null>(null);
+  const [membersPending, setMembersPending] = useState(false);
+  const [selectedOwnerID, setSelectedOwnerID] = useState("");
+  const ownerSelection = useRef<string>("");
+  const ownerPrefix = useRef("");
+  const ownerGeneration = useRef(0);
+  const ownerAbort = useRef<AbortController>();
+  const ownerReadPending = useRef(false);
+  const ownerSearchInput = useRef<HTMLInputElement>(null);
   const [directoryAvailable, setDirectoryAvailable] = useState<boolean>();
   const [inventoryFailure, setInventoryFailure] = useState<ResourceFailure>();
   const [directoryFailure, setDirectoryFailure] = useState<ResourceFailure>();
@@ -156,22 +165,56 @@ function AgentInventory() {
       setInventoryFailure(resourceFailure(cause));
     }
   }, []);
-  const loadDirectory = useCallback(async () => {
+  const loadDirectory = useCallback(async (cursor?: string) => {
+    if (cursor !== undefined && ownerReadPending.current) return;
+    const generation = ++ownerGeneration.current;
+    ownerAbort.current?.abort();
+    const controller = new AbortController();
+    ownerAbort.current = controller;
+    ownerReadPending.current = true;
+    setMembersPending(true);
     setDirectoryFailure(undefined);
     try {
-      const directory = await api.directory();
-      setMembers(directory.users);
+      const prefix = ownerPrefix.current;
+      const query = prefix === "" ? { active: true } : { active: true, q: prefix };
+      const page = cursor === undefined
+        ? await api.directoryMembers(query, controller.signal)
+        : await api.directoryMembers({ ...query, cursor }, controller.signal);
+      if (generation !== ownerGeneration.current) return;
+      setMembers((current) => {
+        const merged = cursor === undefined ? [...page.items] : [...current, ...page.items.filter(
+          (item) => !current.some((known) => known.membership.id === item.membership.id))];
+        for (const kept of current.filter((member) => ownerSelection.current === member.user.id)) {
+          if (!merged.some((item) => item.membership.id === kept.membership.id)) merged.unshift(kept);
+        }
+        return merged;
+      });
+      setMembersCursor(page.next_cursor);
       setDirectoryAvailable(true);
     } catch (cause) {
+      if (generation !== ownerGeneration.current) return;
       setDirectoryAvailable((current) => current ?? false);
       setDirectoryFailure(resourceFailure(cause));
+    } finally {
+      if (generation === ownerGeneration.current) {
+        ownerReadPending.current = false;
+        setMembersPending(false);
+      }
     }
   }, []);
+  const searchOwners = useCallback((prefix: string) => {
+    ownerPrefix.current = prefix.trim().toLowerCase();
+    void loadDirectory();
+  }, [loadDirectory]);
   useEffect(() => {
     void loadAgents();
     void loadDirectory();
     void loadTemplates();
   }, [loadAgents, loadDirectory, loadTemplates]);
+  useEffect(() => () => {
+    ownerAbort.current?.abort();
+    ownerGeneration.current += 1;
+  }, []);
 
   const loadDeleted = useCallback(async () => {
     setDeletedLoading(true);
@@ -492,8 +535,14 @@ function AgentInventory() {
           <Field label="Name">
             <Input name="name" placeholder="Operations assistant" required disabled={!!skillPreparation} />
           </Field>
+          <div className="grid gap-2">
           <Field label="Owner">
-            <Select name="owner_user_id" defaultValue="" required disabled={!!skillPreparation}>
+            <Select name="owner_user_id" aria-label="Owner" required disabled={!!skillPreparation}
+              value={selectedOwnerID}
+              onChange={(event) => {
+                ownerSelection.current = event.target.value;
+                setSelectedOwnerID(event.target.value);
+              }}>
               <option value="" disabled>
                 Select a directory member
               </option>
@@ -504,6 +553,29 @@ function AgentInventory() {
               ))}
             </Select>
           </Field>
+            <div className="flex items-center gap-2">
+              <Input ref={ownerSearchInput} name="owner_search" placeholder="Search owner email" />
+              <Button
+                type="button"
+                variant="secondary"
+                disabled={!!skillPreparation}
+                onClick={() => searchOwners(ownerSearchInput.current?.value ?? "")}
+              >
+                Search
+              </Button>
+            </div>
+            <ListPagination
+              failure={directoryFailure}
+              hasMore={Boolean(membersCursor)}
+              loaded={members.length}
+              pending={membersPending}
+              onLoadMore={() => {
+                const cursor = membersCursor;
+                if (!cursor || membersPending) return;
+                void loadDirectory(cursor);
+              }}
+            />
+          </div>
           <Field label="Template">
             <Select name="template_id" defaultValue="" required disabled={!!skillPreparation}>
               <option value="" disabled>
@@ -567,6 +639,11 @@ function AgentDetail({ agentID, networkScope }: { agentID: string; networkScope?
     retry: retryTemplates,
   } = useTemplateOptions();
   const [members, setMembers] = useState<DirectoryMember[]>();
+  const [ownerCursor, setOwnerCursor] = useState<string | null>(null);
+  const [ownerPending, setOwnerPending] = useState(false);
+  const ownerProfileGeneration = useRef(0);
+  const ownerProfileAbort = useRef<AbortController>();
+  const ownerProfileLocked = useRef(false);
   const [directoryFailure, setDirectoryFailure] = useState<ResourceFailure>();
   const [directoryReloadGeneration, setDirectoryReloadGeneration] = useState(0);
   const [operation, setOperation] = useState<LifecycleOperation>();
@@ -818,22 +895,42 @@ function AgentDetail({ agentID, networkScope }: { agentID: string; networkScope?
     };
   }, [agentID, agent?.readiness, agent?.lifecycle_state, agent?.activation_state, agentStateFailure?.retryable, refreshAgent]);
 
-  useEffect(() => {
-    let cancelled = false;
+  const loadOwnerPage = useCallback((cursor?: string) => {
+    if (cursor !== undefined && ownerProfileLocked.current) return;
+    const generation = ++ownerProfileGeneration.current;
+    ownerProfileAbort.current?.abort();
+    const controller = new AbortController();
+    ownerProfileAbort.current = controller;
+    ownerProfileLocked.current = true;
+    setOwnerPending(true);
     setDirectoryFailure(undefined);
-    api.directory()
-      .then((directory) => {
-        if (!cancelled) setMembers(directory.users);
+    api.directoryMembers(cursor === undefined ? {} : { cursor }, controller.signal)
+      .then((page) => {
+        if (generation !== ownerProfileGeneration.current) return;
+        setMembers((current) => cursor === undefined ? page.items : [...(current ?? []), ...page.items.filter(
+          (item) => !(current ?? []).some((known) => known.membership.id === item.membership.id))]);
+        setOwnerCursor(page.next_cursor);
       })
       .catch((cause: unknown) => {
-        if (!cancelled) {
-          setDirectoryFailure(agentDetailFailure("owner_profile", cause));
-        }
+        if (generation !== ownerProfileGeneration.current) return;
+        setDirectoryFailure(agentDetailFailure("owner_profile", cause));
+      })
+      .finally(() => {
+        if (generation !== ownerProfileGeneration.current) return;
+        ownerProfileLocked.current = false;
+        setOwnerPending(false);
       });
+  }, []);
+
+  useEffect(() => {
+    setMembers(undefined);
+    setOwnerCursor(null);
+    loadOwnerPage();
     return () => {
-      cancelled = true;
+      ownerProfileAbort.current?.abort();
+      ownerProfileGeneration.current += 1;
     };
-  }, [agentID, directoryReloadGeneration]);
+  }, [agentID, directoryReloadGeneration, loadOwnerPage]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1300,7 +1397,30 @@ function AgentDetail({ agentID, networkScope }: { agentID: string; networkScope?
               <span className="block font-medium">{owner.display_name}</span>
               <span className="mt-0.5 block text-xs text-muted-foreground">{owner.email}</span>
             </span>
-          ) : "Owner unavailable"}
+          ) : (
+            <span>
+              <span className="block font-medium">{agent.owner_user_id}</span>
+              <span className="mt-0.5 block text-xs text-muted-foreground">
+                {members === undefined || directoryFailure
+                  ? "Owner profile not loaded"
+                  : ownerCursor ? "Owner profile not loaded" : "Owner profile not found"}
+              </span>
+              {ownerCursor ? (
+                <Button
+                  disabled={ownerPending}
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => {
+                    const cursor = ownerCursor;
+                    if (!cursor || ownerPending) return;
+                    loadOwnerPage(cursor);
+                  }}
+                >
+                  Load more owners
+                </Button>
+              ) : null}
+            </span>
+          )}
         />
         <Fact
           label="Runtime environment"

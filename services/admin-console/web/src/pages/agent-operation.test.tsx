@@ -57,7 +57,9 @@ function mockDetail(initialAgent: Agent, initialOperation: LifecycleOperation) {
         return Response.json({ events: [eventFor(state.operation)], next_sequence: 2 });
       case "/api/admin/operations/operation-1": return Response.json(state.operation);
       case "/api/admin/templates": return Response.json({ items: [] });
-      case "/api/admin/directory": return Response.json({ users: [], groups: [] });
+      case "/api/admin/directory/members": return Response.json({ items: [], next_cursor: null });
+
+      case "/api/admin/directory/groups": return Response.json({ items: [], next_cursor: null });
       default: throw new Error(`Unexpected request: ${url.pathname}`);
     }
   });

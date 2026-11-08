@@ -70,7 +70,9 @@ function mockWorkflow(action: Action, command: () => Promise<Response>) {
       case "/api/admin/agents/agent-2/events":
       case "/api/admin/agents/agent-1/events": return state.eventsRead();
       case "/api/admin/templates": return Response.json({ items: [template] });
-      case "/api/admin/directory": return Response.json({ users: [member], groups: [] });
+      case "/api/admin/directory/members": return Response.json({ items: [member], next_cursor: null });
+
+      case "/api/admin/directory/groups": return Response.json({ items: [], next_cursor: null });
       case "/api/admin/operations/request-1": return state.operationRead();
       default: throw new Error(`Unexpected request: ${init.method} ${url.pathname}`);
     }
@@ -551,7 +553,9 @@ describe("Agent creation admission", () => {
       switch (url.pathname) {
         case "/api/admin/agents": return Response.json({ items: [] });
         case "/api/admin/templates": return Response.json({ items: [template] });
-        case "/api/admin/directory": return Response.json({ users: [member], groups: [] });
+        case "/api/admin/directory/members": return Response.json({ items: [member], next_cursor: null });
+
+        case "/api/admin/directory/groups": return Response.json({ items: [], next_cursor: null });
         default: throw new Error(`Unexpected request: ${init.method} ${url.pathname}`);
       }
     }));
@@ -604,7 +608,9 @@ describe("Agent creation admission", () => {
         case "/api/admin/agents/agent-1/events": return Response.json({ events: [], next_sequence: 0 });
         case "/api/admin/operations/request-1": return Response.json(state.operation);
         case "/api/admin/templates": return Response.json({ items: [template] });
-        case "/api/admin/directory": return Response.json({ users: [member], groups: [] });
+        case "/api/admin/directory/members": return Response.json({ items: [member], next_cursor: null });
+
+        case "/api/admin/directory/groups": return Response.json({ items: [], next_cursor: null });
         default: throw new Error(`Unexpected request: ${init.method} ${url.pathname}`);
       }
     }));

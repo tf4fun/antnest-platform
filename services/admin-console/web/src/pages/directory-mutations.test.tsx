@@ -7,13 +7,14 @@ afterEach(() => { cleanup(); sessionStorage.clear(); });
 
 const dates = { created_at: "2026-09-07T00:00:00Z", updated_at: "2026-09-07T00:00:00Z" };
 const member: DirectoryMember = {
-  user: { ...dates, id: "user-alex", system_role: "member", active: true },
+  user: { ...dates, id: "user-alex", system_role: "user", active: true },
   membership: { ...dates, id: "membership-alex", user_id: "user-alex", email: "alex@example.com", display_name: "Alex", role: "member", source: "local", active: true },
 };
 
 it.each(["desktop", "mobile"])("opens Membership external login controls for SCIM people on %s", async layout => {
   const requests = vi.fn(async (path: string) => {
-    if (path === "/api/admin/directory") return Response.json({ users: [{ ...member, membership: { ...member.membership, source: "scim" } }], groups: [] });
+    if (path === "/api/admin/directory/members?limit=50") return Response.json({ items: [{ ...member, membership: { ...member.membership, source: "scim" } }], next_cursor: null });
+    if (path === "/api/admin/directory/groups?limit=50") return Response.json({ items: [], next_cursor: null });
     if (path === "/api/admin/directory/memberships/membership-alex/external-identities?limit=50") return Response.json({ items: [], next_cursor: null });
     if (path === "/api/admin/directory/identity-providers?limit=50") return Response.json({ items: [], next_cursor: null });
     throw new Error(`Unexpected request ${path}`);
@@ -31,7 +32,8 @@ it.each(["desktop", "mobile"])("opens Membership external login controls for SCI
 it.each(["desktop", "mobile"])("offers organization session controls for SCIM members on %s", async layout => {
   const external = { ...member, membership: { ...member.membership, source: "scim" } };
   const request = vi.fn(async (path: string, init: RequestInit) => {
-    if (path === "/api/admin/directory") return Response.json({ users: [external], groups: [] });
+    if (path === "/api/admin/directory/members?limit=50") return Response.json({ items: [external], next_cursor: null });
+    if (path === "/api/admin/directory/groups?limit=50") return Response.json({ items: [], next_cursor: null });
     if (path === "/api/admin/directory/users/user-alex/sessions?limit=50") return Response.json({ items: [], next_cursor: null });
     if (path === "/api/admin/directory/users/user-alex/sessions/revoke") {
       expect(init.method).toBe("POST");
@@ -62,7 +64,13 @@ function directoryMock(command: (body: string) => Response | Promise<Response>, 
   vi.stubGlobal("fetch", vi.fn(async (input: string, init: RequestInit) => {
     const url = new URL(input, "http://localhost");
     if (init.method === "POST") return command(String(init.body));
-    if (url.pathname === "/api/admin/directory") return read();
+    if (url.pathname === "/api/admin/directory/members" || url.pathname === "/api/admin/directory/groups") {
+      const response = await read();
+      if (!response.ok) return response;
+      const body = await response.json() as { users?: unknown[]; groups?: unknown[] };
+      const items = url.pathname.endsWith("/members") ? body.users ?? [] : body.groups ?? [];
+      return Response.json({ items, next_cursor: null });
+    }
     throw new Error(`Unexpected request: ${url}`);
   }));
 }

@@ -20,6 +20,8 @@ Issue 状态最后核对于 2026-10-28：141 个 issue，87 个已关闭，54 �
 
 ## 当前批次
 
+- **#65 Admin Console 服务批次（依赖 Identity PR #589）**：新增 members/groups 有界 BFF 路由、可信 scope 转发与严格上游投影；目录 UI、Agent owner 选择／详情改为逐页读取，补齐过滤切换、取消／过期响应、连续页失败重试及服务内 fixtures。定向 TDD：目录/RPC投影、全部 71 路由真实 handler 请求／响应 schema、私有字段拒绝 GREEN；62 项目录/API/App component 与随后 47 项 owner／Agent mutation component 通过，typecheck 通过；共享契约 22 项与 175-document conventions clean。真实网络策略写响应不返回 attachment，已据此修正共享 schema，需向 #588／#589 正常传播。完整服务 unit／contract／component 准入仍交精确候选远程 CI，不把本地结果外推为已验收。最小临时日志 `artifacts/verification/issue-65-admin-console/`；随后单独交付消费者／双替身同步和必要契约／组件集成 PR，全部 PR 创建后停止查询 CI；不扩展或执行 Docker E2E，保留原有 `artifacts/recovery/`。
+
 - **#65 Identity 服务批次（2026-11-08，依赖共享契约 PR #588）**：已实现 CCT/workload 约束的 list_members/list_groups、SQL keyset/filter/limit+1、scope/filter/kind 绑定游标和旧目录 SQL LIMIT200，新增 group 排序索引。新服务/RPC测试先RED后GREEN，严格拒绝重复键、空/null 游标、非法过滤和越界limit；定向单元通过，组件overlay编译通过但无本地PostgreSQL执行，真实10000成员并发插入/过滤/旧接口硬上限组件留给远程准入。最小日志 artifacts/verification/issue-65-identity/；Console消费者/UI和显式集成继续开发，不等待CI，不涉Docker E2E。
 
 - **#65 共享契约批次（2026-11-08）**：基于 main `df1440b3`，按共享契约 → Identity → Admin Console → 显式集成拆分独立 PR。Admin version 61 为 71 条实际／规划路由补齐请求、响应、媒体类型和闭合 schema，包含原目录遗漏的两条生命周期路由；复用 #67 公共错误注册表、103 码切片及 Go/TS 生成件，新增严格一致的服务错误文档视图。Identity revision 19 发布 `list_members`／`list_groups`，canonical cursor、必需 nullable next_cursor、limit 1..200；旧目录双数组最多 200，保留一个发布周期。契约测试初始 12 RED，审查补充 wire 形状回归 5 RED 后最终 22/22 GREEN；conventions 175 documents clean，最小日志 `artifacts/verification/issue-65-contract/`。生产服务实现、消费者与独立集成批次继续交付，不将契约发布等同完整业务验收；远程完整准入异步，不等待或轮询最终 CI，不合并、不关闭 #65/#83，不运行或跟踪 Docker E2E。既有 `artifacts/recovery/` 保持原样。

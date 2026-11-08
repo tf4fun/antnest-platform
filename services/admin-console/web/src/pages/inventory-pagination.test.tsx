@@ -46,7 +46,9 @@ function mockInventory(inventory: Inventory, page: (url: URL) => Response | Prom
       case "/api/admin/model-profiles": return Response.json({ items: [model("model")], next_cursor: null });
       case "/api/admin/templates": return Response.json({ items: [template("template")], next_cursor: null });
       case "/api/admin/template-defaults": return Response.json({ runtime_image_ref: template("template").runtime.image_ref });
-      case "/api/admin/directory": return Response.json({ users: [], groups: [] });
+      case "/api/admin/directory/members": return Response.json({ items: [], next_cursor: null });
+
+      case "/api/admin/directory/groups": return Response.json({ items: [], next_cursor: null });
       case "/api/admin/agents": return Response.json({ items: [agent("other-view-agent", url.searchParams.get("view") ?? "current")], next_cursor: null });
       default: throw new Error(`Unexpected request: ${url}`);
     }

@@ -469,7 +469,7 @@ parsed `query_and_path` object, not a fictional body. Multipart uploads declare
 `application/zip`, and the agent watch declares `text/event-stream` with a typed
 event `data` schema. The catalog also records the previously-registered
 lifecycle routes `cancel_lifecycle_operation` and
-`clear_lifecycle_quarantine`, and the planned `GET /directory/members` and
+`clear_lifecycle_quarantine`, and the now-delivered `GET /directory/members` and
 `GET /directory/groups` pages (canonical `cursor`,`limit` 1..200 default 50,
 `q`,`role`,`active`,`source`; required nullable `next_cursor`), which reach
 Identity `list_members`/`list_groups` from identity-contract revision 19. The

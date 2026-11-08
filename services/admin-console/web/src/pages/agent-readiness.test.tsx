@@ -163,7 +163,8 @@ async function readinessFixture(initialReadiness?: Readiness, holdInitial = fals
       const progress = path.match(/^\/api\/admin\/operations\/create-(agent-[12])$/);
       if (progress) return Response.json(operation(progress[1]!));
       if (path === "/api/admin/templates") return Response.json({ items: [] });
-      if (path === "/api/admin/directory") return Response.json({ users: [], groups: [] });
+      if (path === "/api/admin/directory/members?limit=50") return Response.json({ items: [], next_cursor: null });
+      if (path === "/api/admin/directory/groups?limit=50") return Response.json({ items: [], next_cursor: null });
       unexpected.push(path);
       return Response.json({ code: "unexpected_request" }, { status: 503 });
     };
