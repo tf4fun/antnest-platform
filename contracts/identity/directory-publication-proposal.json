@@ -1,0 +1,126 @@
+{
+  "contract": "antnest.identity.directory.proposal",
+  "revision": 1,
+  "status": "proposed",
+  "base_revision": 18,
+  "target_revision": 19,
+  "activation": "Publish these methods and revision 19 with the Identity implementation and caller policies in PR #589. Until then the active catalog remains revision 18.",
+  "methods": {
+    "list_directory": {
+      "method": "POST",
+      "path": "/list-directory",
+      "request": {
+        "required": ["actor_principal_id", "organization_id"],
+        "properties": {
+          "actor_principal_id": {
+            "$ref": "#/definitions/id"
+          },
+          "organization_id": {
+            "$ref": "#/definitions/id"
+          }
+        }
+      },
+      "response": {
+        "required": ["users", "groups"],
+        "properties": {
+          "users": {
+            "type": "array",
+            "items": {
+              "$ref": "#/definitions/directory_member"
+            },
+            "maxItems": 200
+          },
+          "groups": {
+            "type": "array",
+            "items": {
+              "$ref": "#/definitions/group"
+            },
+            "maxItems": 200
+          }
+        }
+      },
+      "deprecated": true,
+      "deprecation_note": "Full-directory reads return at most 200 entries per collection and are not a stable full-organization listing; use list_members and list_groups with cursor pagination. Kept for one release."
+    },
+    "list_members": {
+      "method": "POST",
+      "path": "/list-members",
+      "request": {
+        "$ref": "directory.schema.json#/$defs/list_members_request",
+        "required": ["actor_principal_id", "organization_id", "limit"],
+        "properties": {
+          "actor_principal_id": {
+            "$ref": "directory.schema.json#/$defs/id"
+          },
+          "organization_id": {
+            "$ref": "directory.schema.json#/$defs/id"
+          },
+          "limit": {
+            "type": "integer"
+          },
+          "cursor": {
+            "$ref": "../common/pagination.schema.json#/$defs/cursor"
+          },
+          "filter": {
+            "$ref": "directory.schema.json#/$defs/member_filter"
+          }
+        }
+      },
+      "response": {
+        "$ref": "directory.schema.json#/$defs/list_members_response",
+        "required": ["items", "next_cursor"],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "directory.schema.json#/$defs/directory_member"
+            }
+          },
+          "next_cursor": {
+            "$ref": "../common/pagination.schema.json#/$defs/nullable_cursor"
+          }
+        }
+      }
+    },
+    "list_groups": {
+      "method": "POST",
+      "path": "/list-groups",
+      "request": {
+        "$ref": "directory.schema.json#/$defs/list_groups_request",
+        "required": ["actor_principal_id", "organization_id", "limit"],
+        "properties": {
+          "actor_principal_id": {
+            "$ref": "directory.schema.json#/$defs/id"
+          },
+          "organization_id": {
+            "$ref": "directory.schema.json#/$defs/id"
+          },
+          "limit": {
+            "type": "integer"
+          },
+          "cursor": {
+            "$ref": "../common/pagination.schema.json#/$defs/cursor"
+          },
+          "filter": {
+            "$ref": "directory.schema.json#/$defs/group_filter"
+          }
+        }
+      },
+      "response": {
+        "$ref": "directory.schema.json#/$defs/list_groups_response",
+        "required": ["items", "next_cursor"],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "directory.schema.json#/$defs/group"
+            }
+          },
+          "next_cursor": {
+            "$ref": "../common/pagination.schema.json#/$defs/nullable_cursor"
+          }
+        }
+      }
+    }
+  }
+}

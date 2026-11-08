@@ -1,0 +1,274 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.antnest.dev/identity/directory.schema.json",
+  "title": "Identity directory read methods",
+  "description": "Internal directory member and group pages for /rpc/identity/list-members and /rpc/identity/list-groups.",
+  "$defs": {
+    "id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,199}$"
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "organization_role": {
+      "type": "string",
+      "enum": ["member", "admin"]
+    },
+    "system_role": {
+      "type": "string",
+      "enum": ["user", "admin"]
+    },
+    "source": {
+      "type": "string",
+      "enum": ["local", "scim"]
+    },
+    "user": {
+      "type": "object",
+      "required": ["id", "system_role", "active", "created_at", "updated_at"],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/id"
+        },
+        "system_role": {
+          "$ref": "#/$defs/system_role"
+        },
+        "active": {
+          "type": "boolean"
+        },
+        "created_at": {
+          "$ref": "#/$defs/timestamp"
+        },
+        "updated_at": {
+          "$ref": "#/$defs/timestamp"
+        }
+      }
+    },
+    "membership": {
+      "type": "object",
+      "required": [
+        "id",
+        "organization_id",
+        "user_id",
+        "email",
+        "display_name",
+        "role",
+        "source",
+        "active",
+        "created_at",
+        "updated_at"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/id"
+        },
+        "organization_id": {
+          "$ref": "#/$defs/id"
+        },
+        "user_id": {
+          "$ref": "#/$defs/id"
+        },
+        "email": {
+          "type": "string",
+          "format": "email"
+        },
+        "display_name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "role": {
+          "$ref": "#/$defs/organization_role"
+        },
+        "source": {
+          "$ref": "#/$defs/source"
+        },
+        "active": {
+          "type": "boolean"
+        },
+        "scim_external_id": {
+          "type": "string"
+        },
+        "scim_user_name": {
+          "type": "string"
+        },
+        "created_at": {
+          "$ref": "#/$defs/timestamp"
+        },
+        "updated_at": {
+          "$ref": "#/$defs/timestamp"
+        }
+      }
+    },
+    "group": {
+      "type": "object",
+      "required": [
+        "id",
+        "organization_id",
+        "display_name",
+        "source",
+        "active",
+        "created_at",
+        "updated_at"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/id"
+        },
+        "organization_id": {
+          "$ref": "#/$defs/id"
+        },
+        "display_name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "source": {
+          "$ref": "#/$defs/source"
+        },
+        "active": {
+          "type": "boolean"
+        },
+        "scim_external_id": {
+          "type": "string"
+        },
+        "created_at": {
+          "$ref": "#/$defs/timestamp"
+        },
+        "updated_at": {
+          "$ref": "#/$defs/timestamp"
+        }
+      }
+    },
+    "directory_member": {
+      "type": "object",
+      "required": ["user", "membership"],
+      "properties": {
+        "user": {
+          "$ref": "#/$defs/user"
+        },
+        "membership": {
+          "$ref": "#/$defs/membership"
+        }
+      }
+    },
+    "member_filter": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "email_prefix": {
+          "type": "string",
+          "minLength": 1
+        },
+        "role": {
+          "$ref": "#/$defs/organization_role"
+        },
+        "active": {
+          "type": "boolean"
+        },
+        "source": {
+          "$ref": "#/$defs/source"
+        }
+      }
+    },
+    "group_filter": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "display_name_prefix": {
+          "type": "string",
+          "minLength": 1
+        },
+        "active": {
+          "type": "boolean"
+        },
+        "source": {
+          "$ref": "#/$defs/source"
+        }
+      }
+    },
+    "list_members_request": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["actor_principal_id", "organization_id", "limit"],
+      "properties": {
+        "actor_principal_id": {
+          "$ref": "#/$defs/id"
+        },
+        "organization_id": {
+          "$ref": "#/$defs/id"
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 200
+        },
+        "cursor": {
+          "$ref": "../common/pagination.schema.json#/$defs/cursor"
+        },
+        "filter": {
+          "$ref": "#/$defs/member_filter"
+        }
+      }
+    },
+    "list_groups_request": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["actor_principal_id", "organization_id", "limit"],
+      "properties": {
+        "actor_principal_id": {
+          "$ref": "#/$defs/id"
+        },
+        "organization_id": {
+          "$ref": "#/$defs/id"
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 200
+        },
+        "cursor": {
+          "$ref": "../common/pagination.schema.json#/$defs/cursor"
+        },
+        "filter": {
+          "$ref": "#/$defs/group_filter"
+        }
+      }
+    },
+    "list_members_response": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["items", "next_cursor"],
+      "properties": {
+        "items": {
+          "type": "array",
+          "maxItems": 200,
+          "items": {
+            "$ref": "#/$defs/directory_member"
+          }
+        },
+        "next_cursor": {
+          "$ref": "../common/pagination.schema.json#/$defs/nullable_cursor"
+        }
+      }
+    },
+    "list_groups_response": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["items", "next_cursor"],
+      "properties": {
+        "items": {
+          "type": "array",
+          "maxItems": 200,
+          "items": {
+            "$ref": "#/$defs/group"
+          }
+        },
+        "next_cursor": {
+          "$ref": "../common/pagination.schema.json#/$defs/nullable_cursor"
+        }
+      }
+    }
+  }
+}

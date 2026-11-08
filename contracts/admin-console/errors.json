@@ -1,0 +1,624 @@
+{
+  "service": "admin-console",
+  "source": "../common/errors.json",
+  "errors": [
+    {
+      "code": "invalid_request",
+      "status": 400,
+      "retryable": false,
+      "description": "Request fields are missing, malformed, or failed validation."
+    },
+    {
+      "code": "unauthenticated",
+      "status": 401,
+      "retryable": false,
+      "description": "Authentication credentials are missing, invalid, or expired."
+    },
+    {
+      "code": "forbidden",
+      "status": 403,
+      "retryable": false,
+      "description": "The caller is authenticated but not allowed to perform the request."
+    },
+    {
+      "code": "not_found",
+      "status": 404,
+      "retryable": false,
+      "description": "The requested resource does not exist."
+    },
+    {
+      "code": "internal",
+      "status": 500,
+      "retryable": false,
+      "description": "An unexpected internal failure occurred while serving the request."
+    },
+    {
+      "code": "conflict",
+      "status": 409,
+      "retryable": false,
+      "description": "The request conflicts with the current state of the resource."
+    },
+    {
+      "code": "internal_error",
+      "status": 500,
+      "retryable": false,
+      "description": "Deprecated wire name for internal errors from earlier envelopes."
+    },
+    {
+      "code": "resource_version_conflict",
+      "status": 409,
+      "retryable": false,
+      "description": "Deprecated wire name for conflict on resource version mismatches."
+    },
+    {
+      "code": "method_not_allowed",
+      "status": 405,
+      "retryable": false,
+      "description": "The HTTP method is not supported for this route."
+    },
+    {
+      "code": "principal_changed",
+      "status": 409,
+      "retryable": false,
+      "description": "The authenticated principal changed since the session evidence was issued."
+    },
+    {
+      "code": "identity_unavailable",
+      "status": 503,
+      "retryable": true,
+      "description": "Identity Service could not be reached to serve the request."
+    },
+    {
+      "code": "invalid_current_password",
+      "status": 400,
+      "retryable": false,
+      "description": "The supplied current password is incorrect."
+    },
+    {
+      "code": "credential_busy",
+      "status": 503,
+      "retryable": true,
+      "description": "Password verification capacity is saturated; retry after the announced delay."
+    },
+    {
+      "code": "credential_rate_limited",
+      "status": 429,
+      "retryable": true,
+      "description": "Password verification attempts were rate limited; retry after the announced delay."
+    },
+    {
+      "code": "invalid_idempotency_key",
+      "status": 400,
+      "retryable": false,
+      "description": "The Idempotency-Key header is missing or malformed."
+    },
+    {
+      "code": "runtime_image_required",
+      "status": 400,
+      "retryable": false,
+      "description": "A runtime image selection is required for this operation."
+    },
+    {
+      "code": "invalid_argument",
+      "status": 400,
+      "retryable": false,
+      "description": "The request contains an invalid argument."
+    },
+    {
+      "code": "bad_request",
+      "status": 400,
+      "retryable": false,
+      "description": "The upstream request is invalid."
+    },
+    {
+      "code": "unsupported_media_type",
+      "status": 415,
+      "retryable": false,
+      "description": "The upstream request content type is invalid."
+    },
+    {
+      "code": "limit_exceeded",
+      "status": 413,
+      "retryable": false,
+      "description": "The request exceeds the configured limit."
+    },
+    {
+      "code": "encoding_failed",
+      "status": 500,
+      "retryable": false,
+      "description": "The request could not be encoded for the upstream call."
+    },
+    {
+      "code": "streaming_unavailable",
+      "status": 500,
+      "retryable": false,
+      "description": "The response stream could not be established."
+    },
+    {
+      "code": "upstream_error",
+      "status": 502,
+      "retryable": false,
+      "description": "The upstream dependency returned an unclassified failure."
+    },
+    {
+      "code": "upstream_rejected",
+      "status": 502,
+      "retryable": false,
+      "description": "The upstream dependency rejected the request."
+    },
+    {
+      "code": "invalid_upstream_response",
+      "status": 502,
+      "retryable": true,
+      "description": "The upstream dependency returned a malformed failure response."
+    },
+    {
+      "code": "dependency_invalid_response",
+      "status": 502,
+      "retryable": true,
+      "description": "A required dependency returned an invalid response."
+    },
+    {
+      "code": "provider_discovery_failed",
+      "status": 502,
+      "retryable": true,
+      "description": "Provider discovery failed at the configured endpoint."
+    },
+    {
+      "code": "dependency_unavailable",
+      "status": 503,
+      "retryable": true,
+      "description": "A required dependency is temporarily unavailable."
+    },
+    {
+      "code": "service_stopping",
+      "status": 503,
+      "retryable": true,
+      "description": "The dependency is draining and cannot serve the request."
+    },
+    {
+      "code": "application_unavailable",
+      "status": 503,
+      "retryable": true,
+      "description": "The backing application is temporarily unavailable."
+    },
+    {
+      "code": "agent_inventory_unavailable",
+      "status": 503,
+      "retryable": true,
+      "description": "The agent inventory dependency is temporarily unavailable."
+    },
+    {
+      "code": "identity_dependency_unavailable",
+      "status": 503,
+      "retryable": true,
+      "description": "Identity authorization dependency is unavailable."
+    },
+    {
+      "code": "provider_endpoint_unavailable",
+      "status": 503,
+      "retryable": true,
+      "description": "The provider endpoint is temporarily unavailable."
+    },
+    {
+      "code": "cleanup_failed",
+      "status": 503,
+      "retryable": true,
+      "description": "Dependent resource cleanup did not complete; retry is safe."
+    },
+    {
+      "code": "busy",
+      "status": 429,
+      "retryable": true,
+      "description": "The dependency is saturated; retry after backoff."
+    },
+    {
+      "code": "caller_context_required",
+      "status": 401,
+      "retryable": false,
+      "description": "A caller context token is required for this operation."
+    },
+    {
+      "code": "caller_context_invalid",
+      "status": 401,
+      "retryable": false,
+      "description": "Caller context verification failed."
+    },
+    {
+      "code": "service_unauthenticated",
+      "status": 401,
+      "retryable": false,
+      "description": "Service authentication rejected the request."
+    },
+    {
+      "code": "caller_not_allowed",
+      "status": 403,
+      "retryable": false,
+      "description": "The service caller is not allowed for this operation."
+    },
+    {
+      "code": "organization_mismatch",
+      "status": 403,
+      "retryable": false,
+      "description": "The request organization does not match the authenticated scope."
+    },
+    {
+      "code": "actor_mismatch",
+      "status": 403,
+      "retryable": false,
+      "description": "The actor does not match the caller context."
+    },
+    {
+      "code": "access_denied",
+      "status": 403,
+      "retryable": false,
+      "description": "Access to the requested operation is denied."
+    },
+    {
+      "code": "provider_endpoint_forbidden",
+      "status": 422,
+      "retryable": false,
+      "description": "The provider endpoint refused the request payload."
+    },
+    {
+      "code": "reference_not_found",
+      "status": 404,
+      "retryable": false,
+      "description": "The referenced resource does not exist."
+    },
+    {
+      "code": "agent_not_found",
+      "status": 404,
+      "retryable": false,
+      "description": "The requested agent does not exist."
+    },
+    {
+      "code": "agent_network_not_found",
+      "status": 404,
+      "retryable": false,
+      "description": "The requested agent network does not exist."
+    },
+    {
+      "code": "policy_revision_not_found",
+      "status": 404,
+      "retryable": false,
+      "description": "The requested policy revision does not exist."
+    },
+    {
+      "code": "revision_not_found",
+      "status": 404,
+      "retryable": false,
+      "description": "The requested revision does not exist."
+    },
+    {
+      "code": "model_profile_not_found",
+      "status": 404,
+      "retryable": false,
+      "description": "The requested model profile does not exist."
+    },
+    {
+      "code": "template_not_found",
+      "status": 404,
+      "retryable": false,
+      "description": "The requested template does not exist."
+    },
+    {
+      "code": "operation_not_found",
+      "status": 404,
+      "retryable": false,
+      "description": "The requested operation does not exist."
+    },
+    {
+      "code": "reference_disabled",
+      "status": 409,
+      "retryable": false,
+      "description": "The referenced resource is disabled."
+    },
+    {
+      "code": "agent_network_unavailable",
+      "status": 409,
+      "retryable": false,
+      "description": "The agent network is not currently available for the operation."
+    },
+    {
+      "code": "policy_revision_conflict",
+      "status": 409,
+      "retryable": false,
+      "description": "The policy revision conflicts with the current state."
+    },
+    {
+      "code": "idempotency_conflict",
+      "status": 409,
+      "retryable": false,
+      "description": "An equivalent operation is already in flight for this idempotency key."
+    },
+    {
+      "code": "preparation_not_found",
+      "status": 404,
+      "retryable": false,
+      "description": "Skill preparation was not found"
+    },
+    {
+      "code": "audit_not_found",
+      "status": 404,
+      "retryable": false,
+      "description": "Execution audit record was not found"
+    },
+    {
+      "code": "resource_in_use",
+      "status": 409,
+      "retryable": false,
+      "description": "Resource is referenced and cannot be changed"
+    },
+    {
+      "code": "request_id_conflict",
+      "status": 409,
+      "retryable": false,
+      "description": "Request identifier was already used with different content"
+    },
+    {
+      "code": "lifecycle_conflict",
+      "status": 409,
+      "retryable": false,
+      "description": "Lifecycle operation conflicts with the current state"
+    },
+    {
+      "code": "execution_configuration_capacity_exceeded",
+      "status": 409,
+      "retryable": false,
+      "description": "Execution configuration exceeds capacity"
+    },
+    {
+      "code": "external_identity_conflict",
+      "status": 409,
+      "retryable": false,
+      "description": "External identity is already assigned"
+    },
+    {
+      "code": "external_identity_restore_required",
+      "status": 409,
+      "retryable": false,
+      "description": "External identity binding was revoked and requires explicit restoration"
+    },
+    {
+      "code": "invalid_model_spec",
+      "status": 400,
+      "retryable": false,
+      "description": "Model specification is invalid"
+    },
+    {
+      "code": "invalid_cursor",
+      "status": 400,
+      "retryable": false,
+      "description": "Pagination cursor is invalid"
+    },
+    {
+      "code": "execution_audit_unavailable",
+      "status": 503,
+      "retryable": true,
+      "description": "Execution audit data is unavailable"
+    },
+    {
+      "code": "invalid_package",
+      "status": 400,
+      "retryable": false,
+      "description": "Skill package is invalid"
+    },
+    {
+      "code": "name_conflict",
+      "status": 409,
+      "retryable": false,
+      "description": "Name is already in use"
+    },
+    {
+      "code": "content_changed",
+      "status": 409,
+      "retryable": false,
+      "description": "Content changed since it was read"
+    },
+    {
+      "code": "source_invalid",
+      "status": 502,
+      "retryable": true,
+      "description": "Configured source is invalid"
+    },
+    {
+      "code": "temporarily_unavailable",
+      "status": 503,
+      "retryable": true,
+      "description": "Service is temporarily unavailable"
+    },
+    {
+      "code": "source_unavailable",
+      "status": 503,
+      "retryable": true,
+      "description": "Configured source is unavailable"
+    },
+    {
+      "code": "unavailable",
+      "status": 503,
+      "retryable": true,
+      "description": "A required dependency is temporarily unavailable; retrying is safe."
+    },
+    {
+      "code": "external_identity_last_method",
+      "status": 409,
+      "retryable": false,
+      "description": "The external identity is the membership's last available login method."
+    },
+    {
+      "code": "revision_conflict",
+      "status": 409,
+      "retryable": false,
+      "description": "Deprecated wire name for conflict on revision mismatches."
+    },
+    {
+      "code": "request_conflict",
+      "status": 409,
+      "retryable": false,
+      "description": "Deprecated wire name for conflict on repeated or racing requests."
+    },
+    {
+      "code": "runtime_image_invalid",
+      "status": 400,
+      "retryable": false,
+      "description": "Runtime image reference is invalid"
+    },
+    {
+      "code": "agent_not_ready",
+      "status": 409,
+      "retryable": true,
+      "description": "Agent is not ready"
+    },
+    {
+      "code": "configuration_conflict",
+      "status": 409,
+      "retryable": false,
+      "description": "Agent configuration conflicts with the current revision"
+    },
+    {
+      "code": "lifecycle_timeout",
+      "status": 504,
+      "retryable": true,
+      "description": "Lifecycle operation timed out"
+    },
+    {
+      "code": "request_too_large",
+      "status": 413,
+      "retryable": false,
+      "description": "The request body or headers exceed the admission limit."
+    },
+    {
+      "code": "inactive_principal",
+      "status": 403,
+      "retryable": false,
+      "description": "The principal is inactive"
+    },
+    {
+      "code": "invalid_reference",
+      "status": 400,
+      "retryable": false,
+      "description": "The referenced identity resource is invalid"
+    },
+    {
+      "code": "last_organization_admin",
+      "status": 409,
+      "retryable": false,
+      "description": "An organization must retain at least one active administrator"
+    },
+    {
+      "code": "oidc_authorization_failed",
+      "status": 400,
+      "retryable": false,
+      "description": "OIDC authorization failed"
+    },
+    {
+      "code": "oidc_completed_token_unavailable",
+      "status": 410,
+      "retryable": false,
+      "description": "OIDC completed token is no longer available"
+    },
+    {
+      "code": "oidc_exchange_claim_invalid",
+      "status": 400,
+      "retryable": false,
+      "description": "OIDC exchange claims are invalid"
+    },
+    {
+      "code": "oidc_exchange_failed",
+      "status": 500,
+      "retryable": false,
+      "description": "OIDC exchange failed"
+    },
+    {
+      "code": "oidc_exchange_in_progress",
+      "status": 409,
+      "retryable": false,
+      "description": "OIDC exchange is already in progress"
+    },
+    {
+      "code": "oidc_identity_failed",
+      "status": 500,
+      "retryable": false,
+      "description": "OIDC identity operation failed"
+    },
+    {
+      "code": "oidc_membership_required",
+      "status": 403,
+      "retryable": false,
+      "description": "OIDC login requires an organization membership"
+    },
+    {
+      "code": "oidc_persistence_failed",
+      "status": 500,
+      "retryable": false,
+      "description": "OIDC persistence operation failed"
+    },
+    {
+      "code": "oidc_provider_changed",
+      "status": 409,
+      "retryable": false,
+      "description": "OIDC provider changed since login started"
+    },
+    {
+      "code": "oidc_provider_client_id_immutable",
+      "status": 409,
+      "retryable": false,
+      "description": "OIDC provider client ID cannot be changed"
+    },
+    {
+      "code": "oidc_provider_failed",
+      "status": 500,
+      "retryable": false,
+      "description": "OIDC provider operation failed"
+    },
+    {
+      "code": "oidc_provider_issuer_immutable",
+      "status": 409,
+      "retryable": false,
+      "description": "OIDC provider issuer cannot be changed"
+    },
+    {
+      "code": "oidc_provider_secret_failed",
+      "status": 500,
+      "retryable": false,
+      "description": "OIDC provider secret operation failed"
+    },
+    {
+      "code": "oidc_session_expired",
+      "status": 410,
+      "retryable": false,
+      "description": "OIDC login session has expired"
+    },
+    {
+      "code": "oidc_session_failed",
+      "status": 400,
+      "retryable": false,
+      "description": "OIDC session could not be completed"
+    },
+    {
+      "code": "oidc_token_failed",
+      "status": 500,
+      "retryable": false,
+      "description": "OIDC token operation failed"
+    },
+    {
+      "code": "precondition_failed",
+      "status": 412,
+      "retryable": false,
+      "description": "A required precondition, such as a resource version check, failed."
+    },
+    {
+      "code": "rate_limited",
+      "status": 429,
+      "retryable": true,
+      "description": "Admission rate limiting rejected the request; retry after the announced delay."
+    },
+    {
+      "code": "version_conflict",
+      "status": 409,
+      "retryable": false,
+      "description": "Deprecated wire name for conflict on stale resource versions."
+    }
+  ]
+}

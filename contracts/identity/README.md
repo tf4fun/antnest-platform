@@ -1,5 +1,12 @@
 # Identity Service Contracts
 
+The directory pagination additions are first published in
+[directory-publication-proposal.json](directory-publication-proposal.json).
+The owning service activates them with its implementation: Identity revision 19
+in #589 and Console version 61 in #590. Before those batches, the active catalogs
+remain Identity 18 / Console 60; proposed schemas do not advertise live routes.
+The sections below describe the target contract once activated.
+
 Identity Service owns the JSON RPC contract in `identity-contract.json` and
 the standard OIDC/SCIM protocol surfaces described in
 [`../../docs/stage-2-identity.md`](../../docs/stage-2-identity.md).
@@ -58,3 +65,18 @@ proof depends on the existing commit-order guarantee and fresh authoritative
 reads; it does not add an RPC, watermark or Identity migration. The shared
 policy, Identity PostgreSQL evidence, Gateway implementation and consumer/HTTPS
 integration have separate admission batches.
+
+Revision 19 adds the bounded directory read methods `list_members` and
+`list_groups` (POST `/list-members`, `/list-groups`) with their standalone
+schema [directory.schema.json](directory.schema.json). Requests require
+`actor_principal_id`, `organization_id` and integer `limit` (1..200), and accept
+an optional canonical `cursor` plus a closed `filter` object (members:
+`email_prefix`, `role`, `active`, `source`; groups: `display_name_prefix`,
+`active`, `source`). Responses are closed pages of at most 200 items with a
+required nullable `next_cursor`; there is no `after` alias. Method entries keep
+inline `required`/`properties` for existing contract tooling while `$ref`
+targets the standalone schema. `list_directory` remains for one release,
+deprecated, with both `users` and `groups` arrays capped at 200 entries; it is
+not a stable full-organization listing. Owning-service implementation in
+Identity and the Admin Console consumer/integration batches are pending; this
+contract makes no end-to-end workflow claim.

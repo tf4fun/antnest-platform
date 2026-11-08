@@ -1249,5 +1249,248 @@
     "kind": "deprecated_alias",
     "reason": "Descriptor names the deprecated one-release input alias for the Egress precondition contract; requests may still carry it.",
     "remove_after": "next_release"
+  },
+  {
+    "file": "admin-console/admin-api.schema.json",
+    "pointer": "/$defs/list_skills_request/properties/after_id",
+    "field": "after_id",
+    "replacement": "cursor",
+    "reason": "One-release deprecated request alias; Console normalizes to the canonical wire field.",
+    "kind": "deprecated_alias",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "admin-console/admin-api.schema.json",
+    "pointer": "/$defs/list_skills_request/not/required/1",
+    "field": "after_id",
+    "replacement": "cursor",
+    "reason": "One-release deprecated request alias; Console normalizes to the canonical wire field.",
+    "kind": "deprecated_alias",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "admin-console/admin-api.schema.json",
+    "pointer": "/$defs/list_skill_versions_request/properties/after_version",
+    "field": "after_version",
+    "replacement": "cursor",
+    "reason": "One-release deprecated request alias; Console normalizes to the canonical wire field.",
+    "kind": "deprecated_alias",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "admin-console/admin-api.schema.json",
+    "pointer": "/$defs/list_skill_versions_request/not/required/1",
+    "field": "after_version",
+    "replacement": "cursor",
+    "reason": "One-release deprecated request alias; Console normalizes to the canonical wire field.",
+    "kind": "deprecated_alias",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "admin-console/admin-api.schema.json",
+    "pointer": "/$defs/list_organization_sessions_request/properties/after_id",
+    "field": "after_id",
+    "replacement": "cursor",
+    "reason": "One-release deprecated request alias; Console normalizes to the canonical wire field.",
+    "kind": "deprecated_alias",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "admin-console/admin-api.schema.json",
+    "pointer": "/$defs/list_organization_sessions_request/not/required/1",
+    "field": "after_id",
+    "replacement": "cursor",
+    "reason": "One-release deprecated request alias; Console normalizes to the canonical wire field.",
+    "kind": "deprecated_alias",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "admin-console/admin-api.schema.json",
+    "pointer": "/$defs/list_model_profiles_request/properties/after_id",
+    "field": "after_id",
+    "replacement": "cursor",
+    "reason": "One-release deprecated request alias; Console normalizes to the canonical wire field.",
+    "kind": "deprecated_alias",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "admin-console/admin-api.schema.json",
+    "pointer": "/$defs/list_model_profiles_request/not/required/1",
+    "field": "after_id",
+    "replacement": "cursor",
+    "reason": "One-release deprecated request alias; Console normalizes to the canonical wire field.",
+    "kind": "deprecated_alias",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "admin-console/admin-api.schema.json",
+    "pointer": "/$defs/list_templates_request/properties/after_id",
+    "field": "after_id",
+    "replacement": "cursor",
+    "reason": "One-release deprecated request alias; Console normalizes to the canonical wire field.",
+    "kind": "deprecated_alias",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "admin-console/admin-api.schema.json",
+    "pointer": "/$defs/list_templates_request/not/required/1",
+    "field": "after_id",
+    "replacement": "cursor",
+    "reason": "One-release deprecated request alias; Console normalizes to the canonical wire field.",
+    "kind": "deprecated_alias",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "admin-console/admin-api.schema.json",
+    "pointer": "/$defs/list_provider_connections_request/properties/after_id",
+    "field": "after_id",
+    "replacement": "cursor",
+    "reason": "One-release deprecated request alias; Console normalizes to the canonical wire field.",
+    "kind": "deprecated_alias",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "admin-console/admin-api.schema.json",
+    "pointer": "/$defs/list_provider_connections_request/not/required/1",
+    "field": "after_id",
+    "replacement": "cursor",
+    "reason": "One-release deprecated request alias; Console normalizes to the canonical wire field.",
+    "kind": "deprecated_alias",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "admin-console/admin-api.schema.json",
+    "pointer": "/$defs/set_agent_network_policy_request/properties/expected_resource_version",
+    "field": "expected_resource_version",
+    "replacement": "expected_version",
+    "reason": "One-release deprecated CAS alias; Console normalizes to the canonical expected_version.",
+    "kind": "deprecated_alias",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "admin-console/admin-api.schema.json",
+    "pointer": "/$defs/set_agent_network_policy_request/not/required/1",
+    "field": "expected_resource_version",
+    "replacement": "expected_version",
+    "reason": "One-release deprecated CAS alias; Console normalizes to the canonical expected_version.",
+    "kind": "deprecated_alias",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "admin-console/directory-publication-proposal.json",
+    "pointer": "/catalog_patch/response_policy/agent_network_policy/deprecated_input/0",
+    "field": "expected_resource_version",
+    "replacement": "expected_version",
+    "reason": "One-release deprecated request alias; Console normalizes to the canonical wire field.",
+    "kind": "deprecated_alias",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "admin-console/directory-publication-proposal.json",
+    "pointer": "/catalog_patch/routes/list_model_profiles/query/deprecated/0",
+    "field": "after_id",
+    "replacement": "cursor",
+    "reason": "One-release deprecated request alias; Console normalizes to the canonical wire field.",
+    "kind": "deprecated_alias",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "admin-console/directory-publication-proposal.json",
+    "pointer": "/catalog_patch/routes/list_model_profiles/query/optional/1",
+    "field": "after_id",
+    "replacement": "cursor",
+    "reason": "One-release deprecated request alias; Console normalizes to the canonical wire field.",
+    "kind": "deprecated_alias",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "admin-console/directory-publication-proposal.json",
+    "pointer": "/catalog_patch/routes/list_organization_sessions/query/deprecated/0",
+    "field": "after_id",
+    "replacement": "cursor",
+    "reason": "One-release deprecated request alias; Console normalizes to the canonical wire field.",
+    "kind": "deprecated_alias",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "admin-console/directory-publication-proposal.json",
+    "pointer": "/catalog_patch/routes/list_organization_sessions/query/optional/1",
+    "field": "after_id",
+    "replacement": "cursor",
+    "reason": "One-release deprecated request alias; Console normalizes to the canonical wire field.",
+    "kind": "deprecated_alias",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "admin-console/directory-publication-proposal.json",
+    "pointer": "/catalog_patch/routes/list_provider_connections/query/deprecated/0",
+    "field": "after_id",
+    "replacement": "cursor",
+    "reason": "One-release deprecated request alias; Console normalizes to the canonical wire field.",
+    "kind": "deprecated_alias",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "admin-console/directory-publication-proposal.json",
+    "pointer": "/catalog_patch/routes/list_provider_connections/query/optional/1",
+    "field": "after_id",
+    "replacement": "cursor",
+    "reason": "One-release deprecated request alias; Console normalizes to the canonical wire field.",
+    "kind": "deprecated_alias",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "admin-console/directory-publication-proposal.json",
+    "pointer": "/catalog_patch/routes/list_skill_versions/query/deprecated/0",
+    "field": "after_version",
+    "replacement": "cursor",
+    "reason": "One-release deprecated request alias; Console normalizes to the canonical wire field.",
+    "kind": "deprecated_alias",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "admin-console/directory-publication-proposal.json",
+    "pointer": "/catalog_patch/routes/list_skill_versions/query/optional/1",
+    "field": "after_version",
+    "replacement": "cursor",
+    "reason": "One-release deprecated request alias; Console normalizes to the canonical wire field.",
+    "kind": "deprecated_alias",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "admin-console/directory-publication-proposal.json",
+    "pointer": "/catalog_patch/routes/list_skills/query/deprecated/0",
+    "field": "after_id",
+    "replacement": "cursor",
+    "reason": "One-release deprecated request alias; Console normalizes to the canonical wire field.",
+    "kind": "deprecated_alias",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "admin-console/directory-publication-proposal.json",
+    "pointer": "/catalog_patch/routes/list_skills/query/optional/1",
+    "field": "after_id",
+    "replacement": "cursor",
+    "reason": "One-release deprecated request alias; Console normalizes to the canonical wire field.",
+    "kind": "deprecated_alias",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "admin-console/directory-publication-proposal.json",
+    "pointer": "/catalog_patch/routes/list_templates/query/deprecated/0",
+    "field": "after_id",
+    "replacement": "cursor",
+    "reason": "One-release deprecated request alias; Console normalizes to the canonical wire field.",
+    "kind": "deprecated_alias",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "admin-console/directory-publication-proposal.json",
+    "pointer": "/catalog_patch/routes/list_templates/query/optional/1",
+    "field": "after_id",
+    "replacement": "cursor",
+    "reason": "One-release deprecated request alias; Console normalizes to the canonical wire field.",
+    "kind": "deprecated_alias",
+    "remove_after": "next_release"
   }
 ]
