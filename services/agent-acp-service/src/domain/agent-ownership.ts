@@ -1,3 +1,6 @@
+import type { z } from "zod";
+import { agentIdSchema, organizationIdSchema } from "./ids.js";
+
 export type AgentOwnershipScope = Readonly<{ organizationId: string; agentId: string }>;
 export type AgentOwnershipFence = AgentOwnershipScope &
   Readonly<{ ownerInstanceId: string; epoch: string }>;
@@ -20,9 +23,15 @@ export class AgentLeaseEpochExhaustedError extends Error {
 
 export function ownershipScope(input: AgentOwnershipScope): AgentOwnershipScope {
   return Object.freeze({
-    organizationId: identity(input.organizationId),
-    agentId: identity(input.agentId),
+    organizationId: scopedIdentity(organizationIdSchema, input.organizationId),
+    agentId: scopedIdentity(agentIdSchema, input.agentId),
   });
+}
+
+function scopedIdentity<T>(schema: z.ZodType<T>, value: unknown): T {
+  const parsed = schema.safeParse(value);
+  if (!parsed.success) throw new TypeError("Invalid Agent ownership identity");
+  return parsed.data;
 }
 
 export function ownershipFence(input: AgentOwnershipFence): AgentOwnershipFence {

@@ -12,6 +12,7 @@ import {
   parseExecutionAuthority,
 } from "../../domain/execution-publication-v2.js";
 import { DomainError } from "../../domain/errors.js";
+import { agentIdSchema } from "../../domain/ids.js";
 import {
   AgentOwnershipLostError,
   ownershipFence,
@@ -67,7 +68,7 @@ const identitySchema = z.strictObject({
   runtimes: z.array(
     z.strictObject({
       connection_id: identifier,
-      agent_id: identifier,
+      agent_id: agentIdSchema,
       runtime_revision: identifier,
       digest: digest.optional(),
     }),

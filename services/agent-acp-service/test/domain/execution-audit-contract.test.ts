@@ -15,7 +15,10 @@ import {
 function validator(name: string) {
   const schema: unknown = JSON.parse(
     readFileSync(
-      new URL(`../../../../contracts/agent-acp/${name}.schema.json`, import.meta.url),
+      new URL(
+        `../../../../contracts/agent-acp/${name}${["list-execution-audits-request", "execution-audit-list", "execution-audit"].includes(name) ? ".ids-v2" : ""}.schema.json`,
+        import.meta.url,
+      ),
       "utf8",
     ),
   );
@@ -26,6 +29,14 @@ function validator(name: string) {
     JSON.parse(
       readFileSync(
         new URL("../../../../contracts/common/pagination.schema.json", import.meta.url),
+        "utf8",
+      ),
+    ) as object,
+  );
+  ajv.addSchema(
+    JSON.parse(
+      readFileSync(
+        new URL("../../../../contracts/common/ids.schema.json", import.meta.url),
         "utf8",
       ),
     ) as object,

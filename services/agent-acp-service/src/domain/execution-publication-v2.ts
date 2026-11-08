@@ -13,6 +13,7 @@ import {
   type ExecutionConfiguration,
 } from "./execution-configuration.js";
 import { organizationBudgetSchema } from "./model-budget.js";
+import { agentIdSchema, organizationIdSchema } from "./ids.js";
 
 const identifier = z.string().min(1).max(200);
 const revision = z.number().int().min(1).max(Number.MAX_SAFE_INTEGER);
@@ -40,7 +41,7 @@ export const providerConfigurationV2Schema = z.union([
 ]);
 
 export const executionConfigurationV2Schema = z.strictObject({
-  organization_id: identifier,
+  organization_id: organizationIdSchema,
   schema_version: z.literal(2),
   revision,
   organization_budget: organizationBudgetSchema.optional(),
@@ -53,35 +54,40 @@ export type ProviderConfigurationV2 = z.infer<typeof providerConfigurationV2Sche
 export type ExecutionConfigurationV2 = z.infer<typeof executionConfigurationV2Schema>;
 export type ExecutionCredentialReference = z.infer<typeof providerConfigurationV2CredentialSchema>;
 
-const collectionDelta = <T extends z.ZodType>(upserts: T) =>
-  z.strictObject({ upserts: z.array(upserts), deletes: z.array(identifier) });
+const collectionDelta = <T extends z.ZodType, D extends z.ZodType<string> = typeof identifier>(
+  upserts: T,
+  deletes?: D,
+) => z.strictObject({ upserts: z.array(upserts), deletes: z.array(deletes ?? identifier) });
 
 export const executionDeltaSchema = z.strictObject({
   schema_version: z.literal(2),
-  organization_id: identifier,
+  organization_id: organizationIdSchema,
   base_revision: revision,
   revision: z.number().int().min(2).max(Number.MAX_SAFE_INTEGER),
   providers: collectionDelta(providerConfigurationV2Schema),
   models: collectionDelta(executionModelSchema),
-  agents: collectionDelta(privateAgentConfigurationSchema),
+  agents: collectionDelta(privateAgentConfigurationSchema, agentIdSchema),
   organization_budget: organizationBudgetSchema.nullable(),
 });
 
 export type ExecutionDelta = z.infer<typeof executionDeltaSchema>;
 
-export const executionDigestRequestSchema = z.strictObject({ organization_id: identifier });
+export const executionDigestRequestSchema = z.strictObject({
+  organization_id: organizationIdSchema,
+});
 
 const digestEntrySchema = z.strictObject({ id: identifier, digest: digestHex });
+const agentDigestEntrySchema = z.strictObject({ id: agentIdSchema, digest: digestHex });
 
 export const executionDigestResponseSchema = z
   .strictObject({
-    organization_id: identifier,
+    organization_id: organizationIdSchema,
     schema_version: z.union([z.literal(0), z.literal(1), z.literal(2)]),
     revision: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
     digest: digestHex.nullable(),
     providers: z.array(digestEntrySchema),
     models: z.array(digestEntrySchema),
-    agents: z.array(digestEntrySchema),
+    agents: z.array(agentDigestEntrySchema),
     organization_budget_digest: digestHex.nullable(),
   })
   .superRefine((response, ctx) => {

@@ -1,12 +1,13 @@
 import { z } from "zod";
 import { DomainError } from "./errors.js";
+import { agentIdSchema, organizationIdSchema } from "./ids.js";
 
 const identifier = z.string().min(1).max(200);
 const revision = z.number().int().positive().max(Number.MAX_SAFE_INTEGER);
 
 export const agentSettlementRequestSchema = z.strictObject({
-  organization_id: identifier,
-  agent_id: identifier,
+  organization_id: organizationIdSchema,
+  agent_id: agentIdSchema,
   minimum_revision: revision,
   operation_id: identifier,
   mode: z.enum(["wait", "cancel"]),

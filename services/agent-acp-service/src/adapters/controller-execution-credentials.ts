@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { strictObject } from "./strict-json.js";
 import { ModelError } from "../ports/model.js";
+import { organizationIdSchema } from "../domain/ids.js";
 import type {
   ExecutionCredentialResolver,
   ResolvedExecutionCredential,
@@ -12,13 +13,13 @@ const TIMEOUT_MS = 5_000;
 const identifier = z.string().min(1).max(200);
 
 const scopeSchema = z.strictObject({
-  organization_id: identifier,
+  organization_id: organizationIdSchema,
   connection_id: identifier,
   credential_version: identifier,
 });
 
 const resolvedSchema = z.strictObject({
-  organization_id: identifier,
+  organization_id: organizationIdSchema,
   connection_id: identifier,
   credential_version: identifier,
   method: z.literal("api_key"),

@@ -31,7 +31,16 @@ function validator(name: string) {
   );
   if (typeof schema !== "object" || schema === null || Array.isArray(schema))
     throw new Error("Invalid shared schema");
-  return new Ajv2020({ strict: true }).compile(schema);
+  const ajv = new Ajv2020({ strict: true });
+  ajv.addSchema(
+    JSON.parse(
+      readFileSync(
+        new URL("../../../../contracts/common/ids.schema.json", import.meta.url),
+        "utf8",
+      ),
+    ) as object,
+  );
+  return ajv.compile(schema);
 }
 
 describe("workspace state contract", () => {
@@ -55,7 +64,7 @@ describe("workspace state contract", () => {
     { ...ready, availability: "offline", unavailable_reason: "agent_preparing" },
   ])("accepts an authorized view or sanitized denial: %j", (state) => {
     expect(agentExecutionStateSchema.safeParse(state).success).toBe(true);
-    expect(validator("agent-execution-state")(state)).toBe(true);
+    expect(validator("agent-execution-state.ids-v2")(state)).toBe(true);
   });
 
   it.each([
@@ -79,6 +88,6 @@ describe("workspace state contract", () => {
     { ...ready, availability: "busy", active_session_id: "session-1", run_id: "internal" },
   ])("rejects contradictory or leaking states: %j", (state) => {
     expect(agentExecutionStateSchema.safeParse(state).success).toBe(false);
-    expect(validator("agent-execution-state")(state)).toBe(false);
+    expect(validator("agent-execution-state.ids-v2")(state)).toBe(false);
   });
 });

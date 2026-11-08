@@ -3,6 +3,7 @@ import { ownershipFence } from "../domain/agent-ownership.js";
 import type { ExecutionIdentity } from "../domain/execution-configuration.js";
 import { DomainError } from "../domain/errors.js";
 import { parseOwnerRegistration, type OwnerRegistration } from "./owner-incarnation.js";
+import { agentIdSchema, organizationIdSchema, userIdSchema } from "../domain/ids.js";
 
 const associatedData = "antnest:acp:http-owner-handle:v1";
 const maximumBytes = 4096;
@@ -102,9 +103,9 @@ export class HttpOwnerHandles {
       "agentId",
     ]);
     const identity = Object.freeze({
-      organizationId: identifier(sourceIdentity.organizationId),
-      principalId: identifier(sourceIdentity.principalId),
-      agentId: identifier(sourceIdentity.agentId),
+      organizationId: organizationIdSchema.parse(sourceIdentity.organizationId),
+      principalId: userIdSchema.parse(sourceIdentity.principalId),
+      agentId: agentIdSchema.parse(sourceIdentity.agentId),
     });
     const fence = ownershipFence({
       organizationId: identity.organizationId,

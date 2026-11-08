@@ -1,8 +1,9 @@
 import { z } from "zod";
+import { agentIdSchema } from "./ids.js";
 
 export const agentExecutionStateRequestSchema = z.strictObject({});
 const authorizedState = z.strictObject({
-  agent_id: z.string().min(1).max(200),
+  agent_id: agentIdSchema,
   access_allowed: z.literal(true),
   configuration_revision: z.string().regex(/^[a-f0-9]{64}$/u),
 });
@@ -27,7 +28,7 @@ export const agentExecutionStateSchema = z.union([
     ]),
   }),
   z.strictObject({
-    agent_id: z.string().min(1).max(200),
+    agent_id: agentIdSchema,
     access_allowed: z.literal(false),
     availability: z.literal("offline"),
     active_session_id: z.null(),

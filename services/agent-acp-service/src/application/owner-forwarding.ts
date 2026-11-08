@@ -19,15 +19,11 @@ import type { PeerAvailabilityCapture } from "./peer-availability.js";
 import type { ExecutionDirectory } from "./execution-directory.js";
 import { parseOwnerRegistration, type OwnerRegistration } from "./owner-incarnation.js";
 import { peerDeadline } from "./peer-request.js";
+import { agentIdSchema, organizationIdSchema, userIdSchema } from "../domain/ids.js";
 import { controlBodyDigest, type OwnerControlRequest } from "./owner-control-forwarding.js";
 
 export const OWNER_FORWARD_HEADER = "Antnest-ACP-Forward";
 export const OWNER_FORWARD_PATH = "/internal/acp-peer/forward/ws";
-const identityValue = z
-  .string()
-  .min(1)
-  .max(200)
-  .refine((value) => value.trim() === value);
 const schema = z.strictObject({
   request_id: z
     .string()
@@ -41,9 +37,9 @@ const schema = z.strictObject({
   target: z.unknown().transform(parseOwnerRegistration),
   publication: z.unknown().transform(parseExecutionPublication),
   identity: z.strictObject({
-    organizationId: identityValue,
-    principalId: identityValue,
-    agentId: identityValue,
+    organizationId: organizationIdSchema,
+    principalId: userIdSchema,
+    agentId: agentIdSchema,
   }),
   epoch: z.string(),
   protocol: z.enum(["v1", "v2"]),

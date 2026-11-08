@@ -126,16 +126,77 @@ function inlineProviderLimits(value) {
       .map(([key, item]) => [key, inlineProviderLimits(item)]),
   );
 }
+const IDS_V2 = new Set([
+  "agent-execution-state",
+  "execution-audit",
+  "execution-audit-list",
+  "execution-snapshot",
+  "list-execution-audits-request",
+  "settle-agent-request",
+]);
+const SCOPED_ID_PROPERTIES = {
+  organization_id: "organizationId",
+  organizationId: "organizationId",
+  agent_id: "agentId",
+  agentId: "agentId",
+  requesting_agent_id: "agentId",
+  source_agent_id: "agentId",
+  target_agent_id: "agentId",
+  user_id: "userId",
+  userId: "userId",
+  owner_id: "userId",
+  actor_id: "userId",
+  actor_principal_id: "userId",
+  principal_id: "userId",
+  principalId: "userId",
+  owner_principal_id: "userId",
+};
+const SCOPED_ID_ITEM_PROPERTIES = { principal_ids: "userId", owner_principal_ids: "userId" };
+const scopedIdRef = (kind) => ({ $ref: `../common/ids.schema.json#/$defs/${kind}` });
+function scopeSharedIds(value) {
+  if (Array.isArray(value)) return value.map(scopeSharedIds);
+  if (value === null || typeof value !== "object") return value;
+  return Object.fromEntries(
+    Object.entries(value).map(([key, item]) => {
+      if (key === "properties" && item !== null && typeof item === "object" && !Array.isArray(item))
+        return [
+          key,
+          Object.fromEntries(
+            Object.entries(item).map(([name, sub]) => {
+              if (
+                SCOPED_ID_PROPERTIES[name] !== undefined &&
+                sub !== null &&
+                typeof sub === "object" &&
+                !Array.isArray(sub)
+              )
+                return [name, scopedIdRef(SCOPED_ID_PROPERTIES[name])];
+              if (
+                SCOPED_ID_ITEM_PROPERTIES[name] !== undefined &&
+                sub !== null &&
+                typeof sub === "object" &&
+                !Array.isArray(sub) &&
+                sub.type === "array"
+              )
+                return [name, { ...sub, items: scopedIdRef(SCOPED_ID_ITEM_PROPERTIES[name]) }];
+              return [name, scopeSharedIds(sub)];
+            }),
+          ),
+        ];
+      return [key, scopeSharedIds(item)];
+    }),
+  );
+}
 for (const contract of contracts) {
+  const idsV2 = IDS_V2.has(contract.name);
   const destination = new URL(
-    `../../../contracts/agent-acp/${contract.name}.schema.json`,
+    `../../../contracts/agent-acp/${contract.name}${idsV2 ? ".ids-v2" : ""}.schema.json`,
     import.meta.url,
   );
-  const schema = z.toJSONSchema(contract.definition, {
+  let schema = z.toJSONSchema(contract.definition, {
     target: "draft-2020-12",
     io: contract.name.endsWith("-request") ? "input" : "output",
   });
-  schema.$id = `https://schemas.antnest.dev/agent-acp/${contract.name}.schema.json`;
+  schema.$id = `https://schemas.antnest.dev/agent-acp/${contract.name}${idsV2 ? ".ids-v2" : ""}.schema.json`;
   schema.title = contract.title;
   schema.description = contract.description;
   const withSharedPagination = (properties, field, fragment) => {
@@ -161,6 +222,7 @@ for (const contract of contracts) {
       $ref: "#/$defs/provider_token_limits",
     };
   }
+  if (idsV2) schema = scopeSharedIds(schema);
   const expected = `${JSON.stringify(schema, null, 2)}\n`;
   if (mode === "--write") {
     await writeFile(destination, expected);

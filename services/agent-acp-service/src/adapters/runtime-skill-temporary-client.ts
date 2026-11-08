@@ -18,11 +18,12 @@ import type { RuntimeSkillMaintenanceSigner } from "./runtime-skill-maintenance-
 import type { RuntimeBinding } from "../domain/types.js";
 import type { RuntimeConnectionAuthority } from "../ports/runtime-connections.js";
 import { runtimeAdmissionDenial } from "../domain/runtime-admission-error.js";
+import { agentIdSchema } from "../domain/ids.js";
 import { projectResponse } from "../domain/response-projection.js";
 
 const statusSchema = z.object({
   status: z.literal("ready"),
-  agent_id: z.string().min(1).max(200),
+  agent_id: agentIdSchema,
   execution_id: z.string().min(1).max(200),
 });
 export class RuntimeSkillTemporaryClient implements TemporarySkillRuntime {
