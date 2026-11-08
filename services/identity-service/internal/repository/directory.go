@@ -576,7 +576,7 @@ func (a *DirectoryAdapter) listMembers(ctx context.Context, organizationID strin
 		FROM organization_memberships m
 		JOIN users u ON u.id = m.user_id
 		WHERE m.organization_id = $1 AND m.scim_deleted_at IS NULL
-		ORDER BY m.email, m.id`, organizationID)
+		ORDER BY m.email, m.id LIMIT 200`, organizationID)
 	if err != nil {
 		return nil, fmt.Errorf("list directory users: %w", err)
 	}
@@ -601,7 +601,7 @@ func (a *DirectoryAdapter) listGroups(ctx context.Context, organizationID string
 		       COALESCE(scim_external_id, ''), created_at, updated_at
 		FROM groups
 		WHERE organization_id = $1
-		ORDER BY display_name, id`, organizationID)
+		ORDER BY display_name, id LIMIT 200`, organizationID)
 	if err != nil {
 		return nil, fmt.Errorf("list directory groups: %w", err)
 	}

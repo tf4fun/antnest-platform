@@ -441,8 +441,8 @@ func TestRPCBindingsConformToCentralIdentityContract(t *testing.T) {
 	if err := json.Unmarshal(encoded, &contract); err != nil {
 		t.Fatalf("decode contract: %v", err)
 	}
-	if contract.Revision != 18 {
-		t.Fatalf("identity contract revision=%d want=18", contract.Revision)
+	if contract.Revision != 19 {
+		t.Fatalf("identity contract revision=%d want=19", contract.Revision)
 	}
 	if len(contract.Methods) != len(ContractRoutes) {
 		t.Fatalf("contract methods=%d route bindings=%d", len(contract.Methods), len(ContractRoutes))
@@ -571,6 +571,14 @@ type rpcServicesStub struct {
 	providers                      []oidcflow.Provider
 	providerResult                 oidcflow.Provider
 	scimTokens                     []scim.Token
+	memberPage                     directory.MemberPage
+	groupPage                      directory.GroupPage
+	membersInput                   directory.ListMembersInput
+	groupsInput                    directory.ListGroupsInput
+	membersCalls                   int
+	groupsCalls                    int
+	membersErr                     error
+	groupsErr                      error
 }
 
 func (s *rpcServicesStub) CreateOrganization(_ context.Context, input directory.CreateOrganizationInput) (domain.Organization, error) {
@@ -614,6 +622,18 @@ func (s *rpcServicesStub) SetUserActive(_ context.Context, input directory.SetUs
 
 func (*rpcServicesStub) List(context.Context, string, string) (directory.Directory, error) {
 	return directory.Directory{}, nil
+}
+
+func (s *rpcServicesStub) ListMembers(_ context.Context, input directory.ListMembersInput) (directory.MemberPage, error) {
+	s.membersCalls++
+	s.membersInput = input
+	return s.memberPage, s.membersErr
+}
+
+func (s *rpcServicesStub) ListGroups(_ context.Context, input directory.ListGroupsInput) (directory.GroupPage, error) {
+	s.groupsCalls++
+	s.groupsInput = input
+	return s.groupPage, s.groupsErr
 }
 
 func (s *rpcServicesStub) ResolvePrincipal(
