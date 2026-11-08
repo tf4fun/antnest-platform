@@ -41,10 +41,10 @@ it("api.directoryMembers requests the canonical first page", async () => {
   const requests = stubFetch(() => Response.json({ items: [member("1")], next_cursor: null }));
   const page = await api.directoryMembers();
   expect(requests).toHaveLength(1);
-  expect(requests[0].pathname).toBe("/api/admin/directory/members");
-  expect(requests[0].searchParams.get("limit")).toBe("50");
+  expect(requests[0]!.pathname).toBe("/api/admin/directory/members");
+  expect(requests[0]!.searchParams.get("limit")).toBe("50");
   expect(page.items).toHaveLength(1);
-  expect(page.items[0].membership.email).toBe("member1@example.com");
+  expect(page.items[0]!.membership.email).toBe("member1@example.com");
   expect(page.next_cursor).toBeNull();
 });
 
@@ -54,7 +54,7 @@ it("api.directoryMembers URI-encodes canonical query fields only", async () => {
     q: " Alice ", role: "admin", active: false, source: "scim",
     cursor: "opa+que=", limit: 10,
   });
-  const url = requests[0];
+  const url = requests[0]!;
   expect(url.searchParams.get("limit")).toBe("10");
   expect(url.searchParams.get("q")).toBe("alice");
   expect(url.searchParams.get("role")).toBe("admin");
@@ -114,11 +114,11 @@ it("api.directoryMembers validates a populated page end to end", async () => {
 it("api.directoryGroups requests its own first page without role", async () => {
   const requests = stubFetch(() => Response.json({ items: [group("Operators")], next_cursor: null }));
   const page = await api.directoryGroups({ q: "Op" });
-  expect(requests[0].pathname).toBe("/api/admin/directory/groups");
-  expect(requests[0].searchParams.get("q")).toBe("op");
-  expect(requests[0].searchParams.get("limit")).toBe("50");
-  expect(requests[0].searchParams.get("role")).toBeNull();
-  expect(page.items[0].display_name).toBe("Operators");
+  expect(requests[0]!.pathname).toBe("/api/admin/directory/groups");
+  expect(requests[0]!.searchParams.get("q")).toBe("op");
+  expect(requests[0]!.searchParams.get("limit")).toBe("50");
+  expect(requests[0]!.searchParams.get("role")).toBeNull();
+  expect(page.items[0]!.display_name).toBe("Operators");
 });
 
 it("api.directoryGroups rejects malformed pages", async () => {

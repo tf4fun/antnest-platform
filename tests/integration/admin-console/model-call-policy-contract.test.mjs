@@ -27,14 +27,35 @@ const controller = JSON.parse(
   ),
 );
 
-test("admin contract version 60 publishes both policy routes", () => {
-  assert.equal(contract.version, 60);
+test("admin contract version 61 publishes both policy routes", () => {
+  assert.equal(contract.version, 61);
   assert.deepEqual(contract.routes.get_model_call_policy, {
+    request_schema:
+      "admin-api.schema.json#/$defs/get_model_call_policy_request",
+    response_schema:
+      "admin-api.schema.json#/$defs/get_model_call_policy_response",
+    request_body: { kind: "none", input: "query_and_path" },
+    response_body: {
+      kind: "json",
+      schema: "admin-api.schema.json#/$defs/get_model_call_policy_response",
+    },
     method: "GET",
     path: "/model-call-policy",
     response: "model-call-policy.schema.json#/$defs/model_call_policy",
   });
   assert.deepEqual(contract.routes.set_model_call_policy, {
+    request_schema:
+      "admin-api.schema.json#/$defs/set_model_call_policy_request",
+    response_schema:
+      "admin-api.schema.json#/$defs/set_model_call_policy_response",
+    request_body: {
+      kind: "json",
+      schema: "admin-api.schema.json#/$defs/set_model_call_policy_request",
+    },
+    response_body: {
+      kind: "json",
+      schema: "admin-api.schema.json#/$defs/set_model_call_policy_response",
+    },
     method: "PUT",
     path: "/model-call-policy",
     requires: ["Idempotency-Key"],
