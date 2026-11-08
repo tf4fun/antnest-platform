@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 import { checkPrivateACPConnection } from "../../support/private-acp-recorder.mjs";
-import schema from "../../../contracts/agent-acp/agent-execution-state.schema.json" with { type: "json" };
+import schema from "../../../contracts/agent-acp/agent-execution-state.ids-v2.schema.json" with { type: "json" };
 import { assertLossOwner } from "./loss-private-session.mjs";
 import { assertReplacement } from "./loss-evidence.mjs";
 import { assertRestoreRun } from "./restore-evidence.mjs";

@@ -17,6 +17,7 @@ import { inspectLocalAdminLogin } from "./local-admin-login.mjs";
 import { durablePath } from "../../support/storage.mjs";
 import { gatewaySessionCookies } from "../../support/gateway-session-cookies.mjs";
 import { assertClearedSessionCookies } from "../identity-closeout/expiry.mjs";
+import commonIDs from "../../../contracts/common/ids.schema.json" with { type: "json" };
 
 const requireAcp = createRequire(
   new URL("../../../services/agent-acp-service/package.json", import.meta.url),
@@ -25,13 +26,14 @@ const { Ajv2020 } = requireAcp("ajv/dist/2020.js");
 const schema = JSON.parse(
   readFileSync(
     new URL(
-      "../../../contracts/edge-gateway/session-response.schema.json",
+      "../../../contracts/edge-gateway/session-response.ids-v2.schema.json",
       import.meta.url,
     ),
     "utf8",
   ),
 );
 const compiler = new Ajv2020({ strict: true });
+compiler.addSchema(commonIDs);
 compiler.addFormat("date-time", {
   type: "string",
   validate(value) {
@@ -57,11 +59,8 @@ compiler.addFormat("date-time", {
     );
   },
 });
-const validSession = compiler.compile({
-  $schema: schema.$schema,
-  $defs: schema.$defs,
-  $ref: "#/$defs/session",
-});
+compiler.addSchema(schema);
+const validSession = compiler.getSchema(schema.$id + "#/$defs/session");
 
 function assertSessionMetadata(body) {
   assert(

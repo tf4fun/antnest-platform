@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { test } from "node:test";
+import commonIDs from "../../../contracts/common/ids.schema.json" with { type: "json" };
 
 const require = createRequire(
   new URL("../../../services/agent-acp-service/package.json", import.meta.url),
@@ -33,7 +34,7 @@ function read(path) {
       value.routes[`${route.method} ${route.path}`] = structuredClone(
         proposal.caller_policy,
       );
-  } else if (path === "agent-controller/control-api.schema.json") {
+  } else if (path === "agent-controller/control-api.ids-v2.schema.json") {
     Object.assign(value.$defs, structuredClone(proposal.schema_definitions));
     value.$defs.agent_event.properties.event_type.enum.push(
       ...proposal.event_types,
@@ -70,12 +71,12 @@ test("the proposal stays separate until the owning producer publishes its target
   assert.equal(proposal.target_control_revision, 47);
   assert.equal(proposal.schema_base, "control-api.schema.json");
   assert(
-    [46, 47, 48, 49, 50].includes(activeRevision),
+    [46, 47, 48, 49, 50, 51].includes(activeRevision),
     "unknown publication revision",
   );
   const contract = readRaw("agent-controller/control-contract.json");
   const callers = readRaw("agent-controller/callers.json");
-  const schema = readRaw("agent-controller/control-api.schema.json");
+  const schema = readRaw("agent-controller/control-api.ids-v2.schema.json");
   if (activeRevision === proposal.base_control_revision) {
     assert.equal(contract.lifecycle_reliability, undefined);
     for (const [name, route] of Object.entries(proposal.routes)) {
@@ -95,8 +96,18 @@ test("the proposal stays separate until the owning producer publishes its target
       contract.lifecycle_reliability,
       proposal.lifecycle_reliability,
     );
+    const sharedRefs = {
+      organization_id: "../common/ids.schema.json#/$defs/organizationId",
+      actor_principal_id: "../common/ids.schema.json#/$defs/userId",
+    };
     for (const [name, route] of Object.entries(proposal.routes)) {
-      assert.deepEqual(contract.resources.agents[name], route);
+      const expectedRoute = structuredClone(route);
+      for (const key of activeRevision === 51 ? ["request", "response"] : [])
+        expectedRoute[key] = expectedRoute[key].replace(
+          "control-api.schema.json",
+          "control-api.ids-v2.schema.json",
+        );
+      assert.deepEqual(contract.resources.agents[name], expectedRoute);
       assert.deepEqual(
         callers.routes[`${route.method} ${route.path}`],
         proposal.caller_policy,
@@ -104,8 +115,13 @@ test("the proposal stays separate until the owning producer publishes its target
     }
     for (const [name, definition] of Object.entries(
       proposal.schema_definitions,
-    ))
-      assert.deepEqual(schema.$defs[name], definition);
+    )) {
+      const expectedDefinition = structuredClone(definition);
+      for (const field of Object.keys(sharedRefs))
+        if (activeRevision === 51 && expectedDefinition.properties?.[field]?.$ref === "#/$defs/id")
+          expectedDefinition.properties[field].$ref = sharedRefs[field];
+      assert.deepEqual(schema.$defs[name], expectedDefinition);
+    }
   }
 });
 
@@ -149,22 +165,23 @@ function utcTimestamp(value) {
 }
 
 function controlApiValidators() {
-  const schema = read("agent-controller/control-api.schema.json");
+  const schema = read("agent-controller/control-api.ids-v2.schema.json");
   const ajv = new Ajv2020({
     strict: false,
     allErrors: true,
     useDefaults: true,
   });
+  ajv.addSchema(commonIDs);
   ajv.addFormat("date-time", { type: "string", validate: utcTimestamp });
   ajv.addFormat("uri", {
     type: "string",
     validate: (value) => URL.canParse(value),
   });
   ajv.addSchema(
-    read("runtime/managed-mcp.schema.json"),
-    new URL("../runtime/managed-mcp.schema.json", schema.$id).href,
+    read("runtime/managed-mcp.ids-v2.schema.json"),
+    new URL("../runtime/managed-mcp.ids-v2.schema.json", schema.$id).href,
   );
-  ajv.addSchema(read("agent-controller/runtime-barrier-recovery.schema.json"));
+  ajv.addSchema(read("agent-controller/runtime-barrier-recovery.ids-v2.schema.json"));
   ajv.addSchema(schema);
   return Object.fromEntries(
     [
@@ -209,17 +226,17 @@ test("the control contract declares lifecycle cancel and quarantine-clear routes
     method: "POST",
     path: cancelPath,
     request:
-      "control-api.schema.json#/$defs/cancel_lifecycle_operation_request",
+      "control-api.ids-v2.schema.json#/$defs/cancel_lifecycle_operation_request",
     success_status: 202,
-    response: "control-api.schema.json#/$defs/operation",
+    response: "control-api.ids-v2.schema.json#/$defs/operation",
   });
   assert.deepEqual(agents.clear_lifecycle_quarantine, {
     method: "POST",
     path: quarantinePath,
     request:
-      "control-api.schema.json#/$defs/clear_lifecycle_quarantine_request",
+      "control-api.ids-v2.schema.json#/$defs/clear_lifecycle_quarantine_request",
     success_status: 200,
-    response: "control-api.schema.json#/$defs/agent",
+    response: "control-api.ids-v2.schema.json#/$defs/agent",
   });
 });
 
@@ -235,7 +252,7 @@ test("the lifecycle routes keep admin-console as the only workload caller", () =
 });
 
 test("lifecycle request definitions are strict inline objects over shared identities", () => {
-  const schema = read("agent-controller/control-api.schema.json");
+  const schema = read("agent-controller/control-api.ids-v2.schema.json");
   const cancel = schema.$defs.cancel_lifecycle_operation_request ?? {};
   assert.equal(cancel.type, "object");
   assert.equal(cancel.additionalProperties, false);
@@ -245,8 +262,8 @@ test("lifecycle request definitions are strict inline objects over shared identi
     "organization_id",
   ]);
   assert.deepEqual(cancel.properties, {
-    organization_id: { $ref: "#/$defs/id" },
-    actor_principal_id: { $ref: "#/$defs/id" },
+    organization_id: { $ref: "../common/ids.schema.json#/$defs/organizationId" },
+    actor_principal_id: { $ref: "../common/ids.schema.json#/$defs/userId" },
     operation_request_id: { $ref: "#/$defs/id" },
   });
   const clear = schema.$defs.clear_lifecycle_quarantine_request ?? {};
@@ -258,8 +275,8 @@ test("lifecycle request definitions are strict inline objects over shared identi
     "organization_id",
   ]);
   assert.deepEqual(clear.properties, {
-    organization_id: { $ref: "#/$defs/id" },
-    actor_principal_id: { $ref: "#/$defs/id" },
+    organization_id: { $ref: "../common/ids.schema.json#/$defs/organizationId" },
+    actor_principal_id: { $ref: "../common/ids.schema.json#/$defs/userId" },
     expected_aggregate_sequence: {
       type: "integer",
       minimum: 1,
@@ -405,7 +422,7 @@ test("the quarantine-clear request bounds the expected aggregate sequence", () =
 
 test("event catalogs add lifecycle terminal types while operation states stay unchanged", () => {
   const contract = read("agent-controller/control-contract.json");
-  const schema = read("agent-controller/control-api.schema.json");
+  const schema = read("agent-controller/control-api.ids-v2.schema.json");
   for (const eventTypes of [
     contract.enums?.event_type ?? [],
     schema.$defs.agent_event?.properties?.event_type?.enum ?? [],

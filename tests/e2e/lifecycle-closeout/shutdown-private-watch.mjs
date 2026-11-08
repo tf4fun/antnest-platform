@@ -2,15 +2,18 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { createRequire } from "node:module";
 import { inspect } from "node:util";
-import schema from "../../../contracts/agent-acp/agent-execution-state.schema.json" with { type: "json" };
+import schema from "../../../contracts/agent-acp/agent-execution-state.ids-v2.schema.json" with { type: "json" };
 import { until } from "../workspace-closeout/state.mjs";
+import commonIDs from "../../../contracts/common/ids.schema.json" with { type: "json" };
 
 const require = createRequire(
   new URL("../../../services/agent-acp-service/package.json", import.meta.url),
 );
 const { Ajv2020 } = require("ajv/dist/2020.js");
 const { createParser } = require("eventsource-parser");
-const validateState = new Ajv2020({ strict: false }).compile(schema);
+const __idsAjv = new Ajv2020({ strict: false });
+__idsAjv.addSchema(commonIDs);
+const validateState = __idsAjv.compile(schema);
 const path = "/rpc/agent-acp/watch-agent-execution-state";
 const terminal = {
   category: "unavailable",

@@ -146,8 +146,11 @@ export async function readContainerPrivateExecutionState({
         "-v",
         join(root, "tests") + ":/app/tests:ro",
         "-v",
-        join(root, "contracts/agent-acp/agent-execution-state.schema.json") +
-          ":/app/contracts/agent-acp/agent-execution-state.schema.json:ro",
+        join(root, "contracts/agent-acp/agent-execution-state.ids-v2.schema.json") +
+          ":/app/contracts/agent-acp/agent-execution-state.ids-v2.schema.json:ro",
+        "-v",
+        join(root, "contracts/common/ids.schema.json") +
+          ":/app/contracts/common/ids.schema.json:ro",
         "-v",
         input + ":/proof/input.json:ro",
         "-v",

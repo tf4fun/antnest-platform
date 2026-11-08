@@ -36,7 +36,7 @@ const { Ajv2020 } = requireFromAcp("ajv/dist/2020.js");
 const viewSchema = JSON.parse(
   readFileSync(
     new URL(
-      "../../../contracts/agent-ui/workspace-api.schema.json",
+      "../../../contracts/agent-ui/workspace-api.ids-v2.schema.json",
       import.meta.url,
     ),
     "utf8",
@@ -47,51 +47,31 @@ const validateView = withCommonErrorSchema(
     strict: true,
     validateFormats: false,
   }),
-).compile({
-  $schema: "https://json-schema.org/draft/2020-12/schema",
-  $defs: viewSchema.$defs,
-  $ref: "#/$defs/sessionView",
-});
+).addSchema(viewSchema).getSchema(viewSchema.$id + "#/$defs/sessionView");
 const validateAgentView = withCommonErrorSchema(
   new Ajv2020({
     strict: true,
     validateFormats: false,
   }),
-).compile({
-  $schema: "https://json-schema.org/draft/2020-12/schema",
-  $defs: viewSchema.$defs,
-  $ref: "#/$defs/agentView",
-});
+).addSchema(viewSchema).getSchema(viewSchema.$id + "#/$defs/agentView");
 const validateStreamEvent = withCommonErrorSchema(
   new Ajv2020({
     strict: true,
     validateFormats: false,
   }),
-).compile({
-  $schema: "https://json-schema.org/draft/2020-12/schema",
-  $defs: viewSchema.$defs,
-  $ref: "#/$defs/streamEvent",
-});
+).addSchema(viewSchema).getSchema(viewSchema.$id + "#/$defs/streamEvent");
 const validateProcess = withCommonErrorSchema(
   new Ajv2020({
     strict: true,
     validateFormats: false,
   }),
-).compile({
-  $schema: "https://json-schema.org/draft/2020-12/schema",
-  $defs: viewSchema.$defs,
-  $ref: "#/$defs/processPage",
-});
+).addSchema(viewSchema).getSchema(viewSchema.$id + "#/$defs/processPage");
 const validateProcessContent = withCommonErrorSchema(
   new Ajv2020({
     strict: true,
     validateFormats: false,
   }),
-).compile({
-  $schema: "https://json-schema.org/draft/2020-12/schema",
-  $defs: viewSchema.$defs,
-  $ref: "#/$defs/processContentPage",
-});
+).addSchema(viewSchema).getSchema(viewSchema.$id + "#/$defs/processContentPage");
 
 test("Node HTTP and SSE expose a coalesced live tool update after skipped versions", async () => {
   let publish;
@@ -2588,11 +2568,7 @@ test("common_error actual 404 envelope matches common and workspace contracts", 
   assert.equal(typeof validateCommon, "function");
   const validateWorkspaceError = withCommonErrorSchema(
     new Ajv2020({ strict: true, validateFormats: false }),
-  ).compile({
-    $schema: "https://json-schema.org/draft/2020-12/schema",
-    $defs: viewSchema.$defs,
-    $ref: "#/$defs/error",
-  });
+  ).addSchema(viewSchema).getSchema(viewSchema.$id + "#/$defs/error");
   for (const { response, body } of bodyByPath.values()) {
     assert.equal(response.headers.get("cache-control"), "no-store");
     const requestId = response.headers.get("x-request-id");

@@ -15,6 +15,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import commonIDs from "../../../contracts/common/ids.schema.json" with { type: "json" };
 import {
   createRuntimeReceiver,
   freeLoopbackPort,
@@ -36,12 +37,13 @@ const { Ajv2020 } = requireFromAcp("ajv/dist/2020.js");
 const schema = JSON.parse(
   readFileSync(
     new URL(
-      "../../../contracts/skill-learning/learning-api.schema.json",
+      "../../../contracts/skill-learning/learning-api.ids-v2.schema.json",
       import.meta.url,
     ),
   ),
 );
 const ajv = new Ajv2020({ strict: true, validateFormats: false });
+ajv.addSchema(commonIDs);
 ajv.addSchema(schema);
 function conforms(name, value) {
   const validate = ajv.getSchema(`${schema.$id}#/$defs/${name}`);

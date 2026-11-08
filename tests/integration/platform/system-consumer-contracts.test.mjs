@@ -123,7 +123,7 @@ const command = {
 };
 
 test("Console system Controller double accepts the canonical string CAS without opening a pending attachment", () => {
-  const control = read("agent-controller/control-api.schema.json");
+  const control = read("agent-controller/control-api.ids-v2.schema.json");
   const validate = compiler().compile({
     $id: control.$id,
     $defs: control.$defs,
@@ -197,7 +197,7 @@ const attachmentPath = "/internal/agent-network-attachments/agent-1";
 const runtimePath = "/internal/runtimes/agent-1";
 const attachmentSchema = "egress/attachment-state-request.schema.json";
 const revisionSchema =
-  "runtime-controller/control-api.schema.json#/$defs/revision_request";
+  "runtime-controller/control-api.ids-v2.schema.json#/$defs/revision_request";
 
 test("Controller system Egress double accepts schema-valid canonical CAS through pending, open and close", async () => {
   const peer = executionPeer();

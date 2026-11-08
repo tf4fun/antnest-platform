@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
-import schema from "../../../contracts/agent-acp/agent-execution-state.schema.json" with { type: "json" };
+import schema from "../../../contracts/agent-acp/agent-execution-state.ids-v2.schema.json" with { type: "json" };
 import { inspectLossBusinessEvidence } from "./loss-business.mjs";
 import { lossPrivateAdmission } from "./loss-private-evidence.mjs";
 import { assertReplacement } from "./loss-evidence.mjs";

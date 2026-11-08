@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import test from "node:test";
+import commonIDs from "../../../contracts/common/ids.schema.json" with { type: "json" };
 
 const require = createRequire(
   new URL("../../../services/agent-acp-service/package.json", import.meta.url),
@@ -16,6 +17,7 @@ const read = (name) =>
   );
 function schema(reference) {
   const ajv = new Ajv2020({ strict: true });
+  ajv.addSchema(commonIDs);
   ajv.addFormat("date-time", {
     type: "string",
     validate(value) {
@@ -52,8 +54,8 @@ const token = {
 
 test("Console retains its lifecycle routes with the Identity19 producer", () => {
   const catalog = read("admin-console/admin-contract.json");
-  assert.equal(catalog.version, 61);
-  assert.equal(catalog.response_policy.account_security.identity_revision, 19);
+  assert.equal(catalog.version, 62);
+  assert.equal(catalog.response_policy.account_security.identity_revision, 20);
   for (const [route, field, definition, valid] of [
     [
       "list_scim_tokens",
@@ -78,9 +80,9 @@ test("Console retains its lifecycle routes with the Identity19 producer", () => 
     const wrapper = `${route}_${kind}`;
     assert.equal(
       catalog.routes[route][field],
-      `admin-api.schema.json#/$defs/${wrapper}`,
+      `admin-api.ids-v2.schema.json#/$defs/${wrapper}`,
     );
-    const reference = read("admin-console/admin-api.schema.json").$defs[wrapper]
+    const reference = read("admin-console/admin-api.ids-v2.schema.json").$defs[wrapper]
       .$ref;
     assert.equal(reference, `scim-lifecycle.schema.json#/$defs/${definition}`);
     const validate = schema(reference);

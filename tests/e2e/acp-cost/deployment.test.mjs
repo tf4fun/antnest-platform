@@ -275,7 +275,7 @@ test("Cost client can read its imported contracts without mounting service direc
     "contracts/identity/identity-contract.json",
     "contracts/agent-controller/control-contract.json",
     "contracts/runtime-controller/control-contract.json",
-    "contracts/agent-acp/agent-execution-state.schema.json",
+    "contracts/agent-acp/agent-execution-state.ids-v2.schema.json",
   ];
   const root = new URL("../../../", import.meta.url);
   for (const relative of contracts) {

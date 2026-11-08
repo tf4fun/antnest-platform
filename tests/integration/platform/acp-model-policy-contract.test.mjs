@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { test } from "node:test";
+import commonIDs from "../../../contracts/common/ids.schema.json" with { type: "json" };
 
 const require = createRequire(
   new URL("../../../services/agent-acp-service/package.json", import.meta.url),
@@ -10,7 +11,7 @@ const { Ajv2020 } = require("ajv/dist/2020.js");
 const contracts = new URL("../../../contracts/", import.meta.url);
 const read = (path) =>
   JSON.parse(readFileSync(new URL(path, contracts), "utf8"));
-const schemaPath = "agent-controller/model-call-policy.schema.json";
+const schemaPath = "agent-controller/model-call-policy.ids-v2.schema.json";
 const schemaId = `https://schemas.antnest.dev/${schemaPath}`;
 
 function validators() {
@@ -23,6 +24,7 @@ function validators() {
     useDefaults: false,
     removeAdditional: false,
   });
+  ajv.addSchema(commonIDs);
   ajv.addSchema(read("common/precondition.schema.json"));
   ajv.addSchema(schema);
   return (definition) => ajv.getSchema(`${schemaId}#/$defs/${definition}`);
@@ -71,7 +73,7 @@ test("omitted policy fields preserve legacy configuration without injecting defa
 test("organization policy identifiers retain the existing Controller wire boundary", () => {
   assert.deepEqual(
     read(schemaPath).$defs.identity,
-    read("agent-controller/control-api.schema.json").$defs.id,
+    read("agent-controller/control-api.ids-v2.schema.json").$defs.id,
   );
   const check = validators()("policy_query");
   for (const organization_id of ["org-1", "org.team_owner-1", "x".repeat(200)])
@@ -140,21 +142,21 @@ test("the implemented boundary advertises organization policy GET/PUT with exact
   });
   assert.equal(contract.delivery_defaults.failover, "before_output");
   const active = read("agent-controller/control-contract.json");
-  assert.equal(active.revision, 50);
+  assert.equal(active.revision, 51);
   const expected = {
     get: {
       method: "GET",
       path: contract.policy_path,
       query: ["organization_id"],
       success_status: 200,
-      response: "control-api.schema.json#/$defs/model_call_policy",
+      response: "control-api.ids-v2.schema.json#/$defs/model_call_policy",
     },
     replace: {
       method: "PUT",
       path: contract.policy_path,
       success_status: 200,
-      request: "control-api.schema.json#/$defs/set_model_call_policy_request",
-      response: "control-api.schema.json#/$defs/model_call_policy",
+      request: "control-api.ids-v2.schema.json#/$defs/set_model_call_policy_request",
+      response: "control-api.ids-v2.schema.json#/$defs/model_call_policy",
     },
   };
   assert.deepEqual(active.resources.model_call_policy, expected);

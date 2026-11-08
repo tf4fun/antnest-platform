@@ -76,8 +76,9 @@ docker create --name "$client" $service_hosts --user "$ANTNEST_SERVICE_AUTH_UID:
   -v "$root/tests:/app/tests:ro" -v "$directory/seed.json:/fixture-seed.json:ro" \
   -v "$root/contracts/identity/identity-contract.json:/app/contracts/identity/identity-contract.json:ro" \
   -v "$root/contracts/agent-controller/control-contract.json:/app/contracts/agent-controller/control-contract.json:ro" \
-  -v "$root/contracts/agent-acp/agent-execution-state.schema.json:/app/contracts/agent-acp/agent-execution-state.schema.json:ro" \
-  -v "$root/contracts/agent-ui/workspace-api.schema.json:/app/contracts/agent-ui/workspace-api.schema.json:ro" \
+  -v "$root/contracts/agent-acp/agent-execution-state.ids-v2.schema.json:/app/contracts/agent-acp/agent-execution-state.ids-v2.schema.json:ro" \
+  -v "$root/contracts/common/ids.schema.json:/app/contracts/common/ids.schema.json:ro" \
+  -v "$root/contracts/agent-ui/workspace-api.ids-v2.schema.json:/app/contracts/agent-ui/workspace-api.ids-v2.schema.json:ro" \
   -v "$root/services/agent-ui/web/src/lib:/app/services/agent-ui/web/src/lib:ro" \
   -v "$root/services/agent-ui/web/server/src/protocol:/app/services/agent-ui/web/server/src/protocol:ro" \
   -v "$root/services/agent-ui/web/server/src/errors.gen.ts:/app/services/agent-ui/web/server/src/errors.gen.ts:ro" \

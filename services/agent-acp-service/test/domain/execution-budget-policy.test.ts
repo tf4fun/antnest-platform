@@ -31,13 +31,21 @@ function publication() {
 describe("execution budget publication", () => {
   const schema: unknown = JSON.parse(
     readFileSync(
-      new URL("../../../../contracts/agent-acp/execution-snapshot.schema.json", import.meta.url),
+      new URL("../../../../contracts/agent-acp/execution-snapshot.ids-v2.schema.json", import.meta.url),
       "utf8",
     ),
   );
   if (typeof schema !== "object" || schema === null || Array.isArray(schema))
     throw new Error("Execution snapshot schema must be an object");
-  const validator = new Ajv2020({ strict: true, validateFormats: false }).compile(schema);
+  const commonIDs = JSON.parse(
+    readFileSync(
+      new URL("../../../../contracts/common/ids.schema.json", import.meta.url),
+      "utf8",
+    ),
+  );
+  const validatorAjv = new Ajv2020({ strict: true, validateFormats: false });
+  validatorAjv.addSchema(commonIDs);
+  const validator = validatorAjv.compile(schema);
 
   it("round trips explicit organization and Agent caps through the public projection", () => {
     const input = publication();

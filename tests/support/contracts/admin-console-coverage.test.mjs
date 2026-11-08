@@ -46,9 +46,9 @@ const identity =
       }
     : activeIdentity;
 const adminSchema = readContractIfPresent(
-  "admin-console/admin-api.schema.json",
+  "admin-console/admin-api.ids-v2.schema.json",
 );
-const directorySchema = readContractIfPresent("identity/directory.schema.json");
+const directorySchema = readContractIfPresent("identity/directory.ids-v2.schema.json");
 const errorsView = readContractIfPresent("admin-console/errors.json");
 const goErrors = readFileSync(
   repoPath("services/admin-console/internal/apierror/errors.gen.go"),
@@ -68,9 +68,9 @@ const isObject = (value) =>
   value !== null && typeof value === "object" && !Array.isArray(value);
 const CANONICAL = "https://schemas.antnest.dev/";
 const adminDef = (name) =>
-  `${CANONICAL}admin-console/admin-api.schema.json#/$defs/${name}`;
+  `${CANONICAL}admin-console/admin-api.ids-v2.schema.json#/$defs/${name}`;
 const identityDef = (name) =>
-  `${CANONICAL}identity/directory.schema.json#/$defs/${name}`;
+  `${CANONICAL}identity/directory.ids-v2.schema.json#/$defs/${name}`;
 
 const schemaRegistry = (async () => {
   const ajv = new Ajv2020({
@@ -78,6 +78,7 @@ const schemaRegistry = (async () => {
     allErrors: true,
     validateFormats: false,
   });
+
   const documents = await loadContracts(contractsRoot);
   for (const [key, document] of documents) {
     if (!isObject(document)) continue;
@@ -98,7 +99,7 @@ async function compile(absoluteRef) {
 const sortedKeys = (value) => Object.keys(value ?? {}).sort();
 const sorted = (value) => [...value].sort();
 
-const SCHEMA_FILE = "admin-api.schema.json";
+const SCHEMA_FILE = "admin-api.ids-v2.schema.json";
 const requestRef = (name) => `${SCHEMA_FILE}#/$defs/${name}_request`;
 const responseRef = (name) => `${SCHEMA_FILE}#/$defs/${name}_response`;
 const REQUEST_KINDS = ["none", "json", "multipart"];
@@ -357,7 +358,7 @@ const internalGroup = {
 };
 
 test("catalog version 61 declares paginated directory routes and lifecycle holds", () => {
-  assert.equal(contract.version, 61);
+  assert.equal(contract.version, 62);
   assert.equal(contract.base_path, "/api/admin");
   assert.equal(Object.keys(contract.routes).length, ROUTE_COUNT);
   const members = contract.routes.directory_members;
@@ -492,7 +493,7 @@ test("route metadata mutations surface deterministic diagnostics", () => {
   delete silentWatch.watch_thing.response_body.data;
   mutations.push([silentWatch, "data"]);
   const wrongRef = structuredClone(valid);
-  wrongRef.watch_thing.response_schema = "admin-api.schema.json#/$defs/status";
+  wrongRef.watch_thing.response_schema = "admin-api.ids-v2.schema.json#/$defs/status";
   mutations.push([wrongRef, "response_schema"]);
   for (const [routes, expected] of mutations) {
     const problems = metadataProblems(routes);
@@ -596,10 +597,10 @@ test("an extra mux registration without a contract is flagged", () => {
   );
 });
 
-test("admin-api.schema.json is a draft 2020-12 document with closed route definitions", () => {
+test("admin-api.ids-v2.schema.json is a draft 2020-12 document with closed route definitions", () => {
   assert.ok(
     adminSchema !== undefined,
-    "contracts/admin-console/admin-api.schema.json is missing",
+    "contracts/admin-console/admin-api.ids-v2.schema.json is missing",
   );
   assert.equal(
     adminSchema.$schema,
@@ -607,7 +608,7 @@ test("admin-api.schema.json is a draft 2020-12 document with closed route defini
   );
   assert.equal(
     adminSchema.$id,
-    "https://schemas.antnest.dev/admin-console/admin-api.schema.json",
+    "https://schemas.antnest.dev/admin-console/admin-api.ids-v2.schema.json",
   );
   assert.ok(isObject(adminSchema.$defs), "$defs must be an object");
   const routeNames = Object.keys(contract.routes);
@@ -952,7 +953,7 @@ test("media types are explicit for multipart uploads, the zip download and the e
 test("identity directory schema documents the bounded member and group methods", async () => {
   assert.ok(
     directorySchema !== undefined,
-    "contracts/identity/directory.schema.json is missing",
+    "contracts/identity/directory.ids-v2.schema.json is missing",
   );
   assert.equal(
     directorySchema.$schema,
@@ -960,7 +961,7 @@ test("identity directory schema documents the bounded member and group methods",
   );
   assert.equal(
     directorySchema.$id,
-    "https://schemas.antnest.dev/identity/directory.schema.json",
+    "https://schemas.antnest.dev/identity/directory.ids-v2.schema.json",
   );
   const filters = {
     list_members: ["active", "email_prefix", "role", "source"],
@@ -1140,7 +1141,7 @@ test("the identity descriptor refs the directory schema and keeps inline shapes"
     for (const side of ["request", "response"]) {
       assert.equal(
         entry[side].$ref,
-        `directory.schema.json#/$defs/${method}_${side}`,
+        `directory.ids-v2.schema.json#/$defs/${method}_${side}`,
         `${method}.${side}.$ref`,
       );
       assert.deepEqual(

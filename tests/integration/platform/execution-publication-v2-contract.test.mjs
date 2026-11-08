@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { test } from "node:test";
+import commonIDs from "../../../contracts/common/ids.schema.json" with { type: "json" };
 
 const require = createRequire(
   new URL("../../../services/agent-acp-service/package.json", import.meta.url),
@@ -12,22 +13,23 @@ const read = (path) =>
   JSON.parse(readFileSync(new URL(path, contracts), "utf8"));
 
 const legacyId =
-  "https://schemas.antnest.dev/agent-acp/execution-snapshot.schema.json";
+  "https://schemas.antnest.dev/agent-acp/execution-snapshot.ids-v2.schema.json";
 const publicationId =
-  "https://schemas.antnest.dev/agent-acp/execution-publication-v2.schema.json";
+  "https://schemas.antnest.dev/agent-acp/execution-publication-v2.ids-v2.schema.json";
 const credentialsId =
-  "https://schemas.antnest.dev/agent-controller/execution-credentials.schema.json";
+  "https://schemas.antnest.dev/agent-controller/execution-credentials.ids-v2.schema.json";
 
 function validators() {
-  const legacy = read("agent-acp/execution-snapshot.schema.json");
-  const publication = read("agent-acp/execution-publication-v2.schema.json");
+  const legacy = read("agent-acp/execution-snapshot.ids-v2.schema.json");
+  const publication = read("agent-acp/execution-publication-v2.ids-v2.schema.json");
   const credentials = read(
-    "agent-controller/execution-credentials.schema.json",
+    "agent-controller/execution-credentials.ids-v2.schema.json",
   );
   assert.equal(legacy.$id, legacyId);
   assert.equal(publication.$id, publicationId);
   assert.equal(credentials.$id, credentialsId);
   const ajv = new Ajv2020({ strict: true, allErrors: true });
+  ajv.addSchema(commonIDs);
   ajv.addFormat("uri", {
     type: "string",
     validate: (value) => URL.canParse(value),

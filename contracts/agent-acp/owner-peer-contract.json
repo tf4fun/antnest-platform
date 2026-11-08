@@ -4,7 +4,7 @@
   "issue": 49,
   "receiver": "agent-acp-service",
   "listener": "peer",
-  "schema": "owner-peer.schema.json",
+  "schema": "owner-peer.ids-v2.schema.json",
   "semantics": "owner-peer.md",
   "activation": "The optional ACP peer listener implements these exact member-authenticated operations. Fixed peer membership uses shared worker admission and per-Agent ownership; non-peer deployments retain exclusive admission. User forwarding and replica-crash recovery have separate admission criteria.",
   "workload_header": "Antnest-Service-Authorization",

@@ -3,7 +3,7 @@ import { createRequire } from "node:module";
 import { assertHealthProjection } from "./health-evidence.mjs";
 import { foundationTraceExitCode } from "./foundation-evidence.mjs";
 import { clockWarningsOnly } from "../stage3-base/trace.mjs";
-import schema from "../../../contracts/agent-acp/agent-execution-state.schema.json" with { type: "json" };
+import schema from "../../../contracts/agent-acp/agent-execution-state.ids-v2.schema.json" with { type: "json" };
 
 const require = createRequire(
   new URL("../../../services/agent-acp-service/package.json", import.meta.url),

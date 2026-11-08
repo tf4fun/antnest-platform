@@ -6,6 +6,7 @@ import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { writeGoOverlay } from "../../support/go-overlay.mjs";
 import { runCommand } from "../../support/run-command.mjs";
+import commonIDs from "../../../contracts/common/ids.schema.json" with { type: "json" };
 
 const root = fileURLToPath(new URL("../../../", import.meta.url));
 const requireAcp = createRequire(
@@ -19,7 +20,7 @@ test(
   async () => {
     const schema = JSON.parse(
       await readFile(
-        resolve(root, "contracts/runtime/runtime-spec.schema.json"),
+        resolve(root, "contracts/runtime/runtime-spec.ids-v2.schema.json"),
       ),
     );
     const fixtures = JSON.parse(
@@ -34,14 +35,14 @@ test(
       .addSchema(
         JSON.parse(
           await readFile(
-            resolve(root, "contracts/runtime/managed-mcp.schema.json"),
+            resolve(root, "contracts/runtime/managed-mcp.ids-v2.schema.json"),
           ),
         ),
       )
       .addSchema(
         JSON.parse(
           await readFile(
-            resolve(root, "contracts/runtime/instance-connection.schema.json"),
+            resolve(root, "contracts/runtime/instance-connection.ids-v2.schema.json"),
           ),
         ),
       )
@@ -52,7 +53,9 @@ test(
           ),
         ),
       )
+      .addSchema(commonIDs)
       .compile(schema);
+
     const output = resolve(
       root,
       `artifacts/verification/maintenance-runtime-spec-${Date.now()}-${process.pid}`,

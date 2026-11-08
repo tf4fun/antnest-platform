@@ -42,14 +42,25 @@ func runtimeBarrierJSON(t *testing.T, value any) string {
 
 func assertRuntimeBarrierDefinition(t *testing.T, definition string, payload []byte) {
 	t.Helper()
-	body, err := os.ReadFile("../../../../contracts/agent-acp/runtime-barrier-recovery.schema.json")
+	body, err := os.ReadFile("../../../../contracts/agent-acp/runtime-barrier-recovery.ids-v2.schema.json")
 	require.NoError(t, err)
 	document, err := jsonschema.UnmarshalJSON(bytes.NewReader(body))
 	require.NoError(t, err)
 	compiler := jsonschema.NewCompiler()
 	compiler.DefaultDraft(jsonschema.Draft2020)
 	compiler.AssertFormat()
-	const identifier = "https://schemas.antnest.dev/agent-acp/runtime-barrier-recovery.schema.json"
+	const identifier = "https://schemas.antnest.dev/agent-acp/runtime-barrier-recovery.ids-v2.schema.json"
+	commonIDs, err := os.ReadFile("../../../../contracts/common/ids.schema.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	idsDocument, err := jsonschema.UnmarshalJSON(bytes.NewReader(commonIDs))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := compiler.AddResource("https://schemas.antnest.dev/common/ids.schema.json", idsDocument); err != nil {
+		t.Fatal(err)
+	}
 	require.NoError(t, compiler.AddResource(identifier, document))
 	// The document root is a result; request validation must select request.
 	schema, err := compiler.Compile(identifier + "#/$defs/" + definition)

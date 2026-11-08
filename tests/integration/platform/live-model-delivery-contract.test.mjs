@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { test } from "node:test";
+import commonIDs from "../../../contracts/common/ids.schema.json" with { type: "json" };
 
 const require = createRequire(
   new URL("../../../services/agent-acp-service/package.json", import.meta.url),
@@ -34,15 +35,16 @@ const invalidCounts = [
 ];
 
 const control = read("agent-controller/control-contract.json");
-const controlApi = read("agent-controller/control-api.schema.json");
+const controlApi = read("agent-controller/control-api.ids-v2.schema.json");
 const controlCallers = read("agent-controller/callers.json");
 const admin = read("admin-console/admin-contract.json");
 const adminCallers = read("admin-console/callers.json");
 const consoleDefs = read("admin-console/live-model-semantics.schema.json");
-const auditSchema = read("agent-acp/execution-audit.schema.json");
-const snapshotSchema = read("agent-acp/execution-snapshot.schema.json");
+const auditSchema = read("agent-acp/execution-audit.ids-v2.schema.json");
+const snapshotSchema = read("agent-acp/execution-snapshot.ids-v2.schema.json");
 
 const ajv = new Ajv2020({ strict: false, allErrors: true });
+ajv.addSchema(commonIDs);
 ajv.addSchema({
   $id: "https://schemas.antnest.dev/admin-console/live-model-semantics.schema.json",
   $defs: consoleDefs.$defs,
@@ -60,9 +62,9 @@ const modelItemRevision = ajv.compile(
   snapshotSchema.properties.models.items.properties.model_profile_revision,
 );
 
-test("control revision 50 and admin version 61 declare the live model surface", () => {
-  assert.equal(control.revision, 50);
-  assert.equal(admin.version, 61);
+test("control revision 51 and admin version 62 declare the live model surface", () => {
+  assert.equal(control.revision, 51);
+  assert.equal(admin.version, 62);
   const upstream = control.resources.model_profiles.usage;
   assert.equal(
     upstream.path,
@@ -71,16 +73,16 @@ test("control revision 50 and admin version 61 declare the live model surface", 
   assert.deepEqual(upstream.query, ["organization_id"]);
   assert.equal(
     upstream.response,
-    "control-api.schema.json#/$defs/model_profile_usage",
+    "control-api.ids-v2.schema.json#/$defs/model_profile_usage",
   );
   const browser = admin.routes.get_model_profile_usage;
   assert.equal(browser.path, "/model-profiles/{model_profile_id}/usage");
   assert.equal(
     browser.response_schema,
-    "admin-api.schema.json#/$defs/get_model_profile_usage_response",
+    "admin-api.ids-v2.schema.json#/$defs/get_model_profile_usage_response",
   );
   assert.equal(
-    read("admin-console/admin-api.schema.json").$defs
+    read("admin-console/admin-api.ids-v2.schema.json").$defs
       .get_model_profile_usage_response.$ref,
     "live-model-semantics.schema.json#/$defs/model_profile_usage",
   );

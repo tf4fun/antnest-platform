@@ -16,21 +16,21 @@ import type { RuntimeBinding } from "../../src/domain/types.js";
 
 const contract = JSON.parse(
   readFileSync(
-    new URL("../../../../contracts/skill-learning/learning-api.schema.json", import.meta.url),
+    new URL("../../../../contracts/skill-learning/learning-api.ids-v2.schema.json", import.meta.url),
     "utf8",
   ),
-) as { $schema: string; $defs: Record<string, object> };
+) as { $id: string; $schema: string; $defs: Record<string, object> };
+const commonIDs = JSON.parse(
+  readFileSync(
+    new URL("../../../../contracts/common/ids.schema.json", import.meta.url),
+    "utf8",
+  ),
+) as object;
 const ajv = new Ajv2020({ strict: false, validateFormats: false });
-const installRequestSchema = ajv.compile({
-  $schema: contract.$schema,
-  $defs: contract.$defs,
-  $ref: "#/$defs/install_request",
-});
-const receiptContract = ajv.compile({
-  $schema: contract.$schema,
-  $defs: contract.$defs,
-  $ref: "#/$defs/maintenance_receipt",
-});
+ajv.addSchema(commonIDs);
+ajv.addSchema(contract);
+const installRequestSchema = ajv.getSchema(contract.$id + "#/$defs/install_request")!;
+const receiptContract = ajv.getSchema(contract.$id + "#/$defs/maintenance_receipt")!;
 
 const { publicKey, privateKey } = generateKeyPairSync("ed25519");
 const signer = new RuntimeSkillMaintenanceSigner("key-1", privateKey, () => 1_800_000_000);

@@ -94,7 +94,7 @@ test("egress policy assignment request requires identity and rejects unknown fie
 });
 
 test("egress control status reports ready and degraded shapes", async () => {
-  const ref = "egress/control-response.schema.json#/$defs/status";
+  const ref = "egress/control-response.ids-v2.schema.json#/$defs/status";
   const ready = {
     status: "ready",
     data_plane_ready: true,
@@ -111,7 +111,7 @@ test("egress control status reports ready and degraded shapes", async () => {
 });
 
 test("egress control status rejects missing fields and bad values", async () => {
-  const ref = "egress/control-response.schema.json#/$defs/status";
+  const ref = "egress/control-response.ids-v2.schema.json#/$defs/status";
   const ready = {
     status: "ready",
     data_plane_ready: true,
@@ -133,7 +133,7 @@ test("egress control status rejects missing fields and bad values", async () => 
 
 test("runtime skill-maintenance keeps the published learning definitions unchanged", () => {
   const canonical = contract("runtime/skill-maintenance.schema.json");
-  const learning = contract("skill-learning/learning-api.schema.json");
+  const learning = contract("skill-learning/learning-api.ids-v2.schema.json");
   for (const name of [
     "install_request",
     "digest_request",
@@ -173,11 +173,11 @@ test("runtime skill-maintenance install and digest requests validate", async () 
   await valid(installRef, { ...install, expected_base_digest: DIGEST });
   await valid(digestRef, digest);
   await valid(
-    "skill-learning/learning-api.schema.json#/$defs/install_request",
+    "skill-learning/learning-api.ids-v2.schema.json#/$defs/install_request",
     install,
   );
   await valid(
-    "skill-learning/learning-api.schema.json#/$defs/digest_request",
+    "skill-learning/learning-api.ids-v2.schema.json#/$defs/digest_request",
     digest,
   );
   await invalid(installRef, { ...install, action: "digest" });

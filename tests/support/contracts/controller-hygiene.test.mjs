@@ -18,14 +18,14 @@ const contractJson = (relative) =>
   );
 
 const control = contractJson("agent-controller/control-contract.json");
-const schema = contractJson("agent-controller/control-api.schema.json");
+const schema = contractJson("agent-controller/control-api.ids-v2.schema.json");
 const readinessFixtures = contractJson(
   "agent-controller/readiness-fixtures.json",
 );
 const controlApi = repoText("contracts/agent-controller/control-api.md");
 
-const CONTROL_SCHEMA = "agent-controller/control-api.schema.json";
-const STATUS_REF = "control-api.schema.json#/$defs/status";
+const CONTROL_SCHEMA = "agent-controller/control-api.ids-v2.schema.json";
+const STATUS_REF = "control-api.ids-v2.schema.json#/$defs/status";
 
 const valid = async (ref, document) =>
   assert.equal(await validateGolden(ref, document), true);
@@ -55,21 +55,21 @@ function resolveControllerRef(ref) {
   return node;
 }
 
-test("revision 50 retains the authorization RPC on the global error response", () => {
+test("revision 51 retains the authorization RPC on the global error response", () => {
   assert.equal(control.contract, "antnest.agent-controller.lifecycle");
-  assert.equal(control.revision, 50);
+  assert.equal(control.revision, 51);
   const set = control.resources.agent_authorization?.set;
   assert.equal(set?.method, "POST");
   assert.equal(set?.path, "/rpc/agent-controller/set-agent-authorization");
   assert.equal(
     set?.request,
-    "control-api.schema.json#/$defs/set_agent_authorization_request",
+    "control-api.ids-v2.schema.json#/$defs/set_agent_authorization_request",
   );
   assert.equal(
     set?.response,
-    "control-api.schema.json#/$defs/set_agent_authorization_response",
+    "control-api.ids-v2.schema.json#/$defs/set_agent_authorization_response",
   );
-  assert.equal(control.errors.response, "control-api.schema.json#/$defs/error");
+  assert.equal(control.errors.response, "control-api.ids-v2.schema.json#/$defs/error");
   assert.match(
     controlApi,
     /issues\/582/,
@@ -94,7 +94,7 @@ test("policy routes resolve message refs and share the global error response", (
             `${name}.${operationName}.${key}`,
           );
   }
-  assert.equal(control.errors.response, "control-api.schema.json#/$defs/error");
+  assert.equal(control.errors.response, "control-api.ids-v2.schema.json#/$defs/error");
   assert.deepEqual(
     resolveControllerRef(control.errors.response),
     schema.$defs.error,

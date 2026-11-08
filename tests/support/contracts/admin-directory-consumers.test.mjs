@@ -7,13 +7,13 @@ import { createDirectoryFixture } from "../admin-directory-fixtures.mjs";
 import { validateGolden } from "./golden.mjs";
 
 const MEMBER_RESPONSE =
-  "admin-console/admin-api.schema.json#/$defs/directory_members_response";
+  "admin-console/admin-api.ids-v2.schema.json#/$defs/directory_members_response";
 const GROUP_RESPONSE =
-  "admin-console/admin-api.schema.json#/$defs/directory_groups_response";
+  "admin-console/admin-api.ids-v2.schema.json#/$defs/directory_groups_response";
 const MEMBER_REQUEST =
-  "identity/directory.schema.json#/$defs/list_members_request";
+  "identity/directory.ids-v2.schema.json#/$defs/list_members_request";
 const GROUP_REQUEST =
-  "identity/directory.schema.json#/$defs/list_groups_request";
+  "identity/directory.ids-v2.schema.json#/$defs/list_groups_request";
 
 const membersURL = (query = "") =>
   new URL(`http://localhost/api/admin/directory/members${query}`);

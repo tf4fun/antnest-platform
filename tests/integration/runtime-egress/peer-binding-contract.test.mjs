@@ -77,7 +77,7 @@ test("attachment open requires a peer IPv4; close removes its peer binding", () 
 });
 
 test("RC reports the Docker management address separately from the MCP endpoint", () => {
-  const schema = read("contracts/runtime-controller/control-api.schema.json");
+  const schema = read("contracts/runtime-controller/control-api.ids-v2.schema.json");
   const validate = ajv.compile({
     ...schema,
     $ref: "#/$defs/runtime_inspection",

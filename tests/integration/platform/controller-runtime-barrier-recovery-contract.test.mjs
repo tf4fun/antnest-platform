@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { test } from "node:test";
+import commonIDs from "../../../contracts/common/ids.schema.json" with { type: "json" };
 
 const require = createRequire(
   new URL("../../../services/agent-acp-service/package.json", import.meta.url),
@@ -10,7 +11,7 @@ const { Ajv2020 } = require("ajv/dist/2020.js");
 const root = new URL("../../../contracts/", import.meta.url);
 const read = (path) => JSON.parse(readFileSync(new URL(path, root), "utf8"));
 const schemaID =
-  "https://schemas.antnest.dev/agent-controller/runtime-barrier-recovery.schema.json";
+  "https://schemas.antnest.dev/agent-controller/runtime-barrier-recovery.ids-v2.schema.json";
 const policyPath = "/internal/runtime-barrier-recovery-policy";
 const rebuildRoute = "POST /internal/agents/{agent_id}/rebuild";
 const maximumRevision = Number.MAX_SAFE_INTEGER;
@@ -109,9 +110,10 @@ function utcTimestamp(value) {
 }
 
 function pendingValidators({ useDefaults = false } = {}) {
-  const schema = read("agent-controller/runtime-barrier-recovery.schema.json");
+  const schema = read("agent-controller/runtime-barrier-recovery.ids-v2.schema.json");
   assert.equal(schema.$id, schemaID);
   const ajv = new Ajv2020({ strict: true, allErrors: true, useDefaults });
+  ajv.addSchema(commonIDs);
   ajv.addSchema(read("common/precondition.schema.json"));
   ajv.addFormat("date-time", { type: "string", validate: utcTimestamp });
   ajv.addSchema(schema);
@@ -128,22 +130,23 @@ function pendingValidators({ useDefaults = false } = {}) {
 }
 
 function activeValidators() {
-  const schema = read("agent-controller/control-api.schema.json");
+  const schema = read("agent-controller/control-api.ids-v2.schema.json");
   const ajv = new Ajv2020({
     strict: false,
     allErrors: true,
     useDefaults: true,
   });
+  ajv.addSchema(commonIDs);
   ajv.addFormat("date-time", { type: "string", validate: utcTimestamp });
   ajv.addFormat("uri", {
     type: "string",
     validate: (value) => URL.canParse(value),
   });
   ajv.addSchema(
-    read("runtime/managed-mcp.schema.json"),
-    new URL("../runtime/managed-mcp.schema.json", schema.$id).href,
+    read("runtime/managed-mcp.ids-v2.schema.json"),
+    new URL("../runtime/managed-mcp.ids-v2.schema.json", schema.$id).href,
   );
-  ajv.addSchema(read("agent-controller/runtime-barrier-recovery.schema.json"));
+  ajv.addSchema(read("agent-controller/runtime-barrier-recovery.ids-v2.schema.json"));
   ajv.addSchema(read("common/precondition.schema.json"));
   ajv.addSchema(schema);
   return Object.fromEntries(
@@ -288,7 +291,7 @@ test("pending manual recovery and notifications reuse existing lifecycle and eve
 test("revision 50 preserves policy GET and PUT and their exact administrator grants", () => {
   const active = read("agent-controller/control-contract.json");
   const callers = read("agent-controller/callers.json");
-  assert.equal(active.revision, 50);
+  assert.equal(active.revision, 51);
   const expected = {
     get: {
       method: "GET",
@@ -296,16 +299,16 @@ test("revision 50 preserves policy GET and PUT and their exact administrator gra
       query: ["organization_id"],
       success_status: 200,
       response:
-        "control-api.schema.json#/$defs/runtime_barrier_recovery_policy",
+        "control-api.ids-v2.schema.json#/$defs/runtime_barrier_recovery_policy",
     },
     set: {
       method: "PUT",
       path: policyPath,
       success_status: 200,
       request:
-        "control-api.schema.json#/$defs/set_runtime_barrier_recovery_policy_request",
+        "control-api.ids-v2.schema.json#/$defs/set_runtime_barrier_recovery_policy_request",
       response:
-        "control-api.schema.json#/$defs/runtime_barrier_recovery_policy",
+        "control-api.ids-v2.schema.json#/$defs/runtime_barrier_recovery_policy",
     },
   };
   assert.deepEqual(active.resources.runtime_barrier_recovery_policy, expected);
@@ -342,7 +345,7 @@ test("revision 50 preserves policy GET and PUT and their exact administrator gra
 });
 
 test("active policy aliases preserve the frozen wire vectors without inserting defaults", () => {
-  const schema = read("agent-controller/control-api.schema.json");
+  const schema = read("agent-controller/control-api.ids-v2.schema.json");
   const aliases = {
     policy: "runtime_barrier_recovery_policy",
     policy_update_request: "set_runtime_barrier_recovery_policy_request",
@@ -351,7 +354,7 @@ test("active policy aliases preserve the frozen wire vectors without inserting d
   const frozen = pendingValidators();
   for (const [definition, alias] of Object.entries(aliases))
     assert.deepEqual(schema.$defs[alias], {
-      $ref: `runtime-barrier-recovery.schema.json#/$defs/${definition}`,
+      $ref: `runtime-barrier-recovery.ids-v2.schema.json#/$defs/${definition}`,
     });
   const fixtures = read(
     "agent-controller/runtime-barrier-recovery-fixtures.json",
@@ -395,7 +398,7 @@ test("active policy aliases preserve the frozen wire vectors without inserting d
 });
 
 test("active recovery wire references the frozen definitions and notification catalog", () => {
-  const schema = read("agent-controller/control-api.schema.json");
+  const schema = read("agent-controller/control-api.ids-v2.schema.json");
   const manifest = read("agent-controller/control-contract.json");
   for (const name of [
     "runtime_recovery",
@@ -403,7 +406,7 @@ test("active recovery wire references the frozen definitions and notification ca
     "notification_data",
   ])
     assert.deepEqual(schema.$defs[name], {
-      $ref: `runtime-barrier-recovery.schema.json#/$defs/${name}`,
+      $ref: `runtime-barrier-recovery.ids-v2.schema.json#/$defs/${name}`,
     });
   assert.deepEqual(schema.$defs.agent.properties.runtime_recovery, {
     $ref: "#/$defs/runtime_recovery",
@@ -725,17 +728,22 @@ test("pending wire has exactly its closed field sets and a policy root", () => {
 
 test("Controller IDs stay compatible while barrier IDs retain the ACP opaque identity", () => {
   const v = pendingValidators();
-  const active = read("agent-controller/control-api.schema.json");
-  const acp = read("agent-acp/runtime-barrier-recovery.schema.json");
+  const active = read("agent-controller/control-api.ids-v2.schema.json");
+  const acp = read("agent-acp/runtime-barrier-recovery.ids-v2.schema.json");
   assert.deepEqual(v.schema.$defs.id, active.$defs.id);
   assert.deepEqual(v.schema.$defs.barrier_id, acp.$defs.identity);
   for (const value of ["a", "Agent-1.a_b", "a".repeat(200)])
     check(v, "id", value, true, "Controller identity boundary");
   for (const value of ["", "a".repeat(201), " a", "a b", "a\n", 1, null])
     check(v, "id", value, false, "invalid Controller identity");
+  const sharedRefs = {
+    organization_id: "../common/ids.schema.json#/$defs/organizationId",
+    actor_principal_id: "../common/ids.schema.json#/$defs/userId",
+    agent_id: "../common/ids.schema.json#/$defs/agentId",
+  };
   for (const [name, fields] of Object.entries(controllerIdentities))
     for (const field of fields) {
-      assert.equal(v.schema.$defs[name].properties[field].$ref, "#/$defs/id");
+      assert.equal(v.schema.$defs[name].properties[field].$ref, sharedRefs[field] ?? "#/$defs/id");
       check(
         v,
         name,
@@ -931,7 +939,7 @@ test("unknown fields and private authority or execution payloads stay outside ev
 
 test("pending Rebuild preserves all existing fields and allows only a complete recovery extension", () => {
   const v = pendingValidators();
-  const activeSchema = read("agent-controller/control-api.schema.json");
+  const activeSchema = read("agent-controller/control-api.ids-v2.schema.json");
   const active = activeValidators();
   const legacy = samples.rebuild_agent_request();
   assert.equal(active.rebuild_agent_request(legacy), true);

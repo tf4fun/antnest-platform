@@ -22,7 +22,7 @@ const egressSchema = JSON.parse(
 const controllerSchema = JSON.parse(
   readFileSync(
     new URL(
-      "../../../contracts/agent-controller/control-api.schema.json",
+      "../../../contracts/agent-controller/control-api.ids-v2.schema.json",
       import.meta.url,
     ),
     "utf8",
@@ -192,7 +192,7 @@ test("browser codec round-trips the frozen v2 projection and pending intent", ()
       ),
     "Controller-internal fields must never reach the browser ack",
   );
-  assert.equal(adminContract.version, 61);
+  assert.equal(adminContract.version, 62);
   assert.equal(
     adminContract.response_policy.agent_network_policy.spec_only_v2_status,
     "implemented",
