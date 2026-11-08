@@ -24,7 +24,7 @@ func TestDiscoveryHTTPResponsesMatchSharedSchemaAndRejectMixedAuthority(t *testi
 	if err := compiler.AddResource("https://schemas.antnest.dev/common/error.schema.json", commonDoc); err != nil {
 		t.Fatal(err)
 	}
-	for _, fragment := range []string{"pagination", "precondition"} {
+	for _, fragment := range []string{"pagination", "precondition", "ids"} {
 		data, err := os.ReadFile("../../../../contracts/common/" + fragment + ".schema.json")
 		if err != nil {
 			t.Fatal(err)
@@ -37,7 +37,7 @@ func TestDiscoveryHTTPResponsesMatchSharedSchemaAndRejectMixedAuthority(t *testi
 			t.Fatal(err)
 		}
 	}
-	for _, name := range []string{"registry-api", "discovery-api"} {
+	for _, name := range []string{"registry-api.ids-v2", "discovery-api.ids-v2"} {
 		data, err := os.ReadFile("../../../../contracts/skill-registry/" + name + ".schema.json")
 		if err != nil {
 			t.Fatal(err)
@@ -52,7 +52,7 @@ func TestDiscoveryHTTPResponsesMatchSharedSchemaAndRejectMixedAuthority(t *testi
 	}
 	check := func(name string, data []byte) {
 		t.Helper()
-		schema, err := compiler.Compile("https://schemas.antnest.dev/skill-registry/discovery-api.schema.json#/$defs/" + name)
+		schema, err := compiler.Compile("https://schemas.antnest.dev/skill-registry/discovery-api.ids-v2.schema.json#/$defs/" + name)
 		if err != nil {
 			t.Fatal(err)
 		}

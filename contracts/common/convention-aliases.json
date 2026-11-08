@@ -1152,6 +1152,24 @@
     "remove_after": "next_release"
   },
   {
+    "file": "skill-registry/discovery-api.ids-v2.schema.json",
+    "pointer": "/$defs/inspect_response",
+    "field": "$pagination",
+    "replacement": "bounded_items",
+    "kind": "protocol_exception",
+    "reason": "Finite bounded discovery/resolution result, not a continuation list.",
+    "remove_after": "protocol"
+  },
+  {
+    "file": "skill-registry/discovery-api.ids-v2.schema.json",
+    "pointer": "/$defs/search_response",
+    "field": "$pagination",
+    "replacement": "bounded_items",
+    "kind": "protocol_exception",
+    "reason": "Finite bounded discovery/resolution result, not a continuation list.",
+    "remove_after": "protocol"
+  },
+  {
     "file": "skill-registry/discovery-api.schema.json",
     "pointer": "/$defs/inspect_response",
     "field": "$pagination",
@@ -1163,6 +1181,15 @@
   {
     "file": "skill-registry/discovery-api.schema.json",
     "pointer": "/$defs/search_response",
+    "field": "$pagination",
+    "replacement": "bounded_items",
+    "kind": "protocol_exception",
+    "reason": "Finite bounded discovery/resolution result, not a continuation list.",
+    "remove_after": "protocol"
+  },
+  {
+    "file": "skill-registry/registry-api.ids-v2.schema.json",
+    "pointer": "/$defs/resolve_response",
     "field": "$pagination",
     "replacement": "bounded_items",
     "kind": "protocol_exception",

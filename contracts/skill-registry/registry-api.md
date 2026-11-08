@@ -4,7 +4,9 @@ This document defines the Skill Registry's private control-plane HTTP API for
 publishing, listing, resolving and downloading immutable Skill versions. The
 [JSON payload schema](registry-api.schema.json) and the
 [package-rules-v1 shared cases](../../tests/integration/skill-registry/package-rules-v1.json)
-are part of this boundary. Multipart ZIP bytes and HTTP status mapping are
+are part of this boundary. The
+[opaque-ID revision](registry-api.ids-v2.schema.json) republishes the same
+payload shapes with referenced IDs bound to the shared grammar. Multipart ZIP bytes and HTTP status mapping are
 specified here because they are not JSON payloads.
 
 All business routes are private and enforce per-caller workload credentials,
@@ -14,8 +16,12 @@ See the [Registry authentication profile](service-authentication.md) and
 echoes of the verified CCT; allowlisted service operations derive their scope
 from accepted owned records. A shared Registry bearer is no longer accepted.
 
-`org_<32 lowercase hex>`, `user_<32 lowercase hex>` and
-`skill_<32 lowercase hex>` use the platform resource-ID contract. `request_id`
+`skill_<32 lowercase hex>` uses the platform resource-ID contract; `org_`/`user_`
+is the producer-owned generation format per
+[resource-identifiers](../resource-identifiers.md). Referenced
+`organization_id`/`actor_id` values are opaque and validate against the
+[shared grammar](../common/ids.schema.json) — never trimmed, normalized,
+case-folded or matched to a prefix. `request_id`
 is an opaque, nonempty, at most 128-byte printable non-whitespace ASCII
 idempotency key (`!` through `~`) supplied by the caller and unique within an
 organization across both publish routes. Versions
@@ -60,14 +66,14 @@ The two publish routes consume multipart/form-data with exactly one JSON
 `metadata` part (at most 4 KiB) and one `artifact` ZIP part (at most 8 MiB),
 plus bounded multipart overhead. No other parts are accepted.
 
-| Method and route                                                                           | Input                                                                          | Success                                                                                                                                                    |
-| ------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `POST /internal/skills`                                                                    | metadata `{request_id, organization_id, actor_id}`                             | 201 `{skill_id, version, name, description, artifact_digest, content_digest, artifact_size, unpacked_size, package_rules_version}`                         |
-| `POST /internal/skills/{skill_id}/versions`                                                | same metadata plus the precondition (`expected_version`, or `If-Match`)                                          | 201 same shape, version incremented                                                                                                                        |
-| `GET /internal/skills?organization_id=...&cursor=...&limit=...`                            | `cursor` optional (`after_id` accepted one release); limit default 50, max 100 | 200 `{items:[{skill_id,name,current_version,description,artifact_digest,content_digest,artifact_size,unpacked_size,package_rules_version}],next_cursor}` |
-| `GET /internal/skills/{skill_id}/versions?organization_id=...&cursor=...&limit=...`        | `cursor` optional (`after_version` accepted one release); limit default 50, max 100 | 200 `{items:[publish metadata],next_cursor}`                                                                                                        |
-| `POST /internal/skill-versions/resolve`                                                    | JSON `{organization_id,refs:[{skill_id,version}]}`; up to 32 unique references | 200 `{items:[publish metadata]}` in input order                                                                                                            |
-| `GET /internal/skills/{skill_id}/versions/{version}/artifact?organization_id=...`          | fixed skill and version                                                        | 200 exact ZIP bytes, `Content-Type: application/zip`, `Content-Length`, `ETag` and `X-Antnest-Artifact-Digest`; never redirect                             |
+| Method and route                                                                    | Input                                                                               | Success                                                                                                                                                  |
+| ----------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `POST /internal/skills`                                                             | metadata `{request_id, organization_id, actor_id}`                                  | 201 `{skill_id, version, name, description, artifact_digest, content_digest, artifact_size, unpacked_size, package_rules_version}`                       |
+| `POST /internal/skills/{skill_id}/versions`                                         | same metadata plus the precondition (`expected_version`, or `If-Match`)             | 201 same shape, version incremented                                                                                                                      |
+| `GET /internal/skills?organization_id=...&cursor=...&limit=...`                     | `cursor` optional (`after_id` accepted one release); limit default 50, max 100      | 200 `{items:[{skill_id,name,current_version,description,artifact_digest,content_digest,artifact_size,unpacked_size,package_rules_version}],next_cursor}` |
+| `GET /internal/skills/{skill_id}/versions?organization_id=...&cursor=...&limit=...` | `cursor` optional (`after_version` accepted one release); limit default 50, max 100 | 200 `{items:[publish metadata],next_cursor}`                                                                                                             |
+| `POST /internal/skill-versions/resolve`                                             | JSON `{organization_id,refs:[{skill_id,version}]}`; up to 32 unique references      | 200 `{items:[publish metadata]}` in input order                                                                                                          |
+| `GET /internal/skills/{skill_id}/versions/{version}/artifact?organization_id=...`   | fixed skill and version                                                             | 200 exact ZIP bytes, `Content-Type: application/zip`, `Content-Length`, `ETag` and `X-Antnest-Artifact-Digest`; never redirect                           |
 
 Resolve rejects repeated skills, repeated names and an aggregate unpacked size
 over 128 MiB. The response contains no artifact bytes. A missing skill, version
