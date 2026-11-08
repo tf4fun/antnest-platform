@@ -71,6 +71,7 @@ name, with exactly one workload URI `antnest://service/runtime-egress` and a
 matching key. Configuration failures precede database, kernel and listener
 effects and are reported without credentials or file paths.
 
+Control `agent_id` references follow the [shared opaque-ID grammar](../../../contracts/common/ids.schema.json) via `control-response.ids-v2.schema.json`; `policy_id` keeps its independent identifier rules.
 Use the [exact authentication profile](../../../contracts/egress/service-authentication.md)
 when provisioning hashes and certificates. TLS handshakes expire after five
 seconds, with at most 16 pending handshakes; slow peers do not serialize normal

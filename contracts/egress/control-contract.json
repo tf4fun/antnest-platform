@@ -1,5 +1,5 @@
 {
-  "revision": 9,
+  "revision": 10,
   "transport": "json-over-http",
   "trust_boundary": "verified-controller-or-runtime-controller-workload",
   "status_values": [
@@ -112,7 +112,7 @@
       "authentication": "health",
       "responses": {
         "200": {
-          "body": "control-response.schema.json#/$defs/status",
+          "body": "control-response.ids-v2.schema.json#/$defs/status",
           "content_type": "application/json"
         }
       },
@@ -136,7 +136,7 @@
       "authentication": "workload",
       "responses": {
         "200": {
-          "body": "control-response.schema.json#/$defs/network",
+          "body": "control-response.ids-v2.schema.json#/$defs/network",
           "content_type": "application/json"
         }
       },
@@ -180,7 +180,7 @@
       "authentication": "workload",
       "responses": {
         "200": {
-          "body": "control-response.schema.json#/$defs/network",
+          "body": "control-response.ids-v2.schema.json#/$defs/network",
           "content_type": "application/json"
         }
       },
@@ -233,7 +233,7 @@
       "authentication": "workload",
       "responses": {
         "200": {
-          "body": "control-response.schema.json#/$defs/network",
+          "body": "control-response.ids-v2.schema.json#/$defs/network",
           "content_type": "application/json"
         }
       },
@@ -302,7 +302,7 @@
       "authentication": "workload",
       "responses": {
         "200": {
-          "body": "control-response.schema.json#/$defs/network",
+          "body": "control-response.ids-v2.schema.json#/$defs/network",
           "content_type": "application/json"
         }
       },
@@ -370,7 +370,7 @@
       "authentication": "workload",
       "responses": {
         "200": {
-          "body": "control-response.schema.json#/$defs/policy_metadata",
+          "body": "control-response.ids-v2.schema.json#/$defs/policy_metadata",
           "content_type": "application/json"
         }
       },
@@ -422,7 +422,7 @@
       "authentication": "workload",
       "responses": {
         "200": {
-          "body": "control-response.schema.json#/$defs/policy_revision",
+          "body": "control-response.ids-v2.schema.json#/$defs/policy_revision",
           "content_type": "application/json"
         }
       },
@@ -466,7 +466,7 @@
       "authentication": "workload",
       "responses": {
         "200": {
-          "body": "control-response.schema.json#/$defs/assignment",
+          "body": "control-response.ids-v2.schema.json#/$defs/assignment",
           "content_type": "application/json"
         }
       },
@@ -510,7 +510,7 @@
       "authentication": "workload",
       "responses": {
         "200": {
-          "body": "control-response.schema.json#/$defs/assignment",
+          "body": "control-response.ids-v2.schema.json#/$defs/assignment",
           "content_type": "application/json"
         }
       },
@@ -575,7 +575,7 @@
     "policy": "policy.schema.json",
     "policy_revision_request": "policy-revision-request.schema.json",
     "policy_assignment_request": "policy-assignment-request.schema.json",
-    "responses": "control-response.schema.json",
+    "responses": "control-response.ids-v2.schema.json",
     "packet": "../runtime/packet-contract.json",
     "attachment_state_request": "attachment-state-request.schema.json",
     "resource_version_request": "resource-version-request.schema.json",

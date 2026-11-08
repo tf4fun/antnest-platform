@@ -67,7 +67,7 @@ fn machine_contract_matches_the_complete_control_surface() {
     )))
     .expect("control contract");
 
-    assert_eq!(contract.revision, 9);
+    assert_eq!(contract.revision, 10);
     assert_eq!(contract.transport, "json-over-http");
     assert_eq!(
         contract.trust_boundary,
@@ -187,30 +187,50 @@ fn machine_contract_matches_the_complete_control_surface() {
             .collect::<Vec<_>>(),
         [
             ("PUT", "204", "none"),
-            ("GET", "200", "control-response.schema.json#/$defs/status"),
-            ("GET", "200", "control-response.schema.json#/$defs/network"),
-            ("PUT", "200", "control-response.schema.json#/$defs/network"),
-            ("PUT", "200", "control-response.schema.json#/$defs/network"),
-            ("POST", "200", "control-response.schema.json#/$defs/network"),
             (
-                "PUT",
+                "GET",
                 "200",
-                "control-response.schema.json#/$defs/policy_metadata"
+                "control-response.ids-v2.schema.json#/$defs/status"
             ),
             (
                 "GET",
                 "200",
-                "control-response.schema.json#/$defs/policy_revision"
-            ),
-            (
-                "GET",
-                "200",
-                "control-response.schema.json#/$defs/assignment"
+                "control-response.ids-v2.schema.json#/$defs/network"
             ),
             (
                 "PUT",
                 "200",
-                "control-response.schema.json#/$defs/assignment"
+                "control-response.ids-v2.schema.json#/$defs/network"
+            ),
+            (
+                "PUT",
+                "200",
+                "control-response.ids-v2.schema.json#/$defs/network"
+            ),
+            (
+                "POST",
+                "200",
+                "control-response.ids-v2.schema.json#/$defs/network"
+            ),
+            (
+                "PUT",
+                "200",
+                "control-response.ids-v2.schema.json#/$defs/policy_metadata"
+            ),
+            (
+                "GET",
+                "200",
+                "control-response.ids-v2.schema.json#/$defs/policy_revision"
+            ),
+            (
+                "GET",
+                "200",
+                "control-response.ids-v2.schema.json#/$defs/assignment"
+            ),
+            (
+                "PUT",
+                "200",
+                "control-response.ids-v2.schema.json#/$defs/assignment"
             ),
         ]
     );

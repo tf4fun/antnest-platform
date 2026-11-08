@@ -78,7 +78,7 @@ pub struct AgentId(String);
 impl AgentId {
     pub fn parse(value: impl Into<String>) -> Result<Self, IdentifierError> {
         let value = value.into();
-        validate_identifier(&value)?;
+        validate_agent_identifier(&value)?;
         Ok(Self(value))
     }
 
@@ -178,6 +178,28 @@ pub enum IdentifierError {
     TooLong,
     #[error("identifier must contain only visible ASCII bytes")]
     NotVisibleAscii,
+    #[error("agent identifier must be 1-200 ASCII bytes starting alphanumeric then [A-Za-z0-9_.-]")]
+    InvalidAgentSyntax,
+}
+
+fn validate_agent_identifier(value: &str) -> Result<(), IdentifierError> {
+    if value.is_empty() {
+        return Err(IdentifierError::Empty);
+    }
+    if value.len() > 200 {
+        return Err(IdentifierError::TooLong);
+    }
+    validate_identifier(value)?;
+    let mut bytes = value.bytes();
+    let first = bytes.next().unwrap_or_default();
+    if !first.is_ascii_alphanumeric()
+        || !bytes.all(|byte| {
+            byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'.' || byte == b'-'
+        })
+    {
+        return Err(IdentifierError::InvalidAgentSyntax);
+    }
+    Ok(())
 }
 
 fn validate_identifier(value: &str) -> Result<(), IdentifierError> {
@@ -209,9 +231,14 @@ mod tests {
             Err(IdentifierError::Whitespace)
         );
         assert_eq!(AgentId::parse("agent-1").unwrap().as_str(), "agent-1");
-        assert!(AgentId::parse("a".repeat(255)).is_ok());
+        assert!(AgentId::parse("a".repeat(200)).is_ok());
         assert_eq!(
-            AgentId::parse("a".repeat(256)),
+            AgentId::parse("a".repeat(201)),
+            Err(IdentifierError::TooLong)
+        );
+        assert!(PolicyId::parse("a".repeat(255)).is_ok());
+        assert_eq!(
+            PolicyId::parse("a".repeat(256)),
             Err(IdentifierError::TooLong)
         );
         assert_eq!(
