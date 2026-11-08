@@ -25,8 +25,8 @@ import (
 
 func contractRefDoc(t *testing.T, file string) map[string]any {
 	t.Helper()
-	base := filepath.Join(serviceRoot(t), "../../contracts/runtime-controller")
-	clean := filepath.Clean(filepath.Join(base, file))
+	base := filepath.Join(serviceRoot(t), "../../contracts")
+	clean := filepath.Clean(filepath.Join(base, "runtime-controller", file))
 	if !strings.HasPrefix(clean, filepath.Clean(base)+string(filepath.Separator)) {
 		t.Fatalf("reference escapes contract directory: %s", file)
 	}
@@ -68,8 +68,8 @@ func TestRouteSchemaDeclarationsResolve(t *testing.T) {
 	var contract map[string]any
 	readJSONFile(t, filepath.Join(root, "../../contracts/runtime-controller/control-contract.json"), &contract)
 	var schema map[string]any
-	readJSONFile(t, filepath.Join(root, "../../contracts/runtime-controller/control-api.schema.json"), &schema)
-	docs := map[string]map[string]any{"control-api.schema.json": schema}
+	readJSONFile(t, filepath.Join(root, "../../contracts/runtime-controller/control-api.ids-v2.schema.json"), &schema)
+	docs := map[string]map[string]any{"control-api.ids-v2.schema.json": schema}
 
 	routes := contract["routes"].([]any)
 	if len(routes) != 19 {
@@ -85,18 +85,18 @@ func TestRouteSchemaDeclarationsResolve(t *testing.T) {
 		}
 		seen[label] = true
 		if body, ok := route["request_body"].(string); ok && body != "none" {
-			resolveContractRef(t, docs, "control-api.schema.json", body)
+			resolveContractRef(t, docs, "control-api.ids-v2.schema.json", body)
 		} else if !ok {
 			t.Fatalf("route %s missing request_body", label)
 		}
 		for _, raw := range route["responses"].(map[string]any) {
 			entry := raw.(map[string]any)
 			if body, ok := entry["body"].(string); ok && body != "none" {
-				resolveContractRef(t, docs, "control-api.schema.json", body)
+				resolveContractRef(t, docs, "control-api.ids-v2.schema.json", body)
 			}
 			if sse, ok := entry["sse"].(map[string]any); ok {
-				resolveContractRef(t, docs, "control-api.schema.json", sse["data"].(string))
-				resolveContractRef(t, docs, "control-api.schema.json", sse["id"].(string))
+				resolveContractRef(t, docs, "control-api.ids-v2.schema.json", sse["data"].(string))
+				resolveContractRef(t, docs, "control-api.ids-v2.schema.json", sse["id"].(string))
 			}
 		}
 		errs, _ := route["errors"].([]any)
@@ -109,7 +109,7 @@ func TestRouteSchemaDeclarationsResolve(t *testing.T) {
 				t.Fatalf("error %v has no status", code)
 			}
 			if body, ok := entry["body"].(string); ok {
-				resolveContractRef(t, docs, "control-api.schema.json", body)
+				resolveContractRef(t, docs, "control-api.ids-v2.schema.json", body)
 			}
 		}
 	}
@@ -442,4 +442,12 @@ func (s *routePreparationStub) Get(_ context.Context, org, agentID, requestID st
 func (s *routePreparationStub) Release(ctx context.Context, org, agentID, requestID, owner string) error {
 	s.released = true
 	return s.preparationStub.Release(ctx, org, agentID, requestID, owner)
+}
+
+func TestResourceIDContractRefWithinContracts(t *testing.T) {
+	for _, file := range []string{"runtime-deployment.ids-v2.schema.json", "../common/ids.schema.json"} {
+		if doc := contractRefDoc(t, file); len(doc) == 0 {
+			t.Fatalf("expected schema document for %s", file)
+		}
+	}
 }

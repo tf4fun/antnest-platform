@@ -234,14 +234,16 @@ func TestCommonErrorActualResponsesMatchContracts(t *testing.T) {
 	compiler := jsonschema.NewCompiler()
 	compiler.AssertFormat()
 	for id, rel := range map[string]string{
-		"https://schemas.antnest.dev/common/error.schema.json":                "contracts/common/error.schema.json",
-		"https://schemas.antnest.dev/agent-acp/owner-incarnation.schema.json": "contracts/agent-acp/owner-incarnation.schema.json",
+		"https://schemas.antnest.dev/common/error.schema.json":                                 "contracts/common/error.schema.json",
+		"https://schemas.antnest.dev/common/ids.schema.json":                                   "contracts/common/ids.schema.json",
+		"https://schemas.antnest.dev/agent-acp/owner-incarnation.schema.json":                  "contracts/agent-acp/owner-incarnation.schema.json",
+		"https://schemas.antnest.dev/runtime-controller/runtime-deployment.ids-v2.schema.json": "contracts/runtime-controller/runtime-deployment.ids-v2.schema.json",
 	} {
 		if err := compiler.AddResource(id, readFile(rel)); err != nil {
 			t.Fatalf("load %s: %v", rel, err)
 		}
 	}
-	schemaDoc, err := os.ReadFile(filepath.Join(root, "../../contracts/runtime-controller", "control-api.schema.json"))
+	schemaDoc, err := os.ReadFile(filepath.Join(root, "../../contracts/runtime-controller", "control-api.ids-v2.schema.json"))
 	if err != nil {
 		t.Fatal(err)
 	}

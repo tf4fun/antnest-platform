@@ -954,8 +954,26 @@
     "remove_after": "next_release"
   },
   {
+    "file": "runtime-controller/control-api.ids-v2.schema.json",
+    "pointer": "/$defs/revision_configuration_request/allOf/0/oneOf/0/not/properties/expected_revision",
+    "field": "expected_revision",
+    "replacement": "expected_version",
+    "reason": "Runtime Controller accepts only as a one-release input alias for expected_version; rejects multiple forms.",
+    "kind": "deprecated_alias",
+    "remove_after": "next_release"
+  },
+  {
     "file": "runtime-controller/control-api.schema.json",
     "pointer": "/$defs/revision_configuration_request/allOf/0/oneOf/0/not/properties/expected_revision",
+    "field": "expected_revision",
+    "replacement": "expected_version",
+    "reason": "Runtime Controller accepts only as a one-release input alias for expected_version; rejects multiple forms.",
+    "kind": "deprecated_alias",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "runtime-controller/control-api.ids-v2.schema.json",
+    "pointer": "/$defs/revision_configuration_request/allOf/0/oneOf/0/not/required/0",
     "field": "expected_revision",
     "replacement": "expected_version",
     "reason": "Runtime Controller accepts only as a one-release input alias for expected_version; rejects multiple forms.",
@@ -972,8 +990,26 @@
     "remove_after": "next_release"
   },
   {
+    "file": "runtime-controller/control-api.ids-v2.schema.json",
+    "pointer": "/$defs/revision_configuration_request/allOf/0/oneOf/1/properties/expected_revision",
+    "field": "expected_revision",
+    "replacement": "expected_version",
+    "reason": "Runtime Controller accepts only as a one-release input alias for expected_version; rejects multiple forms.",
+    "kind": "deprecated_alias",
+    "remove_after": "next_release"
+  },
+  {
     "file": "runtime-controller/control-api.schema.json",
     "pointer": "/$defs/revision_configuration_request/allOf/0/oneOf/1/properties/expected_revision",
+    "field": "expected_revision",
+    "replacement": "expected_version",
+    "reason": "Runtime Controller accepts only as a one-release input alias for expected_version; rejects multiple forms.",
+    "kind": "deprecated_alias",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "runtime-controller/control-api.ids-v2.schema.json",
+    "pointer": "/$defs/revision_configuration_request/allOf/0/oneOf/1/required/0",
     "field": "expected_revision",
     "replacement": "expected_version",
     "reason": "Runtime Controller accepts only as a one-release input alias for expected_version; rejects multiple forms.",
@@ -990,7 +1026,7 @@
     "remove_after": "next_release"
   },
   {
-    "file": "runtime-controller/control-api.schema.json",
+    "file": "runtime-controller/control-api.ids-v2.schema.json",
     "pointer": "/$defs/revision_configuration_request/properties/expected_revision",
     "field": "expected_revision",
     "replacement": "expected_version",
@@ -1000,7 +1036,34 @@
   },
   {
     "file": "runtime-controller/control-api.schema.json",
+    "pointer": "/$defs/revision_configuration_request/properties/expected_revision",
+    "field": "expected_revision",
+    "replacement": "expected_version",
+    "kind": "deprecated_alias",
+    "reason": "Runtime Controller accepts only as a one-release input alias for expected_version; rejects multiple forms.",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "runtime-controller/control-api.ids-v2.schema.json",
     "pointer": "/$defs/revision_request/allOf/0/oneOf/0/not/properties/expected_revision",
+    "field": "expected_revision",
+    "replacement": "expected_version",
+    "reason": "Runtime Controller accepts only as a one-release input alias for expected_version; rejects multiple forms.",
+    "kind": "deprecated_alias",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "runtime-controller/control-api.schema.json",
+    "pointer": "/$defs/revision_request/allOf/0/oneOf/0/not/properties/expected_revision",
+    "field": "expected_revision",
+    "replacement": "expected_version",
+    "reason": "Runtime Controller accepts only as a one-release input alias for expected_version; rejects multiple forms.",
+    "kind": "deprecated_alias",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "runtime-controller/control-api.ids-v2.schema.json",
+    "pointer": "/$defs/revision_request/allOf/0/oneOf/0/not/required/0",
     "field": "expected_revision",
     "replacement": "expected_version",
     "reason": "Runtime Controller accepts only as a one-release input alias for expected_version; rejects multiple forms.",
@@ -1017,8 +1080,26 @@
     "remove_after": "next_release"
   },
   {
+    "file": "runtime-controller/control-api.ids-v2.schema.json",
+    "pointer": "/$defs/revision_request/allOf/0/oneOf/1/properties/expected_revision",
+    "field": "expected_revision",
+    "replacement": "expected_version",
+    "reason": "Runtime Controller accepts only as a one-release input alias for expected_version; rejects multiple forms.",
+    "kind": "deprecated_alias",
+    "remove_after": "next_release"
+  },
+  {
     "file": "runtime-controller/control-api.schema.json",
     "pointer": "/$defs/revision_request/allOf/0/oneOf/1/properties/expected_revision",
+    "field": "expected_revision",
+    "replacement": "expected_version",
+    "reason": "Runtime Controller accepts only as a one-release input alias for expected_version; rejects multiple forms.",
+    "kind": "deprecated_alias",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "runtime-controller/control-api.ids-v2.schema.json",
+    "pointer": "/$defs/revision_request/allOf/0/oneOf/1/required/0",
     "field": "expected_revision",
     "replacement": "expected_version",
     "reason": "Runtime Controller accepts only as a one-release input alias for expected_version; rejects multiple forms.",
@@ -1032,6 +1113,15 @@
     "replacement": "expected_version",
     "reason": "Runtime Controller accepts only as a one-release input alias for expected_version; rejects multiple forms.",
     "kind": "deprecated_alias",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "runtime-controller/control-api.ids-v2.schema.json",
+    "pointer": "/$defs/revision_request/properties/expected_revision",
+    "field": "expected_revision",
+    "replacement": "expected_version",
+    "kind": "deprecated_alias",
+    "reason": "Runtime Controller accepts only as a one-release input alias for expected_version; rejects multiple forms.",
     "remove_after": "next_release"
   },
   {

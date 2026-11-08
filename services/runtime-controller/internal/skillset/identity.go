@@ -30,7 +30,7 @@ type FrozenSkill struct {
 var idPattern = regexp.MustCompile(`^skill_[0-9a-f]{32}$`)
 var namePattern = regexp.MustCompile(`^[a-z0-9]+(-[a-z0-9]+)*$`)
 var digestPattern = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
-var organizationPattern = regexp.MustCompile(`^org_[0-9a-f]{32}$`)
+var organizationPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,199}$`)
 
 func Validate(organizationID string, layoutVersion uint32, skills []FrozenSkill) error {
 	if !organizationPattern.MatchString(organizationID) {

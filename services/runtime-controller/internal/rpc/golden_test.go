@@ -111,7 +111,7 @@ func TestRuntimeControllerGolden(t *testing.T) {
 	}
 	boundary := newTestHandler(t, service)
 	compiler := contractCompiler(t)
-	const identifier = "https://schemas.antnest.dev/runtime-controller/control-api.schema.json"
+	const identifier = "https://schemas.antnest.dev/runtime-controller/control-api.ids-v2.schema.json"
 	for _, golden := range []struct {
 		name string
 		path string
