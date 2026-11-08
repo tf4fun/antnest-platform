@@ -20,6 +20,8 @@ Issue 状态最后核对于 2026-10-28：141 个 issue，87 个已关闭，54 �
 
 ## 当前批次
 
+- **#65 PR CI 收尾接手（2026-11-08，用户明确指派 #588 → #589 → #590 → #591）**：前置契约提前发布新现役接口导致批次无法独立准入，沿用已有 proposal 模式：#588 发布目标 schema／catalog proposal，Identity 19 与 Console 61 各在 #589／#590 连同实现、caller policy 和消费绑定激活；新增两项发布时序守卫先 RED 再 GREEN，目标 schema 22/22 与 177-document conventions clean。Console 另修新增分页代码的严格 TypeScript 错误，以及 producer golden 的 context cancel 静态检查；保留 code/status、鉴权、分页与资源清理断言。最终核对四个精确 head 的八项远程必需门禁；普通提交／merge 保留栈与 TODO 历史，不合并／关闭 #65/#83，不安排或查询 Docker E2E。
+
 - **#65 Identity 服务批次（2026-11-08，依赖共享契约 PR #588）**：已实现 CCT/workload 约束的 list_members/list_groups、SQL keyset/filter/limit+1、scope/filter/kind 绑定游标和旧目录 SQL LIMIT200，新增 group 排序索引。新服务/RPC测试先RED后GREEN，严格拒绝重复键、空/null 游标、非法过滤和越界limit；定向单元通过，组件overlay编译通过但无本地PostgreSQL执行，真实10000成员并发插入/过滤/旧接口硬上限组件留给远程准入。最小日志 artifacts/verification/issue-65-identity/；Console消费者/UI和显式集成继续开发，不等待CI，不涉Docker E2E。
 
 - **#65 共享契约批次（2026-11-08）**：基于 main `df1440b3`，按共享契约 → Identity → Admin Console → 显式集成拆分独立 PR。Admin version 61 为 71 条实际／规划路由补齐请求、响应、媒体类型和闭合 schema，包含原目录遗漏的两条生命周期路由；复用 #67 公共错误注册表、103 码切片及 Go/TS 生成件，新增严格一致的服务错误文档视图。Identity revision 19 发布 `list_members`／`list_groups`，canonical cursor、必需 nullable next_cursor、limit 1..200；旧目录双数组最多 200，保留一个发布周期。契约测试初始 12 RED，审查补充 wire 形状回归 5 RED 后最终 22/22 GREEN；conventions 175 documents clean，最小日志 `artifacts/verification/issue-65-contract/`。生产服务实现、消费者与独立集成批次继续交付，不将契约发布等同完整业务验收；远程完整准入异步，不等待或轮询最终 CI，不合并、不关闭 #65/#83，不运行或跟踪 Docker E2E。既有 `artifacts/recovery/` 保持原样。
