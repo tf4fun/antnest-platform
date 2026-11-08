@@ -76,13 +76,13 @@ published outside the trusted Docker or Kubernetes network.
 ## Configuration
 
 Skill maintenance verifier key IDs use the shared
-[RuntimeSpec grammar](../../contracts/runtime/runtime-spec.schema.json#/$defs/maintenanceKid)
+[RuntimeSpec grammar](../../contracts/runtime/runtime-spec.ids-v2.schema.json#/$defs/maintenanceKid)
 and [accept/reject fixtures](../../contracts/runtime/maintenance-kid-fixtures.json).
 Startup rejects invalid IDs and reports duplicate IDs separately.
 
 | Variable                                        | Required | Default                                        | Description                                                                                                                                                                                                |
 | ----------------------------------------------- | -------- | ---------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `ANTNEST_RUNTIME_SPEC`                          | Yes      | none                                           | Immutable RuntimeSpec as a JSON document. Decoded strictly (unknown fields rejected) against [runtime-spec.schema.json](../../contracts/runtime/runtime-spec.schema.json). Supplied by Runtime Controller. |
+| `ANTNEST_RUNTIME_SPEC`                          | Yes      | none                                           | Immutable RuntimeSpec as a JSON document. Decoded strictly (unknown fields rejected) against [runtime-spec.ids-v2.schema.json](../../contracts/runtime/runtime-spec.ids-v2.schema.json). Supplied by Runtime Controller. |
 | `ANTNEST_SERVICE_AUTH_MODE`                     | Yes      | none                                           | Exactly `token`. Native Runtime has no TLS listener; `mtls` fails startup.                                                                                                                                 |
 | `ANTNEST_SERVICE_AUTH_ALLOW_INSECURE_TRANSPORT` | Yes      | none                                           | Exactly `true`, explicitly permitting the private HTTP-only instance profile.                                                                                                                              |
 | `ANTNEST_SERVICE_AUTH_CALLERS_FILE`             | Yes      | none                                           | Exactly `/run/antnest-auth/callers.json`, in RC's verified read-only receiver volume.                                                                                                                      |
@@ -294,9 +294,9 @@ batches; this receiver gate does not complete the platform workflow.
   cross-service design for the information Resource and managed servers.
 - [contract.json](../../contracts/runtime/contract.json) - status, MCP
   transport, tool names, and error code contract.
-- [runtime-spec.schema.json](../../contracts/runtime/runtime-spec.schema.json) -
+- [runtime-spec.ids-v2.schema.json](../../contracts/runtime/runtime-spec.ids-v2.schema.json) -
   RuntimeSpec input contract.
-- [runtime-status.schema.json](../../contracts/runtime/runtime-status.schema.json) -
+- [runtime-status.ids-v2.schema.json](../../contracts/runtime/runtime-status.ids-v2.schema.json) -
   readiness and compiled test-feature identity.
 - [builtin-tools.schema.json](../../contracts/runtime/builtin-tools.schema.json) -
   built-in tool input contract.

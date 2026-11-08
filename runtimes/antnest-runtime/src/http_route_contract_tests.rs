@@ -164,7 +164,7 @@ async fn status_handlers_emit_schema_valid_bodies() {
     let (code, Json(body)) = status_response(status, catalog.clone()).await;
     assert_eq!(code, StatusCode::OK);
     let document = serde_json::to_value(&body).unwrap();
-    assert_valid("runtime-status.schema.json", &document);
+    assert_valid("runtime-status.ids-v2.schema.json", &document);
 
     let (code, Json(live)) = live_status(catalog).await;
     assert_eq!(code, StatusCode::OK);
@@ -523,7 +523,7 @@ async fn mcp_mount_answers_a_schema_valid_protocol_response() {
 
     assert_valid("http.schema.json#/$defs/live_status", &live_body);
     assert!(head_empty, "HEAD /status/live must not carry a body");
-    assert_valid("runtime-status.schema.json", &full_body);
+    assert_valid("runtime-status.ids-v2.schema.json", &full_body);
     assert_valid("http.schema.json#/$defs/protocol_request", &request);
     assert_eq!(status_code, 200, "{text}");
     let message: Value = if let Some(data) = text

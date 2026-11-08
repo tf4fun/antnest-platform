@@ -2,7 +2,7 @@
 
 This contract freezes the #30 private connection handoff before its owning
 service batches. The [machine contract](instance-connection-contract.json),
-[schema](instance-connection.schema.json) and
+[schema](instance-connection.ids-v2.schema.json) and
 [fixtures](instance-connection-fixtures.json) are normative alongside the
 [exact workload profile](../platform/service-authentication.md). Service
 implementations are delivered as owning-service batches: RC's issuer/volume/client,

@@ -1,7 +1,7 @@
 {
   "mcp_protocol_version": "2026-07-28",
-  "runtime_spec": "runtime-spec.schema.json",
-  "status_schema": "runtime-status.schema.json",
+  "runtime_spec": "runtime-spec.ids-v2.schema.json",
+  "status_schema": "runtime-status.ids-v2.schema.json",
   "transport": {
     "status_path": "/status",
     "mcp_path": "/mcp",
@@ -164,11 +164,11 @@
       "request_body": "none",
       "responses": {
         "200": {
-          "body": "runtime-status.schema.json",
+          "body": "runtime-status.ids-v2.schema.json",
           "content_type": "application/json"
         },
         "503": {
-          "body": "runtime-status.schema.json",
+          "body": "runtime-status.ids-v2.schema.json",
           "content_type": "application/json"
         }
       },

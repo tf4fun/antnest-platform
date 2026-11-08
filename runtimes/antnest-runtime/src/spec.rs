@@ -12,12 +12,16 @@ pub(crate) struct RuntimeIdentity {
 impl RuntimeIdentity {
     pub(crate) fn new(agent_id: impl Into<String>, generation: u64) -> Result<Self, SpecError> {
         let agent_id = agent_id.into();
+        let mut bytes = agent_id.bytes();
         if agent_id.is_empty()
-            || agent_id.len() > 255
-            || !agent_id.bytes().all(|byte| byte.is_ascii_graphic())
+            || agent_id.len() > 200
+            || !matches!(bytes.next(), Some(byte) if byte.is_ascii_alphanumeric())
+            || !bytes.all(|byte| {
+                byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'.' || byte == b'-'
+            })
         {
             return Err(SpecError::Identity(
-                "Agent ID must contain 1-255 visible ASCII bytes",
+                "Agent ID must match ^[A-Za-z0-9][A-Za-z0-9_.-]{0,199}$",
             ));
         }
         if generation == 0 {
@@ -318,5 +322,28 @@ mod tests {
         assert!(RuntimeIdentity::new("agent-1", 1).is_ok());
         assert!(RuntimeIdentity::new(" agent-1", 1).is_err());
         assert!(RuntimeIdentity::new("agent 1", 1).is_err());
+    }
+
+    #[test]
+    fn resource_id_shared_vectors() {
+        let vectors: serde_json::Value = serde_json::from_str(include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../contracts/common/id-vectors.json"
+        )))
+        .unwrap();
+        let agent = &vectors["agentId"];
+        for value in agent["accept"].as_array().unwrap() {
+            let value = value.as_str().unwrap();
+            let identity = RuntimeIdentity::new(value, 1)
+                .unwrap_or_else(|err| panic!("agentId must accept {value:?}: {err:?}"));
+            assert_eq!(identity.agent_id(), value);
+        }
+        for value in agent["reject"].as_array().unwrap() {
+            let value = value.as_str().unwrap();
+            assert!(RuntimeIdentity::new(value, 1).is_err(), "reject {value:?}");
+        }
+        assert!(RuntimeIdentity::new("a".repeat(200), 1).is_ok());
+        assert!(RuntimeIdentity::new("a".repeat(201), 1).is_err());
+        assert!(RuntimeIdentity::new("agent-1", 0).is_err());
     }
 }

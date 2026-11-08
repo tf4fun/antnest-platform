@@ -20,6 +20,8 @@ Issue 状态最后核对于 2026-10-28：141 个 issue，87 个已关闭，54 �
 
 ## 当前批次
 
+- **#16 Runtime 审查完成**：真实 parser 的 201 字符错误接受先 RED，修正后 shared vectors／generation 边界 4/4、MCP 契约 7/7、HTTP 路由组件 4/4 GREEN，Rust 格式与 209-document conventions clean。Gateway 已交付 PR #600（`8b88b371`）。Runtime packet／instance-authentication 版本不变，根目录消费者同步与远程准入尚未完成。
+
 - **#16 Gateway 审查完成**：session schema 向量与真实 Organization／browser-control／external-identity handler 定向 GREEN，205-document conventions 和 Go 格式 clean；仅共享 ASCII 模式使用 Go 引擎，其余保留 ECMAScript 规则。旧 CI 的合法 `user-1` mismatch 根因仍未确认，不外推新候选 CI 状态。Identity 已交付 PR #599（`3fd33e04`）。
 
 - **#16 Identity 审查完成**：schema 向量先 RED 后 GREEN；RPC directory、principal、producer golden、OIDC/external-identity 契约及生成器定向通过，204-document conventions 和 Go 格式 clean。Controller 已交付 PR #598（`30f410b8`）。Identity 保持已有随机 typed 生成器和独立 OIDC subject 规则，当前候选等待远程准入。
