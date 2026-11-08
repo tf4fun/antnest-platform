@@ -1,0 +1,1586 @@
+{
+  "contract": "antnest.admin-console.directory.proposal",
+  "revision": 1,
+  "status": "proposed",
+  "base_version": 60,
+  "target_version": 61,
+  "activation": "Publish the catalog patch with the Admin Console handlers, strict readers and paginated browser consumers in PR #590. Until then the active catalog remains version 60.",
+  "catalog_patch": {
+    "version": 61,
+    "error": {
+      "$ref": "../common/error.schema.json",
+      "required": ["code", "category", "message", "retryable", "request_id"],
+      "codes": "../common/slices/admin-console.json",
+      "migration": "additive expansion to the common envelope; old consumers keep reading code/message, one release",
+      "view": "errors.json"
+    },
+    "routes": {
+      "search_skill_sources": {
+        "method": "POST",
+        "path": "/skill-sources/search",
+        "schema": "skill-discovery.schema.json#/$defs/search_request",
+        "request_schema": "admin-api.schema.json#/$defs/search_skill_sources_request",
+        "response_schema": "admin-api.schema.json#/$defs/search_skill_sources_response",
+        "request_body": {
+          "kind": "json",
+          "schema": "admin-api.schema.json#/$defs/search_skill_sources_request"
+        },
+        "response_body": {
+          "kind": "json",
+          "schema": "admin-api.schema.json#/$defs/search_skill_sources_response"
+        }
+      },
+      "preview_skill_source": {
+        "method": "POST",
+        "path": "/skill-sources/preview",
+        "schema": "skill-discovery.schema.json#/$defs/selection",
+        "request_schema": "admin-api.schema.json#/$defs/preview_skill_source_request",
+        "response_schema": "admin-api.schema.json#/$defs/preview_skill_source_response",
+        "request_body": {
+          "kind": "json",
+          "schema": "admin-api.schema.json#/$defs/preview_skill_source_request"
+        },
+        "response_body": {
+          "kind": "json",
+          "schema": "admin-api.schema.json#/$defs/preview_skill_source_response"
+        }
+      },
+      "promote_skill_source": {
+        "method": "POST",
+        "path": "/skill-sources/promote",
+        "schema": "skill-discovery.schema.json#/$defs/promote_request",
+        "requires": ["Idempotency-Key"],
+        "request_schema": "admin-api.schema.json#/$defs/promote_skill_source_request",
+        "response_schema": "admin-api.schema.json#/$defs/promote_skill_source_response",
+        "request_body": {
+          "kind": "json",
+          "schema": "admin-api.schema.json#/$defs/promote_skill_source_request"
+        },
+        "response_body": {
+          "kind": "json",
+          "schema": "admin-api.schema.json#/$defs/promote_skill_source_response"
+        }
+      },
+      "list_skills": {
+        "method": "GET",
+        "path": "/skills",
+        "query": {
+          "optional": ["cursor", "after_id", "limit"],
+          "cursor_response": "next_cursor",
+          "deprecated": ["after_id"]
+        },
+        "request_schema": "admin-api.schema.json#/$defs/list_skills_request",
+        "response_schema": "admin-api.schema.json#/$defs/list_skills_response",
+        "request_body": {
+          "kind": "none",
+          "input": "query_and_path"
+        },
+        "response_body": {
+          "kind": "json",
+          "schema": "admin-api.schema.json#/$defs/list_skills_response"
+        }
+      },
+      "publish_skill": {
+        "method": "POST",
+        "path": "/skills",
+        "content_type": "multipart/form-data",
+        "parts": ["artifact"],
+        "requires": ["Idempotency-Key"],
+        "request_schema": "admin-api.schema.json#/$defs/publish_skill_request",
+        "response_schema": "admin-api.schema.json#/$defs/publish_skill_response",
+        "request_body": {
+          "kind": "multipart",
+          "content_type": "multipart/form-data",
+          "schema": "admin-api.schema.json#/$defs/publish_skill_request"
+        },
+        "response_body": {
+          "kind": "json",
+          "schema": "admin-api.schema.json#/$defs/publish_skill_response"
+        }
+      },
+      "list_skill_versions": {
+        "method": "GET",
+        "path": "/skills/{skill_id}/versions",
+        "query": {
+          "optional": ["cursor", "after_version", "limit"],
+          "cursor_response": "next_cursor",
+          "deprecated": ["after_version"]
+        },
+        "request_schema": "admin-api.schema.json#/$defs/list_skill_versions_request",
+        "response_schema": "admin-api.schema.json#/$defs/list_skill_versions_response",
+        "request_body": {
+          "kind": "none",
+          "input": "query_and_path"
+        },
+        "response_body": {
+          "kind": "json",
+          "schema": "admin-api.schema.json#/$defs/list_skill_versions_response"
+        }
+      },
+      "publish_skill_version": {
+        "method": "POST",
+        "path": "/skills/{skill_id}/versions",
+        "content_type": "multipart/form-data",
+        "parts": ["artifact", "expected_version"],
+        "requires": ["Idempotency-Key"],
+        "request_schema": "admin-api.schema.json#/$defs/publish_skill_version_request",
+        "response_schema": "admin-api.schema.json#/$defs/publish_skill_version_response",
+        "request_body": {
+          "kind": "multipart",
+          "content_type": "multipart/form-data",
+          "schema": "admin-api.schema.json#/$defs/publish_skill_version_request"
+        },
+        "response_body": {
+          "kind": "json",
+          "schema": "admin-api.schema.json#/$defs/publish_skill_version_response"
+        }
+      },
+      "download_skill_version": {
+        "method": "GET",
+        "path": "/skills/{skill_id}/versions/{version}/artifact",
+        "content_type": "application/zip",
+        "request_schema": "admin-api.schema.json#/$defs/download_skill_version_request",
+        "response_schema": "admin-api.schema.json#/$defs/download_skill_version_response",
+        "request_body": {
+          "kind": "none",
+          "input": "query_and_path"
+        },
+        "response_body": {
+          "kind": "binary",
+          "content_type": "application/zip"
+        }
+      },
+      "set_provider_availability": {
+        "method": "PUT",
+        "path": "/provider-connections/{connection_id}/availability",
+        "request_schema": "admin-api.schema.json#/$defs/set_provider_availability_request",
+        "response_schema": "admin-api.schema.json#/$defs/set_provider_availability_response",
+        "request_body": {
+          "kind": "json",
+          "schema": "admin-api.schema.json#/$defs/set_provider_availability_request"
+        },
+        "response_body": {
+          "kind": "json",
+          "schema": "admin-api.schema.json#/$defs/set_provider_availability_response"
+        }
+      },
+      "set_model_availability": {
+        "method": "PUT",
+        "path": "/model-profiles/{model_profile_id}/availability",
+        "request_schema": "admin-api.schema.json#/$defs/set_model_availability_request",
+        "response_schema": "admin-api.schema.json#/$defs/set_model_availability_response",
+        "request_body": {
+          "kind": "json",
+          "schema": "admin-api.schema.json#/$defs/set_model_availability_request"
+        },
+        "response_body": {
+          "kind": "json",
+          "schema": "admin-api.schema.json#/$defs/set_model_availability_response"
+        }
+      },
+      "set_template_availability": {
+        "method": "PUT",
+        "path": "/templates/{template_id}/availability",
+        "request_schema": "admin-api.schema.json#/$defs/set_template_availability_request",
+        "response_schema": "admin-api.schema.json#/$defs/set_template_availability_response",
+        "request_body": {
+          "kind": "json",
+          "schema": "admin-api.schema.json#/$defs/set_template_availability_request"
+        },
+        "response_body": {
+          "kind": "json",
+          "schema": "admin-api.schema.json#/$defs/set_template_availability_response"
+        }
+      },
+      "list_execution_audits": {
+        "method": "GET",
+        "path": "/execution-audits",
+        "query": {
+          "optional": [
+            "agent_id",
+            "session_id",
+            "created_from",
+            "created_until",
+            "limit",
+            "cursor"
+          ],
+          "cursor_response": "next_cursor"
+        },
+        "request_schema": "admin-api.schema.json#/$defs/list_execution_audits_request",
+        "response_schema": "admin-api.schema.json#/$defs/list_execution_audits_response",
+        "request_body": {
+          "kind": "none",
+          "input": "query_and_path"
+        },
+        "response_body": {
+          "kind": "json",
+          "schema": "admin-api.schema.json#/$defs/list_execution_audits_response"
+        }
+      },
+      "get_execution_audit": {
+        "method": "GET",
+        "path": "/execution-audits/{run_id}",
+        "request_schema": "admin-api.schema.json#/$defs/get_execution_audit_request",
+        "response_schema": "admin-api.schema.json#/$defs/get_execution_audit_response",
+        "request_body": {
+          "kind": "none",
+          "input": "query_and_path"
+        },
+        "response_body": {
+          "kind": "json",
+          "schema": "admin-api.schema.json#/$defs/get_execution_audit_response"
+        }
+      },
+      "list_execution_events": {
+        "method": "GET",
+        "path": "/execution-audits/{run_id}/events",
+        "query": {
+          "optional": ["stream", "limit", "cursor"],
+          "stream": ["execution", "permissions"],
+          "cursor_response": "next_cursor"
+        },
+        "request_schema": "admin-api.schema.json#/$defs/list_execution_events_request",
+        "response_schema": "admin-api.schema.json#/$defs/list_execution_events_response",
+        "request_body": {
+          "kind": "none",
+          "input": "query_and_path"
+        },
+        "response_body": {
+          "kind": "json",
+          "schema": "admin-api.schema.json#/$defs/list_execution_events_response"
+        }
+      },
+      "get_execution_synchronization": {
+        "method": "GET",
+        "path": "/execution-synchronization",
+        "request_schema": "admin-api.schema.json#/$defs/get_execution_synchronization_request",
+        "response_schema": "admin-api.schema.json#/$defs/get_execution_synchronization_response",
+        "request_body": {
+          "kind": "none",
+          "input": "query_and_path"
+        },
+        "response_body": {
+          "kind": "json",
+          "schema": "admin-api.schema.json#/$defs/get_execution_synchronization_response"
+        }
+      },
+      "overview": {
+        "method": "GET",
+        "path": "/overview",
+        "request_schema": "admin-api.schema.json#/$defs/overview_request",
+        "response_schema": "admin-api.schema.json#/$defs/overview_response",
+        "request_body": {
+          "kind": "none",
+          "input": "query_and_path"
+        },
+        "response_body": {
+          "kind": "json",
+          "schema": "admin-api.schema.json#/$defs/overview_response"
+        }
+      },
+      "get_template_defaults": {
+        "method": "GET",
+        "path": "/template-defaults",
+        "request_schema": "admin-api.schema.json#/$defs/get_template_defaults_request",
+        "response_schema": "admin-api.schema.json#/$defs/get_template_defaults_response",
+        "request_body": {
+          "kind": "none",
+          "input": "query_and_path"
+        },
+        "response_body": {
+          "kind": "json",
+          "schema": "admin-api.schema.json#/$defs/get_template_defaults_response"
+        }
+      },
+      "get_current_account": {
+        "method": "GET",
+        "path": "/account",
+        "request_schema": "admin-api.schema.json#/$defs/get_current_account_request",
+        "response_schema": "admin-api.schema.json#/$defs/get_current_account_response",
+        "request_body": {
+          "kind": "none",
+          "input": "query_and_path"
+        },
+        "response_body": {
+          "kind": "json",
+          "schema": "admin-api.schema.json#/$defs/get_current_account_response"
+        }
+      },
+      "list_organization_sessions": {
+        "method": "GET",
+        "path": "/directory/users/{user_id}/sessions",
+        "query": {
+          "required": ["limit"],
+          "optional": ["cursor", "after_id"],
+          "cursor_response": "next_cursor",
+          "deprecated": ["after_id"]
+        },
+        "request_schema": "admin-api.schema.json#/$defs/list_organization_sessions_request",
+        "response_schema": "admin-api.schema.json#/$defs/list_organization_sessions_response",
+        "request_body": {
+          "kind": "none",
+          "input": "query_and_path"
+        },
+        "response_body": {
+          "kind": "json",
+          "schema": "admin-api.schema.json#/$defs/list_organization_sessions_response"
+        }
+      },
+      "revoke_organization_sessions": {
+        "method": "POST",
+        "path": "/directory/users/{user_id}/sessions/revoke",
+        "body": "empty_object",
+        "requires": ["Idempotency-Key"],
+        "request_schema": "admin-api.schema.json#/$defs/revoke_organization_sessions_request",
+        "response_schema": "admin-api.schema.json#/$defs/revoke_organization_sessions_response",
+        "request_body": {
+          "kind": "json",
+          "schema": "admin-api.schema.json#/$defs/revoke_organization_sessions_request"
+        },
+        "response_body": {
+          "kind": "json",
+          "schema": "admin-api.schema.json#/$defs/revoke_organization_sessions_response"
+        }
+      },
+      "directory": {
+        "method": "GET",
+        "path": "/directory",
+        "request_schema": "admin-api.schema.json#/$defs/directory_request",
+        "response_schema": "admin-api.schema.json#/$defs/directory_response",
+        "request_body": {
+          "kind": "none",
+          "input": "query_and_path"
+        },
+        "response_body": {
+          "kind": "json",
+          "schema": "admin-api.schema.json#/$defs/directory_response"
+        }
+      },
+      "create_local_user": {
+        "method": "POST",
+        "path": "/directory/users",
+        "password_failure_schema": "password-failure.schema.json",
+        "error_status_by_code": {
+          "credential_busy": 503
+        },
+        "retry_after_policy": "../identity/password-verification-policy.json#/wire",
+        "request_schema": "admin-api.schema.json#/$defs/create_local_user_request",
+        "response_schema": "admin-api.schema.json#/$defs/create_local_user_response",
+        "request_body": {
+          "kind": "json",
+          "schema": "admin-api.schema.json#/$defs/create_local_user_request"
+        },
+        "response_body": {
+          "kind": "json",
+          "schema": "admin-api.schema.json#/$defs/create_local_user_response"
+        }
+      },
+      "update_membership": {
+        "method": "POST",
+        "path": "/directory/memberships/{membership_id}",
+        "request_schema": "admin-api.schema.json#/$defs/update_membership_request",
+        "response_schema": "admin-api.schema.json#/$defs/update_membership_response",
+        "request_body": {
+          "kind": "json",
+          "schema": "admin-api.schema.json#/$defs/update_membership_request"
+        },
+        "response_body": {
+          "kind": "json",
+          "schema": "admin-api.schema.json#/$defs/update_membership_response"
+        }
+      },
+      "set_user_active": {
+        "method": "POST",
+        "path": "/directory/users/{user_id}/active",
+        "request_schema": "admin-api.schema.json#/$defs/set_user_active_request",
+        "response_schema": "admin-api.schema.json#/$defs/set_user_active_response",
+        "request_body": {
+          "kind": "json",
+          "schema": "admin-api.schema.json#/$defs/set_user_active_request"
+        },
+        "response_body": {
+          "kind": "json",
+          "schema": "admin-api.schema.json#/$defs/set_user_active_response"
+        }
+      },
+      "list_oidc_providers": {
+        "method": "GET",
+        "path": "/provisioning/oidc-providers",
+        "authorization": "system_admin",
+        "request_schema": "admin-api.schema.json#/$defs/list_oidc_providers_request",
+        "response_schema": "admin-api.schema.json#/$defs/list_oidc_providers_response",
+        "request_body": {
+          "kind": "none",
+          "input": "query_and_path"
+        },
+        "response_body": {
+          "kind": "json",
+          "schema": "admin-api.schema.json#/$defs/list_oidc_providers_response"
+        }
+      },
+      "upsert_oidc_provider": {
+        "method": "POST",
+        "path": "/provisioning/oidc-providers",
+        "authorization": "system_admin",
+        "link_policy": "Complete optional link_policy/link_domains/authoritative update; explicit acknowledge_link_policy_review. Omission preserves policy and persistent review warning.",
+        "request_schema": "admin-api.schema.json#/$defs/upsert_oidc_provider_request",
+        "response_schema": "admin-api.schema.json#/$defs/upsert_oidc_provider_response",
+        "request_body": {
+          "kind": "json",
+          "schema": "admin-api.schema.json#/$defs/upsert_oidc_provider_request"
+        },
+        "response_body": {
+          "kind": "json",
+          "schema": "admin-api.schema.json#/$defs/upsert_oidc_provider_response"
+        }
+      },
+      "set_oidc_provider_enabled": {
+        "method": "POST",
+        "path": "/provisioning/oidc-providers/{name}/enabled",
+        "authorization": "system_admin",
+        "request_schema": "admin-api.schema.json#/$defs/set_oidc_provider_enabled_request",
+        "response_schema": "admin-api.schema.json#/$defs/set_oidc_provider_enabled_response",
+        "request_body": {
+          "kind": "json",
+          "schema": "admin-api.schema.json#/$defs/set_oidc_provider_enabled_request"
+        },
+        "response_body": {
+          "kind": "json",
+          "schema": "admin-api.schema.json#/$defs/set_oidc_provider_enabled_response"
+        }
+      },
+      "list_scim_tokens": {
+        "method": "GET",
+        "response_schema": "admin-api.schema.json#/$defs/list_scim_tokens_response",
+        "path": "/provisioning/scim-tokens",
+        "request_schema": "admin-api.schema.json#/$defs/list_scim_tokens_request",
+        "request_body": {
+          "kind": "none",
+          "input": "query_and_path"
+        },
+        "response_body": {
+          "kind": "json",
+          "schema": "admin-api.schema.json#/$defs/list_scim_tokens_response"
+        }
+      },
+      "issue_scim_token": {
+        "method": "POST",
+        "request_schema": "admin-api.schema.json#/$defs/issue_scim_token_request",
+        "response_schema": "admin-api.schema.json#/$defs/issue_scim_token_response",
+        "path": "/provisioning/scim-tokens",
+        "oidc_provider_id": "Optional exact Provider ID chosen from the signed-organization chooser; immutable after token issuance.",
+        "request_body": {
+          "kind": "json",
+          "schema": "admin-api.schema.json#/$defs/issue_scim_token_request"
+        },
+        "response_body": {
+          "kind": "json",
+          "schema": "admin-api.schema.json#/$defs/issue_scim_token_response"
+        }
+      },
+      "revoke_scim_token": {
+        "method": "POST",
+        "path": "/provisioning/scim-tokens/{token_id}/revoke",
+        "request_schema": "admin-api.schema.json#/$defs/revoke_scim_token_request",
+        "response_schema": "admin-api.schema.json#/$defs/revoke_scim_token_response",
+        "request_body": {
+          "kind": "json",
+          "schema": "admin-api.schema.json#/$defs/revoke_scim_token_request"
+        },
+        "response_body": {
+          "kind": "json",
+          "schema": "admin-api.schema.json#/$defs/revoke_scim_token_response"
+        }
+      },
+      "model_catalog": {
+        "method": "GET",
+        "path": "/model-catalog",
+        "request_schema": "admin-api.schema.json#/$defs/model_catalog_request",
+        "response_schema": "admin-api.schema.json#/$defs/model_catalog_response",
+        "request_body": {
+          "kind": "none",
+          "input": "query_and_path"
+        },
+        "response_body": {
+          "kind": "json",
+          "schema": "admin-api.schema.json#/$defs/model_catalog_response"
+        }
+      },
+      "list_model_profiles": {
+        "method": "GET",
+        "path": "/model-profiles",
+        "query": {
+          "optional": ["cursor", "after_id", "limit"],
+          "cursor_response": "next_cursor",
+          "deprecated": ["after_id"]
+        },
+        "request_schema": "admin-api.schema.json#/$defs/list_model_profiles_request",
+        "response_schema": "admin-api.schema.json#/$defs/list_model_profiles_response",
+        "request_body": {
+          "kind": "none",
+          "input": "query_and_path"
+        },
+        "response_body": {
+          "kind": "json",
+          "schema": "admin-api.schema.json#/$defs/list_model_profiles_response"
+        }
+      },
+      "create_model_profile": {
+        "method": "POST",
+        "path": "/model-profiles",
+        "request_schema": "admin-api.schema.json#/$defs/create_model_profile_request",
+        "response_schema": "admin-api.schema.json#/$defs/create_model_profile_response",
+        "request_body": {
+          "kind": "json",
+          "schema": "admin-api.schema.json#/$defs/create_model_profile_request"
+        },
+        "response_body": {
+          "kind": "json",
+          "schema": "admin-api.schema.json#/$defs/create_model_profile_response"
+        }
+      },
+      "get_model_profile": {
+        "method": "GET",
+        "path": "/model-profiles/{model_profile_id}",
+        "request_schema": "admin-api.schema.json#/$defs/get_model_profile_request",
+        "response_schema": "admin-api.schema.json#/$defs/get_model_profile_response",
+        "request_body": {
+          "kind": "none",
+          "input": "query_and_path"
+        },
+        "response_body": {
+          "kind": "json",
+          "schema": "admin-api.schema.json#/$defs/get_model_profile_response"
+        }
+      },
+      "revise_model_profile": {
+        "method": "POST",
+        "path": "/model-profiles/{model_profile_id}/revisions",
+        "request_schema": "admin-api.schema.json#/$defs/revise_model_profile_request",
+        "response_schema": "admin-api.schema.json#/$defs/revise_model_profile_response",
+        "request_body": {
+          "kind": "json",
+          "schema": "admin-api.schema.json#/$defs/revise_model_profile_request"
+        },
+        "response_body": {
+          "kind": "json",
+          "schema": "admin-api.schema.json#/$defs/revise_model_profile_response"
+        }
+      },
+      "get_model_profile_usage": {
+        "method": "GET",
+        "response_schema": "admin-api.schema.json#/$defs/get_model_profile_usage_response",
+        "path": "/model-profiles/{model_profile_id}/usage",
+        "query": "reject_all",
+        "cache_control": "no-store",
+        "request_schema": "admin-api.schema.json#/$defs/get_model_profile_usage_request",
+        "request_body": {
+          "kind": "none",
+          "input": "query_and_path"
+        },
+        "response_body": {
+          "kind": "json",
+          "schema": "admin-api.schema.json#/$defs/get_model_profile_usage_response"
+        }
+      },
+      "list_templates": {
+        "method": "GET",
+        "path": "/templates",
+        "query": {
+          "optional": ["cursor", "after_id", "limit"],
+          "cursor_response": "next_cursor",
+          "deprecated": ["after_id"]
+        },
+        "request_schema": "admin-api.schema.json#/$defs/list_templates_request",
+        "response_schema": "admin-api.schema.json#/$defs/list_templates_response",
+        "request_body": {
+          "kind": "none",
+          "input": "query_and_path"
+        },
+        "response_body": {
+          "kind": "json",
+          "schema": "admin-api.schema.json#/$defs/list_templates_response"
+        }
+      },
+      "create_template": {
+        "method": "POST",
+        "path": "/templates",
+        "request_schema": "admin-api.schema.json#/$defs/create_template_request",
+        "response_schema": "admin-api.schema.json#/$defs/create_template_response",
+        "request_body": {
+          "kind": "json",
+          "schema": "admin-api.schema.json#/$defs/create_template_request"
+        },
+        "response_body": {
+          "kind": "json",
+          "schema": "admin-api.schema.json#/$defs/create_template_response"
+        }
+      },
+      "get_template": {
+        "method": "GET",
+        "path": "/templates/{template_id}",
+        "request_schema": "admin-api.schema.json#/$defs/get_template_request",
+        "response_schema": "admin-api.schema.json#/$defs/get_template_response",
+        "request_body": {
+          "kind": "none",
+          "input": "query_and_path"
+        },
+        "response_body": {
+          "kind": "json",
+          "schema": "admin-api.schema.json#/$defs/get_template_response"
+        }
+      },
+      "get_template_revision": {
+        "method": "GET",
+        "path": "/templates/{template_id}/revisions/{revision}",
+        "request_schema": "admin-api.schema.json#/$defs/get_template_revision_request",
+        "response_schema": "admin-api.schema.json#/$defs/get_template_revision_response",
+        "request_body": {
+          "kind": "none",
+          "input": "query_and_path"
+        },
+        "response_body": {
+          "kind": "json",
+          "schema": "admin-api.schema.json#/$defs/get_template_revision_response"
+        }
+      },
+      "revise_template": {
+        "method": "POST",
+        "path": "/templates/{template_id}/revisions",
+        "request_schema": "admin-api.schema.json#/$defs/revise_template_request",
+        "response_schema": "admin-api.schema.json#/$defs/revise_template_response",
+        "request_body": {
+          "kind": "json",
+          "schema": "admin-api.schema.json#/$defs/revise_template_request"
+        },
+        "response_body": {
+          "kind": "json",
+          "schema": "admin-api.schema.json#/$defs/revise_template_response"
+        }
+      },
+      "list_agents": {
+        "method": "GET",
+        "path": "/agents",
+        "query": {
+          "optional": ["view", "cursor", "limit"],
+          "view": ["current", "deleted"],
+          "cursor_response": "next_cursor"
+        },
+        "request_schema": "admin-api.schema.json#/$defs/list_agents_request",
+        "response_schema": "admin-api.schema.json#/$defs/list_agents_response",
+        "request_body": {
+          "kind": "none",
+          "input": "query_and_path"
+        },
+        "response_body": {
+          "kind": "json",
+          "schema": "admin-api.schema.json#/$defs/list_agents_response"
+        }
+      },
+      "create_agent": {
+        "method": "POST",
+        "path": "/agents",
+        "request_schema": "admin-api.schema.json#/$defs/create_agent_request",
+        "response_schema": "admin-api.schema.json#/$defs/create_agent_response",
+        "request_body": {
+          "kind": "json",
+          "schema": "admin-api.schema.json#/$defs/create_agent_request"
+        },
+        "response_body": {
+          "kind": "json",
+          "schema": "admin-api.schema.json#/$defs/create_agent_response"
+        }
+      },
+      "get_agent_skill_preparation": {
+        "method": "GET",
+        "path": "/agent-skill-preparations/{request_id}",
+        "query": "reject_all",
+        "scope": "trusted_organization",
+        "projection": "bounded_progress_without_target_spec_or_prepared_reference",
+        "cache_control": "no-store",
+        "request_schema": "admin-api.schema.json#/$defs/get_agent_skill_preparation_request",
+        "response_schema": "admin-api.schema.json#/$defs/get_agent_skill_preparation_response",
+        "request_body": {
+          "kind": "none",
+          "input": "query_and_path"
+        },
+        "response_body": {
+          "kind": "json",
+          "schema": "admin-api.schema.json#/$defs/get_agent_skill_preparation_response"
+        }
+      },
+      "get_agent_skill_preparation_by_key": {
+        "method": "GET",
+        "path": "/agent-skill-preparations/by-idempotency-key",
+        "headers": {
+          "required": ["Idempotency-Key"]
+        },
+        "query": "reject_all",
+        "request_identity": "derive_lifecycle_request_id_from_trusted_organization_and_original_key",
+        "cache_control": "no-store",
+        "request_schema": "admin-api.schema.json#/$defs/get_agent_skill_preparation_by_key_request",
+        "response_schema": "admin-api.schema.json#/$defs/get_agent_skill_preparation_by_key_response",
+        "request_body": {
+          "kind": "none",
+          "input": "query_and_path"
+        },
+        "response_body": {
+          "kind": "json",
+          "schema": "admin-api.schema.json#/$defs/get_agent_skill_preparation_by_key_response"
+        }
+      },
+      "get_agent": {
+        "method": "GET",
+        "path": "/agents/{agent_id}",
+        "request_schema": "admin-api.schema.json#/$defs/get_agent_request",
+        "response_schema": "admin-api.schema.json#/$defs/get_agent_response",
+        "request_body": {
+          "kind": "none",
+          "input": "query_and_path"
+        },
+        "response_body": {
+          "kind": "json",
+          "schema": "admin-api.schema.json#/$defs/get_agent_response"
+        }
+      },
+      "get_agent_network_policy": {
+        "method": "GET",
+        "path": "/agents/{agent_id}/network-policy",
+        "request_schema": "admin-api.schema.json#/$defs/get_agent_network_policy_request",
+        "response_schema": "admin-api.schema.json#/$defs/get_agent_network_policy_response",
+        "request_body": {
+          "kind": "none",
+          "input": "query_and_path"
+        },
+        "response_body": {
+          "kind": "json",
+          "schema": "admin-api.schema.json#/$defs/get_agent_network_policy_response"
+        }
+      },
+      "set_agent_network_policy": {
+        "method": "PUT",
+        "path": "/agents/{agent_id}/network-policy",
+        "headers": {
+          "required": ["Idempotency-Key", "X-Antnest-Expected-Principal"]
+        },
+        "request_schema": "admin-api.schema.json#/$defs/set_agent_network_policy_request",
+        "response_schema": "admin-api.schema.json#/$defs/set_agent_network_policy_response",
+        "request_body": {
+          "kind": "json",
+          "schema": "admin-api.schema.json#/$defs/set_agent_network_policy_request"
+        },
+        "response_body": {
+          "kind": "json",
+          "schema": "admin-api.schema.json#/$defs/set_agent_network_policy_response"
+        }
+      },
+      "get_model_call_policy": {
+        "method": "GET",
+        "path": "/model-call-policy",
+        "response": "model-call-policy.schema.json#/$defs/model_call_policy",
+        "request_schema": "admin-api.schema.json#/$defs/get_model_call_policy_request",
+        "response_schema": "admin-api.schema.json#/$defs/get_model_call_policy_response",
+        "request_body": {
+          "kind": "none",
+          "input": "query_and_path"
+        },
+        "response_body": {
+          "kind": "json",
+          "schema": "admin-api.schema.json#/$defs/get_model_call_policy_response"
+        }
+      },
+      "set_model_call_policy": {
+        "method": "PUT",
+        "path": "/model-call-policy",
+        "requires": ["Idempotency-Key"],
+        "request": "model-call-policy.schema.json#/$defs/set_model_call_policy_request",
+        "response": "model-call-policy.schema.json#/$defs/model_call_policy",
+        "request_schema": "admin-api.schema.json#/$defs/set_model_call_policy_request",
+        "response_schema": "admin-api.schema.json#/$defs/set_model_call_policy_response",
+        "request_body": {
+          "kind": "json",
+          "schema": "admin-api.schema.json#/$defs/set_model_call_policy_request"
+        },
+        "response_body": {
+          "kind": "json",
+          "schema": "admin-api.schema.json#/$defs/set_model_call_policy_response"
+        }
+      },
+      "rebuild_agent": {
+        "method": "POST",
+        "path": "/agents/{agent_id}/rebuild",
+        "recovery_request_schema": "runtime-recovery.schema.json#/$defs/rebuild_request",
+        "recovery_idempotency_key": "projected_rebuild_request_id_forwarded_unchanged",
+        "request_schema": "admin-api.schema.json#/$defs/rebuild_agent_request",
+        "response_schema": "admin-api.schema.json#/$defs/rebuild_agent_response",
+        "request_body": {
+          "kind": "json",
+          "schema": "admin-api.schema.json#/$defs/rebuild_agent_request"
+        },
+        "response_body": {
+          "kind": "json",
+          "schema": "admin-api.schema.json#/$defs/rebuild_agent_response"
+        }
+      },
+      "disable_agent": {
+        "method": "POST",
+        "path": "/agents/{agent_id}/disable",
+        "request_schema": "admin-api.schema.json#/$defs/disable_agent_request",
+        "response_schema": "admin-api.schema.json#/$defs/disable_agent_response",
+        "request_body": {
+          "kind": "json",
+          "schema": "admin-api.schema.json#/$defs/disable_agent_request"
+        },
+        "response_body": {
+          "kind": "json",
+          "schema": "admin-api.schema.json#/$defs/disable_agent_response"
+        }
+      },
+      "enable_agent": {
+        "method": "POST",
+        "path": "/agents/{agent_id}/enable",
+        "request_schema": "admin-api.schema.json#/$defs/enable_agent_request",
+        "response_schema": "admin-api.schema.json#/$defs/enable_agent_response",
+        "request_body": {
+          "kind": "json",
+          "schema": "admin-api.schema.json#/$defs/enable_agent_request"
+        },
+        "response_body": {
+          "kind": "json",
+          "schema": "admin-api.schema.json#/$defs/enable_agent_response"
+        }
+      },
+      "delete_agent": {
+        "method": "POST",
+        "path": "/agents/{agent_id}/delete",
+        "request_schema": "admin-api.schema.json#/$defs/delete_agent_request",
+        "response_schema": "admin-api.schema.json#/$defs/delete_agent_response",
+        "request_body": {
+          "kind": "json",
+          "schema": "admin-api.schema.json#/$defs/delete_agent_request"
+        },
+        "response_body": {
+          "kind": "json",
+          "schema": "admin-api.schema.json#/$defs/delete_agent_response"
+        }
+      },
+      "get_operation": {
+        "method": "GET",
+        "path": "/operations/{request_id}",
+        "request_schema": "admin-api.schema.json#/$defs/get_operation_request",
+        "response_schema": "admin-api.schema.json#/$defs/get_operation_response",
+        "request_body": {
+          "kind": "none",
+          "input": "query_and_path"
+        },
+        "response_body": {
+          "kind": "json",
+          "schema": "admin-api.schema.json#/$defs/get_operation_response"
+        }
+      },
+      "list_agent_events": {
+        "method": "GET",
+        "path": "/agents/{agent_id}/events",
+        "request_schema": "admin-api.schema.json#/$defs/list_agent_events_request",
+        "response_schema": "admin-api.schema.json#/$defs/list_agent_events_response",
+        "request_body": {
+          "kind": "none",
+          "input": "query_and_path"
+        },
+        "response_body": {
+          "kind": "json",
+          "schema": "admin-api.schema.json#/$defs/list_agent_events_response"
+        },
+        "query": {
+          "optional": ["after_sequence", "limit"]
+        }
+      },
+      "watch_agent_events": {
+        "method": "GET",
+        "path": "/agents/{agent_id}/events/watch",
+        "request_schema": "admin-api.schema.json#/$defs/watch_agent_events_request",
+        "response_schema": "admin-api.schema.json#/$defs/watch_agent_events_response",
+        "request_body": {
+          "kind": "none",
+          "input": "query_and_path"
+        },
+        "response_body": {
+          "kind": "event_stream",
+          "content_type": "text/event-stream",
+          "event": "agent_event",
+          "event_id": "global_sequence",
+          "data": "admin-api.schema.json#/$defs/watch_agent_events_response"
+        },
+        "query": {
+          "optional": ["after_sequence"]
+        },
+        "headers": {
+          "optional": ["Last-Event-ID"]
+        }
+      },
+      "list_provider_connections": {
+        "method": "GET",
+        "path": "/provider-connections",
+        "query": {
+          "optional": ["cursor", "after_id", "limit"],
+          "cursor_response": "next_cursor",
+          "deprecated": ["after_id"]
+        },
+        "request_schema": "admin-api.schema.json#/$defs/list_provider_connections_request",
+        "response_schema": "admin-api.schema.json#/$defs/list_provider_connections_response",
+        "request_body": {
+          "kind": "none",
+          "input": "query_and_path"
+        },
+        "response_body": {
+          "kind": "json",
+          "schema": "admin-api.schema.json#/$defs/list_provider_connections_response"
+        }
+      },
+      "discover_draft_models": {
+        "method": "POST",
+        "path": "/provider-models/discovery",
+        "request_schema": "admin-api.schema.json#/$defs/discover_draft_models_request",
+        "response_schema": "admin-api.schema.json#/$defs/discover_draft_models_response",
+        "request_body": {
+          "kind": "json",
+          "schema": "admin-api.schema.json#/$defs/discover_draft_models_request"
+        },
+        "response_body": {
+          "kind": "json",
+          "schema": "admin-api.schema.json#/$defs/discover_draft_models_response"
+        }
+      },
+      "discover_provider_models": {
+        "method": "GET",
+        "path": "/provider-connections/{connection_id}/models/discovery",
+        "request_schema": "admin-api.schema.json#/$defs/discover_provider_models_request",
+        "response_schema": "admin-api.schema.json#/$defs/discover_provider_models_response",
+        "request_body": {
+          "kind": "none",
+          "input": "query_and_path"
+        },
+        "response_body": {
+          "kind": "json",
+          "schema": "admin-api.schema.json#/$defs/discover_provider_models_response"
+        }
+      },
+      "create_provider_connection": {
+        "method": "POST",
+        "path": "/provider-connections",
+        "request_schema": "admin-api.schema.json#/$defs/create_provider_connection_request",
+        "response_schema": "admin-api.schema.json#/$defs/create_provider_connection_response",
+        "request_body": {
+          "kind": "json",
+          "schema": "admin-api.schema.json#/$defs/create_provider_connection_request"
+        },
+        "response_body": {
+          "kind": "json",
+          "schema": "admin-api.schema.json#/$defs/create_provider_connection_response"
+        }
+      },
+      "get_provider_connection": {
+        "method": "GET",
+        "path": "/provider-connections/{connection_id}",
+        "request_schema": "admin-api.schema.json#/$defs/get_provider_connection_request",
+        "response_schema": "admin-api.schema.json#/$defs/get_provider_connection_response",
+        "request_body": {
+          "kind": "none",
+          "input": "query_and_path"
+        },
+        "response_body": {
+          "kind": "json",
+          "schema": "admin-api.schema.json#/$defs/get_provider_connection_response"
+        }
+      },
+      "rotate_provider_credential": {
+        "method": "POST",
+        "path": "/provider-connections/{connection_id}/credentials",
+        "request_schema": "admin-api.schema.json#/$defs/rotate_provider_credential_request",
+        "response_schema": "admin-api.schema.json#/$defs/rotate_provider_credential_response",
+        "request_body": {
+          "kind": "json",
+          "schema": "admin-api.schema.json#/$defs/rotate_provider_credential_request"
+        },
+        "response_body": {
+          "kind": "json",
+          "schema": "admin-api.schema.json#/$defs/rotate_provider_credential_response"
+        }
+      },
+      "list_external_identity_providers": {
+        "method": "GET",
+        "path": "/directory/identity-providers",
+        "scope": "signed_organization",
+        "authorization": "organization_admin",
+        "cache": "no-store",
+        "response_schema": "admin-api.schema.json#/$defs/list_external_identity_providers_response",
+        "query_schema": "oidc-linking.schema.json#/$defs/list_query",
+        "request_schema": "admin-api.schema.json#/$defs/list_external_identity_providers_request",
+        "request_body": {
+          "kind": "none",
+          "input": "query_and_path"
+        },
+        "response_body": {
+          "kind": "json",
+          "schema": "admin-api.schema.json#/$defs/list_external_identity_providers_response"
+        },
+        "query": {
+          "optional": ["cursor", "limit"],
+          "cursor_response": "next_cursor"
+        }
+      },
+      "list_external_identities": {
+        "method": "GET",
+        "path": "/directory/memberships/{membership_id}/external-identities",
+        "scope": "signed_organization",
+        "authorization": "organization_admin",
+        "cache": "no-store",
+        "response_schema": "admin-api.schema.json#/$defs/list_external_identities_response",
+        "query_schema": "oidc-linking.schema.json#/$defs/list_query",
+        "request_schema": "admin-api.schema.json#/$defs/list_external_identities_request",
+        "request_body": {
+          "kind": "none",
+          "input": "query_and_path"
+        },
+        "response_body": {
+          "kind": "json",
+          "schema": "admin-api.schema.json#/$defs/list_external_identities_response"
+        },
+        "query": {
+          "optional": ["cursor", "limit"],
+          "cursor_response": "next_cursor"
+        }
+      },
+      "bind_external_identity": {
+        "method": "POST",
+        "path": "/directory/memberships/{membership_id}/external-identities",
+        "scope": "signed_organization",
+        "authorization": "organization_admin",
+        "cache": "no-store",
+        "response_schema": "admin-api.schema.json#/$defs/bind_external_identity_response",
+        "request_schema": "admin-api.schema.json#/$defs/bind_external_identity_request",
+        "requires": ["Idempotency-Key"],
+        "error_status_by_code": {
+          "external_identity_conflict": 409,
+          "external_identity_restore_required": 409,
+          "not_found": 404
+        },
+        "request_body": {
+          "kind": "json",
+          "schema": "admin-api.schema.json#/$defs/bind_external_identity_request"
+        },
+        "response_body": {
+          "kind": "json",
+          "schema": "admin-api.schema.json#/$defs/bind_external_identity_response"
+        }
+      },
+      "unbind_external_identity": {
+        "method": "DELETE",
+        "path": "/directory/memberships/{membership_id}/external-identities/{binding_id}",
+        "scope": "signed_organization",
+        "authorization": "organization_admin",
+        "cache": "no-store",
+        "response_schema": "admin-api.schema.json#/$defs/unbind_external_identity_response",
+        "request_schema": "admin-api.schema.json#/$defs/unbind_external_identity_request",
+        "requires": ["Idempotency-Key"],
+        "error_status_by_code": {
+          "external_identity_last_method": 409,
+          "not_found": 404
+        },
+        "request_body": {
+          "kind": "json",
+          "schema": "admin-api.schema.json#/$defs/unbind_external_identity_request"
+        },
+        "response_body": {
+          "kind": "json",
+          "schema": "admin-api.schema.json#/$defs/unbind_external_identity_response"
+        }
+      },
+      "directory_members": {
+        "method": "GET",
+        "path": "/directory/members",
+        "query": {
+          "optional": ["cursor", "limit", "q", "role", "active", "source"],
+          "cursor_response": "next_cursor"
+        },
+        "request_schema": "admin-api.schema.json#/$defs/directory_members_request",
+        "response_schema": "admin-api.schema.json#/$defs/directory_members_response",
+        "request_body": {
+          "kind": "none",
+          "input": "query_and_path"
+        },
+        "response_body": {
+          "kind": "json",
+          "schema": "admin-api.schema.json#/$defs/directory_members_response"
+        }
+      },
+      "directory_groups": {
+        "method": "GET",
+        "path": "/directory/groups",
+        "query": {
+          "optional": ["cursor", "limit", "q", "active", "source"],
+          "cursor_response": "next_cursor"
+        },
+        "request_schema": "admin-api.schema.json#/$defs/directory_groups_request",
+        "response_schema": "admin-api.schema.json#/$defs/directory_groups_response",
+        "request_body": {
+          "kind": "none",
+          "input": "query_and_path"
+        },
+        "response_body": {
+          "kind": "json",
+          "schema": "admin-api.schema.json#/$defs/directory_groups_response"
+        }
+      },
+      "cancel_lifecycle_operation": {
+        "method": "POST",
+        "path": "/agents/{agent_id}/lifecycle-operation/cancel",
+        "request_schema": "admin-api.schema.json#/$defs/cancel_lifecycle_operation_request",
+        "response_schema": "admin-api.schema.json#/$defs/cancel_lifecycle_operation_response",
+        "request_body": {
+          "kind": "json",
+          "schema": "admin-api.schema.json#/$defs/cancel_lifecycle_operation_request"
+        },
+        "response_body": {
+          "kind": "json",
+          "schema": "admin-api.schema.json#/$defs/cancel_lifecycle_operation_response"
+        }
+      },
+      "clear_lifecycle_quarantine": {
+        "method": "POST",
+        "path": "/agents/{agent_id}/lifecycle-quarantine/clear",
+        "request_schema": "admin-api.schema.json#/$defs/clear_lifecycle_quarantine_request",
+        "response_schema": "admin-api.schema.json#/$defs/clear_lifecycle_quarantine_response",
+        "request_body": {
+          "kind": "json",
+          "schema": "admin-api.schema.json#/$defs/clear_lifecycle_quarantine_request"
+        },
+        "response_body": {
+          "kind": "json",
+          "schema": "admin-api.schema.json#/$defs/clear_lifecycle_quarantine_response"
+        }
+      }
+    },
+    "dependencies": {
+      "identity": [
+        "bind_external_identity",
+        "create_local_user",
+        "get_current_account",
+        "issue_scim_token",
+        "list_directory",
+        "list_external_identities",
+        "list_external_identity_providers",
+        "list_groups",
+        "list_members",
+        "list_oidc_providers",
+        "list_scim_tokens",
+        "list_user_sessions",
+        "revoke_scim_token",
+        "revoke_user_sessions",
+        "set_oidc_provider_enabled",
+        "set_user_active",
+        "unbind_external_identity",
+        "update_membership",
+        "upsert_oidc_provider"
+      ],
+      "agent_controller": [
+        "catalog_availability",
+        "execution_synchronization",
+        "provider_connections",
+        "model_profiles",
+        "agent_templates",
+        "agents",
+        "agent_network_policy",
+        "agent_skill_preparation",
+        "operations",
+        "events"
+      ],
+      "agent_acp": [
+        "list_execution_audits",
+        "get_execution_audit",
+        "list_execution_events"
+      ],
+      "skill_registry": [
+        "search_skill_sources",
+        "preview_skill_source",
+        "promote_skill_source",
+        "list_skills",
+        "publish_skill",
+        "list_skill_versions",
+        "publish_skill_version",
+        "download_skill_version"
+      ]
+    },
+    "response_policy": {
+      "agent_readiness": {
+        "schema": "agent-readiness.schema.json",
+        "source": "controller_current_readiness",
+        "missing": "unknown",
+        "runtime_health_fallback": false
+      },
+      "catalog_availability": {
+        "authority": "agent_controller",
+        "authorization": "verified_organization_scoped_administrator",
+        "request": ["expected_enabled", "enabled"],
+        "required_header": "Idempotency-Key",
+        "response": ["resource_id", "enabled", "updated_at"],
+        "references": "preserve_controller_conflict_metadata_without_inference_or_cascade",
+        "receipt": "historical_command_result_read_current_resource_after_success",
+        "cache_control": "no-store"
+      },
+      "execution_audit": {
+        "authority": "agent_acp_service",
+        "authorization": "verified_organization_scoped_administrator",
+        "identity": "verified_workload_and_unchanged_signed_caller_context_no_owner_impersonation",
+        "controller_preflight": false,
+        "read_side_effects": "none_no_session_load_or_activation",
+        "query_identity": "reject",
+        "default_limit": 50,
+        "maximum_limit": 100,
+        "timestamps": "preserve_postgresql_microseconds",
+        "event_streams": "independent_execution_and_permissions_cursors",
+        "projection": "explicit_browser_fields_with_input_snapshot_tool_and_permission_content",
+        "cache_control": "no-store"
+      },
+      "execution_synchronization": {
+        "authority": "agent_controller",
+        "organization": "verified_principal_only_not_exposed_in_response",
+        "query": "reject_all",
+        "missing_record": null,
+        "meaning": "historical_configuration_acknowledgement_not_live_health_or_execution_state",
+        "cache_control": "no-store"
+      },
+      "runtime_barrier_recovery": {
+        "authorization": "verified_organization_scoped_administrator",
+        "projection": "runtime-recovery.schema.json#/$defs/runtime_recovery",
+        "authority": "agent_controller_validates_original_tuple_receipt_target_and_cooldown",
+        "target": "current_configured_template_revision",
+        "ordinary_rebuild": "unchanged_lifecycle_key_hash_and_template_selection",
+        "unknown_response": "query_original_request_before_explicit_same_tuple_retry",
+        "progress": "existing_operation_reads_and_event_subscription_no_automatic_mutation",
+        "cache_control": "no-store"
+      },
+      "runtime_recovery": {
+        "historical_fields": [
+          "agent_spec_revision",
+          "last_successful_execution_revision"
+        ],
+        "history_is_executable_binding": false,
+        "unavailable_rebuild": "enabled_with_retained_history_no_binding_no_quarantine_or_active_operation",
+        "admission_authority": "agent_controller_validates_identity_lineage_and_locked_state",
+        "initial_failure_without_history": "delete_only",
+        "mutation": "existing_explicit_rebuild_with_template_revision",
+        "progress": "existing_operation_reads_and_event_subscription_no_automatic_mutation"
+      },
+      "agent_network_policy": {
+        "authority": "agent_controller_scopes_egress_assignment",
+        "attachment_states": ["open", "closed", "pending"],
+        "attachment_snapshot": "last_confirmed_read_not_live_health_or_execution",
+        "input": ["action", "spec", "expected_version"],
+        "deprecated_input": ["expected_resource_version"],
+        "input_exclusivity": "action_or_spec_never_both",
+        "action": ["allow_all", "deny_all"],
+        "spec": "../agent-controller/control-api.schema.json#/$defs/network_policy_spec",
+        "controller_mapping": "action_to_builtin_reference_tuple_or_spec_to_controller_spec_only",
+        "query": "reject_all",
+        "expected_principal": "uri_encoded_organization_user_pair_compared_with_trusted_principal_not_used_as_authority",
+        "read": [
+          "agent_id",
+          "action",
+          "spec",
+          "resource_version",
+          "attachment"
+        ],
+        "read_projection": "action_for_v1_or_full_spec_for_v2_in_place_of_action_never_both",
+        "excluded": [
+          "policy_id",
+          "revision",
+          "digest",
+          "organization_id",
+          "actor",
+          "tunnel_ipv4",
+          "runtime_metadata"
+        ],
+        "write": ["agent_id", "action", "spec", "resource_version"],
+        "write_ack": "same_action_or_spec_projection_never_both",
+        "mutation": "single_cas_no_redirect_retry_or_post_write_read",
+        "browser_recovery": "local_storage_per_account_agent_request_explicit_original_tuple_retry",
+        "side_effects": "no_agent_revision_runtime_rebuild_or_attachment_open",
+        "spec_only_v2_status": "implemented"
+      },
+      "model_pricing": {
+        "owner": "agent_controller_current_model",
+        "schema": "../agent-controller/control-api.schema.json#/$defs/model_pricing",
+        "input": "optional_model_pricing_forwarded_unchanged_for_owner_validation",
+        "projection": "explicit_price_field_allowlist_without_internal_metadata",
+        "history": "historical_usage_comes_from_agent_and_run_snapshots_not_model_history",
+        "unknown": "omitted_not_zero",
+        "units": "USD_per_million_tokens",
+        "editing": "preserve_stored_rates_unless_explicitly_changed_or_reset",
+        "apply": "update_current_model_not_runtime_rebuild"
+      },
+      "model_input_capabilities": {
+        "owner": "agent_controller_current_model",
+        "fields": ["supports_images", "supports_audio", "supports_pdf"],
+        "optional_false_by_default": ["supports_audio", "supports_pdf"],
+        "known_models": "editable_console_defaults_stored_configuration_takes_precedence",
+        "custom_models": "administrator_configured_independent_flags",
+        "input": "model_raw_json_on_create_and_revise_for_owner_validation",
+        "projection": "explicit_model_field_allowlist_including_native_flags",
+        "history": "historical_usage_comes_from_agent_and_run_snapshots_not_model_history"
+      },
+      "managed_mcp": {
+        "configuration_owner": "agent_controller_immutable_template_runtime",
+        "input": "runtime.mcp_servers_raw_json_on_create_and_revise",
+        "schema": "../runtime/managed-mcp.schema.json#/$defs/servers_write",
+        "read_schema": "../runtime/managed-mcp.schema.json#/$defs/servers_read",
+        "secret_env": "write_only_value_or_keep_true_read_set_and_fingerprint_omit_to_clear",
+        "clear": "explicit_empty_array_in_new_revision",
+        "full_configuration_except_secret_values": [
+          "get_template",
+          "get_template_revision",
+          "create_template",
+          "revise_template"
+        ],
+        "inventory_and_overview": "omit_process_configuration",
+        "agent_configuration": ["id", "command"],
+        "environment_values": "administrator_detail_only_visually_masked_not_encrypted",
+        "cache_control": "no-store",
+        "browser_value_persistence": "forbidden",
+        "apply": "explicit_agent_rebuild"
+      },
+      "template_skills": {
+        "configuration_owner": "agent_controller_immutable_template_revision",
+        "write": "skill_refs_array_of_skill_id_and_positive_fixed_version_create_and_revise",
+        "clear": "explicit_empty_array_in_new_revision",
+        "read": "frozen_skill_metadata_and_skill_set_digest_from_controller",
+        "inventory": "frozen_skill_identity_without_artifact_bytes",
+        "apply": "explicit_agent_rebuild"
+      },
+      "catalog_creation": {
+        "browser_input": "editable_form_values_only",
+        "generated_resource_keys": ["profile_key", "template_key"],
+        "key_authority": "bff_derives_from_organization_scoped_idempotency_request_id",
+        "browser_generated_keys": "rejected",
+        "ambiguous_retry": "same_body_same_idempotency_key_same_resource_key",
+        "successful_new_action": "fresh_idempotency_key_and_resource_key",
+        "owner": "agent_controller_catalog_request_ledger"
+      },
+      "projection": "explicit_browser_allowlist",
+      "forbidden_fields": [
+        "credential_ref",
+        "credential_version",
+        "agent_access_subject",
+        "access_revision",
+        "runtime_execution_id",
+        "mcp_endpoint",
+        "organization_id",
+        "profile_key",
+        "template_key",
+        "client_secret",
+        "token_hash",
+        "scim_external_id",
+        "scim_user_name"
+      ],
+      "one_time_credentials": {
+        "routes": ["issue_scim_token"],
+        "cache_control": "no-store",
+        "persistence": "forbidden",
+        "redisclosure": "forbidden"
+      },
+      "resource_identity": {
+        "organization_id": "trusted_scope_only_except_explicit_browser_session_and_external_identity_metadata",
+        "directory_group_id": "read_only_internal_identity_not_projected",
+        "oidc_record_id": "provider_name_is_configuration_command_key_record_id_only_for_external_identity_bindings_provider_chooser_and_scim_pairing",
+        "scim_token_id": "revoke_action_handle_not_presentation_label"
+      },
+      "account_security": {
+        "browser_session_contract": "../identity/browser-sessions.md",
+        "gateway_revision": 24,
+        "identity_revision": 19,
+        "password_owner": "edge_gateway_POST_/api/session/password",
+        "retired_console_password_route": "deny_without_dependency_effect",
+        "profile_fields": [
+          "email",
+          "display_name",
+          "source",
+          "organization_slug",
+          "organization_name"
+        ],
+        "internal_identity_fields": "stripped_by_bff",
+        "local_password_capability": "identity_authoritative",
+        "target_user": "trusted_principal_only",
+        "password_fields": "write_only",
+        "browser_persistence": "forbidden",
+        "retry_intent_persistence": "forbidden",
+        "invalid_current_password": {
+          "status": 400,
+          "code": "invalid_current_password",
+          "session_invalidation": false
+        },
+        "password_401": "invalidate_current_generation_session_including_unknown_or_malformed_response",
+        "password_success": "replace_session_from_gateway_then_validate_current_cookie_generation",
+        "self_session_controls": "gateway_cross_organization_scope",
+        "organization_sessions": {
+          "actor_and_organization": "verified_cct_only_including_system_admin",
+          "target_user": "path_member_of_current_organization_validated_by_identity",
+          "scope": "organization",
+          "revoke_mode": "all",
+          "query": "strict_limit_1_to_100_and_optional_public_after_id",
+          "projection": [
+            "id",
+            "organization_id",
+            "organization_slug",
+            "organization_name",
+            "created_at",
+            "last_active_at",
+            "idle_expires_at",
+            "expires_at",
+            "user_agent_hint",
+            "current"
+          ],
+          "user_agent_hint": "plain_text_at_most_256_unicode_characters",
+          "revocation_response": ["revoked_count", "current_revoked"],
+          "cookie_writes": "forbidden",
+          "cache_control": "no-store"
+        }
+      },
+      "lists": {
+        "default_limit": 100,
+        "maximum_limit": 100,
+        "unknown_or_repeated_query": "reject",
+        "organization_scope": "trusted_principal_only",
+        "deleted_agents": "authority_filtered_explicit_view",
+        "dependent_selectors": "incremental_owner_cursor"
+      },
+      "overview": {
+        "deadline": "single_bounded_deadline",
+        "fanout": "concurrent_buffered",
+        "required_sections": ["agents"],
+        "optional_sections": ["directory", "model_profiles", "templates"],
+        "section_status": ["available", "unavailable"],
+        "section_error_message": "safe_resource_named_without_upstream_detail",
+        "section_error_fields": ["status", "code", "message"],
+        "required_failure": "safe_http_status_preserved_transport_503_invalid_response_502",
+        "browser_recovery": {
+          "terminal_status": [403, 404, 410],
+          "refresh_action": "only_for_transient_aggregate_or_section_failure",
+          "terminal_aggregate": "no_refresh_from_older_degraded_snapshot",
+          "pending": "preserve_loaded_snapshot_disable_duplicate_refresh",
+          "unmount": "cancel_read_ignore_late_completion"
+        },
+        "catalog_and_agent_page_limit": 200,
+        "continuation_metadata": "preserved",
+        "count_with_continuation": "lower_bound_not_total",
+        "active_member_metric": "user_active_and_membership_active"
+      },
+      "resource_page_reads": {
+        "overview_usage": "dashboard_only",
+        "model_page": [
+          "provider_connections",
+          "model_profiles",
+          "model_catalog"
+        ],
+        "template_page": ["templates", "model_profiles", "template_defaults"],
+        "agent_page": ["agents", "agent_templates", "directory"],
+        "agent_detail": [
+          "agent",
+          "lifecycle_events",
+          "active_operation",
+          "agent_templates",
+          "directory",
+          "agent_network_policy"
+        ],
+        "primary_detail_failure": {
+          "not_found_status": [404, 410],
+          "forbidden_status": [403],
+          "transient_status": "all_other_failures",
+          "not_found_and_forbidden_action": "return_to_inventory_without_retry",
+          "transient_action": "retry_primary_read",
+          "server_message": "preserved"
+        },
+        "primary_inventory_failure": {
+          "not_found_status": [404, 410],
+          "forbidden_status": [403],
+          "transient_status": "all_other_failures",
+          "terminal_action": "return_to_overview_without_retry",
+          "transient_action": "retry_primary_read",
+          "loaded_snapshot": "preserved_during_later_refresh_failure"
+        },
+        "deleted_agent_inventory_failure": "independent_from_current_inventory_retry_only_when_transient",
+        "dependency_failure": "page_local_preserve_primary_inventory",
+        "dependency_failure_semantics": {
+          "capture": "preserve_structured_resource_failure",
+          "terminal_status": [403, 404, 410],
+          "terminal_action": "show_failure_without_retry",
+          "transient_action": "section_local_retry",
+          "catalog_selector_snapshot": "preserve_loaded_eligible_options",
+          "catalog_selector_pagination": "preserve_cursor_and_failure_semantics"
+        },
+        "model_catalog_failure": "connections_readable_credentials_independent_model_changes_disabled_until_retry",
+        "agent_detail_failure_semantics": {
+          "resources": [
+            "agent_refresh",
+            "owner_directory",
+            "lifecycle_events",
+            "active_operation"
+          ],
+          "capture": "preserve_structured_resource_failure",
+          "terminal_status": [403, 404, 410],
+          "terminal_action": "preserve_loaded_evidence_without_retry",
+          "transient_action": "resource_local_retry",
+          "event_replay_terminal": "stop_automatic_retry",
+          "operation_request_identity": "preserved",
+          "operation_terminal": "do_not_refetch_same_request_automatically",
+          "agent_refresh_command_policy": "preserve_projection_close_commands_until_fresh_authority"
+        },
+        "agent_event_failure": "agent_readable_loaded_history_preserved_retry_only_when_transient",
+        "agent_operation_failure": "agent_readable_active_request_gates_actions_retry_only_when_transient_stale_operation_hidden",
+        "agent_stream_recovery": {
+          "event_replay": "owns_cursor_and_stream_reconnect",
+          "agent_refresh": "independent_primary_state",
+          "failure_partition": "each_resource_commits_and_retries_independently",
+          "event_retry": "does_not_repeat_agent_refresh",
+          "agent_snapshot_ordering": "aggregate_sequence_monotonic_not_request_completion_order",
+          "operation_reconciliation": "active_agent_request_then_latest_replayed_event"
+        },
+        "catalog_detail": {
+          "primary_read": "current_model_or_requested_template_revision",
+          "historical_current_head_read": "omitted",
+          "referenced_resource_failure": "primary_detail_readable_section_local_retry",
+          "template_model_reference": "model_profile_id_current_head_not_pinned_revision",
+          "template_model_write": "stable_model_profile_id_only_no_bff_revision_resolution",
+          "model_and_agent_build_history": "current_model_page_separate_from_immutable_agent_build_snapshot"
+        }
+      },
+      "agent_owner_presentation": {
+        "creation_choices": "user_active_and_membership_active",
+        "existing_agent_lookup": "all_directory_records_including_inactive",
+        "inactive_owner": "retained_human_identity_not_selectable"
+      },
+      "provisioning": {
+        "independent_reads": ["oidc_providers", "scim_tokens"],
+        "read_failure": "section_local_retry_only_when_transient",
+        "command_failure": "operation_local_preserve_input",
+        "credential_copy_failure": "visible_and_retryable",
+        "protocol_endpoints": {
+          "authority": "same_origin_edge",
+          "oidc_callback_path": "/protocol/oidc/callback",
+          "scim_base_path": "/scim/v2",
+          "discard_browser_query_and_fragment": true,
+          "copy_failure": "visible_and_retryable"
+        }
+      },
+      "provider_connections": {
+        "credential": "typed_write_only_api_key",
+        "credential_version": "opaque_cas_precondition_only_on_connection_projection",
+        "create": "connection_credential_and_explicit_initial_models_atomic",
+        "profile_keys": "bff_scoped_request_id_plus_model_position",
+        "rotation": "expected_version_cas_no_model_revision",
+        "model_edit": "no_endpoint_or_credential_api_model_id_immutable",
+        "supported": "deepseek_and_openrouter_api_key",
+        "catalogue_owner": "admin_console"
+      }
+    }
+  }
+}

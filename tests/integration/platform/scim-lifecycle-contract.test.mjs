@@ -173,8 +173,8 @@ test("complete issuance and inventory responses require lifecycle metadata and c
 test("active Identity catalog advertises SCIM versions under the shared lifecycle policy", () => {
   const document = read("identity/identity-contract.json");
   const value = policy();
-  assert.equal(document.revision, value.activation.identity_revision);
-  assert.equal(document.revision, 18);
+  assert.equal(value.activation.identity_revision, 18);
+  assert.equal(document.revision, 19);
   assert.equal(document.protocols.scim.unsupported.includes("etag"), false);
   assert.deepEqual(document.protocols.scim.versioning, {
     policy: "scim-lifecycle-policy.json",
