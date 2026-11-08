@@ -1,6 +1,6 @@
 {
   "contract": "antnest.identity",
-  "revision": 19,
+  "revision": 20,
   "password_verification_policy": "password-verification-policy.json",
   "scim_lifecycle_policy": "scim-lifecycle-policy.json",
   "transport": "json-over-http",
@@ -17,21 +17,30 @@
     "principal_revocation": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["sequence", "user_id", "reason", "occurred_at"],
+      "required": [
+        "sequence",
+        "user_id",
+        "reason",
+        "occurred_at"
+      ],
       "properties": {
         "sequence": {
           "type": "integer",
           "minimum": 1
         },
         "user_id": {
-          "$ref": "#/definitions/id"
+          "$ref": "https://schemas.antnest.dev/common/ids.schema.json#/$defs/userId"
         },
         "organization_id": {
-          "$ref": "#/definitions/id"
+          "$ref": "https://schemas.antnest.dev/common/ids.schema.json#/$defs/organizationId"
         },
         "reason": {
           "type": "string",
-          "enum": ["user_deactivated", "membership_deactivated", "membership_deleted"]
+          "enum": [
+            "user_deactivated",
+            "membership_deactivated",
+            "membership_deleted"
+          ]
         },
         "occurred_at": {
           "$ref": "#/definitions/timestamp"
@@ -49,16 +58,23 @@
             }
           },
           "not": {
-            "required": ["organization_id"]
+            "required": [
+              "organization_id"
+            ]
           }
         },
         {
           "properties": {
             "reason": {
-              "enum": ["membership_deactivated", "membership_deleted"]
+              "enum": [
+                "membership_deactivated",
+                "membership_deleted"
+              ]
             }
           },
-          "required": ["organization_id"]
+          "required": [
+            "organization_id"
+          ]
         }
       ]
     },
@@ -74,26 +90,45 @@
     },
     "organization_role": {
       "type": "string",
-      "enum": ["member", "admin"]
+      "enum": [
+        "member",
+        "admin"
+      ]
     },
     "system_role": {
       "type": "string",
-      "enum": ["user", "admin"]
+      "enum": [
+        "user",
+        "admin"
+      ]
     },
     "source": {
       "type": "string",
-      "enum": ["local", "scim"]
+      "enum": [
+        "local",
+        "scim"
+      ]
     },
     "scim_scope": {
       "type": "string",
-      "enum": ["scim:read", "scim:write"]
+      "enum": [
+        "scim:read",
+        "scim:write"
+      ]
     },
     "organization": {
       "type": "object",
-      "required": ["id", "slug", "name", "active", "created_at", "updated_at"],
+      "required": [
+        "id",
+        "slug",
+        "name",
+        "active",
+        "created_at",
+        "updated_at"
+      ],
       "properties": {
         "id": {
-          "$ref": "#/definitions/id"
+          "$ref": "https://schemas.antnest.dev/common/ids.schema.json#/$defs/organizationId"
         },
         "slug": {
           "type": "string",
@@ -116,10 +151,16 @@
     },
     "user": {
       "type": "object",
-      "required": ["id", "system_role", "active", "created_at", "updated_at"],
+      "required": [
+        "id",
+        "system_role",
+        "active",
+        "created_at",
+        "updated_at"
+      ],
       "properties": {
         "id": {
-          "$ref": "#/definitions/id"
+          "$ref": "https://schemas.antnest.dev/common/ids.schema.json#/$defs/userId"
         },
         "system_role": {
           "$ref": "#/definitions/system_role"
@@ -154,10 +195,10 @@
           "$ref": "#/definitions/id"
         },
         "organization_id": {
-          "$ref": "#/definitions/id"
+          "$ref": "https://schemas.antnest.dev/common/ids.schema.json#/$defs/organizationId"
         },
         "user_id": {
-          "$ref": "#/definitions/id"
+          "$ref": "https://schemas.antnest.dev/common/ids.schema.json#/$defs/userId"
         },
         "email": {
           "type": "string",
@@ -206,7 +247,7 @@
           "$ref": "#/definitions/id"
         },
         "organization_id": {
-          "$ref": "#/definitions/id"
+          "$ref": "https://schemas.antnest.dev/common/ids.schema.json#/$defs/organizationId"
         },
         "display_name": {
           "type": "string",
@@ -231,7 +272,10 @@
     },
     "directory_member": {
       "type": "object",
-      "required": ["user", "membership"],
+      "required": [
+        "user",
+        "membership"
+      ],
       "properties": {
         "user": {
           "$ref": "#/definitions/user"
@@ -255,10 +299,10 @@
       ],
       "properties": {
         "user_id": {
-          "$ref": "#/definitions/id"
+          "$ref": "https://schemas.antnest.dev/common/ids.schema.json#/$defs/userId"
         },
         "organization_id": {
-          "$ref": "#/definitions/id"
+          "$ref": "https://schemas.antnest.dev/common/ids.schema.json#/$defs/organizationId"
         },
         "organization_slug": {
           "type": "string",
@@ -300,10 +344,10 @@
       ],
       "properties": {
         "user_id": {
-          "$ref": "#/definitions/id"
+          "$ref": "https://schemas.antnest.dev/common/ids.schema.json#/$defs/userId"
         },
         "organization_id": {
-          "$ref": "#/definitions/id"
+          "$ref": "https://schemas.antnest.dev/common/ids.schema.json#/$defs/organizationId"
         },
         "organization_slug": {
           "type": "string",
@@ -337,13 +381,18 @@
     },
     "organization_principal_binding": {
       "type": "object",
-      "required": ["user_id", "organization_id", "membership_id", "active"],
+      "required": [
+        "user_id",
+        "organization_id",
+        "membership_id",
+        "active"
+      ],
       "properties": {
         "user_id": {
-          "$ref": "#/definitions/id"
+          "$ref": "https://schemas.antnest.dev/common/ids.schema.json#/$defs/userId"
         },
         "organization_id": {
-          "$ref": "#/definitions/id"
+          "$ref": "https://schemas.antnest.dev/common/ids.schema.json#/$defs/organizationId"
         },
         "membership_id": {
           "$ref": "#/definitions/id"
@@ -372,7 +421,7 @@
           "$ref": "#/definitions/id"
         },
         "organization_id": {
-          "$ref": "#/definitions/id"
+          "$ref": "https://schemas.antnest.dev/common/ids.schema.json#/$defs/organizationId"
         },
         "name": {
           "type": "string",
@@ -424,7 +473,9 @@
             "type": "null"
           }
         },
-        "required": ["issued_by"]
+        "required": [
+          "issued_by"
+        ]
       },
       "then": {
         "properties": {
@@ -463,7 +514,7 @@
           "$ref": "#/definitions/id"
         },
         "organization_id": {
-          "$ref": "#/definitions/id"
+          "$ref": "https://schemas.antnest.dev/common/ids.schema.json#/$defs/organizationId"
         },
         "name": {
           "type": "string",
@@ -505,7 +556,10 @@
         },
         "token_endpoint_auth_method": {
           "type": "string",
-          "enum": ["client_secret_basic", "client_secret_post"]
+          "enum": [
+            "client_secret_basic",
+            "client_secret_post"
+          ]
         },
         "id_token_signing_algs": {
           "type": "array",
@@ -550,7 +604,9 @@
       "allOf": [
         {
           "if": {
-            "required": ["link_policy"],
+            "required": [
+              "link_policy"
+            ],
             "properties": {
               "link_policy": {
                 "const": "verified_email_in_domains"
@@ -576,7 +632,10 @@
     },
     "login_method": {
       "type": "object",
-      "required": ["name", "display_name"],
+      "required": [
+        "name",
+        "display_name"
+      ],
       "properties": {
         "name": {
           "type": "string",
@@ -613,7 +672,7 @@
           "$ref": "#/definitions/id"
         },
         "organization_id": {
-          "$ref": "#/definitions/id"
+          "$ref": "https://schemas.antnest.dev/common/ids.schema.json#/$defs/organizationId"
         },
         "organization_slug": {
           "type": "string",
@@ -649,7 +708,14 @@
     "session_revocation": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["sequence", "token_id", "user_id", "organization_id", "reason", "occurred_at"],
+      "required": [
+        "sequence",
+        "token_id",
+        "user_id",
+        "organization_id",
+        "reason",
+        "occurred_at"
+      ],
       "properties": {
         "sequence": {
           "type": "integer",
@@ -659,10 +725,10 @@
           "$ref": "#/definitions/id"
         },
         "user_id": {
-          "$ref": "#/definitions/id"
+          "$ref": "https://schemas.antnest.dev/common/ids.schema.json#/$defs/userId"
         },
         "organization_id": {
-          "$ref": "#/definitions/id"
+          "$ref": "https://schemas.antnest.dev/common/ids.schema.json#/$defs/organizationId"
         },
         "reason": {
           "type": "string",
@@ -686,7 +752,11 @@
     },
     "oidc_link_policy": {
       "type": "string",
-      "enum": ["none", "verified_email_in_domains", "verified_email"]
+      "enum": [
+        "none",
+        "verified_email_in_domains",
+        "verified_email"
+      ]
     },
     "oidc_link_domain": {
       "type": "string",
@@ -737,7 +807,7 @@
           "pattern": "\\S"
         },
         "organization_id": {
-          "$ref": "#/definitions/id"
+          "$ref": "https://schemas.antnest.dev/common/ids.schema.json#/$defs/organizationId"
         },
         "organization_slug": {
           "type": "string",
@@ -757,7 +827,11 @@
         },
         "method": {
           "type": "string",
-          "enum": ["auto", "admin", "scim"]
+          "enum": [
+            "auto",
+            "admin",
+            "scim"
+          ]
         },
         "provider_enabled": {
           "type": "boolean"
@@ -818,7 +892,7 @@
           "pattern": "\\S"
         },
         "organization_id": {
-          "$ref": "#/definitions/id"
+          "$ref": "https://schemas.antnest.dev/common/ids.schema.json#/$defs/organizationId"
         },
         "organization_slug": {
           "type": "string",
@@ -838,7 +912,11 @@
         },
         "method": {
           "type": "string",
-          "enum": ["auto", "admin", "scim"]
+          "enum": [
+            "auto",
+            "admin",
+            "scim"
+          ]
         },
         "created_at": {
           "$ref": "#/definitions/timestamp"
@@ -848,7 +926,11 @@
     "external_identity_self_list": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["items", "notices", "next_cursor"],
+      "required": [
+        "items",
+        "notices",
+        "next_cursor"
+      ],
       "properties": {
         "items": {
           "type": "array",
@@ -879,7 +961,10 @@
     "external_identity_organization_list": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["items", "next_cursor"],
+      "required": [
+        "items",
+        "next_cursor"
+      ],
       "properties": {
         "items": {
           "type": "array",
@@ -948,7 +1033,9 @@
       "allOf": [
         {
           "if": {
-            "required": ["link_policy"],
+            "required": [
+              "link_policy"
+            ],
             "properties": {
               "link_policy": {
                 "const": "verified_email_in_domains"
@@ -975,7 +1062,13 @@
   },
   "error": {
     "$ref": "../common/error.schema.json",
-    "required": ["code", "category", "message", "retryable", "request_id"],
+    "required": [
+      "code",
+      "category",
+      "message",
+      "retryable",
+      "request_id"
+    ],
     "properties": {
       "category": {
         "type": "string",
@@ -1097,18 +1190,23 @@
       "method": "POST",
       "path": "/resolve-owner-authorization",
       "request": {
-        "required": ["user_id", "organization_id"],
+        "required": [
+          "user_id",
+          "organization_id"
+        ],
         "properties": {
           "user_id": {
-            "$ref": "#/definitions/id"
+            "$ref": "https://schemas.antnest.dev/common/ids.schema.json#/$defs/userId"
           },
           "organization_id": {
-            "$ref": "#/definitions/id"
+            "$ref": "https://schemas.antnest.dev/common/ids.schema.json#/$defs/organizationId"
           }
         }
       },
       "response": {
-        "required": ["authorization"],
+        "required": [
+          "authorization"
+        ],
         "properties": {
           "authorization": {
             "type": "object",
@@ -1122,10 +1220,10 @@
             ],
             "properties": {
               "user_id": {
-                "$ref": "#/definitions/id"
+                "$ref": "https://schemas.antnest.dev/common/ids.schema.json#/$defs/userId"
               },
               "organization_id": {
-                "$ref": "#/definitions/id"
+                "$ref": "https://schemas.antnest.dev/common/ids.schema.json#/$defs/organizationId"
               },
               "membership_id": {
                 "$ref": "#/definitions/id"
@@ -1147,7 +1245,10 @@
       "path": "/list-principal-revocations",
       "request": {
         "additionalProperties": false,
-        "required": ["after_sequence", "limit"],
+        "required": [
+          "after_sequence",
+          "limit"
+        ],
         "properties": {
           "after_sequence": {
             "type": "integer",
@@ -1161,7 +1262,10 @@
         }
       },
       "response": {
-        "required": ["events", "next_sequence"],
+        "required": [
+          "events",
+          "next_sequence"
+        ],
         "properties": {
           "events": {
             "type": "array",
@@ -1194,7 +1298,7 @@
             "$ref": "#/definitions/id"
           },
           "actor_principal_id": {
-            "$ref": "#/definitions/id"
+            "$ref": "https://schemas.antnest.dev/common/ids.schema.json#/$defs/userId"
           },
           "slug": {
             "type": "string",
@@ -1215,7 +1319,9 @@
         }
       },
       "response": {
-        "required": ["organization"],
+        "required": [
+          "organization"
+        ],
         "properties": {
           "organization": {
             "$ref": "#/definitions/organization"
@@ -1241,10 +1347,10 @@
             "$ref": "#/definitions/id"
           },
           "actor_principal_id": {
-            "$ref": "#/definitions/id"
+            "$ref": "https://schemas.antnest.dev/common/ids.schema.json#/$defs/userId"
           },
           "organization_id": {
-            "$ref": "#/definitions/id"
+            "$ref": "https://schemas.antnest.dev/common/ids.schema.json#/$defs/organizationId"
           },
           "email": {
             "type": "string",
@@ -1266,7 +1372,10 @@
         }
       },
       "response": {
-        "required": ["user", "membership"],
+        "required": [
+          "user",
+          "membership"
+        ],
         "properties": {
           "user": {
             "$ref": "#/definitions/user"
@@ -1295,13 +1404,13 @@
             "$ref": "#/definitions/id"
           },
           "actor_principal_id": {
-            "$ref": "#/definitions/id"
+            "$ref": "https://schemas.antnest.dev/common/ids.schema.json#/$defs/userId"
           },
           "organization_id": {
-            "$ref": "#/definitions/id"
+            "$ref": "https://schemas.antnest.dev/common/ids.schema.json#/$defs/organizationId"
           },
           "user_id": {
-            "$ref": "#/definitions/id"
+            "$ref": "https://schemas.antnest.dev/common/ids.schema.json#/$defs/userId"
           },
           "email": {
             "type": "string",
@@ -1317,7 +1426,9 @@
         }
       },
       "response": {
-        "required": ["membership"],
+        "required": [
+          "membership"
+        ],
         "properties": {
           "membership": {
             "$ref": "#/definitions/membership"
@@ -1332,20 +1443,25 @@
       "request": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["actor_principal_id", "organization_id"],
+        "required": [
+          "actor_principal_id",
+          "organization_id"
+        ],
         "properties": {
           "actor_principal_id": {
-            "$ref": "#/definitions/id"
+            "$ref": "https://schemas.antnest.dev/common/ids.schema.json#/$defs/userId"
           },
           "organization_id": {
-            "$ref": "#/definitions/id"
+            "$ref": "https://schemas.antnest.dev/common/ids.schema.json#/$defs/organizationId"
           }
         }
       },
       "response": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["account"],
+        "required": [
+          "account"
+        ],
         "properties": {
           "account": {
             "$ref": "#/definitions/current_account"
@@ -1354,7 +1470,10 @@
       },
       "authorization": {
         "authentication": "workload",
-        "callers": ["edge-gateway", "admin-console"],
+        "callers": [
+          "edge-gateway",
+          "admin-console"
+        ],
         "caller_context": {
           "edge-gateway": "required",
           "admin-console": "required"
@@ -1379,10 +1498,10 @@
             "$ref": "#/definitions/id"
           },
           "actor_principal_id": {
-            "$ref": "#/definitions/id"
+            "$ref": "https://schemas.antnest.dev/common/ids.schema.json#/$defs/userId"
           },
           "user_id": {
-            "$ref": "#/definitions/id"
+            "$ref": "https://schemas.antnest.dev/common/ids.schema.json#/$defs/userId"
           },
           "current_password": {
             "type": "string",
@@ -1437,7 +1556,9 @@
       },
       "authorization": {
         "authentication": "workload",
-        "callers": ["edge-gateway"],
+        "callers": [
+          "edge-gateway"
+        ],
         "caller_context": {
           "edge-gateway": "required"
         }
@@ -1462,10 +1583,10 @@
             "$ref": "#/definitions/id"
           },
           "actor_principal_id": {
-            "$ref": "#/definitions/id"
+            "$ref": "https://schemas.antnest.dev/common/ids.schema.json#/$defs/userId"
           },
           "organization_id": {
-            "$ref": "#/definitions/id"
+            "$ref": "https://schemas.antnest.dev/common/ids.schema.json#/$defs/organizationId"
           },
           "membership_id": {
             "$ref": "#/definitions/id"
@@ -1487,7 +1608,9 @@
         }
       },
       "response": {
-        "required": ["membership"],
+        "required": [
+          "membership"
+        ],
         "properties": {
           "membership": {
             "$ref": "#/definitions/membership"
@@ -1499,16 +1622,21 @@
       "method": "POST",
       "path": "/set-user-active",
       "request": {
-        "required": ["request_id", "actor_principal_id", "user_id", "active"],
+        "required": [
+          "request_id",
+          "actor_principal_id",
+          "user_id",
+          "active"
+        ],
         "properties": {
           "request_id": {
             "$ref": "#/definitions/id"
           },
           "actor_principal_id": {
-            "$ref": "#/definitions/id"
+            "$ref": "https://schemas.antnest.dev/common/ids.schema.json#/$defs/userId"
           },
           "user_id": {
-            "$ref": "#/definitions/id"
+            "$ref": "https://schemas.antnest.dev/common/ids.schema.json#/$defs/userId"
           },
           "active": {
             "type": "boolean"
@@ -1516,7 +1644,9 @@
         }
       },
       "response": {
-        "required": ["status"],
+        "required": [
+          "status"
+        ],
         "properties": {
           "status": {
             "type": "string",
@@ -1529,18 +1659,24 @@
       "method": "POST",
       "path": "/list-directory",
       "request": {
-        "required": ["actor_principal_id", "organization_id"],
+        "required": [
+          "actor_principal_id",
+          "organization_id"
+        ],
         "properties": {
           "actor_principal_id": {
-            "$ref": "#/definitions/id"
+            "$ref": "https://schemas.antnest.dev/common/ids.schema.json#/$defs/userId"
           },
           "organization_id": {
-            "$ref": "#/definitions/id"
+            "$ref": "https://schemas.antnest.dev/common/ids.schema.json#/$defs/organizationId"
           }
         }
       },
       "response": {
-        "required": ["users", "groups"],
+        "required": [
+          "users",
+          "groups"
+        ],
         "properties": {
           "users": {
             "type": "array",
@@ -1566,18 +1702,23 @@
       "path": "/resolve-principal",
       "audience": "internal-service",
       "request": {
-        "required": ["user_id", "organization_id"],
+        "required": [
+          "user_id",
+          "organization_id"
+        ],
         "properties": {
           "user_id": {
-            "$ref": "#/definitions/id"
+            "$ref": "https://schemas.antnest.dev/common/ids.schema.json#/$defs/userId"
           },
           "organization_id": {
-            "$ref": "#/definitions/id"
+            "$ref": "https://schemas.antnest.dev/common/ids.schema.json#/$defs/organizationId"
           }
         }
       },
       "response": {
-        "required": ["principal"],
+        "required": [
+          "principal"
+        ],
         "properties": {
           "principal": {
             "$ref": "#/definitions/organization_principal_binding"
@@ -1589,7 +1730,12 @@
       "method": "POST",
       "path": "/local-login",
       "request": {
-        "required": ["request_id", "organization_slug", "email", "password"],
+        "required": [
+          "request_id",
+          "organization_slug",
+          "email",
+          "password"
+        ],
         "properties": {
           "request_id": {
             "$ref": "#/definitions/id"
@@ -1656,7 +1802,10 @@
       "request": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["access_token", "profile"],
+        "required": [
+          "access_token",
+          "profile"
+        ],
         "properties": {
           "access_token": {
             "type": "string",
@@ -1665,10 +1814,15 @@
           },
           "profile": {
             "type": "string",
-            "enum": ["console", "workspace", "acp", "session"]
+            "enum": [
+              "console",
+              "workspace",
+              "acp",
+              "session"
+            ]
           },
           "agent_id": {
-            "$ref": "#/definitions/id"
+            "$ref": "https://schemas.antnest.dev/common/ids.schema.json#/$defs/agentId"
           }
         },
         "allOf": [
@@ -1682,7 +1836,9 @@
             },
             "then": {
               "not": {
-                "required": ["agent_id"]
+                "required": [
+                  "agent_id"
+                ]
               }
             }
           }
@@ -1724,7 +1880,9 @@
       "method": "POST",
       "path": "/revoke-access-token",
       "request": {
-        "required": ["access_token"],
+        "required": [
+          "access_token"
+        ],
         "properties": {
           "access_token": {
             "type": "string",
@@ -1734,11 +1892,16 @@
         }
       },
       "response": {
-        "required": ["status"],
+        "required": [
+          "status"
+        ],
         "properties": {
           "status": {
             "type": "string",
-            "enum": ["revoked", "already_invalid"]
+            "enum": [
+              "revoked",
+              "already_invalid"
+            ]
           }
         }
       }
@@ -1747,16 +1910,22 @@
       "method": "POST",
       "path": "/issue-scim-token",
       "request": {
-        "required": ["request_id", "actor_principal_id", "organization_id", "name", "scopes"],
+        "required": [
+          "request_id",
+          "actor_principal_id",
+          "organization_id",
+          "name",
+          "scopes"
+        ],
         "properties": {
           "request_id": {
             "$ref": "#/definitions/id"
           },
           "actor_principal_id": {
-            "$ref": "#/definitions/id"
+            "$ref": "https://schemas.antnest.dev/common/ids.schema.json#/$defs/userId"
           },
           "organization_id": {
-            "$ref": "#/definitions/id"
+            "$ref": "https://schemas.antnest.dev/common/ids.schema.json#/$defs/organizationId"
           },
           "name": {
             "type": "string",
@@ -1783,7 +1952,10 @@
         "additionalProperties": false
       },
       "response": {
-        "required": ["token", "credential"],
+        "required": [
+          "token",
+          "credential"
+        ],
         "properties": {
           "token": {
             "$ref": "#/definitions/scim_token"
@@ -1803,10 +1975,13 @@
       "method": "POST",
       "path": "/revoke-scim-token",
       "request": {
-        "required": ["actor_principal_id", "token_id"],
+        "required": [
+          "actor_principal_id",
+          "token_id"
+        ],
         "properties": {
           "actor_principal_id": {
-            "$ref": "#/definitions/id"
+            "$ref": "https://schemas.antnest.dev/common/ids.schema.json#/$defs/userId"
           },
           "token_id": {
             "$ref": "#/definitions/id"
@@ -1814,7 +1989,9 @@
         }
       },
       "response": {
-        "required": ["status"],
+        "required": [
+          "status"
+        ],
         "properties": {
           "status": {
             "type": "string",
@@ -1827,18 +2004,23 @@
       "method": "POST",
       "path": "/list-scim-tokens",
       "request": {
-        "required": ["actor_principal_id", "organization_id"],
+        "required": [
+          "actor_principal_id",
+          "organization_id"
+        ],
         "properties": {
           "actor_principal_id": {
-            "$ref": "#/definitions/id"
+            "$ref": "https://schemas.antnest.dev/common/ids.schema.json#/$defs/userId"
           },
           "organization_id": {
-            "$ref": "#/definitions/id"
+            "$ref": "https://schemas.antnest.dev/common/ids.schema.json#/$defs/organizationId"
           }
         }
       },
       "response": {
-        "required": ["tokens"],
+        "required": [
+          "tokens"
+        ],
         "properties": {
           "tokens": {
             "type": "array",
@@ -1871,10 +2053,10 @@
             "$ref": "#/definitions/id"
           },
           "actor_principal_id": {
-            "$ref": "#/definitions/id"
+            "$ref": "https://schemas.antnest.dev/common/ids.schema.json#/$defs/userId"
           },
           "organization_id": {
-            "$ref": "#/definitions/id"
+            "$ref": "https://schemas.antnest.dev/common/ids.schema.json#/$defs/organizationId"
           },
           "name": {
             "type": "string",
@@ -1930,15 +2112,30 @@
         "type": "object",
         "additionalProperties": false,
         "dependentRequired": {
-          "link_policy": ["link_domains", "authoritative"],
-          "link_domains": ["link_policy", "authoritative"],
-          "authoritative": ["link_policy", "link_domains"],
-          "acknowledge_link_policy_review": ["link_policy", "link_domains", "authoritative"]
+          "link_policy": [
+            "link_domains",
+            "authoritative"
+          ],
+          "link_domains": [
+            "link_policy",
+            "authoritative"
+          ],
+          "authoritative": [
+            "link_policy",
+            "link_domains"
+          ],
+          "acknowledge_link_policy_review": [
+            "link_policy",
+            "link_domains",
+            "authoritative"
+          ]
         },
         "allOf": [
           {
             "if": {
-              "required": ["link_policy"],
+              "required": [
+                "link_policy"
+              ],
               "properties": {
                 "link_policy": {
                   "const": "verified_email_in_domains"
@@ -1963,7 +2160,9 @@
         ]
       },
       "response": {
-        "required": ["provider"],
+        "required": [
+          "provider"
+        ],
         "properties": {
           "provider": {
             "$ref": "#/definitions/oidc_provider"
@@ -1977,16 +2176,22 @@
       "path": "/set-oidc-provider-enabled",
       "lifecycle": "Changes only the local enabled state and never contacts the external Provider. Repeating the desired state is idempotent.",
       "request": {
-        "required": ["request_id", "actor_principal_id", "organization_id", "name", "enabled"],
+        "required": [
+          "request_id",
+          "actor_principal_id",
+          "organization_id",
+          "name",
+          "enabled"
+        ],
         "properties": {
           "request_id": {
             "$ref": "#/definitions/id"
           },
           "actor_principal_id": {
-            "$ref": "#/definitions/id"
+            "$ref": "https://schemas.antnest.dev/common/ids.schema.json#/$defs/userId"
           },
           "organization_id": {
-            "$ref": "#/definitions/id"
+            "$ref": "https://schemas.antnest.dev/common/ids.schema.json#/$defs/organizationId"
           },
           "name": {
             "type": "string",
@@ -1998,7 +2203,9 @@
         }
       },
       "response": {
-        "required": ["provider"],
+        "required": [
+          "provider"
+        ],
         "properties": {
           "provider": {
             "$ref": "#/definitions/oidc_provider"
@@ -2010,18 +2217,23 @@
       "method": "POST",
       "path": "/list-oidc-providers",
       "request": {
-        "required": ["actor_principal_id", "organization_id"],
+        "required": [
+          "actor_principal_id",
+          "organization_id"
+        ],
         "properties": {
           "actor_principal_id": {
-            "$ref": "#/definitions/id"
+            "$ref": "https://schemas.antnest.dev/common/ids.schema.json#/$defs/userId"
           },
           "organization_id": {
-            "$ref": "#/definitions/id"
+            "$ref": "https://schemas.antnest.dev/common/ids.schema.json#/$defs/organizationId"
           }
         }
       },
       "response": {
-        "required": ["providers"],
+        "required": [
+          "providers"
+        ],
         "properties": {
           "providers": {
             "type": "array",
@@ -2036,7 +2248,9 @@
       "method": "POST",
       "path": "/list-login-methods",
       "request": {
-        "required": ["organization_slug"],
+        "required": [
+          "organization_slug"
+        ],
         "properties": {
           "organization_slug": {
             "type": "string",
@@ -2045,7 +2259,9 @@
         }
       },
       "response": {
-        "required": ["methods"],
+        "required": [
+          "methods"
+        ],
         "properties": {
           "methods": {
             "type": "array",
@@ -2060,7 +2276,11 @@
       "method": "POST",
       "path": "/start-oidc-login",
       "request": {
-        "required": ["request_id", "organization_slug", "provider_name"],
+        "required": [
+          "request_id",
+          "organization_slug",
+          "provider_name"
+        ],
         "properties": {
           "request_id": {
             "$ref": "#/definitions/id"
@@ -2082,12 +2302,17 @@
         "additionalProperties": false
       },
       "response": {
-        "required": ["authorization_url", "expires_at"],
+        "required": [
+          "authorization_url",
+          "expires_at"
+        ],
         "properties": {
           "authorization_url": {
             "type": "string",
             "format": "uri",
-            "contains_secret_query": ["state"]
+            "contains_secret_query": [
+              "state"
+            ]
           },
           "expires_at": {
             "$ref": "#/definitions/timestamp"
@@ -2101,7 +2326,9 @@
       "audience": "internal-service",
       "authorization": {
         "authentication": "workload",
-        "callers": ["edge-gateway"],
+        "callers": [
+          "edge-gateway"
+        ],
         "caller_context": {
           "edge-gateway": "required"
         }
@@ -2109,17 +2336,23 @@
       "request": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["actor_principal_id"],
+        "required": [
+          "actor_principal_id"
+        ],
         "properties": {
           "actor_principal_id": {
-            "$ref": "#/definitions/id"
+            "$ref": "https://schemas.antnest.dev/common/ids.schema.json#/$defs/userId"
           }
         }
       },
       "response": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["expires_at", "idle_expires_at", "activity_interval_ms"],
+        "required": [
+          "expires_at",
+          "idle_expires_at",
+          "activity_interval_ms"
+        ],
         "properties": {
           "expires_at": {
             "$ref": "#/definitions/timestamp"
@@ -2139,7 +2372,10 @@
       "audience": "internal-service",
       "authorization": {
         "authentication": "workload",
-        "callers": ["edge-gateway", "admin-console"],
+        "callers": [
+          "edge-gateway",
+          "admin-console"
+        ],
         "caller_context": {
           "edge-gateway": "required",
           "admin-console": "required"
@@ -2148,17 +2384,25 @@
       "request": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["actor_principal_id", "user_id", "scope", "limit"],
+        "required": [
+          "actor_principal_id",
+          "user_id",
+          "scope",
+          "limit"
+        ],
         "properties": {
           "actor_principal_id": {
-            "$ref": "#/definitions/id"
+            "$ref": "https://schemas.antnest.dev/common/ids.schema.json#/$defs/userId"
           },
           "user_id": {
-            "$ref": "#/definitions/id"
+            "$ref": "https://schemas.antnest.dev/common/ids.schema.json#/$defs/userId"
           },
           "scope": {
             "type": "string",
-            "enum": ["self", "organization"]
+            "enum": [
+              "self",
+              "organization"
+            ]
           },
           "limit": {
             "type": "integer",
@@ -2174,7 +2418,10 @@
           }
         },
         "not": {
-          "required": ["cursor", "after_id"],
+          "required": [
+            "cursor",
+            "after_id"
+          ],
           "properties": {
             "cursor": true,
             "after_id": true
@@ -2184,7 +2431,10 @@
       "response": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["items", "next_cursor"],
+        "required": [
+          "items",
+          "next_cursor"
+        ],
         "properties": {
           "items": {
             "type": "array",
@@ -2209,7 +2459,10 @@
       "audience": "internal-service",
       "authorization": {
         "authentication": "workload",
-        "callers": ["edge-gateway", "admin-console"],
+        "callers": [
+          "edge-gateway",
+          "admin-console"
+        ],
         "caller_context": {
           "edge-gateway": "required",
           "admin-console": "required"
@@ -2218,24 +2471,36 @@
       "request": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["request_id", "actor_principal_id", "user_id", "scope", "mode"],
+        "required": [
+          "request_id",
+          "actor_principal_id",
+          "user_id",
+          "scope",
+          "mode"
+        ],
         "properties": {
           "request_id": {
             "$ref": "#/definitions/id"
           },
           "actor_principal_id": {
-            "$ref": "#/definitions/id"
+            "$ref": "https://schemas.antnest.dev/common/ids.schema.json#/$defs/userId"
           },
           "user_id": {
-            "$ref": "#/definitions/id"
+            "$ref": "https://schemas.antnest.dev/common/ids.schema.json#/$defs/userId"
           },
           "scope": {
             "type": "string",
-            "enum": ["self", "organization"]
+            "enum": [
+              "self",
+              "organization"
+            ]
           },
           "mode": {
             "type": "string",
-            "enum": ["others", "all"]
+            "enum": [
+              "others",
+              "all"
+            ]
           }
         },
         "allOf": [
@@ -2260,7 +2525,10 @@
       "response": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["revoked_count", "current_revoked"],
+        "required": [
+          "revoked_count",
+          "current_revoked"
+        ],
         "properties": {
           "revoked_count": {
             "type": "integer",
@@ -2278,7 +2546,9 @@
       "audience": "internal-service",
       "authorization": {
         "authentication": "workload",
-        "callers": ["edge-gateway"],
+        "callers": [
+          "edge-gateway"
+        ],
         "caller_context": {
           "edge-gateway": "operation"
         }
@@ -2286,7 +2556,10 @@
       "request": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["after_sequence", "limit"],
+        "required": [
+          "after_sequence",
+          "limit"
+        ],
         "properties": {
           "after_sequence": {
             "type": "integer",
@@ -2302,7 +2575,10 @@
       "response": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["events", "next_sequence"],
+        "required": [
+          "events",
+          "next_sequence"
+        ],
         "properties": {
           "events": {
             "type": "array",
@@ -2324,7 +2600,10 @@
       "audience": "internal-service",
       "authorization": {
         "authentication": "workload",
-        "callers": ["edge-gateway", "admin-console"],
+        "callers": [
+          "edge-gateway",
+          "admin-console"
+        ],
         "caller_context": {
           "edge-gateway": "required",
           "admin-console": "required"
@@ -2337,14 +2616,21 @@
       "request": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["actor_principal_id", "scope", "limit"],
+        "required": [
+          "actor_principal_id",
+          "scope",
+          "limit"
+        ],
         "properties": {
           "actor_principal_id": {
-            "$ref": "#/definitions/id"
+            "$ref": "https://schemas.antnest.dev/common/ids.schema.json#/$defs/userId"
           },
           "scope": {
             "type": "string",
-            "enum": ["self", "organization"]
+            "enum": [
+              "self",
+              "organization"
+            ]
           },
           "membership_id": {
             "$ref": "#/definitions/id"
@@ -2375,20 +2661,29 @@
               }
             },
             "then": {
-              "required": ["membership_id"],
+              "required": [
+                "membership_id"
+              ],
               "not": {
-                "required": ["notice_after_id"]
+                "required": [
+                  "notice_after_id"
+                ]
               }
             },
             "else": {
               "not": {
-                "required": ["membership_id"]
+                "required": [
+                  "membership_id"
+                ]
               }
             }
           }
         ],
         "not": {
-          "required": ["cursor", "after_id"],
+          "required": [
+            "cursor",
+            "after_id"
+          ],
           "properties": {
             "cursor": true,
             "after_id": true
@@ -2412,7 +2707,9 @@
       "audience": "internal-service",
       "authorization": {
         "authentication": "workload",
-        "callers": ["admin-console"],
+        "callers": [
+          "admin-console"
+        ],
         "caller_context": {
           "admin-console": "required"
         },
@@ -2423,13 +2720,19 @@
       "request": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["request_id", "actor_principal_id", "membership_id", "provider_id", "subject"],
+        "required": [
+          "request_id",
+          "actor_principal_id",
+          "membership_id",
+          "provider_id",
+          "subject"
+        ],
         "properties": {
           "request_id": {
             "$ref": "#/definitions/id"
           },
           "actor_principal_id": {
-            "$ref": "#/definitions/id"
+            "$ref": "https://schemas.antnest.dev/common/ids.schema.json#/$defs/userId"
           },
           "membership_id": {
             "$ref": "#/definitions/id"
@@ -2449,7 +2752,9 @@
       "response": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["binding"],
+        "required": [
+          "binding"
+        ],
         "properties": {
           "binding": {
             "$ref": "#/definitions/external_identity"
@@ -2463,7 +2768,10 @@
       "audience": "internal-service",
       "authorization": {
         "authentication": "workload",
-        "callers": ["edge-gateway", "admin-console"],
+        "callers": [
+          "edge-gateway",
+          "admin-console"
+        ],
         "caller_context": {
           "edge-gateway": "required",
           "admin-console": "required"
@@ -2477,20 +2785,28 @@
       "request": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["request_id", "actor_principal_id", "binding_id", "scope"],
+        "required": [
+          "request_id",
+          "actor_principal_id",
+          "binding_id",
+          "scope"
+        ],
         "properties": {
           "request_id": {
             "$ref": "#/definitions/id"
           },
           "actor_principal_id": {
-            "$ref": "#/definitions/id"
+            "$ref": "https://schemas.antnest.dev/common/ids.schema.json#/$defs/userId"
           },
           "binding_id": {
             "$ref": "#/definitions/id"
           },
           "scope": {
             "type": "string",
-            "enum": ["self", "organization"]
+            "enum": [
+              "self",
+              "organization"
+            ]
           },
           "allow_lockout": {
             "type": "boolean",
@@ -2510,11 +2826,15 @@
               }
             },
             "then": {
-              "required": ["membership_id"]
+              "required": [
+                "membership_id"
+              ]
             },
             "else": {
               "not": {
-                "required": ["membership_id"]
+                "required": [
+                  "membership_id"
+                ]
               }
             }
           }
@@ -2523,7 +2843,10 @@
       "response": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["revoked_count", "current_revoked"],
+        "required": [
+          "revoked_count",
+          "current_revoked"
+        ],
         "properties": {
           "revoked_count": {
             "type": "integer",
@@ -2541,7 +2864,9 @@
       "audience": "internal-service",
       "authorization": {
         "authentication": "workload",
-        "callers": ["edge-gateway"],
+        "callers": [
+          "edge-gateway"
+        ],
         "caller_context": {
           "edge-gateway": "required"
         },
@@ -2552,13 +2877,17 @@
       "request": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["request_id", "actor_principal_id", "notice_ids"],
+        "required": [
+          "request_id",
+          "actor_principal_id",
+          "notice_ids"
+        ],
         "properties": {
           "request_id": {
             "$ref": "#/definitions/id"
           },
           "actor_principal_id": {
-            "$ref": "#/definitions/id"
+            "$ref": "https://schemas.antnest.dev/common/ids.schema.json#/$defs/userId"
           },
           "notice_ids": {
             "type": "array",
@@ -2574,7 +2903,9 @@
       "response": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["acknowledged_count"],
+        "required": [
+          "acknowledged_count"
+        ],
         "properties": {
           "acknowledged_count": {
             "type": "integer",
@@ -2590,7 +2921,9 @@
       "audience": "internal-service",
       "authorization": {
         "authentication": "workload",
-        "callers": ["admin-console"],
+        "callers": [
+          "admin-console"
+        ],
         "caller_context": {
           "admin-console": "required"
         },
@@ -2601,10 +2934,13 @@
       "request": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["actor_principal_id", "limit"],
+        "required": [
+          "actor_principal_id",
+          "limit"
+        ],
         "properties": {
           "actor_principal_id": {
-            "$ref": "#/definitions/id"
+            "$ref": "https://schemas.antnest.dev/common/ids.schema.json#/$defs/userId"
           },
           "limit": {
             "type": "integer",
@@ -2620,7 +2956,10 @@
           }
         },
         "not": {
-          "required": ["cursor", "after_id"],
+          "required": [
+            "cursor",
+            "after_id"
+          ],
           "properties": {
             "cursor": true,
             "after_id": true
@@ -2630,7 +2969,10 @@
       "response": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["items", "next_cursor"],
+        "required": [
+          "items",
+          "next_cursor"
+        ],
         "properties": {
           "items": {
             "type": "array",
@@ -2653,14 +2995,18 @@
       "method": "POST",
       "path": "/list-members",
       "request": {
-        "$ref": "directory.schema.json#/$defs/list_members_request",
-        "required": ["actor_principal_id", "organization_id", "limit"],
+        "$ref": "directory.ids-v2.schema.json#/$defs/list_members_request",
+        "required": [
+          "actor_principal_id",
+          "organization_id",
+          "limit"
+        ],
         "properties": {
           "actor_principal_id": {
-            "$ref": "directory.schema.json#/$defs/id"
+            "$ref": "https://schemas.antnest.dev/common/ids.schema.json#/$defs/userId"
           },
           "organization_id": {
-            "$ref": "directory.schema.json#/$defs/id"
+            "$ref": "https://schemas.antnest.dev/common/ids.schema.json#/$defs/organizationId"
           },
           "limit": {
             "type": "integer"
@@ -2669,18 +3015,21 @@
             "$ref": "../common/pagination.schema.json#/$defs/cursor"
           },
           "filter": {
-            "$ref": "directory.schema.json#/$defs/member_filter"
+            "$ref": "directory.ids-v2.schema.json#/$defs/member_filter"
           }
         }
       },
       "response": {
-        "$ref": "directory.schema.json#/$defs/list_members_response",
-        "required": ["items", "next_cursor"],
+        "$ref": "directory.ids-v2.schema.json#/$defs/list_members_response",
+        "required": [
+          "items",
+          "next_cursor"
+        ],
         "properties": {
           "items": {
             "type": "array",
             "items": {
-              "$ref": "directory.schema.json#/$defs/directory_member"
+              "$ref": "directory.ids-v2.schema.json#/$defs/directory_member"
             }
           },
           "next_cursor": {
@@ -2693,14 +3042,18 @@
       "method": "POST",
       "path": "/list-groups",
       "request": {
-        "$ref": "directory.schema.json#/$defs/list_groups_request",
-        "required": ["actor_principal_id", "organization_id", "limit"],
+        "$ref": "directory.ids-v2.schema.json#/$defs/list_groups_request",
+        "required": [
+          "actor_principal_id",
+          "organization_id",
+          "limit"
+        ],
         "properties": {
           "actor_principal_id": {
-            "$ref": "directory.schema.json#/$defs/id"
+            "$ref": "https://schemas.antnest.dev/common/ids.schema.json#/$defs/userId"
           },
           "organization_id": {
-            "$ref": "directory.schema.json#/$defs/id"
+            "$ref": "https://schemas.antnest.dev/common/ids.schema.json#/$defs/organizationId"
           },
           "limit": {
             "type": "integer"
@@ -2709,18 +3062,21 @@
             "$ref": "../common/pagination.schema.json#/$defs/cursor"
           },
           "filter": {
-            "$ref": "directory.schema.json#/$defs/group_filter"
+            "$ref": "directory.ids-v2.schema.json#/$defs/group_filter"
           }
         }
       },
       "response": {
-        "$ref": "directory.schema.json#/$defs/list_groups_response",
-        "required": ["items", "next_cursor"],
+        "$ref": "directory.ids-v2.schema.json#/$defs/list_groups_response",
+        "required": [
+          "items",
+          "next_cursor"
+        ],
         "properties": {
           "items": {
             "type": "array",
             "items": {
-              "$ref": "directory.schema.json#/$defs/group"
+              "$ref": "directory.ids-v2.schema.json#/$defs/group"
             }
           },
           "next_cursor": {
@@ -2742,7 +3098,9 @@
       "method": "GET",
       "path": "/protocol/oidc/callback",
       "query": {
-        "required": ["state"],
+        "required": [
+          "state"
+        ],
         "properties": {
           "state": {
             "type": "string",
@@ -2766,7 +3124,14 @@
             "format": "uri"
           }
         },
-        "oneOfRequired": [["code"], ["error"]]
+        "oneOfRequired": [
+          [
+            "code"
+          ],
+          [
+            "error"
+          ]
+        ]
       },
       "initial_response": {
         "type": "object",
@@ -2834,17 +3199,29 @@
             "$ref": "#/definitions/activity_interval_ms"
           }
         },
-        "forbidden": ["access_token"]
+        "forbidden": [
+          "access_token"
+        ]
       }
     },
     "scim": {
       "base_path": "/scim/v2",
       "user_profile": {
-        "required_schemas": ["urn:ietf:params:scim:schemas:core:2.0:User"],
-        "required_attributes": ["userName"],
-        "required_profile_fields": ["email"],
+        "required_schemas": [
+          "urn:ietf:params:scim:schemas:core:2.0:User"
+        ],
+        "required_attributes": [
+          "userName"
+        ],
+        "required_profile_fields": [
+          "email"
+        ],
         "user_name_is_email": false,
-        "filters": ["userName eq", "externalId eq", "emails.value eq"],
+        "filters": [
+          "userName eq",
+          "externalId eq",
+          "emails.value eq"
+        ],
         "patch_paths": [
           "active",
           "userName",
@@ -2858,22 +3235,47 @@
         "delete_semantics": "hide SCIM membership and allow fresh reprovisioning on the same global User; create a new Membership and repoint durable OIDC identity while preserving audit facts"
       },
       "group_profile": {
-        "required_schemas": ["urn:ietf:params:scim:schemas:core:2.0:Group"],
-        "required_attributes": ["displayName"],
-        "filters": ["displayName eq", "externalId eq"],
-        "patch_paths": ["displayName", "externalId", "members", "members[value eq value]"],
+        "required_schemas": [
+          "urn:ietf:params:scim:schemas:core:2.0:Group"
+        ],
+        "required_attributes": [
+          "displayName"
+        ],
+        "filters": [
+          "displayName eq",
+          "externalId eq"
+        ],
+        "patch_paths": [
+          "displayName",
+          "externalId",
+          "members",
+          "members[value eq value]"
+        ],
         "create_semantics": "POST is create-only and conflicts with an active resource ID or organization-scoped externalId"
       },
       "authority": "one logical directory authority per organization; bearer tokens are rotating credentials",
-      "unsupported": ["bulk", "sort", "changePassword"],
+      "unsupported": [
+        "bulk",
+        "sort",
+        "changePassword"
+      ],
       "versioning": {
         "policy": "scim-lifecycle-policy.json",
         "etag_supported": true,
         "header": "ETag",
         "representation_field": "meta.version",
         "list_rows_have_version": true,
-        "response_methods": ["GET", "POST", "PUT", "PATCH"],
-        "if_match_methods": ["PUT", "PATCH", "DELETE"]
+        "response_methods": [
+          "GET",
+          "POST",
+          "PUT",
+          "PATCH"
+        ],
+        "if_match_methods": [
+          "PUT",
+          "PATCH",
+          "DELETE"
+        ]
       }
     }
   },

@@ -66,9 +66,11 @@ reads; it does not add an RPC, watermark or Identity migration. The shared
 policy, Identity PostgreSQL evidence, Gateway implementation and consumer/HTTPS
 integration have separate admission batches.
 
-Revision 19 adds the bounded directory read methods `list_members` and
-`list_groups` (POST `/list-members`, `/list-groups`) with their standalone
-schema [directory.schema.json](directory.schema.json). Requests require
+Revision 19 introduced the bounded directory read methods `list_members` and
+`list_groups` (POST `/list-members`, `/list-groups`). Revision 20 is the
+current opaque-ID revision binding their standalone
+schema [directory.ids-v2.schema.json](directory.ids-v2.schema.json) to the
+[shared grammar](../common/ids.schema.json). Requests require
 `actor_principal_id`, `organization_id` and integer `limit` (1..200), and accept
 an optional canonical `cursor` plus a closed `filter` object (members:
 `email_prefix`, `role`, `active`, `source`; groups: `display_name_prefix`,

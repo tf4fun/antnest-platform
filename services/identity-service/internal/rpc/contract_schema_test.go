@@ -38,6 +38,17 @@ func newIdentitySchemaCompiler(t *testing.T) *jsonschema.Compiler {
 	if err != nil {
 		t.Fatal(err)
 	}
+	commonIDs, err := os.ReadFile("../../../../contracts/common/ids.schema.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	idsDocument, err := jsonschema.UnmarshalJSON(bytes.NewReader(commonIDs))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := compiler.AddResource("https://schemas.antnest.dev/common/ids.schema.json", idsDocument); err != nil {
+		t.Fatal(err)
+	}
 	if err := compiler.AddResource("https://schemas.antnest.dev/common/pagination.schema.json", document); err != nil {
 		t.Fatal(err)
 	}

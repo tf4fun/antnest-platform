@@ -370,3 +370,5 @@ offline Ajv checker validates each capture against the method response
 fragments of `contracts/identity/identity-contract.json`. The real Gateway and
 Controller consumer wiring lands in their own batches and the explicit
 integration batch.
+
+Public organization/user references follow the [shared opaque-ID grammar](../../contracts/common/ids.schema.json) via `directory.ids-v2.schema.json`; `org_<32hex>`/`user_<32hex>` generation stays producer-owned.
