@@ -45,6 +45,8 @@ var ContractRoutes = map[string]string{
 	"update_membership":                     "/rpc/identity/update-membership",
 	"set_user_active":                       "/rpc/identity/set-user-active",
 	"list_directory":                        "/rpc/identity/list-directory",
+	"list_members":                          "/rpc/identity/list-members",
+	"list_groups":                           "/rpc/identity/list-groups",
 	"get_current_account":                   "/rpc/identity/get-current-account",
 	"resolve_principal":                     "/rpc/identity/resolve-principal",
 	"local_login":                           "/rpc/identity/local-login",
@@ -69,6 +71,8 @@ type DirectoryService interface {
 	UpdateMembership(context.Context, directory.UpdateMembershipInput) (domain.OrganizationMembership, error)
 	SetUserActive(context.Context, directory.SetUserActiveInput) error
 	List(context.Context, string, string) (directory.Directory, error)
+	ListMembers(context.Context, directory.ListMembersInput) (directory.MemberPage, error)
+	ListGroups(context.Context, directory.ListGroupsInput) (directory.GroupPage, error)
 	GetCurrentAccount(context.Context, string, string) (directory.CurrentAccount, error)
 	ResolvePrincipal(context.Context, string, string) (domain.Principal, error)
 }
@@ -150,6 +154,8 @@ func NewHandler(dependencies Dependencies) (*Handler, error) {
 	handler.mux.HandleFunc("POST /rpc/identity/update-membership", handler.updateMembership)
 	handler.mux.HandleFunc("POST /rpc/identity/set-user-active", handler.setUserActive)
 	handler.mux.HandleFunc("POST /rpc/identity/list-directory", handler.listDirectory)
+	handler.mux.HandleFunc("POST /rpc/identity/list-members", handler.listMembers)
+	handler.mux.HandleFunc("POST /rpc/identity/list-groups", handler.listGroups)
 	handler.mux.HandleFunc("POST /rpc/identity/get-current-account", handler.getCurrentAccount)
 	handler.mux.HandleFunc("POST /rpc/identity/resolve-principal", handler.resolvePrincipal)
 	handler.mux.HandleFunc("POST /rpc/identity/local-login", handler.localLogin)

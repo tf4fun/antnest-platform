@@ -29,6 +29,8 @@ var routeCallers = map[string][]string{
 	"/rpc/identity/update-membership":                     {"admin-console"},
 	"/rpc/identity/set-user-active":                       {"admin-console"},
 	"/rpc/identity/list-directory":                        {"admin-console"},
+	"/rpc/identity/list-members":                          {"admin-console"},
+	"/rpc/identity/list-groups":                           {"admin-console"},
 	"/rpc/identity/get-current-account":                   {"edge-gateway", "admin-console"},
 	"/rpc/identity/issue-scim-token":                      {"admin-console"},
 	"/rpc/identity/revoke-scim-token":                     {"admin-console"},

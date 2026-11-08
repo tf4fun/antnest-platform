@@ -70,6 +70,18 @@ required nullable `next_cursor`; there is no `after` alias. Method entries keep
 inline `required`/`properties` for existing contract tooling while `$ref`
 targets the standalone schema. `list_directory` remains for one release,
 deprecated, with both `users` and `groups` arrays capped at 200 entries; it is
-not a stable full-organization listing. Owning-service implementation in
-Identity and the Admin Console consumer/integration batches are pending; this
+not a stable full-organization listing. Owning-service implementation is delivered
+in Identity; the Admin Console consumer and integration batches are pending; this
 contract makes no end-to-end workflow claim.
+
+Identity's implementation filters `active` as the effective flag (user `active`
+AND membership `active`; groups filter the group's own flag), normalizes
+`email_prefix`/`display_name_prefix` by trimming whitespace and lowercasing
+(maximum 256 bytes, valid UTF-8), and treats `%`/`_`/`\\` in prefixes as
+literal characters rather than LIKE wildcards. Cursors are opaque
+base64url-encoded envelopes bound to the page kind, organization, and the
+normalized filter fingerprint; they grant no authority and are not a snapshot:
+rows inserted behind the current cursor are not retroactively included, while
+rows ahead of it may appear on later pages. Cursor misuse, filter changes, or
+organization changes all fail closed with `invalid_argument` before any
+directory read.

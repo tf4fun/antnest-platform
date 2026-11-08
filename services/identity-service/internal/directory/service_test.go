@@ -296,6 +296,12 @@ type directoryRepositoryStub struct {
 	updatedMembership       UpdateMembershipCommand
 	userActivation          SetUserActiveCommand
 	directory               Directory
+	membersPage             []Member
+	groupsPage              []domain.Group
+	membersQuery            MembersQuery
+	groupsQuery             GroupsQuery
+	membersCalls            int
+	groupsCalls             int
 }
 
 func (r *directoryRepositoryStub) GetOrganization(context.Context, string) (domain.Organization, error) {
@@ -338,6 +344,18 @@ func (r *directoryRepositoryStub) AddOrganizationMembership(
 
 func (r *directoryRepositoryStub) ListDirectory(context.Context, string) (Directory, error) {
 	return r.directory, nil
+}
+
+func (r *directoryRepositoryStub) ListMembers(_ context.Context, query MembersQuery) ([]Member, error) {
+	r.membersCalls++
+	r.membersQuery = query
+	return r.membersPage, nil
+}
+
+func (r *directoryRepositoryStub) ListGroups(_ context.Context, query GroupsQuery) ([]domain.Group, error) {
+	r.groupsCalls++
+	r.groupsQuery = query
+	return r.groupsPage, nil
 }
 
 func (r *directoryRepositoryStub) GetLocalCredential(context.Context, string) (domain.LocalCredential, error) {

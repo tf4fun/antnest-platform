@@ -25,6 +25,8 @@ type Repository interface {
 	UpdateMembership(context.Context, UpdateMembershipCommand) (domain.OrganizationMembership, error)
 	SetUserActive(context.Context, SetUserActiveCommand) error
 	ListDirectory(context.Context, string) (Directory, error)
+	ListMembers(context.Context, MembersQuery) ([]Member, error)
+	ListGroups(context.Context, GroupsQuery) ([]domain.Group, error)
 }
 
 type CreateOrganizationInput struct {
