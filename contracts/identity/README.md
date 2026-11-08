@@ -1,5 +1,12 @@
 # Identity Service Contracts
 
+The directory pagination additions are first published in
+[directory-publication-proposal.json](directory-publication-proposal.json).
+The owning service activates them with its implementation: Identity revision 19
+in #589 and Console version 61 in #590. Before those batches, the active catalogs
+remain Identity 18 / Console 60; proposed schemas do not advertise live routes.
+The sections below describe the target contract once activated.
+
 Identity Service owns the JSON RPC contract in `identity-contract.json` and
 the standard OIDC/SCIM protocol surfaces described in
 [`../../docs/stage-2-identity.md`](../../docs/stage-2-identity.md).

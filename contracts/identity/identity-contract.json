@@ -1,6 +1,6 @@
 {
   "contract": "antnest.identity",
-  "revision": 19,
+  "revision": 18,
   "password_verification_policy": "password-verification-policy.json",
   "scim_lifecycle_policy": "scim-lifecycle-policy.json",
   "transport": "json-over-http",
@@ -31,7 +31,11 @@
         },
         "reason": {
           "type": "string",
-          "enum": ["user_deactivated", "membership_deactivated", "membership_deleted"]
+          "enum": [
+            "user_deactivated",
+            "membership_deactivated",
+            "membership_deleted"
+          ]
         },
         "occurred_at": {
           "$ref": "#/definitions/timestamp"
@@ -649,7 +653,14 @@
     "session_revocation": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["sequence", "token_id", "user_id", "organization_id", "reason", "occurred_at"],
+      "required": [
+        "sequence",
+        "token_id",
+        "user_id",
+        "organization_id",
+        "reason",
+        "occurred_at"
+      ],
       "properties": {
         "sequence": {
           "type": "integer",
@@ -991,10 +1002,7 @@
           "internal"
         ]
       },
-      "request_id": {
-        "type": "string",
-        "pattern": "^[A-Za-z0-9._:-]{1,128}$"
-      },
+      "request_id": {"type": "string", "pattern": "^[A-Za-z0-9._:-]{1,128}$"},
       "code": {
         "type": "string",
         "enum": [
@@ -1546,20 +1554,16 @@
             "type": "array",
             "items": {
               "$ref": "#/definitions/directory_member"
-            },
-            "maxItems": 200
+            }
           },
           "groups": {
             "type": "array",
             "items": {
               "$ref": "#/definitions/group"
-            },
-            "maxItems": 200
+            }
           }
         }
-      },
-      "deprecated": true,
-      "deprecation_note": "Full-directory reads return at most 200 entries per collection and are not a stable full-organization listing; use list_members and list_groups with cursor pagination. Kept for one release."
+      }
     },
     "resolve_principal": {
       "method": "POST",
@@ -1747,7 +1751,13 @@
       "method": "POST",
       "path": "/issue-scim-token",
       "request": {
-        "required": ["request_id", "actor_principal_id", "organization_id", "name", "scopes"],
+        "required": [
+          "request_id",
+          "actor_principal_id",
+          "organization_id",
+          "name",
+          "scopes"
+        ],
         "properties": {
           "request_id": {
             "$ref": "#/definitions/id"
@@ -1933,7 +1943,11 @@
           "link_policy": ["link_domains", "authoritative"],
           "link_domains": ["link_policy", "authoritative"],
           "authoritative": ["link_policy", "link_domains"],
-          "acknowledge_link_policy_review": ["link_policy", "link_domains", "authoritative"]
+          "acknowledge_link_policy_review": [
+            "link_policy",
+            "link_domains",
+            "authoritative"
+          ]
         },
         "allOf": [
           {
@@ -1977,7 +1991,13 @@
       "path": "/set-oidc-provider-enabled",
       "lifecycle": "Changes only the local enabled state and never contacts the external Provider. Repeating the desired state is idempotent.",
       "request": {
-        "required": ["request_id", "actor_principal_id", "organization_id", "name", "enabled"],
+        "required": [
+          "request_id",
+          "actor_principal_id",
+          "organization_id",
+          "name",
+          "enabled"
+        ],
         "properties": {
           "request_id": {
             "$ref": "#/definitions/id"
@@ -2173,13 +2193,7 @@
             "deprecated": true
           }
         },
-        "not": {
-          "required": ["cursor", "after_id"],
-          "properties": {
-            "cursor": true,
-            "after_id": true
-          }
-        }
+        "not": {"required": ["cursor", "after_id"], "properties": {"cursor": true, "after_id": true}}
       },
       "response": {
         "type": "object",
@@ -2194,12 +2208,12 @@
             }
           },
           "next_cursor": {
-            "allOf": [
-              {
-                "$ref": "../common/pagination.schema.json#/$defs/nullable_cursor"
-              }
-            ]
-          }
+          "allOf": [
+            {
+              "$ref": "../common/pagination.schema.json#/$defs/nullable_cursor"
+            }
+          ]
+        }
         }
       }
     },
@@ -2218,7 +2232,13 @@
       "request": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["request_id", "actor_principal_id", "user_id", "scope", "mode"],
+        "required": [
+          "request_id",
+          "actor_principal_id",
+          "user_id",
+          "scope",
+          "mode"
+        ],
         "properties": {
           "request_id": {
             "$ref": "#/definitions/id"
@@ -2387,13 +2407,7 @@
             }
           }
         ],
-        "not": {
-          "required": ["cursor", "after_id"],
-          "properties": {
-            "cursor": true,
-            "after_id": true
-          }
-        }
+        "not": {"required": ["cursor", "after_id"], "properties": {"cursor": true, "after_id": true}}
       },
       "response": {
         "oneOf": [
@@ -2423,7 +2437,13 @@
       "request": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["request_id", "actor_principal_id", "membership_id", "provider_id", "subject"],
+        "required": [
+          "request_id",
+          "actor_principal_id",
+          "membership_id",
+          "provider_id",
+          "subject"
+        ],
         "properties": {
           "request_id": {
             "$ref": "#/definitions/id"
@@ -2619,13 +2639,7 @@
             "deprecated": true
           }
         },
-        "not": {
-          "required": ["cursor", "after_id"],
-          "properties": {
-            "cursor": true,
-            "after_id": true
-          }
-        }
+        "not": {"required": ["cursor", "after_id"], "properties": {"cursor": true, "after_id": true}}
       },
       "response": {
         "type": "object",
@@ -2640,92 +2654,12 @@
             }
           },
           "next_cursor": {
-            "allOf": [
-              {
-                "$ref": "../common/pagination.schema.json#/$defs/nullable_cursor"
-              }
-            ]
-          }
-        }
-      }
-    },
-    "list_members": {
-      "method": "POST",
-      "path": "/list-members",
-      "request": {
-        "$ref": "directory.schema.json#/$defs/list_members_request",
-        "required": ["actor_principal_id", "organization_id", "limit"],
-        "properties": {
-          "actor_principal_id": {
-            "$ref": "directory.schema.json#/$defs/id"
-          },
-          "organization_id": {
-            "$ref": "directory.schema.json#/$defs/id"
-          },
-          "limit": {
-            "type": "integer"
-          },
-          "cursor": {
-            "$ref": "../common/pagination.schema.json#/$defs/cursor"
-          },
-          "filter": {
-            "$ref": "directory.schema.json#/$defs/member_filter"
-          }
-        }
-      },
-      "response": {
-        "$ref": "directory.schema.json#/$defs/list_members_response",
-        "required": ["items", "next_cursor"],
-        "properties": {
-          "items": {
-            "type": "array",
-            "items": {
-              "$ref": "directory.schema.json#/$defs/directory_member"
+          "allOf": [
+            {
+              "$ref": "../common/pagination.schema.json#/$defs/nullable_cursor"
             }
-          },
-          "next_cursor": {
-            "$ref": "../common/pagination.schema.json#/$defs/nullable_cursor"
-          }
+          ]
         }
-      }
-    },
-    "list_groups": {
-      "method": "POST",
-      "path": "/list-groups",
-      "request": {
-        "$ref": "directory.schema.json#/$defs/list_groups_request",
-        "required": ["actor_principal_id", "organization_id", "limit"],
-        "properties": {
-          "actor_principal_id": {
-            "$ref": "directory.schema.json#/$defs/id"
-          },
-          "organization_id": {
-            "$ref": "directory.schema.json#/$defs/id"
-          },
-          "limit": {
-            "type": "integer"
-          },
-          "cursor": {
-            "$ref": "../common/pagination.schema.json#/$defs/cursor"
-          },
-          "filter": {
-            "$ref": "directory.schema.json#/$defs/group_filter"
-          }
-        }
-      },
-      "response": {
-        "$ref": "directory.schema.json#/$defs/list_groups_response",
-        "required": ["items", "next_cursor"],
-        "properties": {
-          "items": {
-            "type": "array",
-            "items": {
-              "$ref": "directory.schema.json#/$defs/group"
-            }
-          },
-          "next_cursor": {
-            "$ref": "../common/pagination.schema.json#/$defs/nullable_cursor"
-          }
         }
       }
     }
@@ -2861,7 +2795,12 @@
         "required_schemas": ["urn:ietf:params:scim:schemas:core:2.0:Group"],
         "required_attributes": ["displayName"],
         "filters": ["displayName eq", "externalId eq"],
-        "patch_paths": ["displayName", "externalId", "members", "members[value eq value]"],
+        "patch_paths": [
+          "displayName",
+          "externalId",
+          "members",
+          "members[value eq value]"
+        ],
         "create_semantics": "POST is create-only and conflicts with an active resource ID or organization-scoped externalId"
       },
       "authority": "one logical directory authority per organization; bearer tokens are rotating credentials",
