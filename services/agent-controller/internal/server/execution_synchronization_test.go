@@ -30,7 +30,7 @@ func TestExecutionSynchronizationMissingRecordIsExplicit(t *testing.T) {
 
 func TestExecutionSynchronizationSchemaRejectsIncompleteOrExecutionFields(t *testing.T) {
 	t.Parallel()
-	compiler := compileControlSchema(t, filepath.Join(repositoryRoot(t), "contracts/agent-controller/control-api.schema.json"))
+	compiler := compileControlSchema(t, filepath.Join(repositoryRoot(t), "contracts/agent-controller/control-api.ids-v2.schema.json"))
 	schema, err := compiler.Compile(controlSchemaID + "#/$defs/execution_synchronization")
 	require.NoError(t, err)
 	for _, payload := range []string{
@@ -50,7 +50,7 @@ func TestExecutionSynchronizationSchemaRejectsIncompleteOrExecutionFields(t *tes
 
 func TestExecutionSynchronizationHTTPMatchesContract(t *testing.T) {
 	t.Parallel()
-	compiler := compileControlSchema(t, filepath.Join(repositoryRoot(t), "contracts/agent-controller/control-api.schema.json"))
+	compiler := compileControlSchema(t, filepath.Join(repositoryRoot(t), "contracts/agent-controller/control-api.ids-v2.schema.json"))
 	now := time.Unix(100, 0).UTC()
 	for _, state := range []*application.ExecutionSynchronizationState{
 		nil,
@@ -67,7 +67,7 @@ func TestExecutionSynchronizationHTTPMatchesContract(t *testing.T) {
 		require.Equal(t, http.StatusOK, response.Code, response.Body.String())
 		require.Equal(t, "org-1", configuration.synchronizationOrganization)
 		require.Equal(t, "no-store", response.Header().Get("Cache-Control"))
-		assertControlResponseSchema(t, compiler, "control-api.schema.json#/$defs/execution_synchronization", response.Body.Bytes())
+		assertControlResponseSchema(t, compiler, "control-api.ids-v2.schema.json#/$defs/execution_synchronization", response.Body.Bytes())
 	}
 }
 

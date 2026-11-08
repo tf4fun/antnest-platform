@@ -16,7 +16,7 @@ import (
 
 func TestAgentModelPolicyHTTPPreservesFrozenConfigurationAndLegacyOmission(t *testing.T) {
 	t.Parallel()
-	compiler := compileControlSchema(t, repositoryRoot(t)+"/contracts/agent-controller/control-api.schema.json")
+	compiler := compileControlSchema(t, repositoryRoot(t)+"/contracts/agent-controller/control-api.ids-v2.schema.json")
 	for _, policy := range []struct {
 		name string
 		body string
@@ -47,7 +47,7 @@ func TestAgentModelPolicyHTTPPreservesFrozenConfigurationAndLegacyOmission(t *te
 			require.Equal(t, "no-store", response.Header().Get("Cache-Control"))
 			require.Equal(t, "agent-1", queries.agentID)
 			require.Equal(t, "org-1", queries.organizationID)
-			assertControlResponseSchema(t, compiler, "control-api.schema.json#/$defs/agent", response.Body.Bytes())
+			assertControlResponseSchema(t, compiler, "control-api.ids-v2.schema.json#/$defs/agent", response.Body.Bytes())
 			var decoded struct {
 				Configuration map[string]json.RawMessage `json:"configuration"`
 			}
@@ -97,7 +97,7 @@ func TestAgentModelPolicyHTTPPreservesFrozenConfigurationAndLegacyOmission(t *te
 			boundary.ServeHTTP(readAgain, httptest.NewRequest(http.MethodGet, "/internal/agents/agent-1?organization_id=org-1", nil))
 			require.Equal(t, http.StatusOK, readAgain.Code, readAgain.Body.String())
 			require.JSONEq(t, response.Body.String(), readAgain.Body.String())
-			assertControlResponseSchema(t, compiler, "control-api.schema.json#/$defs/agent", readAgain.Body.Bytes())
+			assertControlResponseSchema(t, compiler, "control-api.ids-v2.schema.json#/$defs/agent", readAgain.Body.Bytes())
 		})
 	}
 }

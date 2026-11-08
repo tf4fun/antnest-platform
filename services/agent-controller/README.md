@@ -132,7 +132,9 @@ The Runtime Controller and Egress consumers emit the canonical
 preserved inbound for N-1 clients.
 
 Resource identifiers follow the
-[platform resource ID contract](../../contracts/resource-identifiers.md). Create
+[platform resource ID contract](../../contracts/resource-identifiers.md) and the
+[shared opaque-ID grammar](../../contracts/common/ids.schema.json); the control
+`*.ids-v2.schema.json` revisions bind public references to it. Create
 and Rebuild generate `agentspec_` IDs, execution revisions use `execution_`,
 and lifecycle, Runtime observation and owner-revocation events use `event_`.
 

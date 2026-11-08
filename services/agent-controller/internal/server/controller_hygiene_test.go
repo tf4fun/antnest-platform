@@ -57,7 +57,7 @@ func TestControllerHygieneLifecycleWireAppliesActivationCondition(t *testing.T) 
 	t.Parallel()
 	root := repositoryRoot(t)
 	compiler := compileControlSchema(
-		t, filepath.Join(root, "contracts/agent-controller/control-api.schema.json"),
+		t, filepath.Join(root, "contracts/agent-controller/control-api.ids-v2.schema.json"),
 	)
 	now := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
 	states := []struct {
@@ -101,20 +101,20 @@ func TestControllerHygieneLifecycleWireAppliesActivationCondition(t *testing.T) 
 			single := httptest.NewRecorder()
 			boundary.ServeHTTP(single, httptest.NewRequest(http.MethodGet, "/internal/agents/agent-1?organization_id=org-1", nil))
 			require.Equal(t, http.StatusOK, single.Code, single.Body.String())
-			assertControlResponseSchema(t, compiler, "control-api.schema.json#/$defs/agent", single.Body.Bytes())
+			assertControlResponseSchema(t, compiler, "control-api.ids-v2.schema.json#/$defs/agent", single.Body.Bytes())
 			assertActivation(single.Body.Bytes(), "get agent")
 
 			list := httptest.NewRecorder()
 			boundary.ServeHTTP(list, httptest.NewRequest(http.MethodGet, "/internal/agents?organization_id=org-1", nil))
 			require.Equal(t, http.StatusOK, list.Code, list.Body.String())
-			assertControlResponseSchema(t, compiler, "control-api.schema.json#/$defs/agent_list", list.Body.Bytes())
+			assertControlResponseSchema(t, compiler, "control-api.ids-v2.schema.json#/$defs/agent_list", list.Body.Bytes())
 			assertActivation(list.Body.Bytes(), "list agents")
 
 			workspace := httptest.NewRecorder()
 			boundary.ServeHTTP(workspace, httptest.NewRequest(http.MethodPost, "/rpc/agent-controller/list-workspace-agents",
 				strings.NewReader(`{"request_id":"workspace-1","organization_id":"org-1","principal_id":"user-admin"}`)))
 			require.Equal(t, http.StatusOK, workspace.Code, workspace.Body.String())
-			assertControlResponseSchema(t, compiler, "control-api.schema.json#/$defs/list_workspace_agents_response", workspace.Body.Bytes())
+			assertControlResponseSchema(t, compiler, "control-api.ids-v2.schema.json#/$defs/list_workspace_agents_response", workspace.Body.Bytes())
 			assertActivation(workspace.Body.Bytes(), "workspace agents")
 		})
 	}

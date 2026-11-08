@@ -27,6 +27,11 @@ Controller no longer exposes `resolve-agent-access`, `get-session-configuration`
 configuration publisher and owns protocol authorization, execution and audit.
 These removed routes return 404; there is no compatibility switch or proxy.
 
+The `*.ids-v2.schema.json` revisions bind public organization, agent, and
+principal/user references to the
+[shared opaque-ID grammar](../common/ids.schema.json); generation formats stay
+producer-owned.
+
 Workspace items contain agent_id/name and management lifecycle_state,
 activation_state and runtime_state. Controller's former execution state get/watch
 endpoints remain removed; these management facts do not replace ACP observation.

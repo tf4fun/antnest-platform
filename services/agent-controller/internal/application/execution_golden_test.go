@@ -28,13 +28,18 @@ func writeGoldenDocument(t *testing.T, path string, body []byte) {
 }
 
 func TestExecutionSnapshotGolden(t *testing.T) {
-	const identifier = "https://schemas.antnest.dev/agent-acp/execution-snapshot.schema.json"
-	contract, err := os.ReadFile("../../../../contracts/agent-acp/execution-snapshot.schema.json")
+	const identifier = "https://schemas.antnest.dev/agent-acp/execution-snapshot.ids-v2.schema.json"
+	contract, err := os.ReadFile("../../../../contracts/agent-acp/execution-snapshot.ids-v2.schema.json")
 	require.NoError(t, err)
 	document, err := jsonschema.UnmarshalJSON(bytes.NewReader(contract))
 	require.NoError(t, err)
 	compiler := jsonschema.NewCompiler()
 	compiler.AssertFormat()
+	commonIDs, err := os.ReadFile("../../../../contracts/common/ids.schema.json")
+	require.NoError(t, err)
+	commonIDsDocument, err := jsonschema.UnmarshalJSON(bytes.NewReader(commonIDs))
+	require.NoError(t, err)
+	require.NoError(t, compiler.AddResource("https://schemas.antnest.dev/common/ids.schema.json", commonIDsDocument))
 	require.NoError(t, compiler.AddResource(identifier, document))
 	definition, err := compiler.Compile(identifier)
 	require.NoError(t, err)
@@ -76,19 +81,24 @@ func TestExecutionSnapshotGolden(t *testing.T) {
 }
 
 func TestExecutionSnapshotV2Golden(t *testing.T) {
-	const identifier = "https://schemas.antnest.dev/agent-acp/execution-publication-v2.schema.json"
-	contract, err := os.ReadFile("../../../../contracts/agent-acp/execution-publication-v2.schema.json")
+	const identifier = "https://schemas.antnest.dev/agent-acp/execution-publication-v2.ids-v2.schema.json"
+	contract, err := os.ReadFile("../../../../contracts/agent-acp/execution-publication-v2.ids-v2.schema.json")
 	require.NoError(t, err)
 	document, err := jsonschema.UnmarshalJSON(bytes.NewReader(contract))
 	require.NoError(t, err)
 	compiler := jsonschema.NewCompiler()
 	compiler.AssertFormat()
+	commonIDs, err := os.ReadFile("../../../../contracts/common/ids.schema.json")
+	require.NoError(t, err)
+	commonIDsDocument, err := jsonschema.UnmarshalJSON(bytes.NewReader(commonIDs))
+	require.NoError(t, err)
+	require.NoError(t, compiler.AddResource("https://schemas.antnest.dev/common/ids.schema.json", commonIDsDocument))
 	require.NoError(t, compiler.AddResource(identifier, document))
-	legacy, err := os.ReadFile("../../../../contracts/agent-acp/execution-snapshot.schema.json")
+	legacy, err := os.ReadFile("../../../../contracts/agent-acp/execution-snapshot.ids-v2.schema.json")
 	require.NoError(t, err)
 	legacyDocument, err := jsonschema.UnmarshalJSON(bytes.NewReader(legacy))
 	require.NoError(t, err)
-	require.NoError(t, compiler.AddResource("https://schemas.antnest.dev/agent-acp/execution-snapshot.schema.json", legacyDocument))
+	require.NoError(t, compiler.AddResource("https://schemas.antnest.dev/agent-acp/execution-snapshot.ids-v2.schema.json", legacyDocument))
 	definition, err := compiler.Compile(identifier + "#/$defs/snapshot")
 	require.NoError(t, err)
 	source := executionSource(t)
