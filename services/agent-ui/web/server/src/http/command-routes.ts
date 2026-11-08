@@ -1,4 +1,5 @@
 import { workspaceError } from "../protocol/api-error.ts";
+import { agentIdSchema, organizationIdSchema, userIdSchema } from "../protocol/resource-ids.ts";
 import { ERROR_CODES } from "../errors.gen.ts";
 import { recordPromptInputPrepared } from "../telemetry.ts";
 import type { ContentBlock } from "@agentclientprotocol/sdk";
@@ -300,6 +301,7 @@ export function routeParts(pathname: string): string[] | null {
   }
   if (!prefix.every((part, index) => parts[index] === part)) return null;
   const rest = parts.slice(prefix.length);
+  if (!agentIdSchema.safeParse(rest[0]).success) return null;
   if (rest[1] !== "sessions" || rest.length < 4 || rest.length > 8) return null;
   return [rest[0]!, rest[2]!, ...rest.slice(3)];
 }
@@ -307,6 +309,9 @@ export function routeParts(pathname: string): string[] | null {
 export function trustedScope(request: Request): BridgeScope | null {
   const context = verifiedRequestContext(request.headers);
   if (!context?.claims.agt) return null;
+  if (!organizationIdSchema.safeParse(context.claims.org).success ||
+      !userIdSchema.safeParse(context.claims.sub).success ||
+      !agentIdSchema.safeParse(context.claims.agt).success) return null;
   const scope = { organizationId: context.claims.org, principalId: context.claims.sub, agentId: context.claims.agt };
   bindScopeContext(scope, context);
   return scope;

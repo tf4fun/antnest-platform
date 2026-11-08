@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { agentIdSchema } from "../protocol/resource-ids.ts";
 import { ERROR_CODES } from "../errors.gen.ts";
 import { ReplayCapacityError } from "../bridge/replay-load-gate.ts";
 import { PermissionDecisionError } from "../bridge/permission-inbox.ts";
@@ -41,7 +42,7 @@ export function createPermissionHandler(dependencies: {
     try {
       agentId = decodeURIComponent(raw[0]!);
       permissionId = decodeURIComponent(raw[2]!);
-      id.parse(agentId);
+      agentIdSchema.parse(agentId);
       id.parse(permissionId);
       if (/[/\\\x00-\x1f]/u.test(agentId + permissionId)) throw new Error();
     } catch {

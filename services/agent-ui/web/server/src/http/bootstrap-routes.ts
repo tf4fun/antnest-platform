@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { agentIdSchema } from "../protocol/resource-ids.ts";
 import { ERROR_CODES } from "../errors.gen.ts";
 import { error, json } from "./command-routes.ts";
 import { readWorkspacePrincipal } from "./workspace-principal.ts";
@@ -7,7 +8,7 @@ import { bindScopeContext, verifiedRequestContext } from "./trusted-identity.ts"
 export type BootstrapScope = { organizationId: string; principalId: string };
 
 const workspaceAgent = z.object({
-  agent_id: z.string().min(1).max(200),
+  agent_id: agentIdSchema,
   name: z.string().min(1),
   lifecycle_state: z.enum(["not_created", "created", "deleted"]),
   activation_state: z.enum(["enabled", "disabled"]).optional(),

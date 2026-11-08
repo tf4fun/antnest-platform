@@ -1,5 +1,6 @@
 // Browser-safe workspace DTO validation and patching. No Node or ACP runtime imports.
 import { z } from "zod";
+import { agentIdSchema } from "./resource-ids.ts";
 import { ERROR_METADATA } from "../errors.gen.ts";
 import { learningStatusSchema } from "./learning-status.ts";
 import { availableCommandsSchema } from "./available-commands.ts";
@@ -74,7 +75,7 @@ const turn = z.strictObject({ turnId: id, outcome: z.enum(["running", "completed
   value.liveProcessDelta.fromVersion < value.processVersion &&
   value.liveProcessDelta.items.every(({ index }) => index < value.processCount) &&
   new Set(value.liveProcessDelta.items.map(({ index }) => index)).size === value.liveProcessDelta.items.length));
-const session = z.strictObject({ agentId: id, sessionId: id, title: z.string().max(512).nullable(),
+const session = z.strictObject({ agentId: agentIdSchema, sessionId: id, title: z.string().max(512).nullable(),
   updatedAt: z.string().max(64).nullable(), bridgeEpoch: id, incarnation: id,
   viewRevision: revision, appendVersion: revision.nullable(), outputWatermark: revision.nullable(),
   historyToken: cursor.nullable(), streamCursor: cursor,
@@ -91,7 +92,7 @@ const session = z.strictObject({ agentId: id, sessionId: id, title: z.string().m
 const systemNotice = z.strictObject({
   changeId: id,
   sequence: z.string().regex(/^[1-9][0-9]{0,18}$/),
-  agentId: id,
+  agentId: agentIdSchema,
   kind: z.enum(["skill_created", "skill_updated"]),
   occurredAt: z.string().min(20).max(40),
   skillName: z.string().min(1).max(64).regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/),
@@ -99,7 +100,7 @@ const systemNotice = z.strictObject({
   sourceSessionId: id.optional(),
   sourceRunId: id.optional(),
 });
-const agent = z.strictObject({ agentId: id, bridgeEpoch: id, availability: z.enum(["ready", "busy", "offline"]),
+const agent = z.strictObject({ agentId: agentIdSchema, bridgeEpoch: id, availability: z.enum(["ready", "busy", "offline"]),
   unavailableReason: z.enum(["agent_unavailable", "agent_preparing", "runtime_barrier_required"]).nullable().optional(),
   controlCommands: availableCommandsSchema.optional(),
   skillCommands: availableCommandsSchema.optional(),

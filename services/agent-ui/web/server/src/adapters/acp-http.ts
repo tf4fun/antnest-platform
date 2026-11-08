@@ -10,6 +10,7 @@ import {
   type AcpErrorClassification,
 } from "./acp-errors.ts";
 import { z } from "zod";
+import { agentIdSchema } from "../protocol/resource-ids.ts";
 import { initialSkillCommands, type WorkspaceCommand } from "../protocol/available-commands.ts";
 import type { BridgeScope } from "../bridge/registry.ts";
 import { ConfigurationConflictError } from "../bridge/configuration-token.ts";
@@ -25,7 +26,7 @@ const CONFIGURATION = "antnest.dev/configuration";
 const learningChangeSchema = z.strictObject({
   changeId: z.string().min(1).max(200),
   sequence: z.string().regex(/^[1-9][0-9]{0,18}$/u),
-  agentId: z.string().min(1).max(200),
+  agentId: agentIdSchema,
   kind: z.enum(["skill_created", "skill_updated"]),
   occurredAt: z.string().min(20).max(40),
   skillName: z.string().min(1).max(64),
@@ -128,7 +129,7 @@ const observationSchema = z.strictObject({
 });
 
 const agentStateBase = {
-  agent_id: z.string().min(1).max(200),
+  agent_id: agentIdSchema,
   access_allowed: z.literal(true),
   configuration_revision: z.string().regex(/^[a-f0-9]{64}$/u),
 };

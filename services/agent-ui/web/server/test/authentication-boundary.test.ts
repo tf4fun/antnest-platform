@@ -134,13 +134,13 @@ test("signed claims determine bootstrap authority and credentials never enter th
   try {
     const address = server.address(); assert.ok(address && typeof address !== "string");
     const response = await fetch(`http://127.0.0.1:${address.port}/api/app/workspace/v1/bootstrap`, { headers: {
-      ...workloadHeaders(), "Antnest-Caller-Context": testContext({ sub: "用户,一", org: "组织,一" }).token,
+      ...workloadHeaders(), "Antnest-Caller-Context": testContext({ sub: "user-1", org: "org-1" }).token,
       "x-antnest-organization-id": "forged", "x-antnest-principal-id": "forged", "x-antnest-administrator": "true",
       "x-antnest-organization-slug": "ZW5naW5lZXJpbmc", "x-antnest-organization-name": "RW5naW5lZXJpbmc",
       cookie: "browser-private", authorization: "Bearer browser-private",
     } });
     assert.equal(response.status, 200);
-    assert.deepEqual(await response.json(), { userId: "用户,一", organizationId: "组织,一",
+    assert.deepEqual(await response.json(), { userId: "user-1", organizationId: "org-1",
       organizationSlug: "engineering", organizationName: "Engineering", administrator: false });
   } finally { server.closeAllConnections(); server.close(); await once(server, "close"); }
 });

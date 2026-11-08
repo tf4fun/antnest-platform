@@ -11,6 +11,7 @@ export function readWorkspacePrincipal(headers: Headers): WorkspacePrincipal | n
   const organizationSlug = decodeDisplay(headers.get("x-antnest-organization-slug"));
   const organizationName = decodeDisplay(headers.get("x-antnest-organization-name"));
   if (!claims || organizationSlug === null || organizationName === null) return null;
+  if (!userIdSchema.safeParse(claims.sub).success || !organizationIdSchema.safeParse(claims.org).success) return null;
   return { userId: claims.sub, organizationId: claims.org, organizationSlug, organizationName,
     administrator: claims.sys_role === "admin" || claims.org_role === "admin" };
 }
@@ -29,3 +30,4 @@ function decodeDisplay(value: string | null): string | null {
 }
 
 import { verifiedRequestContext } from "./trusted-identity.ts";
+import { organizationIdSchema, userIdSchema } from "../protocol/resource-ids.ts";

@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
+import { agentIdSchema } from "../protocol/resource-ids.ts";
 import type { BootstrapScope } from "../http/bootstrap-routes.ts";
 import { scopeHeaders } from "../http/trusted-identity.ts";
 import { withActiveHttpTrace } from "../telemetry.ts";
@@ -8,7 +9,7 @@ const pageLimit = 200;
 const maximumPages = 100;
 const maximumResponseBytes = 2 * 1024 * 1024;
 const agentSchema = z.object({
-  agent_id: z.string().min(1).max(200),
+  agent_id: agentIdSchema,
   name: z.string().min(1),
   lifecycle_state: z.enum(["not_created", "created", "deleted"]),
   activation_state: z.enum(["enabled", "disabled"]).optional(),

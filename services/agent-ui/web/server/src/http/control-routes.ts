@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { agentIdSchema } from "../protocol/resource-ids.ts";
 import { ERROR_CODES } from "../errors.gen.ts";
 import { AgentAccessRevokedError, SessionNotFoundError } from "../adapters/acp-http.ts";
 import { ConfigurationConflictError } from "../bridge/configuration-token.ts";
@@ -22,6 +23,7 @@ export function createControlHandler(dependencies: {
     let agentId: string;
     try { agentId = decodeURIComponent(match[1]!); }
     catch { return error(422, ERROR_CODES.INVALID_REQUEST, "Agent ID is invalid", "none"); }
+    if (!agentIdSchema.safeParse(agentId).success) return error(422, ERROR_CODES.INVALID_REQUEST, "Malformed agent", "none");
     if (scope.agentId !== agentId) return error(403, ERROR_CODES.ACCESS_DENIED, "Agent access denied", "none");
     if (url.search) return error(422, ERROR_CODES.INVALID_REQUEST, "Command query is invalid", "none");
     let body: ControlRequest;

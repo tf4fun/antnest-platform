@@ -19,7 +19,7 @@ test("raw and copied identity headers carry no verified authority", () => {
 });
 
 test("scope conditions cannot serialize credentials and only same-scope authenticated requests replace context", () => {
-  const original = testScope({ organizationId: "研发,一", principalId: "user,一", agentId: "agent" });
+  const original = testScope({ organizationId: "org-1", principalId: "user-1", agentId: "agent" });
   const first = scopeHeaders(original, "agent-acp-service");
   assert.deepEqual(Object.keys(first), ["Antnest-Caller-Context"]);
   assert.equal(JSON.stringify(original).includes(first["Antnest-Caller-Context"]), false);

@@ -1,12 +1,13 @@
 import { z } from "zod";
+import { agentIdSchema, organizationIdSchema, userIdSchema } from "../../server/src/protocol/resource-ids.ts";
 import type { WorkspaceSnapshot } from "./types";
 
 const organizationDisplay = z.string().min(1).refine((value) => value.trim() !== "");
 
 const bootstrapSchema = z.object({
   principal: z.object({
-    user_id: z.string().min(1),
-    organization_id: z.string().min(1),
+    user_id: userIdSchema,
+    organization_id: organizationIdSchema,
     organization_slug: organizationDisplay,
     organization_name: organizationDisplay,
     administrator: z.boolean(),
@@ -15,7 +16,7 @@ const bootstrapSchema = z.object({
     .array(
       z
         .object({
-          agent_id: z.string().min(1),
+          agent_id: agentIdSchema,
           name: z.string().min(1),
           lifecycle_state: z.enum(["not_created", "created", "deleted"]),
           activation_state: z.enum(["enabled", "disabled"]).optional(),
@@ -44,14 +45,14 @@ const bootstrapSchema = z.object({
 
 const bridgeBootstrapSchema = z.strictObject({
   principal: z.strictObject({
-    userId: z.string().min(1),
-    organizationId: z.string().min(1),
+    userId: userIdSchema,
+    organizationId: organizationIdSchema,
     organizationSlug: organizationDisplay,
     organizationName: organizationDisplay,
     administrator: z.boolean(),
   }),
   agents: z.array(z.strictObject({
-    agentId: z.string().min(1),
+    agentId: agentIdSchema,
     name: z.string().min(1),
     lifecycle: z.enum(["not_created", "created", "deleted"]),
     activation: z.enum(["enabled", "disabled"]).optional(),
