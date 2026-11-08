@@ -58,6 +58,7 @@ const baseHandlers = (members: Handler): Record<string, Handler> => ({
 async function openCreateForm() {
   const page = render(<AgentsPage />);
   const [trigger] = await screen.findAllByRole("button", { name: /^create agent$/i });
+  if (!trigger) throw new Error("Create Agent trigger is missing");
   await waitFor(() => expect((trigger as HTMLButtonElement).disabled).toBe(false));
   fireEvent.click(trigger);
   return page;
@@ -84,9 +85,9 @@ describe("Agent inventory owner pagination", () => {
       (u) => u.pathname === "/api/admin/directory/members" && u.searchParams.get("q") === "alice",
     );
     expect(queried).toHaveLength(2);
-    expect(queried[1].searchParams.get("cursor")).toBe("page-2");
-    expect(queried[0].searchParams.get("cursor")).toBeNull();
-    expect(queried[1].searchParams.get("active")).toBe("true");
+    expect(queried[1]!.searchParams.get("cursor")).toBe("page-2");
+    expect(queried[0]!.searchParams.get("cursor")).toBeNull();
+    expect(queried[1]!.searchParams.get("active")).toBe("true");
     expect((select as HTMLSelectElement).value).toBe("user-52");
     expect(option).toBeTruthy();
   });

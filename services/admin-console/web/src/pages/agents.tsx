@@ -126,7 +126,7 @@ function AgentInventory() {
   const ownerSelection = useRef<string>("");
   const ownerPrefix = useRef("");
   const ownerGeneration = useRef(0);
-  const ownerAbort = useRef<AbortController>();
+  const ownerAbort = useRef<AbortController | undefined>(undefined);
   const ownerReadPending = useRef(false);
   const ownerSearchInput = useRef<HTMLInputElement>(null);
   const [directoryAvailable, setDirectoryAvailable] = useState<boolean>();
@@ -642,7 +642,7 @@ function AgentDetail({ agentID, networkScope }: { agentID: string; networkScope?
   const [ownerCursor, setOwnerCursor] = useState<string | null>(null);
   const [ownerPending, setOwnerPending] = useState(false);
   const ownerProfileGeneration = useRef(0);
-  const ownerProfileAbort = useRef<AbortController>();
+  const ownerProfileAbort = useRef<AbortController | undefined>(undefined);
   const ownerProfileLocked = useRef(false);
   const [directoryFailure, setDirectoryFailure] = useState<ResourceFailure>();
   const [directoryReloadGeneration, setDirectoryReloadGeneration] = useState(0);

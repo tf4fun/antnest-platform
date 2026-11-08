@@ -22,11 +22,29 @@ const readContractIfPresent = (relative) => {
   return existsSync(path) ? JSON.parse(readFileSync(path, "utf8")) : undefined;
 };
 
-const contract = readContract("admin-console/admin-contract.json");
+const activeContract = readContract("admin-console/admin-contract.json");
+const adminProposal = readContract(
+  "admin-console/directory-publication-proposal.json",
+);
+const contract =
+  activeContract.version === adminProposal.base_version
+    ? { ...activeContract, ...adminProposal.catalog_patch }
+    : activeContract;
 const callers = readContract("admin-console/callers.json");
 const slice = readContract("common/slices/admin-console.json");
 const registry = readContract("common/errors.json");
-const identity = readContract("identity/identity-contract.json");
+const activeIdentity = readContract("identity/identity-contract.json");
+const identityProposal = readContract(
+  "identity/directory-publication-proposal.json",
+);
+const identity =
+  activeIdentity.revision === identityProposal.base_revision
+    ? {
+        ...activeIdentity,
+        revision: identityProposal.target_revision,
+        methods: { ...activeIdentity.methods, ...identityProposal.methods },
+      }
+    : activeIdentity;
 const adminSchema = readContractIfPresent(
   "admin-console/admin-api.schema.json",
 );

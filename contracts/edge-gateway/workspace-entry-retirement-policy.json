@@ -75,7 +75,7 @@
     "original_idle_absolute_cct_deadlines": "preserved",
     "origin_contract": "public-entry.md",
     "csrf_contract": "session-security.md",
-    "identity_revision": 18
+    "identity_revision": 19
   },
   "cache_admission": {
     "outage_seconds": 5,

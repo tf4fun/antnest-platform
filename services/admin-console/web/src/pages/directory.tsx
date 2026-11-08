@@ -73,11 +73,11 @@ export function DirectoryPage({
   const [groupQuery, setGroupQuery] = useState<DirectoryGroupQuery>({});
   const memberGeneration = useRef(0);
   const groupGeneration = useRef(0);
-  const memberAbort = useRef<AbortController>();
-  const groupAbort = useRef<AbortController>();
+  const memberAbort = useRef<AbortController | undefined>(undefined);
+  const groupAbort = useRef<AbortController | undefined>(undefined);
   const memberReadLocked = useRef(false);
   const groupReadLocked = useRef(false);
-  const groupLoadedQuery = useRef<string>();
+  const groupLoadedQuery = useRef<string | undefined>(undefined);
   const memberSentinel = useRef<HTMLDivElement>(null);
   const groupSentinel = useRef<HTMLDivElement>(null);
   const loadPending = memberState.pending && memberState.nextCursor === undefined;

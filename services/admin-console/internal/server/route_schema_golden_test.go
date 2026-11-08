@@ -144,10 +144,12 @@ func newGoldenSkillHandler(t *testing.T) (http.Handler, *skillStub) {
 
 func requestGolden(t *testing.T, handler http.Handler, c goldenRouteCase) (*httptest.ResponseRecorder, *http.Request) {
 	t.Helper()
-	var ctx context.Context = t.Context()
+	ctx := t.Context()
 	var cancel context.CancelFunc
 	if c.stream {
-		ctx, cancel = context.WithCancel(t.Context())
+		streamContext, streamCancel := context.WithCancel(ctx)
+		defer streamCancel()
+		ctx, cancel = streamContext, streamCancel
 	}
 	request := httptest.NewRequest(c.method, c.path, strings.NewReader(c.body)).WithContext(ctx)
 	if c.body != "" {

@@ -62,7 +62,7 @@ describe("DirectoryPage people list", () => {
     renderDirectory();
     await screen.findAllByText("member1@example.com");
     expect(requests.map((u) => u.pathname)).toEqual(["/api/admin/directory/members"]);
-    expect(requests[0].searchParams.get("limit")).toBe("50");
+    expect(requests[0]!.searchParams.get("limit")).toBe("50");
   });
 
   it("appends a second page on load more and stops at null cursor", async () => {
@@ -78,7 +78,7 @@ describe("DirectoryPage people list", () => {
     await screen.findAllByText("member2@example.com");
     const memberRequests = requests.filter((u) => u.pathname === "/api/admin/directory/members");
     expect(memberRequests).toHaveLength(2);
-    expect(memberRequests[1].searchParams.get("cursor")).toBe("page-2");
+    expect(memberRequests[1]!.searchParams.get("cursor")).toBe("page-2");
     expect(screen.queryByRole("button", { name: /load more/i })).toBeNull();
   });
 
@@ -151,8 +151,8 @@ describe("DirectoryPage groups list", () => {
     await waitFor(() => expect(screen.getAllByText("Operators").length).toBeGreaterThanOrEqual(2));
     const groupRequests = requests.filter((u) => u.pathname === "/api/admin/directory/groups");
     expect(groupRequests).toHaveLength(2);
-    expect(groupRequests[1].searchParams.get("cursor")).toBe("groups-2");
-    expect(groupRequests[0].searchParams.get("role")).toBeNull();
+    expect(groupRequests[1]!.searchParams.get("cursor")).toBe("groups-2");
+    expect(groupRequests[0]!.searchParams.get("role")).toBeNull();
   });
 
   it("does not drain pages eagerly", async () => {
@@ -182,9 +182,9 @@ describe("DirectoryPage groups list", () => {
     await screen.findAllByText("Operators");
     const groupRequests = requests.filter((u) => u.pathname === "/api/admin/directory/groups");
     expect(groupRequests).toHaveLength(2);
-    expect(groupRequests[0].searchParams.get("q")).toBeNull();
-    expect(groupRequests[1].searchParams.get("q")).toBe("ops");
-    expect(groupRequests[1].searchParams.get("cursor")).toBeNull();
+    expect(groupRequests[0]!.searchParams.get("q")).toBeNull();
+    expect(groupRequests[1]!.searchParams.get("q")).toBe("ops");
+    expect(groupRequests[1]!.searchParams.get("cursor")).toBeNull();
   });
 
   it("does not auto-retry a failed group first page but retries on demand", async () => {
