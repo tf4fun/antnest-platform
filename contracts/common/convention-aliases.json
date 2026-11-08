@@ -1296,6 +1296,60 @@
     "remove_after": "protocol"
   },
   {
+    "file": "edge-gateway/session-response.ids-v2.schema.json",
+    "pointer": "/$defs/external_identity_list_query/not/properties/after_id",
+    "field": "after_id",
+    "replacement": "cursor",
+    "reason": "One-release deprecated request alias; Gateway forwards only canonical cursor.",
+    "kind": "deprecated_alias",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "edge-gateway/session-response.ids-v2.schema.json",
+    "pointer": "/$defs/external_identity_list_query/not/required/1",
+    "field": "after_id",
+    "replacement": "cursor",
+    "reason": "One-release deprecated request alias; Gateway forwards only canonical cursor.",
+    "kind": "deprecated_alias",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "edge-gateway/session-response.ids-v2.schema.json",
+    "pointer": "/$defs/external_identity_list_query/properties/after_id",
+    "field": "after_id",
+    "replacement": "cursor",
+    "reason": "One-release deprecated request alias; Gateway forwards only canonical cursor.",
+    "kind": "deprecated_alias",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "edge-gateway/session-response.ids-v2.schema.json",
+    "pointer": "/$defs/list_sessions_query/not/properties/after_id",
+    "field": "after_id",
+    "replacement": "cursor",
+    "reason": "One-release deprecated request alias; Gateway forwards only canonical cursor.",
+    "kind": "deprecated_alias",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "edge-gateway/session-response.ids-v2.schema.json",
+    "pointer": "/$defs/list_sessions_query/not/required/1",
+    "field": "after_id",
+    "replacement": "cursor",
+    "reason": "One-release deprecated request alias; Gateway forwards only canonical cursor.",
+    "kind": "deprecated_alias",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "edge-gateway/session-response.ids-v2.schema.json",
+    "pointer": "/$defs/list_sessions_query/properties/after_id",
+    "field": "after_id",
+    "replacement": "cursor",
+    "reason": "One-release deprecated request alias; Gateway forwards only canonical cursor.",
+    "kind": "deprecated_alias",
+    "remove_after": "next_release"
+  },
+  {
     "file": "edge-gateway/session-response.schema.json",
     "pointer": "/$defs/external_identity_list_query/not/properties/after_id",
     "field": "after_id",
