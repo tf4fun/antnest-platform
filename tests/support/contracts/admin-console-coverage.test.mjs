@@ -3,7 +3,10 @@ import { existsSync, readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { collectSources, discoverRoutes } from "../check-service-authentication.mjs";
+import {
+  collectSources,
+  discoverRoutes,
+} from "../check-service-authentication.mjs";
 import { loadContracts } from "../../../scripts/check-contract-conventions.mjs";
 import { collectContractRoutes } from "./route-parity.mjs";
 
@@ -11,7 +14,9 @@ const repoRoot = new URL("../../../", import.meta.url);
 const contractsRoot = new URL("contracts/", repoRoot);
 const repoPath = (relative) => fileURLToPath(new URL(relative, repoRoot));
 const readContract = (relative) =>
-  JSON.parse(readFileSync(fileURLToPath(new URL(relative, contractsRoot)), "utf8"));
+  JSON.parse(
+    readFileSync(fileURLToPath(new URL(relative, contractsRoot)), "utf8"),
+  );
 const readContractIfPresent = (relative) => {
   const path = fileURLToPath(new URL(relative, contractsRoot));
   return existsSync(path) ? JSON.parse(readFileSync(path, "utf8")) : undefined;
@@ -22,24 +27,32 @@ const callers = readContract("admin-console/callers.json");
 const slice = readContract("common/slices/admin-console.json");
 const registry = readContract("common/errors.json");
 const identity = readContract("identity/identity-contract.json");
-const adminSchema = readContractIfPresent("admin-console/admin-api.schema.json");
+const adminSchema = readContractIfPresent(
+  "admin-console/admin-api.schema.json",
+);
 const directorySchema = readContractIfPresent("identity/directory.schema.json");
 const errorsView = readContractIfPresent("admin-console/errors.json");
 const goErrors = readFileSync(
   repoPath("services/admin-console/internal/apierror/errors.gen.go"),
   "utf8",
 );
-const tsErrors = readFileSync(repoPath("services/admin-console/web/src/lib/errors.gen.ts"), "utf8");
+const tsErrors = readFileSync(
+  repoPath("services/admin-console/web/src/lib/errors.gen.ts"),
+  "utf8",
+);
 
 const require = createRequire(
   new URL("../../../services/agent-acp-service/package.json", import.meta.url),
 );
 const { Ajv2020 } = require("ajv/dist/2020.js");
 
-const isObject = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
+const isObject = (value) =>
+  value !== null && typeof value === "object" && !Array.isArray(value);
 const CANONICAL = "https://schemas.antnest.dev/";
-const adminDef = (name) => `${CANONICAL}admin-console/admin-api.schema.json#/$defs/${name}`;
-const identityDef = (name) => `${CANONICAL}identity/directory.schema.json#/$defs/${name}`;
+const adminDef = (name) =>
+  `${CANONICAL}admin-console/admin-api.schema.json#/$defs/${name}`;
+const identityDef = (name) =>
+  `${CANONICAL}identity/directory.schema.json#/$defs/${name}`;
 
 const schemaRegistry = (async () => {
   const ajv = new Ajv2020({
@@ -85,7 +98,9 @@ function routeMetadataProblems(name, route) {
     problems.push(`${label}: response_schema must be ${responseSchema}`);
   const requestBody = route.request_body;
   if (!isObject(requestBody) || !REQUEST_KINDS.includes(requestBody.kind)) {
-    problems.push(`${label}: request_body must declare kind none, json or multipart`);
+    problems.push(
+      `${label}: request_body must declare kind none, json or multipart`,
+    );
   } else {
     const allowed =
       requestBody.kind === "none"
@@ -94,14 +109,20 @@ function routeMetadataProblems(name, route) {
           ? ["kind", "schema"]
           : ["kind", "content_type", "schema"];
     for (const key of Object.keys(requestBody))
-      if (!allowed.includes(key)) problems.push(`${label}: unexpected request_body.${key}`);
+      if (!allowed.includes(key))
+        problems.push(`${label}: unexpected request_body.${key}`);
     if (requestBody.kind === "none") {
       if (requestBody.input !== "query_and_path")
-        problems.push(`${label}: bodyless request_body must declare input query_and_path`);
+        problems.push(
+          `${label}: bodyless request_body must declare input query_and_path`,
+        );
     } else {
       if (requestBody.schema !== requestSchema)
         problems.push(`${label}: request_body.schema must be ${requestSchema}`);
-      if (requestBody.kind === "multipart" && requestBody.content_type !== "multipart/form-data")
+      if (
+        requestBody.kind === "multipart" &&
+        requestBody.content_type !== "multipart/form-data"
+      )
         problems.push(
           `${label}: multipart request_body must declare content_type multipart/form-data`,
         );
@@ -109,7 +130,9 @@ function routeMetadataProblems(name, route) {
   }
   const responseBody = route.response_body;
   if (!isObject(responseBody) || !RESPONSE_KINDS.includes(responseBody.kind)) {
-    problems.push(`${label}: response_body must declare kind none, json, binary or event_stream`);
+    problems.push(
+      `${label}: response_body must declare kind none, json, binary or event_stream`,
+    );
   } else {
     const allowed =
       responseBody.kind === "none"
@@ -120,11 +143,17 @@ function routeMetadataProblems(name, route) {
             ? ["kind", "content_type"]
             : ["kind", "content_type", "event", "event_id", "data"];
     for (const key of Object.keys(responseBody))
-      if (!allowed.includes(key)) problems.push(`${label}: unexpected response_body.${key}`);
+      if (!allowed.includes(key))
+        problems.push(`${label}: unexpected response_body.${key}`);
     if (responseBody.kind === "json" && responseBody.schema !== responseSchema)
       problems.push(`${label}: response_body.schema must be ${responseSchema}`);
-    if (responseBody.kind === "binary" && responseBody.content_type !== "application/zip")
-      problems.push(`${label}: binary response_body must declare content_type application/zip`);
+    if (
+      responseBody.kind === "binary" &&
+      responseBody.content_type !== "application/zip"
+    )
+      problems.push(
+        `${label}: binary response_body must declare content_type application/zip`,
+      );
     if (responseBody.kind === "event_stream") {
       if (responseBody.content_type !== "text/event-stream")
         problems.push(
@@ -155,7 +184,8 @@ function definitionProblems(definition, kind, label) {
     (isObject(definition) && Object.keys(definition).length === 0)
   )
     return [`${label}: ${kind} definition must not be an empty placeholder`];
-  if (!isObject(definition)) return [`${label}: ${kind} definition must be a schema object`];
+  if (!isObject(definition))
+    return [`${label}: ${kind} definition must be a schema object`];
   if (typeof definition.$ref === "string") return [];
   if (
     kind === "response" &&
@@ -165,14 +195,18 @@ function definitionProblems(definition, kind, label) {
     return [];
   if (definition.type !== "object" || definition.additionalProperties !== false)
     return [`${label}: ${kind} definition must be a closed object`];
-  if (kind === "response" && Object.keys(definition.properties ?? {}).length === 0)
+  if (
+    kind === "response" &&
+    Object.keys(definition.properties ?? {}).length === 0
+  )
     return [`${label}: response definition must declare envelope properties`];
   return [];
 }
 
 function expectedRequestProperties(route) {
   const names = new Set();
-  for (const match of route.path.matchAll(/\{([A-Za-z_][A-Za-z0-9_]*)\}/g)) names.add(match[1]);
+  for (const match of route.path.matchAll(/\{([A-Za-z_][A-Za-z0-9_]*)\}/g))
+    names.add(match[1]);
   if (isObject(route.query))
     for (const key of ["required", "optional", "deprecated"])
       for (const name of route.query[key] ?? []) names.add(name);
@@ -181,8 +215,10 @@ function expectedRequestProperties(route) {
 
 function expectedRequiredProperties(route) {
   const names = new Set();
-  for (const match of route.path.matchAll(/\{([A-Za-z_][A-Za-z0-9_]*)\}/g)) names.add(match[1]);
-  if (isObject(route.query)) for (const name of route.query.required ?? []) names.add(name);
+  for (const match of route.path.matchAll(/\{([A-Za-z_][A-Za-z0-9_]*)\}/g))
+    names.add(match[1]);
+  if (isObject(route.query))
+    for (const name of route.query.required ?? []) names.add(name);
   return names;
 }
 
@@ -206,7 +242,8 @@ function errorsViewProblems(view, sliceCodes, registryByCode) {
   for (const key of Object.keys(view))
     if (!["service", "source", "errors"].includes(key))
       problems.push(`view must not declare ${key}`);
-  if (view.service !== "admin-console") problems.push("view service must be admin-console");
+  if (view.service !== "admin-console")
+    problems.push("view service must be admin-console");
   if (view.source !== "../common/errors.json")
     problems.push("view source must be ../common/errors.json");
   const errors = view.errors;
@@ -222,7 +259,10 @@ function errorsViewProblems(view, sliceCodes, registryByCode) {
         return;
       }
       const keys = sortedKeys(entry);
-      if (JSON.stringify(keys) !== JSON.stringify(["code", "description", "retryable", "status"]))
+      if (
+        JSON.stringify(keys) !==
+        JSON.stringify(["code", "description", "retryable", "status"])
+      )
         problems.push(
           `view error ${entry.code ?? index} must declare exactly code, status, retryable and description`,
         );
@@ -240,13 +280,17 @@ function errorsViewProblems(view, sliceCodes, registryByCode) {
           `view error ${entry.code} retryable must be the registry ${documented.retryable}`,
         );
       if (entry.description !== documented.description)
-        problems.push(`view error ${entry.code} description must be the registry description`);
+        problems.push(
+          `view error ${entry.code} description must be the registry description`,
+        );
     });
   }
   return problems.sort();
 }
 
-const registryByCode = new Map(registry.errors.map((entry) => [entry.code, entry]));
+const registryByCode = new Map(
+  registry.errors.map((entry) => [entry.code, entry]),
+);
 
 const ROUTE_COUNT = 71;
 const PLANNED_UNREGISTERED = [
@@ -273,7 +317,10 @@ const directoryMembership = {
   created_at: timestamp,
   updated_at: timestamp,
 };
-const directoryMember = { user: directoryUser, membership: directoryMembership };
+const directoryMember = {
+  user: directoryUser,
+  membership: directoryMembership,
+};
 const directoryGroup = {
   display_name: "Operators",
   source: "local",
@@ -325,8 +372,16 @@ test("catalog version 61 declares paginated directory routes and lifecycle holds
   assert.equal(groups?.query?.cursor_response, "next_cursor");
   assert.ok(!("deprecated" in (groups?.query ?? {})));
   for (const [name, method, path] of [
-    ["cancel_lifecycle_operation", "POST", "/agents/{agent_id}/lifecycle-operation/cancel"],
-    ["clear_lifecycle_quarantine", "POST", "/agents/{agent_id}/lifecycle-quarantine/clear"],
+    [
+      "cancel_lifecycle_operation",
+      "POST",
+      "/agents/{agent_id}/lifecycle-operation/cancel",
+    ],
+    [
+      "clear_lifecycle_quarantine",
+      "POST",
+      "/agents/{agent_id}/lifecycle-quarantine/clear",
+    ],
   ]) {
     assert.deepEqual(
       {
@@ -458,29 +513,42 @@ function registeredAdminRoutes(sources) {
     errors.push(...(scan.errors ?? []).map((error) => `${path}: ${error}`));
     for (const route of scan.routes ?? []) {
       const label = route.split(" ", 2)[1];
-      if (label !== undefined && label.startsWith("/api/admin")) registered.add(route);
+      if (label !== undefined && label.startsWith("/api/admin"))
+        registered.add(route);
     }
   }
   return { registered, errors: errors.sort() };
 }
 
 test("every mux-registered and caller-cataloged admin route has a contract", () => {
-  const declared = new Set(collectContractRoutes(contract.routes, contract.base_path));
+  const declared = new Set(
+    collectContractRoutes(contract.routes, contract.base_path),
+  );
   const { registered, errors } = registeredAdminRoutes(collectSources());
   assert.deepEqual(errors, []);
   for (const route of [...registered].sort())
-    assert.ok(declared.has(route), `registered route lacks a contract: ${route}`);
+    assert.ok(
+      declared.has(route),
+      `registered route lacks a contract: ${route}`,
+    );
   const cataloged = Object.keys(callers.routes).filter((route) =>
     route.split(" ", 2)[1]?.startsWith("/api/admin"),
   );
   for (const route of cataloged.sort())
-    assert.ok(declared.has(route), `caller catalog route lacks a contract: ${route}`);
-  const unregistered = [...declared].filter((route) => !registered.has(route)).sort();
+    assert.ok(
+      declared.has(route),
+      `caller catalog route lacks a contract: ${route}`,
+    );
+  const unregistered = [...declared]
+    .filter((route) => !registered.has(route))
+    .sort();
   assert.ok(
     unregistered.every((route) => PLANNED_UNREGISTERED.includes(route)),
     `only the planned directory routes may lack registration: ${JSON.stringify(unregistered)}`,
   );
-  const unpolicy = [...declared].filter((route) => !(route in callers.routes)).sort();
+  const unpolicy = [...declared]
+    .filter((route) => !(route in callers.routes))
+    .sort();
   assert.ok(
     unpolicy.every((route) => PLANNED_UNREGISTERED.includes(route)),
     `only the planned directory routes may lack a caller policy: ${JSON.stringify(unpolicy)}`,
@@ -488,7 +556,8 @@ test("every mux-registered and caller-cataloged admin route has a contract", () 
 });
 
 test("an extra mux registration without a contract is flagged", () => {
-  const anchor = 'h.mux.HandleFunc("GET /api/admin/overview", h.withPrincipal(h.overview))';
+  const anchor =
+    'h.mux.HandleFunc("GET /api/admin/overview", h.withPrincipal(h.overview))';
   const sources = collectSources((path, source) =>
     path === "services/admin-console/internal/server/handler.go"
       ? source.replace(
@@ -500,7 +569,9 @@ test("an extra mux registration without a contract is flagged", () => {
   const { registered, errors } = registeredAdminRoutes(sources);
   assert.deepEqual(errors, []);
   assert.ok(registered.has("GET /api/admin/mutant-extra"));
-  const declared = new Set(collectContractRoutes(contract.routes, contract.base_path));
+  const declared = new Set(
+    collectContractRoutes(contract.routes, contract.base_path),
+  );
   assert.ok(
     [...registered].some((route) => !declared.has(route)),
     "the coverage check must flag an undeclared registered route",
@@ -508,16 +579,28 @@ test("an extra mux registration without a contract is flagged", () => {
 });
 
 test("admin-api.schema.json is a draft 2020-12 document with closed route definitions", () => {
-  assert.ok(adminSchema !== undefined, "contracts/admin-console/admin-api.schema.json is missing");
-  assert.equal(adminSchema.$schema, "https://json-schema.org/draft/2020-12/schema");
-  assert.equal(adminSchema.$id, "https://schemas.antnest.dev/admin-console/admin-api.schema.json");
+  assert.ok(
+    adminSchema !== undefined,
+    "contracts/admin-console/admin-api.schema.json is missing",
+  );
+  assert.equal(
+    adminSchema.$schema,
+    "https://json-schema.org/draft/2020-12/schema",
+  );
+  assert.equal(
+    adminSchema.$id,
+    "https://schemas.antnest.dev/admin-console/admin-api.schema.json",
+  );
   assert.ok(isObject(adminSchema.$defs), "$defs must be an object");
   const routeNames = Object.keys(contract.routes);
   const definitionNames = Object.keys(adminSchema.$defs);
   for (const name of routeNames) {
     for (const kind of ["request", "response"]) {
       const definition = adminSchema.$defs[`${name}_${kind}`];
-      assert.deepEqual(definitionProblems(definition, kind, `${name}_${kind}`), []);
+      assert.deepEqual(
+        definitionProblems(definition, kind, `${name}_${kind}`),
+        [],
+      );
     }
   }
   for (const kind of ["request", "response"])
@@ -536,7 +619,11 @@ test("every route request and response definition resolves and enforces a real e
   for (const name of Object.keys(contract.routes)) {
     await compile(adminDef(`${name}_request`));
     const validate = await compile(adminDef(`${name}_response`));
-    assert.equal(validate({}), false, `${name}_response must reject an empty envelope`);
+    assert.equal(
+      validate({}),
+      false,
+      `${name}_response must reject an empty envelope`,
+    );
   }
 });
 
@@ -545,7 +632,11 @@ test("bodyless request definitions model exactly the declared path and query inp
     if (route.request_body?.kind !== "none") continue;
     const definition = adminSchema?.$defs?.[`${name}_request`];
     assert.equal(definition?.type, "object", `${name}_request`);
-    assert.equal(definition?.additionalProperties, false, `${name}_request must be closed`);
+    assert.equal(
+      definition?.additionalProperties,
+      false,
+      `${name}_request must be closed`,
+    );
     assert.deepEqual(
       sortedKeys(definition.properties),
       sorted(expectedRequestProperties(route)),
@@ -568,11 +659,19 @@ test("directory member and group pages match the browser projection allowlist", 
     [groupPage, undefined, directoryGroup],
   ]) {
     assert(validate({ items: member ? [member] : [group], next_cursor: null }));
-    assert(validate({ items: member ? [member] : [group], next_cursor: "opaque" }));
+    assert(
+      validate({ items: member ? [member] : [group], next_cursor: "opaque" }),
+    );
     assert(validate({ items: [], next_cursor: null }));
     assert(!validate({ items: member ? [member] : [group] }));
     assert(!validate({ items: member ? [member] : [group], next_cursor: 5 }));
-    assert(!validate({ items: member ? [member] : [group], next_cursor: null, extra: 1 }));
+    assert(
+      !validate({
+        items: member ? [member] : [group],
+        next_cursor: null,
+        extra: 1,
+      }),
+    );
     assert(
       !validate({
         items: member ? [member] : [group],
@@ -581,13 +680,21 @@ test("directory member and group pages match the browser projection allowlist", 
       }),
     );
     const overflow = { items: member ? [member] : [group], next_cursor: null };
-    overflow.items = Array.from({ length: 201 }, () => (member ? member : group));
+    overflow.items = Array.from({ length: 201 }, () =>
+      member ? member : group,
+    );
     assert(!validate(overflow), "pages are bounded at 200 items");
   }
   assert(legacy({ users: [directoryMember], groups: [directoryGroup] }));
   assert(!legacy({ users: [directoryMember] }));
   assert(!legacy({ users: [directoryMember], groups: [], next_cursor: null }));
-  for (const key of ["id", "system_role", "active", "created_at", "updated_at"]) {
+  for (const key of [
+    "id",
+    "system_role",
+    "active",
+    "created_at",
+    "updated_at",
+  ]) {
     const user = { ...directoryUser };
     delete user[key];
     assert(
@@ -619,7 +726,11 @@ test("directory member and group pages match the browser projection allowlist", 
       `membership.${key} is required`,
     );
   }
-  for (const field of ["credential_ref", "organization_id", "scim_external_id"]) {
+  for (const field of [
+    "credential_ref",
+    "organization_id",
+    "scim_external_id",
+  ]) {
     assert(
       !memberPage({
         items: [
@@ -657,7 +768,13 @@ test("directory member and group pages match the browser projection allowlist", 
       next_cursor: null,
     }),
   );
-  for (const key of ["display_name", "source", "active", "created_at", "updated_at"]) {
+  for (const key of [
+    "display_name",
+    "source",
+    "active",
+    "created_at",
+    "updated_at",
+  ]) {
     const group = { ...directoryGroup };
     delete group[key];
     assert(!groupPage({ items: [group], next_cursor: null }), `group.${key}`);
@@ -681,16 +798,28 @@ test("directory list requests keep the canonical cursor query without retired al
     assert.equal(definition?.type, "object", `${name}_request`);
     assert.equal(definition?.additionalProperties, false, `${name}_request`);
     assert.deepEqual(sortedKeys(definition?.properties), queryNames, name);
-    for (const retired of ["after", "after_id", "email_prefix", "display_name_prefix"])
+    for (const retired of [
+      "after",
+      "after_id",
+      "email_prefix",
+      "display_name_prefix",
+    ])
       assert.ok(!(retired in (definition?.properties ?? {})), retired);
     assert.ok(isObject(definition), `${name}_request is missing`);
-    const property = (key) => resolveLocalDef(adminSchema, definition.properties[key]);
-    const limit = JSON.stringify(definition.properties.limit) + JSON.stringify(property("limit"));
+    const property = (key) =>
+      resolveLocalDef(adminSchema, definition.properties[key]);
+    const limit =
+      JSON.stringify(definition.properties.limit) +
+      JSON.stringify(property("limit"));
     assert.ok(limit.includes('"default":50'), `${name} limit default`);
     assert.ok(limit.includes('"minimum":1'), `${name} limit minimum`);
     assert.ok(limit.includes('"maximum":200'), `${name} limit maximum`);
     assert.equal(property("q")?.type, "string", `${name} q`);
-    assert.deepEqual(sorted(property("source")?.enum ?? []), ["local", "scim"], `${name} source`);
+    assert.deepEqual(
+      sorted(property("source")?.enum ?? []),
+      ["local", "scim"],
+      `${name} source`,
+    );
     assert.equal(property("active")?.type, "boolean", `${name} active`);
     if (name === "directory_members")
       assert.deepEqual(
@@ -722,7 +851,9 @@ test("directory list requests keep the canonical cursor query without retired al
       { after: "x" },
       { after_id: "x" },
       { bogus: 1 },
-      ...(name === "directory_members" ? [{ role: "owner" }] : [{ role: "admin" }]),
+      ...(name === "directory_members"
+        ? [{ role: "owner" }]
+        : [{ role: "admin" }]),
     ])
       assert(!validate(input), `${name} rejects ${JSON.stringify(input)}`);
   }
@@ -739,7 +870,10 @@ test("media types are explicit for multipart uploads, the zip download and the e
     const definition = adminSchema?.$defs?.[`${name}_request`];
     assert.equal(definition?.type, "object", `${name}_request`);
     assert.equal(definition?.additionalProperties, false, `${name}_request`);
-    assert.ok((definition?.required ?? []).includes("artifact"), `${name} artifact`);
+    assert.ok(
+      (definition?.required ?? []).includes("artifact"),
+      `${name} artifact`,
+    );
     if (name === "publish_skill_version")
       assert.ok(
         (definition?.required ?? []).includes("expected_version"),
@@ -773,7 +907,9 @@ test("media types are explicit for multipart uploads, the zip download and the e
     occurred_at: timestamp,
   };
   assert(validate(event));
-  assert(validate({ ...event, trace_id: "trace-1", operation_request_id: "req-1" }));
+  assert(
+    validate({ ...event, trace_id: "trace-1", operation_request_id: "req-1" }),
+  );
   for (const key of [
     "event_id",
     "global_sequence",
@@ -790,13 +926,24 @@ test("media types are explicit for multipart uploads, the zip download and the e
     !validate({ ...event, runtime_mcp_endpoint: "http://private" }),
     "private event fields must not pass",
   );
-  assert(!validate({ ...event, data: { runtime_mcp_endpoint: "http://private" } }));
+  assert(
+    !validate({ ...event, data: { runtime_mcp_endpoint: "http://private" } }),
+  );
 });
 
 test("identity directory schema documents the bounded member and group methods", async () => {
-  assert.ok(directorySchema !== undefined, "contracts/identity/directory.schema.json is missing");
-  assert.equal(directorySchema.$schema, "https://json-schema.org/draft/2020-12/schema");
-  assert.equal(directorySchema.$id, "https://schemas.antnest.dev/identity/directory.schema.json");
+  assert.ok(
+    directorySchema !== undefined,
+    "contracts/identity/directory.schema.json is missing",
+  );
+  assert.equal(
+    directorySchema.$schema,
+    "https://json-schema.org/draft/2020-12/schema",
+  );
+  assert.equal(
+    directorySchema.$id,
+    "https://schemas.antnest.dev/identity/directory.schema.json",
+  );
   const filters = {
     list_members: ["active", "email_prefix", "role", "source"],
     list_groups: ["active", "display_name_prefix", "source"],
@@ -804,7 +951,11 @@ test("identity directory schema documents the bounded member and group methods",
   for (const method of ["list_members", "list_groups"]) {
     const request = directorySchema.$defs[`${method}_request`];
     assert.equal(request?.type, "object", `${method}_request`);
-    assert.equal(request?.additionalProperties, false, `${method}_request must be closed`);
+    assert.equal(
+      request?.additionalProperties,
+      false,
+      `${method}_request must be closed`,
+    );
     assert.deepEqual(
       sorted(request?.required ?? []),
       ["actor_principal_id", "limit", "organization_id"],
@@ -818,14 +969,21 @@ test("identity directory schema documents the bounded member and group methods",
     assert.ok(!("after" in (request?.properties ?? {})), `${method} after`);
     const limit =
       JSON.stringify(request.properties.limit) +
-      JSON.stringify(resolveLocalDef(directorySchema, request.properties.limit));
+      JSON.stringify(
+        resolveLocalDef(directorySchema, request.properties.limit),
+      );
     assert.ok(limit.includes('"minimum":1'), `${method} limit minimum`);
     assert.ok(limit.includes('"maximum":200'), `${method} limit maximum`);
     const filter = resolveLocalDef(directorySchema, request.properties.filter);
-    assert.equal(filter?.type, "object", `${method} filter must be a closed object`);
+    assert.equal(
+      filter?.type,
+      "object",
+      `${method} filter must be a closed object`,
+    );
     assert.equal(filter?.additionalProperties, false, `${method} filter`);
     assert.deepEqual(sortedKeys(filter?.properties), filters[method], method);
-    const filterProperty = (name) => resolveLocalDef(directorySchema, filter.properties[name]);
+    const filterProperty = (name) =>
+      resolveLocalDef(directorySchema, filter.properties[name]);
     assert.deepEqual(
       sorted(filterProperty("source")?.enum ?? []),
       ["local", "scim"],
@@ -845,7 +1003,11 @@ test("identity directory schema documents the bounded member and group methods",
     }
     const response = directorySchema.$defs[`${method}_response`];
     assert.equal(response?.type, "object", `${method}_response`);
-    assert.equal(response?.additionalProperties, false, `${method}_response must be closed`);
+    assert.equal(
+      response?.additionalProperties,
+      false,
+      `${method}_response must be closed`,
+    );
     assert.deepEqual(
       sorted(response?.required ?? []),
       ["items", "next_cursor"],
@@ -860,7 +1022,13 @@ test("identity directory schema documents the bounded member and group methods",
     );
     const validateRequest = await compile(identityDef(`${method}_request`));
     const validateResponse = await compile(identityDef(`${method}_response`));
-    assert(validateRequest({ actor_principal_id: "a", organization_id: "o", limit: 1 }));
+    assert(
+      validateRequest({
+        actor_principal_id: "a",
+        organization_id: "o",
+        limit: 1,
+      }),
+    );
     assert(
       validateRequest({
         actor_principal_id: "a",
@@ -914,7 +1082,10 @@ test("identity directory schema documents the bounded member and group methods",
             },
           ]),
     ])
-      assert(!validateRequest(input), `${method} rejects ${JSON.stringify(input)}`);
+      assert(
+        !validateRequest(input),
+        `${method} rejects ${JSON.stringify(input)}`,
+      );
     const item =
       method === "list_members"
         ? { user: directoryUser, membership: internalMembership }
@@ -956,7 +1127,11 @@ test("the identity descriptor refs the directory schema and keeps inline shapes"
       );
       assert.deepEqual(
         sorted(entry[side].required ?? []),
-        sorted(directorySchema?.$defs?.[`${method}_${side}`]?.required ?? ["missing"]),
+        sorted(
+          directorySchema?.$defs?.[`${method}_${side}`]?.required ?? [
+            "missing",
+          ],
+        ),
         `${method}.${side} inline required must match the schema`,
       );
       assert.deepEqual(
@@ -987,8 +1162,14 @@ test("the error documentation view maps slice codes to the shared registry", () 
     "errors.json",
     "the catalog must reference the generated service error view",
   );
-  assert.ok(errorsView !== undefined, "contracts/admin-console/errors.json is missing");
-  assert.deepEqual(errorsViewProblems(errorsView, slice.codes, registryByCode), []);
+  assert.ok(
+    errorsView !== undefined,
+    "contracts/admin-console/errors.json is missing",
+  );
+  assert.deepEqual(
+    errorsViewProblems(errorsView, slice.codes, registryByCode),
+    [],
+  );
 });
 
 test("the error view rejects drift in either direction", () => {
@@ -1007,8 +1188,13 @@ test("the error view rejects drift in either direction", () => {
   };
   assert.deepEqual(errorsViewProblems(valid, slice.codes, registryByCode), []);
   const dropped = structuredClone(valid);
-  dropped.errors = dropped.errors.filter((entry) => entry.code !== slice.codes[0]);
-  assert.notDeepEqual(errorsViewProblems(dropped, slice.codes, registryByCode), []);
+  dropped.errors = dropped.errors.filter(
+    (entry) => entry.code !== slice.codes[0],
+  );
+  assert.notDeepEqual(
+    errorsViewProblems(dropped, slice.codes, registryByCode),
+    [],
+  );
   const extra = structuredClone(valid);
   extra.errors.push({
     code: "made_up_code",
@@ -1016,25 +1202,41 @@ test("the error view rejects drift in either direction", () => {
     retryable: false,
     description: "independent constant",
   });
-  assert.notDeepEqual(errorsViewProblems(extra, slice.codes, registryByCode), []);
+  assert.notDeepEqual(
+    errorsViewProblems(extra, slice.codes, registryByCode),
+    [],
+  );
   const drifted = structuredClone(valid);
   drifted.errors[0].status = 418;
-  assert.notDeepEqual(errorsViewProblems(drifted, slice.codes, registryByCode), []);
+  assert.notDeepEqual(
+    errorsViewProblems(drifted, slice.codes, registryByCode),
+    [],
+  );
   const widened = structuredClone(valid);
   widened.errors[0].category = "internal";
-  assert.notDeepEqual(errorsViewProblems(widened, slice.codes, registryByCode), []);
+  assert.notDeepEqual(
+    errorsViewProblems(widened, slice.codes, registryByCode),
+    [],
+  );
   const alien = structuredClone(valid);
   alien.service = "edge-gateway";
-  assert.notDeepEqual(errorsViewProblems(alien, slice.codes, registryByCode), []);
+  assert.notDeepEqual(
+    errorsViewProblems(alien, slice.codes, registryByCode),
+    [],
+  );
 });
 
 test("generated Go and TypeScript catalogs remain derived from the slice", () => {
   const expected = sorted(slice.codes);
   const goCodes = sorted(
-    new Set([...goErrors.matchAll(/= "([a-z][a-z0-9_]+)"/g)].map((match) => match[1])),
+    new Set(
+      [...goErrors.matchAll(/= "([a-z][a-z0-9_]+)"/g)].map((match) => match[1]),
+    ),
   );
   const tsCodes = sorted(
-    new Set([...tsErrors.matchAll(/: "([a-z][a-z0-9_]+)"/g)].map((match) => match[1])),
+    new Set(
+      [...tsErrors.matchAll(/: "([a-z][a-z0-9_]+)"/g)].map((match) => match[1]),
+    ),
   );
   assert.deepEqual(goCodes, expected, "errors.gen.go codes");
   assert.deepEqual(tsCodes, expected, "errors.gen.ts codes");
@@ -1150,8 +1352,14 @@ test("execution audit envelopes match the projected stream and synchronization w
     events({ stream: "permissions", items: [permission], next_cursor: null }),
     "permissions stream page with nullable decision fields",
   );
-  assert(!events({ items: [message], next_cursor: null }), "stream is required");
-  assert(!events({ stream: "bogus", items: [message], next_cursor: null }), "stream enum");
+  assert(
+    !events({ items: [message], next_cursor: null }),
+    "stream is required",
+  );
+  assert(
+    !events({ stream: "bogus", items: [message], next_cursor: null }),
+    "stream enum",
+  );
   assert(
     !events({ stream: "execution", items: [permission], next_cursor: null }),
     "execution stream must carry audit messages",
@@ -1166,7 +1374,9 @@ test("execution audit envelopes match the projected stream and synchronization w
     }),
     "decision is a required nullable field",
   );
-  const synchronization = await compile(adminDef("get_execution_synchronization_response"));
+  const synchronization = await compile(
+    adminDef("get_execution_synchronization_response"),
+  );
   assert(synchronization({ synchronization: null }));
   assert(
     synchronization({
@@ -1184,7 +1394,10 @@ test("execution audit envelopes match the projected stream and synchronization w
     updated_at: timestamp,
     applied_at: null,
   };
-  assert(!synchronization({ synchronization: missingApplied }), "applied_revision is required");
+  assert(
+    !synchronization({ synchronization: missingApplied }),
+    "applied_revision is required",
+  );
   const detail = await compile(adminDef("get_execution_audit_response"));
   const audit = {
     run_id: "run-1",
@@ -1306,7 +1519,10 @@ test("legacy directory arrays are capped and deprecated aliases reject ambiguity
       !validate({ ...requiredInput, cursor: "opaque", after_id: "stale" }),
       `${name} rejects cursor with after_id`,
     );
-    assert(validate({ ...requiredInput, after_id: "stale" }), `${name} accepts the alias alone`);
+    assert(
+      validate({ ...requiredInput, after_id: "stale" }),
+      `${name} accepts the alias alone`,
+    );
   }
   const versions = await compile(adminDef("list_skill_versions_request"));
   assert(
