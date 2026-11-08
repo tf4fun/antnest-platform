@@ -643,7 +643,7 @@
     "account_security": {
       "browser_session_contract": "../identity/browser-sessions.md",
       "gateway_revision": 24,
-      "identity_revision": 18,
+      "identity_revision": 19,
       "password_owner": "edge_gateway_POST_/api/session/password",
       "retired_console_password_route": "deny_without_dependency_effect",
       "profile_fields": [

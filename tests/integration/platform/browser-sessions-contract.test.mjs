@@ -560,7 +560,7 @@ test("Console browser-session consumer adopts the current Gateway contract", () 
 });
 
 test("Gateway owns session mutations and records cookie concurrency and stream bounds", () => {
-  assert.equal(identity.revision, 18);
+  assert.equal(identity.revision, 19);
   assert.equal(gateway.version, 24);
   assert.equal(
     gateway.browser_session_contract,

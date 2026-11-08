@@ -9,16 +9,25 @@
   "agent_unavailability": {
     "source": "authorized ACP Agent execution-state read/watch",
     "field": "agentView.unavailableReason",
-    "values": ["agent_unavailable", "agent_preparing", "runtime_barrier_required", null],
+    "values": [
+      "agent_unavailable",
+      "agent_preparing",
+      "runtime_barrier_required",
+      null
+    ],
     "optional": true,
-    "clear_on": ["null or omitted reason", "scope replacement", "access revocation"],
+    "clear_on": [
+      "null or omitted reason",
+      "scope replacement",
+      "access revocation"
+    ],
     "recovery_action": "existing administrator-only Console action",
     "workspace_rebuild_mutation": false
   },
   "browser_session_consumer": {
     "browser_session_contract": "../identity/browser-sessions.md",
     "gateway_revision": 24,
-    "identity_revision": 18,
+    "identity_revision": 19,
     "gateway_routes": [
       "get_session",
       "get_account",

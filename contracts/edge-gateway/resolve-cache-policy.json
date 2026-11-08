@@ -1,7 +1,7 @@
 {
   "contract": "antnest.edge-gateway.resolve-cache",
   "revision": 4,
-  "identity_revision": 18,
+  "identity_revision": 19,
   "gateway_session_revision": 24,
   "resolve_method": "resolve_access_token",
   "semantics": "resolve-cache.md",
@@ -453,8 +453,16 @@
     },
     "outage_runtime_cancellation": {
       "phase": "c4-cache-runtime-outage",
-      "model": { "requests": 1, "stage": "tool", "outcome": "ok" },
-      "tool": { "calls": 1, "name": "bash", "source": "runtime" },
+      "model": {
+        "requests": 1,
+        "stage": "tool",
+        "outcome": "ok"
+      },
+      "tool": {
+        "calls": 1,
+        "name": "bash",
+        "source": "runtime"
+      },
       "binding": [
         "actual-prompt-and-cancel-http",
         "same-organization-user-agent-session-run",
