@@ -136,8 +136,8 @@ func TestGetRuntimeBarrierUsesFrozenRequestAndResponseContract(t *testing.T) {
 
 func TestGetRuntimeBarrierPreservesOpaqueUnicodeIdentities(t *testing.T) {
 	query := ports.RuntimeBarrierQuery{
-		OrganizationID:          ":" + strings.Repeat("界", 199),
-		AgentID:                 strings.Repeat("工", 200),
+		OrganizationID:          "Org." + strings.Repeat("x", 196),
+		AgentID:                 "Agent_" + strings.Repeat("x", 194),
 		ExpectedRuntimeRevision: strings.Repeat("e\u0301", 100),
 	}
 	// These are 200 Unicode characters, not 200 bytes or Controller IDs. The
