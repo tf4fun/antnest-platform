@@ -114,7 +114,13 @@
           "$ref": "#/$defs/timestamp"
         }
       },
-      "required": ["display_name", "source", "active", "created_at", "updated_at"]
+      "required": [
+        "display_name",
+        "source",
+        "active",
+        "created_at",
+        "updated_at"
+      ]
     },
     "browser_session": {
       "type": "object",
@@ -383,7 +389,13 @@
           "$ref": "#/$defs/id"
         }
       },
-      "required": ["base_url", "model", "context_window", "max_output_tokens", "supports_images"]
+      "required": [
+        "base_url",
+        "model",
+        "context_window",
+        "max_output_tokens",
+        "supports_images"
+      ]
     },
     "runtime_resources": {
       "type": "object",
@@ -667,7 +679,13 @@
           "$ref": "#/$defs/agent_model_spec"
         }
       },
-      "required": ["model_profile_id", "revision_id", "revision", "name", "model"]
+      "required": [
+        "model_profile_id",
+        "revision_id",
+        "revision",
+        "name",
+        "model"
+      ]
     },
     "agent_configuration": {
       "type": "object",
@@ -790,7 +808,14 @@
           "$ref": "agent-readiness.schema.json#/properties/readiness"
         },
         "runtime_state": {
-          "enum": ["waiting", "available", "unhealthy", "exited", "absent", "unknown"]
+          "enum": [
+            "waiting",
+            "available",
+            "unhealthy",
+            "exited",
+            "absent",
+            "unknown"
+          ]
         },
         "runtime_reason": {
           "type": "string"
@@ -888,7 +913,15 @@
           "$ref": "#/$defs/timestamp"
         }
       },
-      "required": ["request_id", "agent_id", "kind", "phase", "state", "created_at", "updated_at"]
+      "required": [
+        "request_id",
+        "agent_id",
+        "kind",
+        "phase",
+        "state",
+        "created_at",
+        "updated_at"
+      ]
     },
     "agent_skill_preparation": {
       "type": "object",
@@ -909,7 +942,12 @@
         "progress": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["verified_packages", "verified_bytes", "total_packages", "total_bytes"],
+          "required": [
+            "verified_packages",
+            "verified_bytes",
+            "total_packages",
+            "total_bytes"
+          ],
           "properties": {
             "verified_packages": {
               "type": "integer"
@@ -935,7 +973,14 @@
           "$ref": "#/$defs/timestamp"
         }
       },
-      "required": ["request_id", "agent_id", "kind", "state", "progress", "updated_at"]
+      "required": [
+        "request_id",
+        "agent_id",
+        "kind",
+        "state",
+        "progress",
+        "updated_at"
+      ]
     },
     "agent_event": {
       "type": "object",
@@ -1087,7 +1132,14 @@
           }
         }
       },
-      "required": ["provider_key", "display_name", "description", "base_url", "custom", "models"]
+      "required": [
+        "provider_key",
+        "display_name",
+        "description",
+        "base_url",
+        "custom",
+        "models"
+      ]
     },
     "provider_connection": {
       "type": "object",
@@ -1429,7 +1481,14 @@
           "format": "date-time"
         }
       },
-      "required": ["tool_call_id", "request", "decision", "reason", "created_at", "decided_at"]
+      "required": [
+        "tool_call_id",
+        "request",
+        "decision",
+        "reason",
+        "created_at",
+        "decided_at"
+      ]
     },
     "audit_tool_rule": {
       "type": "object",
@@ -2169,7 +2228,11 @@
         "link_policy": ["link_domains", "authoritative"],
         "link_domains": ["link_policy", "authoritative"],
         "authoritative": ["link_policy", "link_domains"],
-        "acknowledge_link_policy_review": ["link_policy", "link_domains", "authoritative"]
+        "acknowledge_link_policy_review": [
+          "link_policy",
+          "link_domains",
+          "authoritative"
+        ]
       }
     },
     "set_oidc_provider_enabled_request": {
@@ -2726,7 +2789,13 @@
           }
         }
       },
-      "required": ["provider_key", "display_name", "base_url", "credential", "models"]
+      "required": [
+        "provider_key",
+        "display_name",
+        "base_url",
+        "credential",
+        "models"
+      ]
     },
     "get_provider_connection_request": {
       "type": "object",
@@ -3159,7 +3228,13 @@
           "required": ["runtime_image_ref"]
         }
       },
-      "required": ["directory", "model_profiles", "templates", "agents", "defaults"]
+      "required": [
+        "directory",
+        "model_profiles",
+        "templates",
+        "agents",
+        "defaults"
+      ]
     },
     "get_template_defaults_response": {
       "type": "object",
@@ -3497,20 +3572,17 @@
         },
         "resource_version": {
           "type": "integer"
-        },
-        "attachment": {
-          "$ref": "#/$defs/network_attachment"
         }
       },
       "oneOf": [
         {
-          "required": ["agent_id", "action", "resource_version", "attachment"],
+          "required": ["agent_id", "action", "resource_version"],
           "not": {
             "required": ["spec"]
           }
         },
         {
-          "required": ["agent_id", "spec", "resource_version", "attachment"],
+          "required": ["agent_id", "spec", "resource_version"],
           "not": {
             "required": ["action"]
           }
