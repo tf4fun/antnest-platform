@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readDirectoryPages } from "../../support/admin-directory-client.mjs";
 import { join } from "node:path";
 import {
   browserClient,
@@ -722,7 +723,7 @@ export async function verifyOIDCLinking({
       { noPassword: true, noAgent: true, retryCannotRestore: true },
     );
 
-    const directory = await fixture.json("/api/admin/directory");
+    const directory = await readDirectoryPages((path) => fixture.json(path));
     const owner = directory.users.find(
       (row) => row.user.id === fixture.ownerID,
     )?.membership;

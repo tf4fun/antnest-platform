@@ -1,3 +1,4 @@
+import { readDirectoryPages } from "../../support/admin-directory-client.mjs";
 import { runtimeResourceName } from "../../support/runtime-resource-name.mjs";
 import assert from "node:assert/strict";
 import { createHash, randomUUID } from "node:crypto";
@@ -478,7 +479,7 @@ export async function openPropagationFlow({
       [],
       "an organization administrator cannot impersonate another source owner",
     );
-    const directory = await fixture.json("/api/admin/directory");
+    const directory = await readDirectoryPages((path) => fixture.json(path));
     const owner = directory.users.find(
       (item) => item.user.id === fixture.ownerID,
     );

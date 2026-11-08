@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readDirectoryPages } from "../../support/admin-directory-client.mjs";
 import { setTimeout as delay } from "node:timers/promises";
 import { GatewayClient, assertNoStore } from "../identity-closeout/support.mjs";
 import { member, until } from "../workspace-closeout/c4-setup.mjs";
@@ -487,7 +488,7 @@ export async function verifyBrowserSessions({
   };
   const workspace = `/workspace/${fixture.agentID}/`;
   try {
-    const directory = await fixture.json("/api/admin/directory");
+    const directory = await readDirectoryPages((path) => fixture.json(path));
     const membership = directory.users.find(
       ({ user }) => user.id === fixture.ownerID,
     )?.membership;

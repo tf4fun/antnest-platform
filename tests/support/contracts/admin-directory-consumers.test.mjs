@@ -462,3 +462,23 @@ test("component browser fixtures consume the paginated directory double", () => 
     );
   }
 });
+
+test("system directory data consumers use the bounded-page client", () => {
+  const root = new URL("../../e2e/", import.meta.url);
+  for (const file of [
+    "stage3-base/identity.mjs",
+    "skill-learning/propagation-flow.mjs",
+    "edge-gateway/browser-sessions-flow.mjs",
+    "edge-gateway/oidc-linking-flow.mjs",
+    "edge-gateway/resolve-cache-recovery-flow.mjs",
+    "identity-closeout/oidc-client.mjs",
+    "identity-closeout/offboarding-scenarios.mjs",
+    "identity-closeout/client.mjs",
+    "identity-closeout/organization-display-client.mjs",
+    "identity-closeout/access-client.mjs",
+  ]) {
+    const source = readFileSync(new URL(file, root), "utf8");
+    assert.ok(source.includes("admin-directory-client.mjs"), file);
+    assert.match(source, /\breadDirectoryPages\s*\(/, file);
+  }
+});

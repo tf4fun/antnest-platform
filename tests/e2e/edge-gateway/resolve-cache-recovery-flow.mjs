@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readDirectoryPages } from "../../support/admin-directory-client.mjs";
 import { randomUUID } from "node:crypto";
 import { GatewayClient } from "../identity-closeout/support.mjs";
 import { observedHeldRun } from "../workspace-closeout/browser-control.mjs";
@@ -35,9 +36,15 @@ export async function verifyRecovery({
 }) {
   evidence.recovery = { cases: [] };
   let current = { ...credentials };
-  const directory = await http(administrator, "/api/admin/directory", {
-    label: "recovery-directory",
+  let directoryReceipt;
+  const body = await readDirectoryPages(async (path) => {
+    const receipt = await http(administrator, path, {
+      label: "recovery-directory",
+    });
+    directoryReceipt ??= receipt;
+    return receipt.body;
   });
+  const directory = { ...directoryReceipt, body };
   const entry = directory.body.users.find(
     ({ user }) => user.id === fixture.ownerID,
   );

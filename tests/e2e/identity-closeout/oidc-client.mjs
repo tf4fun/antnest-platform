@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readDirectoryPages } from "../../support/admin-directory-client.mjs";
 import { readFile, writeFile } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { assertOrganizationSession } from "./organization-session.mjs";
@@ -201,7 +202,9 @@ const { body: provisioned } = await protocol.request("/scim/v2/Users", {
     active: true,
   },
 });
-const directory = (await admin.request("/api/admin/directory")).body;
+const directory = await readDirectoryPages(
+  async (path) => (await admin.request(path)).body,
+);
 const scimMember = directory.users.find(
   (item) => item.membership.id === provisioned.id,
 );
@@ -342,7 +345,9 @@ await admin.request(`${authPath}/${profileProvider}/enabled`, {
   body: { enabled: false },
 });
 checks.push("userinfo-fallback-preserves-provisioned-identity");
-const afterDirectory = (await admin.request("/api/admin/directory")).body;
+const afterDirectory = await readDirectoryPages(
+  async (path) => (await admin.request(path)).body,
+);
 assert.equal(
   afterDirectory.users.length,
   directory.users.length,

@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readDirectoryPages } from "../../support/admin-directory-client.mjs";
 import { randomUUID } from "node:crypto";
 import { assertOrganizationSession } from "./organization-session.mjs";
 import {
@@ -222,7 +223,9 @@ async function tokenBoundary() {
 }
 
 async function directoryMember(id) {
-  const { body } = await admin.request("/api/admin/directory");
+  const body = await readDirectoryPages(
+    async (path) => (await admin.request(path)).body,
+  );
   const entry = body.users.find((item) => item.membership.id === id);
   assert(entry, "SCIM user missing from Console directory");
   return entry;
@@ -363,7 +366,11 @@ async function usersAndGroups() {
     reset.body.members.map((item) => item.value),
     [a.id],
   );
-  const directory = await admin.request("/api/admin/directory");
+  const directory = {
+    body: await readDirectoryPages(
+      async (path) => (await admin.request(path)).body,
+    ),
+  };
   assert(
     directory.body.groups.some(
       (item) =>
