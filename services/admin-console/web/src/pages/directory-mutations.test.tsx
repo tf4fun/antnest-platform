@@ -77,7 +77,9 @@ function directoryMock(command: (body: string) => Response | Promise<Response>, 
 
 async function openWorkflow(workflow: Workflow) {
   render(<DirectoryPage currentUserID="administrator" organizationName="Example" systemAdministrator />);
-  fireEvent.click(await screen.findByRole("button", { name: workflow.open }));
+  const trigger = await screen.findByRole("button", { name: workflow.open });
+  await waitFor(() => expect((trigger as HTMLButtonElement).disabled).toBe(false));
+  fireEvent.click(trigger);
   const dialog = within(await screen.findByRole("dialog", { name: workflow.dialog }));
   if (workflow.name !== "global access") {
     fireEvent.change(dialog.getByLabelText("Display name"), { target: { value: "Alex Updated" } });
@@ -86,6 +88,21 @@ async function openWorkflow(workflow: Workflow) {
   if (workflow.name === "creation") fireEvent.change(dialog.getByLabelText("Initial password"), { target: { value: "test-password-12345" } });
   return dialog;
 }
+
+it("waits for the initial directory page before opening a creation workflow", async () => {
+  let release!: (response: Response) => void;
+  const initial = new Promise<Response>((resolve) => { release = resolve; });
+  const command = vi.fn(() => Response.json({ status: "unexpected" }));
+  directoryMock(command, () => initial);
+  const opening = openWorkflow(workflows[0]!);
+  const trigger = await screen.findByRole("button", { name: "Add local user" });
+  expect((trigger as HTMLButtonElement).disabled).toBe(true);
+  expect(screen.queryByRole("dialog")).toBeNull();
+  await act(async () => { release(Response.json({ users: [member], groups: [] })); });
+  const dialog = await opening;
+  expect(dialog.getByRole("button", { name: "Create user" })).toBeTruthy();
+  expect(command).not.toHaveBeenCalled();
+});
 
 function expectRowActionsDisabled(disabled: boolean) {
   const buttons = [
