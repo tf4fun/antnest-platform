@@ -1,5 +1,6 @@
 // Built Console assets against browser API doubles. Real Gateway/Identity HTTPS
 // acceptance is a separate integration batch.
+import { createDirectoryFixture } from "../../support/admin-directory-fixtures.mjs";
 import assert from "node:assert/strict";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -36,6 +37,8 @@ const member = {
     primary_email: "alex@example.test",
     system_role: "user",
     active: true,
+    created_at: "2026-10-11T00:00:00Z",
+    updated_at: "2026-10-11T00:00:00Z",
   },
   membership: {
     id: "target-member",
@@ -47,8 +50,13 @@ const member = {
     source: "scim",
     active: true,
     created_at: "2026-10-11T00:00:00Z",
+    updated_at: "2026-10-11T00:00:00Z",
   },
 };
+const directoryFixture = createDirectoryFixture({
+  users: [member],
+  groups: [],
+});
 const userAgent = "<img src=x onerror=alert(1)> Synthetic browser";
 
 async function exercise(browser, origin, viewport, label) {
@@ -125,9 +133,12 @@ async function exercise(browser, origin, viewport, label) {
             local_password_available: localPassword,
           },
         });
-      if (path === "/api/admin/directory") {
+      if (
+        path === "/api/admin/directory/members" ||
+        path === "/api/admin/directory/groups"
+      ) {
         directoryReads++;
-        return reply({ users: [member], groups: [] });
+        return reply(await directoryFixture(url));
       }
       if (
         path === "/api/session/external-identities" &&

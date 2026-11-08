@@ -1,3 +1,4 @@
+import { readDirectoryPages } from "../../support/admin-directory-client.mjs";
 import { assertResourceId } from "./contracts.mjs";
 import assert from "node:assert/strict";
 import { GatewayClient, assertNoStore } from "../identity-closeout/support.mjs";
@@ -55,7 +56,7 @@ export async function identity(admin, secrets) {
     process.env.TEST_RUNTIME_IMAGE,
   );
   assert.equal(
-    (await api("/api/admin/directory")).users[0].user.id,
+    (await readDirectoryPages(api)).users[0].user.id,
     principal.user_id,
   );
   const rejectedPassword = await request(
@@ -69,7 +70,7 @@ export async function identity(admin, secrets) {
   assert.equal(rejectedPassword.body.code, "invalid_current_password");
   assertNoStore(rejectedPassword.headers);
   assert.equal(rejectedPassword.headers.getSetCookie().length, 0);
-  await api("/api/admin/directory");
+  await readDirectoryPages(api);
   let previousCookie = admin.cookie;
   const assertRotation = async (response) => {
     assert.deepEqual(Object.keys(response.body).sort(), [
@@ -176,7 +177,7 @@ export async function identity(admin, secrets) {
       ).status,
       "updated",
     );
-  const user = (await api("/api/admin/directory")).users.find(
+  const user = (await readDirectoryPages(api)).users.find(
     (row) => row.user.id === created.user.id,
   );
   assert(user.user.active && user.membership.active);

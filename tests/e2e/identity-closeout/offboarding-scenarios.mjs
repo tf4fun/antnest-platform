@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readDirectoryPages } from "../../support/admin-directory-client.mjs";
 import { waitForAgentReady } from "../../support/verification/agent-state.mjs";
 import { GatewayClient } from "./support.mjs";
 import {
@@ -154,7 +155,9 @@ export async function globalAndSCIMOffboarding({
     active: true,
   };
   const { body: created } = await scim("Users", { body: input, status: 201 });
-  const directory = (await b.admin.request("/api/admin/directory")).body.users;
+  const directory = (
+    await readDirectoryPages(async (path) => (await b.admin.request(path)).body)
+  ).users;
   const user = directory.find(
     (entry) => entry.membership.id === created.id,
   )?.user;
@@ -226,8 +229,8 @@ export async function globalAndSCIMOffboarding({
     "SCIM tombstone was silently reused",
   );
   const rebound = (
-    await b.admin.request("/api/admin/directory")
-  ).body.users.find((entry) => entry.membership.id === restored.id);
+    await readDirectoryPages(async (path) => (await b.admin.request(path)).body)
+  ).users.find((entry) => entry.membership.id === restored.id);
   assert.equal(
     rebound?.user.id,
     user.id,

@@ -60,9 +60,9 @@ const modelItemRevision = ajv.compile(
   snapshotSchema.properties.models.items.properties.model_profile_revision,
 );
 
-test("control revision 50 and admin version 60 declare the live model surface", () => {
+test("control revision 50 and admin version 61 declare the live model surface", () => {
   assert.equal(control.revision, 50);
-  assert.equal(admin.version, 60);
+  assert.equal(admin.version, 61);
   const upstream = control.resources.model_profiles.usage;
   assert.equal(
     upstream.path,
@@ -77,6 +77,11 @@ test("control revision 50 and admin version 60 declare the live model surface", 
   assert.equal(browser.path, "/model-profiles/{model_profile_id}/usage");
   assert.equal(
     browser.response_schema,
+    "admin-api.schema.json#/$defs/get_model_profile_usage_response",
+  );
+  assert.equal(
+    read("admin-console/admin-api.schema.json").$defs
+      .get_model_profile_usage_response.$ref,
     "live-model-semantics.schema.json#/$defs/model_profile_usage",
   );
   assert.equal(browser.query, "reject_all");

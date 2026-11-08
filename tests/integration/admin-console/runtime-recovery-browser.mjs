@@ -8,6 +8,7 @@ import {
   prepareConsoleSession,
 } from "./console-browser-harness.mjs";
 
+import { createDirectoryFixture } from "../../support/admin-directory-fixtures.mjs";
 const timestamp = "2026-09-07T00:00:00Z";
 const requestID = "rebuild_original";
 const operationPath = `/api/admin/operations/${requestID}`;
@@ -262,6 +263,7 @@ export async function exerciseRuntimeRecovery(
                 active_operation_request_id: requestID,
               };
         const directory = { users: [member], groups: [] };
+        const directoryFixture = createDirectoryFixture(directory);
         const fixtures = {
           "/api/session": {
             ...consoleSessionMetadata,
@@ -310,12 +312,18 @@ export async function exerciseRuntimeRecovery(
             items: [latestTemplate],
             next_cursor: null,
           },
-          "/api/admin/directory": directory,
         };
-        if (method !== "GET" || !Object.hasOwn(fixtures, url.pathname)) {
+        if (
+          method === "GET" &&
+          (url.pathname === "/api/admin/directory/members" ||
+            url.pathname === "/api/admin/directory/groups")
+        ) {
+          await respond(await directoryFixture(url));
+        } else if (method !== "GET" || !Object.hasOwn(fixtures, url.pathname)) {
           throw new Error("Unmatched recovery fixture API");
+        } else {
+          await respond(fixtures[url.pathname]);
         }
-        await respond(fixtures[url.pathname]);
       } catch {
         unexpected.push(`${request.method()} ${url.pathname}`);
         await route.fulfill({

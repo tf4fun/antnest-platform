@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readDirectoryPages } from "../../support/admin-directory-client.mjs";
 import { readFile } from "node:fs/promises";
 import { evidenceDirectory } from "../../support/storage.mjs";
 import { assertNoStore, GatewayClient } from "./support.mjs";
@@ -67,12 +68,19 @@ for (const [browser, expected, foreign] of [
   [a, seed.a, seed.b],
   [b, seed.b, seed.a],
 ]) {
-  const response = await browser.request("/api/admin/directory", {
-    headers: {
-      "X-Antnest-Organization-ID": foreign.membership.organization_id,
-      "X-Antnest-User-ID": foreign.user.id,
-    },
-  });
+  const response = {
+    body: await readDirectoryPages(
+      async (path) =>
+        (
+          await browser.request(path, {
+            headers: {
+              "X-Antnest-Organization-ID": foreign.membership.organization_id,
+              "X-Antnest-User-ID": foreign.user.id,
+            },
+          })
+        ).body,
+    ),
+  };
   assert(
     response.body.users.some(
       (item) => item.membership.id === expected.membership.id,

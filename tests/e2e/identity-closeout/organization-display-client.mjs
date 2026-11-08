@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readDirectoryPages } from "../../support/admin-directory-client.mjs";
 import { randomUUID } from "node:crypto";
 import { readFile, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
@@ -669,7 +670,9 @@ try {
     body: { organization_slug: changed.slug, email: memberEmail, password },
   });
   remember(fresh);
-  const directory = (await admin.request("/api/admin/directory")).body;
+  const directory = await readDirectoryPages(
+    async (path) => (await admin.request(path)).body,
+  );
   const membership = directory.users.find(
     (value) => value.membership.id === a.membership_id,
   );
