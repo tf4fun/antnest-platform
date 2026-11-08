@@ -1,6 +1,6 @@
 {
   "contract": "antnest.agent-controller.lifecycle",
-  "revision": 49,
+  "revision": 50,
   "transport": "json-over-http",
   "trust": "verified-workload-and-caller-context",
   "authentication": "service-authentication.md",
@@ -19,12 +19,14 @@
   "status": {
     "method": "GET",
     "path": "/status",
-    "success_status": 200
+    "success_status": 200,
+    "response": "control-api.schema.json#/$defs/status"
   },
   "status_rpc": {
     "method": "GET",
     "path": "/rpc/agent-controller/status",
-    "success_status": 200
+    "success_status": 200,
+    "response": "control-api.schema.json#/$defs/status"
   },
   "resources": {
     "skill_learning_policy": {

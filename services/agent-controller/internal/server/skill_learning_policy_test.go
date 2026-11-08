@@ -14,6 +14,8 @@ import (
 	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/ports"
 )
 
+const learningPolicyMutationJSON = `{"request_id":"learning-change-1","organization_id":"org-1","actor_principal_id":"admin-1","expected_version":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef","mode":"automatic","scope":{"auto_generated_personal":true,"adopted_paths":[]},"pinned_paths":[],"limits":{"daily_reviews":20,"daily_model_input_tokens":320000,"daily_model_output_tokens":80000}}`
+
 type learningPolicyServiceStub struct {
 	readOrg, readAgent, readPrincipal string
 	write                             application.SetSkillLearningPolicyInput
@@ -32,7 +34,7 @@ func (stub *learningPolicyServiceStub) Set(_ context.Context, input application.
 
 func TestSkillLearningPolicyRevisionConflictHasPolicyError(t *testing.T) {
 	stub := &learningPolicyServiceStub{policy: domain.DefaultSkillLearningPolicy("org-1", "agent-1", "owner-1", time.Unix(1, 0)), err: ports.ErrConcurrentChange}
-	boundary, err := withBusinessLearningRoutes(t, http.NotFoundHandler(), stub)
+	boundary, err := newBusinessLearningHandler(t, stub)
 	require.NoError(t, err)
 	response := httptest.NewRecorder()
 	boundary.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/internal/agents/agent-1/skill-learning-policy?organization_id=org-1&principal_id=owner-1", nil))
@@ -42,7 +44,7 @@ func TestSkillLearningPolicyRevisionConflictHasPolicyError(t *testing.T) {
 
 func TestSkillLearningPolicyRoutesBindPathAndStrictScope(t *testing.T) {
 	stub := &learningPolicyServiceStub{policy: domain.DefaultSkillLearningPolicy("org-1", "agent-1", "owner-1", time.Unix(1, 0))}
-	boundary, err := withBusinessLearningRoutes(t, http.NotFoundHandler(), stub)
+	boundary, err := newBusinessLearningHandler(t, stub)
 	require.NoError(t, err)
 	read := httptest.NewRecorder()
 	boundary.ServeHTTP(read, httptest.NewRequest(http.MethodGet, "/internal/agents/agent-1/skill-learning-policy?organization_id=org-1&principal_id=owner-1", nil))

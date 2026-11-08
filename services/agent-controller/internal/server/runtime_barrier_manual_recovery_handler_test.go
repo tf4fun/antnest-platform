@@ -244,7 +244,7 @@ func newRuntimeBarrierManualHandlerFixture(t *testing.T) (*businessFixture, *run
 	}}
 	f := newAuthenticationFixture(t)
 	var err error
-	f.raw, err = NewHandler(&catalogServiceStub{}, service, &agentConfigurationServiceStub{}, &agentQueryServiceStub{}, &agentEventServiceStub{}, &networkPolicyServiceStub{}, func(context.Context) error { return nil }, f.security)
+	f.raw, err = NewHandler(&catalogServiceStub{}, service, &agentConfigurationServiceStub{}, &agentQueryServiceStub{}, &agentEventServiceStub{}, &networkPolicyServiceStub{}, &learningPolicyServiceStub{}, func(context.Context) error { return nil }, f.security)
 	require.NoError(t, err)
 	return f, service
 }

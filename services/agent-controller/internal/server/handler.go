@@ -105,6 +105,7 @@ type handler struct {
 	queries       AgentQueryService
 	events        AgentEventService
 	network       NetworkPolicyService
+	learning      SkillLearningPolicyService
 	health        HealthCheck
 }
 
@@ -117,7 +118,7 @@ type routeDefinition struct {
 func NewHandler(
 	catalog CatalogService, lifecycle LifecycleService, configuration AgentConfigurationService,
 	queries AgentQueryService, events AgentEventService, network NetworkPolicyService,
-	health HealthCheck, authentication ...Security,
+	learning SkillLearningPolicyService, health HealthCheck, authentication ...Security,
 ) (http.Handler, error) {
 	if catalog == nil {
 		return nil, fmt.Errorf("catalog service is required")
@@ -140,12 +141,15 @@ func NewHandler(
 	if network == nil {
 		return nil, fmt.Errorf("network policy service is required")
 	}
+	if learning == nil {
+		return nil, fmt.Errorf("skill learning policy service is required")
+	}
 	if len(authentication) != 1 || !authentication[0].valid() {
 		return nil, fmt.Errorf("workload authentication and caller-context verification are required")
 	}
 	security := authentication[0]
 	h := &handler{
-		catalog: catalog, lifecycle: lifecycle, configuration: configuration, queries: queries, events: events, network: network, health: health,
+		catalog: catalog, lifecycle: lifecycle, configuration: configuration, queries: queries, events: events, network: network, learning: learning, health: health,
 	}
 	mux := http.NewServeMux()
 	for _, route := range h.routes() {
@@ -192,6 +196,8 @@ func (h *handler) routes() []routeDefinition {
 		{pattern: "GET /internal/agents/{agent_id}", handler: h.getAgent},
 		{pattern: "GET /internal/agents/{agent_id}/network-policy", handler: h.getAgentNetworkPolicy},
 		{pattern: "PUT /internal/agents/{agent_id}/network-policy", handler: h.setAgentNetworkPolicy},
+		{pattern: "GET /internal/agents/{agent_id}/skill-learning-policy", handler: h.getSkillLearningPolicy, metadataOnly: true},
+		{pattern: "PUT /internal/agents/{agent_id}/skill-learning-policy", handler: h.setSkillLearningPolicy, metadataOnly: true},
 		{pattern: "POST /internal/agents/{agent_id}/rebuild", handler: h.rebuildAgent},
 		{pattern: "POST /internal/agents/{agent_id}/disable", handler: h.disableAgent},
 		{pattern: "POST /internal/agents/{agent_id}/enable", handler: h.enableAgent},

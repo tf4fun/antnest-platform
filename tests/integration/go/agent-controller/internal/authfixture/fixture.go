@@ -2,6 +2,7 @@ package authfixture
 
 import (
 	"bytes"
+	"context"
 	"crypto/ed25519"
 	"crypto/rand"
 	"crypto/sha256"
@@ -16,6 +17,8 @@ import (
 
 	"github.com/tf4fun/antnest-platform/modules/service-authentication/callercontext"
 	"github.com/tf4fun/antnest-platform/modules/service-authentication/serviceauth"
+	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/application"
+	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/domain"
 	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/server"
 )
 
@@ -77,28 +80,28 @@ func newAuthenticationFixture(t *testing.T) *businessFixture {
 	return &businessFixture{t: t, tokens: tokens, key: key, security: server.Security{Authentication: receiver, CallerContext: verifier}}
 }
 
-func NewHandler(t *testing.T, catalog server.CatalogService, lifecycle server.LifecycleService, configuration server.AgentConfigurationService,
-	queries server.AgentQueryService, events server.AgentEventService, network server.NetworkPolicyService, health server.HealthCheck) (http.Handler, error) {
-	f := newAuthenticationFixture(t)
-	var err error
-	f.raw, err = server.NewHandler(catalog, lifecycle, configuration, queries, events, network, health, f.security)
-	if err != nil {
-		return nil, err
-	}
-	return f, nil
+type unavailableLearningPolicy struct{}
+
+func (unavailableLearningPolicy) Get(context.Context, string, string, string) (domain.SkillLearningPolicy, error) {
+	return domain.SkillLearningPolicy{}, application.ErrDependencyUnavailable
+}
+func (unavailableLearningPolicy) Set(context.Context, application.SetSkillLearningPolicyInput) (domain.SkillLearningPolicy, error) {
+	return domain.SkillLearningPolicy{}, application.ErrDependencyUnavailable
 }
 
-func WithSkillLearningPolicyRoutes(t *testing.T, base http.Handler, service server.SkillLearningPolicyService) (http.Handler, error) {
+func NewHandler(t *testing.T, catalog server.CatalogService, lifecycle server.LifecycleService, configuration server.AgentConfigurationService,
+	queries server.AgentQueryService, events server.AgentEventService, network server.NetworkPolicyService, health server.HealthCheck,
+	learning ...server.SkillLearningPolicyService) (http.Handler, error) {
 	f := newAuthenticationFixture(t)
-	if previous, ok := base.(*businessFixture); ok {
-		f = previous
-		base = previous.raw
+	var err error
+	policy := server.SkillLearningPolicyService(unavailableLearningPolicy{})
+	if len(learning) > 0 {
+		policy = learning[0]
 	}
-	raw, err := server.WithSkillLearningPolicyRoutes(base, service, f.security)
+	f.raw, err = server.NewHandler(catalog, lifecycle, configuration, queries, events, network, policy, health, f.security)
 	if err != nil {
 		return nil, err
 	}
-	f.raw = raw
 	return f, nil
 }
 

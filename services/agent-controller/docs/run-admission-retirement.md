@@ -9,11 +9,11 @@ The Controller Run admission routes `resolve-agent-access`,
 per-Run Controller permit.
 
 Agent default authorization and the workspace Agent list remain management
-operations in [control-api.md](control-api.md) and
-[control-contract.json](control-contract.json). ACP receives current
+operations in [control-api.md](../../../contracts/agent-controller/control-api.md) and
+[control-contract.json](../../../contracts/agent-controller/control-contract.json). ACP receives current
 configuration through management RPC and owns protocol authorization,
 Session/Run state, model/Tool execution and audit; see the
-[ACP execution API](../agent-acp/execution-api.md).
+[ACP execution API](../../../contracts/agent-acp/execution-api.md).
 
 Controller has no workspace execution reader and no Run persistence. Gateway
 reads workspace execution state from ACP, and Admin Console reads execution

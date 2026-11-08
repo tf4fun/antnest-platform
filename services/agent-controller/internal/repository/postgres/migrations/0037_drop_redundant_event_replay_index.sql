@@ -1,0 +1,1 @@
+DROP INDEX IF EXISTS agent_controller.agent_events_global_replay_idx;

@@ -111,7 +111,7 @@ func TestMachineControlContractMatchesRegisteredBoundary(t *testing.T) {
 	readStrictContractJSON(t, filepath.Join(root, "contracts/agent-controller/control-contract.json"), &contract)
 	var schema machineControlSchema
 	readContractJSON(t, filepath.Join(root, "contracts/agent-controller/control-api.schema.json"), &schema)
-	if contract.Revision != 49 || contract.Trust != "verified-workload-and-caller-context" || contract.Authentication != "service-authentication.md" {
+	if contract.Revision != 50 || contract.Trust != "verified-workload-and-caller-context" || contract.Authentication != "service-authentication.md" {
 		t.Fatalf("control contract revision = %d", contract.Revision)
 	}
 	if contract.MediaTypes.Request != "application/json" ||
@@ -564,11 +564,30 @@ func TestMachineControlContractValidatesSuccessfulHTTPBoundary(t *testing.T) {
 		}
 	}
 
-	status := httptest.NewRecorder()
-	boundary.ServeHTTP(status, httptest.NewRequest(contract.Status.Method, contract.Status.Path, nil))
-	if status.Code != contract.Status.SuccessStatus ||
-		strings.Split(status.Header().Get("Content-Type"), ";")[0] != contract.MediaTypes.Response {
-		t.Fatalf("status boundary code=%d content_type=%q body=%s", status.Code, status.Header().Get("Content-Type"), status.Body.String())
+	for _, route := range []controlContractRoute{contract.Status, contract.StatusRPC} {
+		response := httptest.NewRecorder()
+		boundary.ServeHTTP(response, httptest.NewRequest(route.Method, route.Path, nil))
+		if response.Code != route.SuccessStatus ||
+			strings.Split(response.Header().Get("Content-Type"), ";")[0] != contract.MediaTypes.Response {
+			t.Fatalf("status boundary %s code=%d content_type=%q body=%s", route.Path, response.Code, response.Header().Get("Content-Type"), response.Body.String())
+		}
+		assertControlResponseSchema(t, compiler, route.Response, response.Body.Bytes())
+	}
+
+	unhealthy, err := newBusinessHandler(t,
+		catalog, reliability, &agentConfigurationServiceStub{}, queries, events, &networkPolicyServiceStub{},
+		func(context.Context) error { return errors.New("synthetic readiness failure") },
+	)
+	if err != nil {
+		t.Fatalf("new unhealthy control boundary: %v", err)
+	}
+	for _, route := range []controlContractRoute{contract.Status, contract.StatusRPC} {
+		response := httptest.NewRecorder()
+		unhealthy.ServeHTTP(response, httptest.NewRequest(route.Method, route.Path, nil))
+		if response.Code != http.StatusServiceUnavailable {
+			t.Fatalf("status boundary %s unhealthy code=%d body=%s", route.Path, response.Code, response.Body.String())
+		}
+		assertControlResponseSchema(t, compiler, route.Response, response.Body.Bytes())
 	}
 }
 
@@ -599,6 +618,8 @@ func TestMachineControlContractValidatesActualHTTPErrorBoundary(t *testing.T) {
 		{code: "cleanup_failed", err: &ports.DependencyError{Service: "runtime-egress", Code: "cleanup_failed"}, method: http.MethodPut, path: "/internal/agents/agent-1/network-policy", body: networkMutationJSON},
 		{code: "dependency_invalid_response", err: &ports.DependencyError{Service: "runtime-egress", Code: "invalid_response"}, method: http.MethodPut, path: "/internal/agents/agent-1/network-policy", body: networkMutationJSON},
 		{code: "request_id_conflict", err: ports.ErrRequestConflict},
+		{code: "policy_revision_conflict", err: ports.ErrConcurrentChange, method: http.MethodPut, path: "/internal/agents/agent-1/skill-learning-policy", body: learningPolicyMutationJSON},
+		{code: "request_id_conflict", err: ports.ErrRequestConflict, method: http.MethodPut, path: "/internal/agents/agent-1/skill-learning-policy", body: learningPolicyMutationJSON},
 		{code: "reference_not_found", err: application.ErrInvalidReference},
 		{code: "reference_disabled", err: ports.ErrDisabledReference},
 		{code: "resource_in_use", err: &ports.CatalogReferenceConflict{References: []ports.CatalogReference{{Kind: "template", ResourceID: "template-1"}}}},
@@ -630,7 +651,7 @@ func TestMachineControlContractValidatesActualHTTPErrorBoundary(t *testing.T) {
 				&catalogServiceStub{getModelErr: test.err}, lifecycle, &agentConfigurationServiceStub{err: test.err}, &agentQueryServiceStub{},
 				&agentEventServiceStub{}, &networkPolicyServiceStub{err: test.err},
 
-				func(context.Context) error { return nil })
+				func(context.Context) error { return nil }, &learningPolicyServiceStub{err: test.err})
 
 			if err != nil {
 				t.Fatalf("new control boundary: %v", err)
@@ -666,6 +687,9 @@ func TestMachineControlContractValidatesActualHTTPErrorBoundary(t *testing.T) {
 				t.Fatalf("error content type=%q", mediaType)
 			}
 			assertControlResponseSchema(t, compiler, contract.Errors.Response, response.Body.Bytes())
+			if strings.HasSuffix(path, "/skill-learning-policy") && response.Header().Get("Cache-Control") != "no-store" {
+				t.Fatalf("policy error missed no-store: %q", response.Header().Get("Cache-Control"))
+			}
 			seen[test.code] = struct{}{}
 		})
 	}
@@ -1154,8 +1178,8 @@ func sampleModelCallPolicyInput() application.SetModelCallPolicyInput {
 	}
 }
 
-// Compose the same wrappers as main, including the separately contracted Skill
-// routes, so the manifest is checked against the handler actually served.
+// Compose the same wrappers as main so the manifest is checked against the
+// handler actually served.
 func composeControlPolicyFixture(t *testing.T, endpoint http.Handler) *businessFixture {
 	t.Helper()
 	fixture, ok := endpoint.(*businessFixture)
@@ -1163,10 +1187,6 @@ func composeControlPolicyFixture(t *testing.T, endpoint http.Handler) *businessF
 		t.Fatalf("unexpected control fixture %T", endpoint)
 	}
 	var err error
-	fixture.raw, err = WithSkillLearningPolicyRoutes(fixture.raw, &learningPolicyServiceStub{policy: domain.DefaultSkillLearningPolicy("org-1", "contract-fixture", "user-1", time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC))}, fixture.security)
-	if err != nil {
-		t.Fatal(err)
-	}
 	fixture.raw, err = WithRuntimeBarrierRecoveryPolicyRoutes(fixture.raw,
 		&runtimeBarrierRecoveryPolicyServiceStub{policy: domain.RuntimeBarrierRecoveryPolicy{OrganizationID: "org-1", Revision: 1, Mode: "manual", CooldownMS: 300000}}, fixture.security)
 	if err != nil {

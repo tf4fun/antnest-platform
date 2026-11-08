@@ -242,7 +242,9 @@ func newRuntimeBarrierManualHTTPServer(t *testing.T, fixture runtimeBarrierAdmis
 		application.WithRuntimeBarrierManualRecovery(fixture.store, reader))
 	unused := &unusedCatalogDependencies{}
 	boundary, err := server.NewHandler(fixtureCatalogService(fixture.store, nil, clock), lifecycle,
-		unused, unused, unused, unused, func(context.Context) error { return nil }, security)
+		unused, unused, unused, unused,
+		application.NewSkillLearningPolicyService(fixture.store, unavailableOwnerAuthorizationSource{}),
+		func(context.Context) error { return nil }, security)
 	require.NoError(t, err)
 	endpoint := &runtimeBarrierPolicyHTTPServer{
 		server: httptest.NewServer(boundary), transport: &http.Transport{Proxy: nil},
@@ -253,6 +255,12 @@ func newRuntimeBarrierManualHTTPServer(t *testing.T, fixture runtimeBarrierAdmis
 	}
 	t.Cleanup(endpoint.close)
 	return endpoint
+}
+
+type unavailableOwnerAuthorizationSource struct{}
+
+func (unavailableOwnerAuthorizationSource) ResolveOwnerAuthorization(context.Context, string, string) (ports.IdentityPrincipal, error) {
+	return ports.IdentityPrincipal{}, application.ErrDependencyUnavailable
 }
 
 func runtimeBarrierManualHTTPInput(fixture runtimeBarrierAdmissionFixture) application.RuntimeBarrierManualRecoveryInput {
