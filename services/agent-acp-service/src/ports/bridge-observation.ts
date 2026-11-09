@@ -18,7 +18,10 @@ export type BridgeSessionExecution = {
   configurationRevision: string | null;
 };
 
+export type BridgeIntentObservation =
+  { kind: "receipt"; receipt: BridgeIntentReceipt } | { kind: "unknown" } | { kind: "expired" };
+
 export interface BridgeObservationRepository {
-  readIntent(sessionId: string, intentId: string): Promise<BridgeIntentReceipt | null>;
+  readIntent(sessionId: string, intentId: string): Promise<BridgeIntentObservation>;
   readSession(sessionId: string): Promise<BridgeSessionExecution | null>;
 }

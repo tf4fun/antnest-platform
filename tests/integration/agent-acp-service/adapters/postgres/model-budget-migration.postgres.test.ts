@@ -169,16 +169,16 @@ async function journal(pool: Pool) {
   ).rows;
 }
 
-async function checkedJournal(pool: Pool, length: 31 | 35) {
+async function checkedJournal(pool: Pool, length: 31 | 36) {
   const rows = await journal(pool);
   expect(rows).toHaveLength(length);
   expect(rows[0]?.version).toBe("0001_initial.sql");
   expect(rows.at(-1)?.version).toBe(
     length === 31
       ? "0031_peer_participation.sql"
-      : "0035_content_retention.sql",
+      : "0036_bridge_receipt_retention.sql",
   );
-  if (length === 35) await contentRetentionFacts(pool);
+  if (length === 36) await contentRetentionFacts(pool);
   for (const [index, row] of rows.entries()) {
     expect(
       row.version.startsWith(String(index + 1).padStart(4, "0") + "_"),
@@ -333,7 +333,7 @@ describe.skipIf(databaseUrl === undefined)(
           const upgrading = migrate(pool);
           originals.push(upgrading);
           await upgrading;
-          const upgraded = await checkedJournal(pool, 35);
+          const upgraded = await checkedJournal(pool, 36);
           const metadataBefore = await contentRetentionFacts(pool);
           expect(upgraded.slice(0, 31)).toEqual(applied);
           expect(await presentLedgerTables(pool)).toEqual(
@@ -402,7 +402,7 @@ describe.skipIf(databaseUrl === undefined)(
 
         await migrate(pool);
         const metadataBefore = await contentRetentionFacts(pool);
-        const upgraded = await checkedJournal(pool, 35);
+        const upgraded = await checkedJournal(pool, 36);
         expect(upgraded.slice(0, 31)).toEqual(applied);
         expect(await originalFacts(pool)).toEqual(before);
         expect(
@@ -659,7 +659,7 @@ describe.skipIf(databaseUrl === undefined)(
           const applied = await checkedJournal(pool, 31);
           const before = await sourceFacts();
           await migrate(pool);
-          const upgraded = await checkedJournal(pool, 35);
+          const upgraded = await checkedJournal(pool, 36);
           expect(upgraded.slice(0, 31)).toEqual(applied);
           expect(await sourceFacts()).toEqual(before);
           expect(
@@ -1056,7 +1056,7 @@ describe.skipIf(databaseUrl === undefined)(
           const applied = await checkedJournal(pool, 31);
           const before = await sourceFacts();
           await migrate(pool);
-          const upgraded = await checkedJournal(pool, 35);
+          const upgraded = await checkedJournal(pool, 36);
           expect(upgraded.slice(0, 31)).toEqual(applied);
           expect(await sourceFacts()).toEqual(before);
           expect(
@@ -1246,7 +1246,7 @@ describe.skipIf(databaseUrl === undefined)(
             "SELECT clock_timestamp()::text AS observed_at",
           )
         ).rows[0]!.observed_at;
-        const upgraded = await checkedJournal(pool, 35);
+        const upgraded = await checkedJournal(pool, 36);
         expect(upgraded.slice(0, 31)).toEqual(applied);
         expect(
           (

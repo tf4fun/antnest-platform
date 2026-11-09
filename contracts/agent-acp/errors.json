@@ -644,9 +644,18 @@
       "class": "resource",
       "json_rpc_code": null,
       "http_status": 404,
-      "retryable": false,
+      "retryable": true,
       "recovery": "query_intent",
       "message": "Prompt intent has not been observed",
+      "surfaces": ["http"]
+    },
+    "intent_receipt_expired": {
+      "class": "resource",
+      "json_rpc_code": null,
+      "http_status": 410,
+      "retryable": false,
+      "recovery": "query_intent",
+      "message": "Intent receipt expired; the original prompt may have executed",
       "surfaces": ["http"]
     },
     "unauthorized": {

@@ -2,6 +2,7 @@ import { testAuthentication, testHeaders } from "../support/auth-fixture.js";
 import { sessionConfigurationView } from "../support/fixtures.js";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { AgentAcpHttpServer } from "../../src/transport/http-server.js";
+import { serveBridgeObservation } from "../../src/transport/bridge-observation.js";
 import type { AcpApplicationPort } from "../../src/ports/acp-application.js";
 import { DomainError } from "../../src/domain/errors.js";
 import { readFileSync } from "node:fs";
@@ -149,29 +150,43 @@ describe("AgentAcpHttpServer", () => {
     let errorClass: string | null = "model_unsupported_content";
     const query = vi.fn((sql: string) =>
       Promise.resolve({
-        rows: sql.includes("FROM acp_sessions")
+        rows: sql.includes("receipt_retained_after_append_version")
           ? [
               {
+                receipt_retained_after_append_version: null,
+                bridge_intent_id: "intent-1",
+                session_id: "session-1",
+                run_id: "run-1",
+                state: "failed",
                 append_version: "2",
-                configuration_revision: "1",
-                last_message_sequence: "4",
-                active_run_id: null,
+                output_watermark: "4",
+                stop_reason: null,
+                error_class: errorClass,
               },
             ]
-          : sql.startsWith("SET ")
-            ? []
-            : [
+          : sql.includes("FROM acp_sessions")
+            ? [
                 {
-                  bridge_intent_id: "intent-1",
-                  session_id: "session-1",
-                  run_id: "run-1",
-                  state: "failed",
                   append_version: "2",
-                  output_watermark: "4",
-                  stop_reason: null,
-                  error_class: errorClass,
+                  configuration_revision: "1",
+                  last_message_sequence: "4",
+                  active_run_id: null,
                 },
-              ],
+              ]
+            : sql.startsWith("SET ")
+              ? []
+              : [
+                  {
+                    bridge_intent_id: "intent-1",
+                    session_id: "session-1",
+                    run_id: "run-1",
+                    state: "failed",
+                    append_version: "2",
+                    output_watermark: "4",
+                    stop_reason: null,
+                    error_class: errorClass,
+                  },
+                ],
       }),
     );
     const transaction = async (operation: (client: never) => Promise<unknown>) =>
@@ -264,14 +279,17 @@ describe("AgentAcpHttpServer", () => {
 
   it("serves scoped Bridge receipts only with complete trusted identity", async () => {
     const readIntent = vi.fn().mockResolvedValue({
-      intentId: "intent-1",
-      sessionId: "session-1",
-      runId: "run-1",
-      phase: "running",
-      appendVersion: 1,
-      outputWatermark: 2,
-      stopReason: null,
-      errorClass: null,
+      kind: "receipt",
+      receipt: {
+        intentId: "intent-1",
+        sessionId: "session-1",
+        runId: "run-1",
+        phase: "running",
+        appendVersion: 1,
+        outputWatermark: 2,
+        stopReason: null,
+        errorClass: null,
+      },
     });
     const readSession = vi.fn().mockResolvedValue({
       sessionId: "session-1",
@@ -383,6 +401,127 @@ describe("AgentAcpHttpServer", () => {
     ).toBe(401);
     const readUrl = `${base}/learning-undo-operations/undo-1`;
     expect((await fetch(readUrl)).status).toBe(401);
+  });
+
+  it("serves tagged intent observations with the canonical observationError envelope", async () => {
+    const bridge = JSON.parse(
+      readFileSync(
+        new URL("../../../../contracts/agent-acp/workspace-bridge.schema.json", import.meta.url),
+        "utf8",
+      ),
+    ) as { $id: string; $defs: Record<string, object> };
+    const common = JSON.parse(
+      readFileSync(
+        new URL("../../../../contracts/common/error.schema.json", import.meta.url),
+        "utf8",
+      ),
+    ) as { $id: string };
+    const ajv = new Ajv2020({ strict: true, validateFormats: false });
+    ajv.addSchema(common);
+    ajv.compile(bridge);
+    const validObservationError = ajv.getSchema(`${bridge.$id}#/$defs/observationError`);
+    if (validObservationError === undefined) throw new Error("Missing observationError");
+    const readIntent = vi.fn().mockResolvedValue({ kind: "unknown" });
+    const readSession = vi.fn();
+    server = new AgentAcpHttpServer({
+      authentication: testAuthentication(),
+      application: applicationPort(),
+      ready: () => Promise.resolve(true),
+      maxWebSocketPayloadBytes: 64 * 1024,
+      bridgeObservation: { readIntent, readSession },
+    });
+    await server.listen("127.0.0.1", 0);
+    const address = server.address();
+    if (address === null || typeof address === "string") throw new Error("Expected TCP listener");
+    const url = `http://127.0.0.1:${address.port}/rpc/agent-acp/workspace/sessions/session-1/intents/intent-1`;
+    const headers = testHeaders({
+      "X-Antnest-Organization-Id": "organization-1",
+      "X-Antnest-Principal-Id": "principal-1",
+      "X-Antnest-Agent-Id": "agent-1",
+    });
+    const unknown = await fetch(url, { headers });
+    expect(unknown.status).toBe(404);
+    const unknownBody: unknown = await unknown.json();
+    expect(validObservationError(unknownBody), JSON.stringify(validObservationError.errors)).toBe(
+      true,
+    );
+    expect(unknownBody).toMatchObject({
+      code: "intent_unknown",
+      category: "not_found",
+      retryable: true,
+    });
+    expect(unknown.headers.get("cache-control")).toBe("no-store");
+    expect(unknown.headers.get("x-request-id")).toBe(
+      (unknownBody as { request_id: string }).request_id,
+    );
+    readIntent.mockResolvedValue({ kind: "expired" });
+    const expired = await fetch(url, { headers });
+    expect(expired.status).toBe(410);
+    const expiredBody: unknown = await expired.json();
+    expect(validObservationError(expiredBody), JSON.stringify(validObservationError.errors)).toBe(
+      true,
+    );
+    expect(expiredBody).toMatchObject({
+      code: "intent_receipt_expired",
+      category: "not_found",
+      retryable: false,
+    });
+    expect(expired.headers.get("x-request-id")).toBe(
+      (expiredBody as { request_id: string }).request_id,
+    );
+    readIntent.mockRejectedValue(new Error("storage unavailable"));
+    const unavailable = await fetch(url, { headers });
+    expect(unavailable.status).toBe(503);
+    const unavailableBody: unknown = await unavailable.json();
+    expect(
+      validObservationError(unavailableBody),
+      JSON.stringify(validObservationError.errors),
+    ).toBe(true);
+    expect(unavailableBody).toMatchObject({
+      code: "workspace_observation_unavailable",
+      retryable: true,
+    });
+    for (const denied of [
+      new DomainError("access_denied", "denied"),
+      new DomainError("session_access_denied", "foreign"),
+      new DomainError("session_not_found", "missing"),
+    ]) {
+      readIntent.mockReset();
+      readIntent.mockRejectedValue(denied);
+      const response = await fetch(url, { headers });
+      const expected = denied.code === "access_denied" ? 403 : 404;
+      expect(response.status).toBe(expected);
+      const body: unknown = await response.json();
+      expect(validObservationError(body), JSON.stringify(validObservationError.errors)).toBe(true);
+      expect(body).not.toMatchObject({ code: "intent_unknown" });
+    }
+  });
+
+  it("rejects a non-GET intent observation at the route guard before any service call", async () => {
+    const chunks: string[] = [];
+    const response = {
+      destroyed: false,
+      setHeader: vi.fn(),
+      writeHead: vi.fn(),
+      end: vi.fn((body?: string) => {
+        if (body !== undefined) chunks.push(body);
+      }),
+    };
+    const readIntent = vi.fn();
+    await serveBridgeObservation(
+      { method: "POST", headers: {} } as never,
+      response as never,
+      { kind: "intent", sessionId: "session-1", intentId: "intent-1" },
+      { readIntent, readSession: vi.fn() },
+      () => Promise.resolve(true),
+    );
+    expect(readIntent).not.toHaveBeenCalled();
+    expect(response.setHeader).toHaveBeenCalledWith("Allow", "GET");
+    expect(response.writeHead).toHaveBeenCalledWith(405, expect.anything());
+    expect(JSON.parse(chunks.join(""))).toMatchObject({
+      code: "method_not_allowed",
+      retryable: false,
+    });
   });
 });
 

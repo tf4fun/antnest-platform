@@ -310,7 +310,7 @@
       "routes": ["POST /rpc/agent-acp/settle-agent"]
     },
     "services/agent-acp-service/src/transport/bridge-observation.ts": {
-      "sha256": "07ca3afe45d4faa4a9e5302a42bfca34574ce33dde914ec4bc20dd2d7c123978",
+      "sha256": "c3d44203800ec03bb4504aa975faa363ee6eec213b19c0046945f50fc9c42949",
       "routes": [
         "GET /rpc/agent-acp/workspace/sessions/{session_id}/execution",
         "GET /rpc/agent-acp/workspace/sessions/{session_id}/intents/{intent_id}"

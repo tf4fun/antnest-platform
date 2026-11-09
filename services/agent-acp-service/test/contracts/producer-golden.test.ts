@@ -144,7 +144,7 @@ describe("Agent ACP producer goldens", () => {
       access: { assert: () => Promise.resolve() },
       sessions: { requireAuthorized: () => Promise.resolve() },
       repository: {
-        readIntent: () => Promise.resolve(receipt),
+        readIntent: () => Promise.resolve({ kind: "receipt", receipt }),
         readSession: () => Promise.resolve(session),
       },
     });

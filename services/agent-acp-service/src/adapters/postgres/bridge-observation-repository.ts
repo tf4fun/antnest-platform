@@ -1,6 +1,8 @@
 import type { PoolClient } from "pg";
+import { DomainError } from "../../domain/errors.js";
 import { configurationRevisionToken } from "../../domain/configuration-revision.js";
 import type {
+  BridgeIntentObservation,
   BridgeIntentReceipt,
   BridgeObservationRepository,
   BridgeSessionExecution,
@@ -19,6 +21,14 @@ type ReceiptRow = {
   error_class: string | null;
 };
 
+type IntentRow = {
+  [K in keyof ReceiptRow]: ReceiptRow[K] | null;
+} & { receipt_retained_after_append_version: string | null };
+
+function foundReceipt(row: IntentRow): row is IntentRow & ReceiptRow {
+  return row.bridge_intent_id !== null;
+}
+
 const RECEIPT_COLUMNS = `r.bridge_intent_id, r.session_id, r.id AS run_id,
   r.state, r.append_version, r.stop_reason, r.error_class,
   COALESCE((SELECT MAX(m.sequence) FROM session_messages m WHERE m.run_id = r.id), 0)
@@ -30,16 +40,23 @@ export class PostgresBridgeObservationRepository implements BridgeObservationRep
     private readonly telemetry: TelemetryPort = NOOP_TELEMETRY,
   ) {}
 
-  public async readIntent(
-    sessionId: string,
-    intentId: string,
-  ): Promise<BridgeIntentReceipt | null> {
-    const result = await this.kernel.query<ReceiptRow>(
-      `SELECT ${RECEIPT_COLUMNS} FROM runs r
-        WHERE r.session_id = $1 AND r.bridge_intent_id = $2`,
+  public async readIntent(sessionId: string, intentId: string): Promise<BridgeIntentObservation> {
+    const result = await this.kernel.query<IntentRow>(
+      `SELECT s.receipt_retained_after_append_version, found.*
+        FROM acp_sessions s
+        LEFT JOIN LATERAL (
+          SELECT ${RECEIPT_COLUMNS} FROM runs r
+          WHERE r.session_id = s.id AND r.bridge_intent_id = $2
+        ) found ON TRUE
+        WHERE s.id = $1 AND s.state <> 'deleted'`,
       [sessionId, intentId],
     );
-    return result.rows[0] === undefined ? null : receipt(result.rows[0], this.telemetry);
+    const row = result.rows[0];
+    if (row === undefined) throw new DomainError("session_not_found", "Session does not exist");
+    if (foundReceipt(row)) return { kind: "receipt", receipt: receipt(row, this.telemetry) };
+    return row.receipt_retained_after_append_version === null
+      ? { kind: "unknown" }
+      : { kind: "expired" };
   }
 
   public readSession(sessionId: string): Promise<BridgeSessionExecution | null> {

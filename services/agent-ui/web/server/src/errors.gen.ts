@@ -226,7 +226,7 @@ export const ERROR_METADATA: Record<
   intent_already_recorded: { category: "conflict", httpStatus: 409, retryable: false },
   intent_key_mismatch: { category: "conflict", httpStatus: 409, retryable: false },
   intent_receipt_expired: { category: "not_found", httpStatus: 410, retryable: false },
-  intent_unknown: { category: "not_found", httpStatus: 404, retryable: false },
+  intent_unknown: { category: "not_found", httpStatus: 404, retryable: true },
   internal: { category: "internal", httpStatus: 500, retryable: false },
   internal_error: { category: "internal", httpStatus: 500, retryable: false },
   invalid_agent_settlement: { category: "invalid_request", httpStatus: 400, retryable: false },

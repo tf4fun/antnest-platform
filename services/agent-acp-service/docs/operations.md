@@ -353,6 +353,16 @@ receipt identities and accounting totals have no execution-record foreign keys
 and therefore survive later purge. The migration journal makes the import
 atomic and prevents duplicate charging on restart.
 
+Migration `0036_bridge_receipt_retention.sql` adds one nullable watermark
+column and one statement-level delete trigger; it creates no table and changes
+no retention policy. Whole-Session purge under the existing data-retention
+contract keeps `session_not_found` semantics, and the trigger only records
+already-deleted bridge receipt facts — it never grants deletion authority or
+schedules active-Session cleanup. Rollback of a deleting transaction restores
+both the receipt row and the watermark update. No worker retirement window is
+required: the column defaults NULL (no pruning observed) and writers do not
+read it.
+
 Receipts linked to the exact hidden attempt use its original UTC start day and
 month, including calls that finish after midnight. Older receipts without that
 identity link retain their receipt-time basis. An unmatched hidden start is an

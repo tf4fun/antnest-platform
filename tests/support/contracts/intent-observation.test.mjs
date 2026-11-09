@@ -220,7 +220,7 @@ test("agent-ui and agent-acp-service slices expose intent_receipt_expired", () =
   }
 });
 
-test("foundation leaves intent_unknown registry metadata for the ACP batch", () => {
+test("registry declares canonical lookup-retryable intent_unknown metadata", () => {
   const entry = registryEntry("intent_unknown");
   assert.ok(entry, "registry must declare intent_unknown");
   assert.equal(entry.owner, "agent-acp-service");
@@ -228,7 +228,7 @@ test("foundation leaves intent_unknown registry metadata for the ACP batch", () 
   assert.equal(entry.http_status, 404);
   assert.equal(
     entry.retryable,
-    false,
-    "canonical retryable:true lands with the ACP catalog change",
+    true,
+    "retryable:true authorizes repeating the lookup only, never the Prompt",
   );
 });

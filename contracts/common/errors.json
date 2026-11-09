@@ -2061,7 +2061,7 @@
     {
       "code": "intent_unknown",
       "category": "not_found",
-      "retryable": false,
+      "retryable": true,
       "http_status": 404,
       "owner": "agent-acp-service",
       "description": "Intent unknown"
