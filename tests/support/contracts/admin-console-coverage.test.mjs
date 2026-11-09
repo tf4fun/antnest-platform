@@ -48,9 +48,7 @@ const identity =
 const adminSchema = readContractIfPresent(
   "admin-console/admin-api.ids-v2.schema.json",
 );
-const directorySchema = readContractIfPresent(
-  "identity/directory.schema.json",
-);
+const directorySchema = readContractIfPresent("identity/directory.schema.json");
 const errorsView = readContractIfPresent("admin-console/errors.json");
 const goErrors = readFileSync(
   repoPath("services/admin-console/internal/apierror/errors.gen.go"),
