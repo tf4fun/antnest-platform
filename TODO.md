@@ -1,5 +1,7 @@
 # Antnest Platform 全局 TODO
 
+- **#19 预算参数化迁移回修（2026-11-09，继续 CI）**：首轮新候选 `7f320c2f` 的 Repository、全部服务 unit 及其他组件均通过，ACP 组件确认原三个具名历史快照失败已消失，但仍报告 `model-budget-migration` 的动态用例失败。补盘点发现该文件另有两处内联 `sourceFacts`，第一轮未覆盖其 Session JSON 快照；两处均补排除新 retention 元数据，所有旧字段仍精确比较。同时将 watermark 初始 null 验证提升到预算迁移 `checkedJournal(36)`，覆盖全部参数化用例；重复迁移及账本／原始事实断言保留。定向 typed lint、Prettier 与 diff 通过；再次同步 #615 后，以两个最终新 head 的远程 PostgreSQL／Repository／Integration 为准，旧候选绿色不替代最终候选。未在本地执行 PostgreSQL。
+
 - **#19 PR CI 收尾（2026-11-09，用户授权接手）**：保留 #612 契约 → #613 UI 消费方 → #614 ACP 生产方 → #615 显式集成的部署依赖。#612 原精确候选必需门禁全通过。#613 Gateway 的真实 login schema 验证曾把 `engineering` 判为不符合 `\\S`；同一原始候选的原失败用例本地连续 10 次通过，未改 Gateway／schema／正则适配器，远程只重跑失败 jobs，历史单次失败的底层原因尚未确认。
 
   #614 定位并复现新增 PostgreSQL receipt matcher 的 `no-unsafe-assignment`，改为先断言并缩窄 tagged result 再校验原有 receipt 字段，保留全部语义。三个历史迁移测试的业务事实投影排除新引入的 `receipt_retained_after_append_version` 元数据，仍逐字段比较全部旧事实；升级后逐行验证 watermark 初始为 null，并在既有 retention metadata 快照中纳入该字段、验证重复 migrate 的幂等性。五文件 typed lint、Prettier 和 diff 检查通过；真实 PostgreSQL 组件交远程最终候选准入，不把本地缺少数据库的跳过当通过。生产代码、0036 迁移与业务／鉴权／清理断言不变；同步 #615 后继续核对两个新 head 的完整 Repository／Integration／服务组件门禁，不合并、不关闭 #19/#83，不查询或运行独立 Docker/system E2E。本轮最小日志暂存 `artifacts/verification/issue-19-ci/`。
