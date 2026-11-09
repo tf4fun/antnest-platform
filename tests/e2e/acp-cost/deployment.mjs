@@ -226,6 +226,7 @@ export function costHarnessArguments(env, { evidence }) {
         "contracts/agent-controller/control-contract.json",
         "contracts/runtime-controller/control-contract.json",
         "contracts/agent-acp/agent-execution-state.ids-v2.schema.json",
+        "contracts/common/ids.schema.json",
       ].flatMap((relative) => [
         "-v",
         `${join(root, relative)}:/app/${relative}:ro`,

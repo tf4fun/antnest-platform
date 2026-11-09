@@ -1,5 +1,7 @@
 # Antnest Platform 全局 TODO
 
+- **main E2E 回修（2026-11-09，run 42549201070 / main `364dbed1`）**：用户明确指派处理本次 system E2E，20 组中 Deployment／Service authentication／ACP workspace／Skill discovery and deployment 失败，其余组通过。Cost 与 discovery 的真实私有 state reader 漏挂载 common IDs schema；补只读挂载，并把私有 Skill 客户端的 schema 挂载与权限／网络参数统一。快速门禁在隔离模块图导入真实 helper、按实际容器参数限制可见 contract，显式移除 common mount 仍拒绝。Deployment stop 去掉覆盖 Compose 130s Egress grace 的固定 30s；保留零退出码／资源清理检查。RC auth 的 registration recovery 在立即删除前复用既有真实健康／execution 验证，避免 Node double 启动与 SIGTERM handler 注册竞态；根 test-repo 加入该回归。四项新增检查先 RED 后 GREEN，相关 58 项定向测试与格式／lint 通过；完整远程 PR 准入和失败场景定向重放待确认，不计 main E2E 或发布能力通过。
+
 - **#16 CI 收尾（2026-11-09）**：用户授权继续修复 #592–#603 的 PR CI，保留服务依赖顺序，不自动合并或关闭。已定位旧非法 ID 断言、目录版本/consumer 同步遗漏、PG migration 边界与晚改 schema 的 N-1 违规。共享批次前置完整 ids-v2 目标图及精确 aliases；活跃目录由各 owning service 激活。目标引用与所有向量 2/2、210 文档 conventions、Gateway 定向真实 handler/engine 检查通过。Gateway 两个 ASCII pattern 提前使用 native engine；CI 原 user-1 误拒签名保留，不把第三方 engine 根因视为已证实。远程 exact-head 门禁跟进中，未运行或查询独立 system E2E。
 
 本清单保存全部开放 issue 的推进顺序、依赖、当前批次和验收记录。

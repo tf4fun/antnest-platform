@@ -1,3 +1,4 @@
+import { assertContainerContractImports } from "../../support/container-contract-imports.mjs";
 import assert from "node:assert/strict";
 import test from "node:test";
 import { skillClientArgs } from "./client-container.mjs";
@@ -110,4 +111,35 @@ test("private ACP clients opt into exact workload grants and the exporter networ
 test("private ACP network admission requires an explicit boolean", () => {
   for (const privateACP of ["true", 1, null])
     assert.throws(() => skillClientArgs(config, { privateACP }));
+});
+
+test("private ACP clients mount the state schema and its published ID dependency read-only", () => {
+  const root = new URL("../../../", import.meta.url).pathname.replace(
+    /\/$/u,
+    "",
+  );
+  const args = skillClientArgs(config, { privateACP: true });
+  assertContainerContractImports(
+    args,
+    "tests/support/private-acp-execution-state.mjs",
+  );
+  assert.throws(
+    () =>
+      assertContainerContractImports(
+        args.filter((arg) => !arg.includes("contracts/common/ids.schema.json")),
+        "tests/support/private-acp-execution-state.mjs",
+      ),
+    /Container contract is not mounted/u,
+  );
+  for (const relative of [
+    "contracts/agent-acp/agent-execution-state.ids-v2.schema.json",
+    "contracts/common/ids.schema.json",
+  ]) {
+    assert(args.includes(`${root}/${relative}:/app/${relative}:ro`), relative);
+    assert(
+      !skillClientArgs(config).some((value) =>
+        value.includes(`:/app/${relative}`),
+      ),
+    );
+  }
 });
