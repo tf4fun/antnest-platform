@@ -1,3 +1,4 @@
+import { withCommonErrorSchema } from "../../support/common-error-schema.mjs";
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 import { assertHealthProjection } from "./health-evidence.mjs";
@@ -17,9 +18,11 @@ export function healthPublicResult(result) {
 }
 
 export function healthPrivateAdmission(result) {
-  validateState ??= new (require("ajv/dist/2020.js").Ajv2020)({
-    strict: false,
-  }).compile(schema);
+  validateState ??= withCommonErrorSchema(
+    new (require("ajv/dist/2020.js").Ajv2020)({
+      strict: false,
+    }),
+  ).compile(schema);
   assert.equal(result.profile, "runtime-health");
   assert.equal(result.operations, 3);
   assert.equal(result.execution_audits, 0);
