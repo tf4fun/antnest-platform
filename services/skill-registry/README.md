@@ -18,6 +18,11 @@ the workload-only outbound policy: source/JWKS calls replace peer credentials
 and remove CCT, browser cookies, Authorization and legacy identity headers.
 Skill authorization, ownership and content lifecycle remain Registry-owned.
 
+HTTP trace plumbing (server span start, request cloning, body wrapping and
+the response status writer) uses the shared Go telemetry module in
+`libs/go/telemetry`; telemetry names come from its generated registry
+constants.
+
 Startup rejects published PostgreSQL passwords under the [development secret policy](../../contracts/platform/development-secrets.md). The exact `ANTNEST_ALLOW_PUBLIC_DEV_SECRETS=true` opt-in emits variable-only WARNs. Retired API/source bearers remain rejected even with the opt-in.
 
 The internal HTTP boundary follows the shared contract conventions in

@@ -26,6 +26,7 @@ require (
 	github.com/jackc/pgpassfile v1.0.0 // indirect
 	github.com/jackc/pgservicefile v0.0.0-20240606120523-5a60cdf6a761 // indirect
 	github.com/jackc/puddle/v2 v2.2.2 // indirect
+	github.com/tf4fun/antnest-platform/libs/go/telemetry v0.0.0
 	go.opentelemetry.io/auto/sdk v1.2.1 // indirect
 	go.opentelemetry.io/otel/exporters/otlp/otlptrace v1.47.0 // indirect
 	go.opentelemetry.io/otel/log v1.47.0 // indirect
@@ -42,3 +43,5 @@ require (
 )
 
 replace github.com/tf4fun/antnest-platform/modules/service-authentication => ../../modules/service-authentication
+
+replace github.com/tf4fun/antnest-platform/libs/go/telemetry => ../../libs/go/telemetry
