@@ -1,4 +1,5 @@
 import { ReplayCapacityError } from "../bridge/replay-load-gate.ts";
+import { agentIdSchema } from "../protocol/resource-ids.ts";
 import { ERROR_CODES } from "../errors.gen.ts";
 import { AgentAccessRevokedError } from "../adapters/acp-http.ts";
 import { OperationReconciliationTimeoutError } from "../bridge/operations.ts";
@@ -39,6 +40,7 @@ export function createEventHandler(dependencies: {
     let agentId: string;
     try {
       agentId = decodeURIComponent(suffix[0]!);
+      if (!agentIdSchema.safeParse(agentId).success) return error(422, ERROR_CODES.INVALID_REQUEST, "Malformed agent", "none");
     } catch {
       return error(422, ERROR_CODES.INVALID_REQUEST, "Agent ID is invalid", "none");
     }

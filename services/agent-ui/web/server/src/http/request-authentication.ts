@@ -1,4 +1,5 @@
 import type { IncomingMessage } from "node:http";
+import { agentIdSchema } from "../protocol/resource-ids.ts";
 import { fields, type ServiceAuthentication } from "../adapters/service-authentication.ts";
 import { CALLER_CONTEXT_HEADER, CallerContextError, type CallerContextVerifier } from "../adapters/caller-context.ts";
 import type { Delegation } from "./trusted-identity.ts";
@@ -51,7 +52,7 @@ export function workspaceRoutePolicy(method: string, rawUrl: string): Policy {
   if (!match) return unknown;
   let agent: string;
   try { agent = decodeURIComponent(match[1]!); } catch { return unknown; }
-  if (!agent || /[\x00-\x1f\x7f]/u.test(agent)) return unknown;
+  if (!agent || !agentIdSchema.safeParse(agent).success) return unknown;
   const suffix = match[2]!;
   const known = method === "GET"
     ? /^(?:events|view|sessions|sessions\/[^/]+\/(?:view|operations\/[^/]+|turns(?:\/[^/]+\/(?:content|process(?:\/[^/]+\/content)?))?))$/u.test(suffix)

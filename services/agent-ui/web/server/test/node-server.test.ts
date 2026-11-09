@@ -79,13 +79,13 @@ test("document paths reject unknown shapes and retain escaped identifiers for GE
     assert.ok(address && typeof address !== "string");
     const origin = `http://127.0.0.1:${address.port}`;
     const headers = { "x-antnest-organization-id": "org", "x-antnest-principal-id": "user", "x-antnest-administrator": "false", "x-antnest-organization-slug": "ZW5naW5lZXJpbmc", "x-antnest-organization-name": "RW5naW5lZXJpbmc", };
-    for (const path of ["/workspace/agent/sessions/", "/workspace/agent/sessions/s/extra", "/workspace/?agent=agent", "/workspace/agent/?return_to=//other", "/workspace/%00/", "/workspace/assets/"]) {
+    for (const path of ["/workspace/agent/sessions/", "/workspace/agent/sessions/s/extra", "/workspace/?agent=agent", "/workspace/agent/?return_to=//other", "/workspace/%00/", "/workspace/assets/", "/workspace/agent%2Fone/sessions/session-1"]) {
       assert.equal((await fetch(origin + path, { headers })).status, 404, path);
     }
     assert.equal(renders, 0);
-    const path = "/workspace/agent%2Fone/sessions/session%20%26one";
+    const path = "/workspace/agent.one/sessions/session%20%26one";
     const document = await fetch(origin + path, { headers });
-    assert.deepEqual(await document.json(), { agentId: "agent/one", sessionId: "session &one" });
+    assert.deepEqual(await document.json(), { agentId: "agent.one", sessionId: "session &one" });
     const head = await fetch(origin + path, { headers, method: "HEAD" });
     assert.equal(head.status, 200);
     assert.equal(await head.text(), "");

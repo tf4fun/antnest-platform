@@ -1,3 +1,4 @@
+import { agentIdSchema } from "./resource-ids.ts";
 export type WorkspaceRoute = { agentId: string; sessionId: string | null };
 
 function validIdentifier(value: string): boolean {
@@ -13,7 +14,7 @@ export function parseWorkspaceDocumentPath(path: string): WorkspaceRoute | null 
   try {
     const agentId = decodeURIComponent(match[1]!);
     const sessionId = match[2] === undefined ? null : decodeURIComponent(match[2]);
-    if (!validIdentifier(agentId) || agentId === "assets" ||
+    if (!agentIdSchema.safeParse(agentId).success || agentId === "assets" ||
       (sessionId !== null && !validIdentifier(sessionId))) return null;
     return { agentId, sessionId };
   } catch { return null; }
@@ -21,7 +22,7 @@ export function parseWorkspaceDocumentPath(path: string): WorkspaceRoute | null 
 
 export function workspacePath(route: WorkspaceRoute): string {
   if (!route.agentId) return "/workspace/";
-  if (!validIdentifier(route.agentId) || route.agentId === "assets" ||
+  if (!agentIdSchema.safeParse(route.agentId).success || route.agentId === "assets" ||
     (route.sessionId !== null && !validIdentifier(route.sessionId)))
     throw new Error("Invalid workspace route identifier");
   const base = `/workspace/${encodeURIComponent(route.agentId)}/`;

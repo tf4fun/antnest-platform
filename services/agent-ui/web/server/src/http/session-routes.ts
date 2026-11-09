@@ -1,4 +1,5 @@
 import type { ListSessionsResponse, NewSessionResponse } from "@agentclientprotocol/sdk";
+import { agentIdSchema } from "../protocol/resource-ids.ts";
 import { ERROR_CODES } from "../errors.gen.ts";
 import { z } from "zod";
 import { AgentAccessRevokedError } from "../adapters/acp-http.ts";
@@ -20,6 +21,7 @@ export function createSessionHandler(dependencies: {
     let agentId: string;
     try {
       agentId = decodeURIComponent(suffix[0]!);
+      if (!agentIdSchema.safeParse(agentId).success) return error(422, ERROR_CODES.INVALID_REQUEST, "Malformed agent", "none");
     } catch {
       return error(422, ERROR_CODES.INVALID_REQUEST, "Agent ID is invalid", "none");
     }

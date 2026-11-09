@@ -25,9 +25,9 @@ import {
 } from "../src/adapters/acp-http.ts";
 
 const scope = {
-  organizationId: "org+1",
-  principalId: "user/1",
-  agentId: "agent:1",
+  organizationId: "org.1",
+  principalId: "user.1",
+  agentId: "agent.1",
 };
 
 test("the internal ACP caller forwards signed context without browser credentials or authority hints", () => {
@@ -84,7 +84,7 @@ test("ACP boolean configuration carries the SDK discriminator on the wire", () =
 
 test("Agent state watch parses split SSE frames and fails closed on revocation", async () => {
   const state = {
-    agent_id: "agent:1",
+    agent_id: "agent.1",
     access_allowed: true,
     configuration_revision: "a".repeat(64),
     availability: "busy",
@@ -113,7 +113,7 @@ test("Agent state watch parses split SSE frames and fails closed on revocation",
     },
   }), { headers: { "content-type": "text/event-stream" } });
   const observed: unknown[] = [];
-  await consumeAgentExecutionStateStream(response, "agent:1", (value) => {
+  await consumeAgentExecutionStateStream(response, "agent.1", (value) => {
     observed.push(value);
   }, new AbortController().signal);
   assert.deepEqual(observed, [
@@ -130,7 +130,7 @@ test("Agent state watch parses split SSE frames and fails closed on revocation",
     consumeAgentExecutionStateStream(new Response(
       `event: workspace_state\ndata: ${JSON.stringify(revoked)}\n\n`,
       { headers: { "content-type": "text/event-stream" } },
-    ), "agent:1", () => {}, new AbortController().signal),
+    ), "agent.1", () => {}, new AbortController().signal),
     AgentAccessRevokedError,
   );
   await assert.rejects(
@@ -139,14 +139,14 @@ test("Agent state watch parses split SSE frames and fails closed on revocation",
         availability: "offline", active_session_id: null,
         unavailable_reason: "unknown_reason" })}\n\n`,
       { headers: { "content-type": "text/event-stream" } },
-    ), "agent:1", () => {}, new AbortController().signal),
+    ), "agent.1", () => {}, new AbortController().signal),
     BridgeCapabilityError,
   );
 });
 
 test("Agent execution state rejects denied or mismatched scopes", async () => {
   const state = {
-    agent_id: "agent:1",
+    agent_id: "agent.1",
     access_allowed: true,
     configuration_revision: "a".repeat(64),
     availability: "busy",
@@ -154,7 +154,7 @@ test("Agent execution state rejects denied or mismatched scopes", async () => {
     unavailable_reason: null,
   };
   assert.deepEqual(
-    await parseAgentExecutionState(new Response(JSON.stringify(state)), "agent:1"),
+    await parseAgentExecutionState(new Response(JSON.stringify(state)), "agent.1"),
     { availability: "busy", activeSessionId: "session-2", unavailableReason: null },
   );
   for (const unavailableReason of ["runtime_barrier_required", "agent_unavailable", "agent_preparing", null]) {
@@ -162,33 +162,33 @@ test("Agent execution state rejects denied or mismatched scopes", async () => {
     assert.deepEqual(
       await parseAgentExecutionState(new Response(JSON.stringify({
         ...state, availability, active_session_id: null, unavailable_reason: unavailableReason,
-      })), "agent:1"),
+      })), "agent.1"),
       { availability, activeSessionId: null, unavailableReason },
     );
   }
   await assert.rejects(
-    parseAgentExecutionState(new Response(JSON.stringify(state)), "agent:2"),
+    parseAgentExecutionState(new Response(JSON.stringify(state)), "agent.2"),
     BridgeCapabilityError,
   );
   await assert.rejects(
     parseAgentExecutionState(new Response(JSON.stringify({
       ...state,
       access_allowed: false,
-    })), "agent:1"),
+    })), "agent.1"),
     BridgeCapabilityError,
   );
   await assert.rejects(
     parseAgentExecutionState(new Response(JSON.stringify({
       ...state, availability: "offline", active_session_id: null,
       unavailable_reason: "unknown_reason",
-    })), "agent:1"),
+    })), "agent.1"),
     BridgeCapabilityError,
   );
 });
 
 test("preparing Agent state rejects inconsistent availability, Session identity, scope and revocation over GET and split SSE", async () => {
   const preparing = {
-    agent_id: "agent:1",
+    agent_id: "agent.1",
     access_allowed: true,
     configuration_revision: "a".repeat(64),
     availability: "offline",
@@ -199,7 +199,7 @@ test("preparing Agent state rejects inconsistent availability, Session identity,
     { name: "ready with preparing", patch: { availability: "ready" }, failure: BridgeCapabilityError },
     { name: "busy with preparing", patch: { availability: "busy" }, failure: BridgeCapabilityError },
     { name: "preparing leaks an active Session", patch: { active_session_id: "session-private" }, failure: BridgeCapabilityError },
-    { name: "preparing belongs to another Agent", patch: { agent_id: "agent:2" }, failure: BridgeCapabilityError },
+    { name: "preparing belongs to another Agent", patch: { agent_id: "agent.2" }, failure: BridgeCapabilityError },
     { name: "revocation remains terminal", patch: {
       access_allowed: false, configuration_revision: null, unavailable_reason: "access_denied",
     }, failure: AgentAccessRevokedError },
@@ -209,7 +209,7 @@ test("preparing Agent state rejects inconsistent availability, Session identity,
   ]) {
     const state = { ...preparing, ...patch };
     await assert.rejects(
-      parseAgentExecutionState(new Response(JSON.stringify(state)), "agent:1"),
+      parseAgentExecutionState(new Response(JSON.stringify(state)), "agent.1"),
       failure,
       "GET: " + name,
     );
@@ -225,7 +225,7 @@ test("preparing Agent state rejects inconsistent availability, Session identity,
     }), { headers: { "content-type": "text/event-stream" } });
     const observed: unknown[] = [];
     await assert.rejects(
-      consumeAgentExecutionStateStream(response, "agent:1", (value) => {
+      consumeAgentExecutionStateStream(response, "agent.1", (value) => {
         observed.push(value);
       }, new AbortController().signal),
       failure,
@@ -318,7 +318,7 @@ test("a hidden or deleted Session keeps its permanent absence across ACP observa
   await assert.rejects(
     parseAgentExecutionState(new Response(JSON.stringify({
       code: "session_not_found", retryable: false,
-    }), { status: 404 }), "agent:1"),
+    }), { status: 404 }), "agent.1"),
     SessionNotFoundError,
   );
   const missing = new RequestError(-32020, "Session does not exist", {

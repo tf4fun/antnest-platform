@@ -1,7 +1,8 @@
 import { z } from "zod";
+import { agentIdSchema } from "./resource-ids.ts";
 const id = z.string().min(1).max(200);
 export const learningStatusSchema = z.strictObject({
-  agentId: id,
+  agentId: agentIdSchema,
   blocked: z.strictObject({
     reason: z.enum(["writer_present", "unknown_effect", "model_unavailable", "runtime_unavailable", "review_inconclusive"]),
     skillName: z.string().min(1).max(64).regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/).optional(),

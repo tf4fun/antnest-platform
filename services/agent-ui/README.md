@@ -484,3 +484,5 @@ all known-field type/enum/refinement checks, union discriminator retention and
 Agent scope assertions (`parseAuthorizedAgentState`, `parseLearningStatus`,
 `parseLearningChanges`) stay unchanged; request and protocol schemas remain
 strict. Deploy consumers first.
+
+Public organization, user and agent references in the workspace and bridge surfaces follow the shared opaque-ID grammar (`resource-ids.ts`); private session, provider, execution and operation identifiers keep their existing syntax.

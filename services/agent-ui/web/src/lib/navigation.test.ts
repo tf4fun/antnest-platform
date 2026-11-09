@@ -4,8 +4,9 @@ import { readWorkspaceRoute, workspacePath, selectWorkspaceRoute } from "./navig
 import { workspaceFromBootstrap } from "./bootstrap.ts";
 
 test("routes express workspace and Session hierarchy with independently encoded identifiers", () => {
-  assert.equal(workspacePath({ agentId: "a/1", sessionId: "s &1" }), "/workspace/a%2F1/sessions/s%20%261");
-  assert.deepEqual(readWorkspaceRoute("/workspace/a%2F1/sessions/s%20%261"), { agentId: "a/1", sessionId: "s &1" });
+  assert.equal(workspacePath({ agentId: "a.1", sessionId: "s &1" }), "/workspace/a.1/sessions/s%20%261");
+  assert.deepEqual(readWorkspaceRoute("/workspace/a.1/sessions/s%20%261"), { agentId: "a.1", sessionId: "s &1" });
+  assert.throws(() => workspacePath({ agentId: "a/1", sessionId: "s &1" }));
   assert.equal(workspacePath({ agentId: "a1", sessionId: null }), "/workspace/a1/");
   assert.deepEqual(readWorkspaceRoute("/workspace/a1/"), { agentId: "a1", sessionId: null });
   assert.deepEqual(readWorkspaceRoute("/workspace/"), { agentId: "", sessionId: null });
@@ -42,7 +43,7 @@ test("selecting another Session releases completed process from the workspace ca
 
 test("malformed routes, queries, assets and dot segments cannot choose an Agent", () => {
   for (const path of ["/workspace/?agent=a1", "/workspace/a1/?session=s1", "/workspace/a1/sessions/",
-    "/workspace/a1/sessions/s1/extra", "/workspace/%00/", "/workspace/%E0%A4/", "/workspace/../",
+    "/workspace/a1/sessions/s1/extra", "/workspace/%00/", "/workspace/%E0%A4/", "/workspace/a%2F1/sessions/s1", "/workspace/../",
     "/workspace/%2e%2e/", "/workspace/a1/sessions/%2E", "/workspace/assets/", "/workspace/assets/app.js",
     "/workspace/a1/#fragment", "/workspace/%20a1/", `/${"/workspace/a1/"}`,
     `/workspace/${"a".repeat(201)}/`]) {

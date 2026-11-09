@@ -10,8 +10,14 @@ import { workspaceFromBridgeBootstrap } from "../../src/lib/bootstrap.ts";
 
 const requireAcp = createRequire(new URL("../../../../agent-acp-service/package.json", import.meta.url));
 const { Ajv2020 } = requireAcp("ajv/dist/2020.js");
-const schema = JSON.parse(readFileSync(new URL("../../../../../contracts/agent-ui/workspace-api.schema.json", import.meta.url), "utf8"));
-const compile = (name: string) => new Ajv2020({ strict: true, validateFormats: false }).compile({ $schema: schema.$schema, $defs: schema.$defs, $ref: `#/$defs/${name}` });
+const schema = JSON.parse(readFileSync(new URL("../../../../../contracts/agent-ui/workspace-api.ids-v2.schema.json", import.meta.url), "utf8"));
+const commonIDs = JSON.parse(readFileSync(new URL("../../../../../contracts/common/ids.schema.json", import.meta.url), "utf8"));
+const compile = (name: string) => {
+  const ajv = new Ajv2020({ strict: true, validateFormats: false });
+  ajv.addSchema(commonIDs);
+  ajv.addSchema(schema);
+  return ajv.getSchema(schema.$id + "#/$defs/" + name)!;
+};
 const validPrincipal = compile("verifiedWorkspacePrincipal");
 const validBootstrap = compile("bootstrap");
 const path = "http://workspace/api/app/workspace/v1/bootstrap";

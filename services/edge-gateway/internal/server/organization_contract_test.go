@@ -63,12 +63,13 @@ func compileOrganizationSchema(t *testing.T, path, definition string) *jsonschem
 	if err != nil {
 		t.Fatal(err)
 	}
-	if path == "agent-ui/workspace-api.schema.json" {
+	if path == "agent-ui/workspace-api.ids-v2.schema.json" {
 		// The rest of the Workspace schema contains ECMAScript lookaheads that
 		// Go's regexp engine cannot compile. Import these exact central definitions;
 		// the Node contract gate validates the entire Workspace document with Ajv.
 		all := document.(map[string]any)["$defs"].(map[string]any)
 		document = map[string]any{
+			"$id":     document.(map[string]any)["$id"],
 			"$schema": "https://json-schema.org/draft/2020-12/schema",
 			"$defs":   map[string]any{"id": all["id"], "organizationDisplay": all["organizationDisplay"], "verifiedWorkspacePrincipal": all["verifiedWorkspacePrincipal"]},
 		}
@@ -150,7 +151,7 @@ func TestOrganizationSessionHandlersMatchCentralSchemas(t *testing.T) {
 }
 
 func TestOrganizationProjectionIsVerifiedFreshAndSchemaValid(t *testing.T) {
-	schema := compileOrganizationSchema(t, "agent-ui/workspace-api.schema.json", "verifiedWorkspacePrincipal")
+	schema := compileOrganizationSchema(t, "agent-ui/workspace-api.ids-v2.schema.json", "verifiedWorkspacePrincipal")
 	for _, administrator := range []bool{false, true} {
 		stub := &identityServiceStub{resolvePrincipal: displayPrincipal(t, "研发 · Équipe 🚀", administrator)}
 		var forwarded http.Header

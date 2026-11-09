@@ -22,6 +22,8 @@ Issue 状态最后核对于 2026-10-28：141 个 issue，87 个已关闭，54 �
 
 ## 当前批次
 
+- **#16 Agent UI 审查完成**：真实 Agent 路由、learning status、两种 bootstrap 映射先 RED；定向初跑 124/125 通过，修正旧正例中的非法公共 Agent 后 navigation 4/4 通过（原私有 Session 特殊字符保留并增加非法 Agent 负例）。前后端类型检查、服务端构建与 210-document conventions clean。Runtime 已交付 PR #601（`98426974`）。全部服务候选已写完，下一步仅显式集成同步消费者；没有等待或外推远程 CI。
+
 - **#16 Runtime 审查完成**：真实 parser 的 201 字符错误接受先 RED，修正后 shared vectors／generation 边界 4/4、MCP 契约 7/7、HTTP 路由组件 4/4 GREEN，Rust 格式与 209-document conventions clean。Gateway 已交付 PR #600（`8b88b371`）。Runtime packet／instance-authentication 版本不变，根目录消费者同步与远程准入尚未完成。
 
 - **#16 Gateway 审查完成**：session schema 向量与真实 Organization／browser-control／external-identity handler 定向 GREEN，205-document conventions 和 Go 格式 clean；仅共享 ASCII 模式使用 Go 引擎，其余保留 ECMAScript 规则。旧 CI 的合法 `user-1` mismatch 根因仍未确认，不外推新候选 CI 状态。Identity 已交付 PR #599（`3fd33e04`）。

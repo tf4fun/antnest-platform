@@ -3,7 +3,7 @@
 This document defines the HTTP and SSE API between the Workspace browser
 application and the Agent UI Node Bridge, reached through Edge Gateway. The
 route catalog is [`workspace-api.json`](workspace-api.json); browser-safe wire
-values are [`workspace-api.schema.json`](workspace-api.schema.json). The Node
+values are [`workspace-api.ids-v2.schema.json`](workspace-api.ids-v2.schema.json). The Node
 implementation and Gateway routing are checked against both. Service ownership
 is described in the [Agent UI architecture](../../services/agent-ui/docs/architecture.md).
 
