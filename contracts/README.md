@@ -175,3 +175,12 @@ slices, and `--check` keeps the generated files fresh in CI. Rendering runs
 the source through `gofmt`, so generation and `--check` require the Go
 toolchain on `PATH` (installed in CI). Service error envelope migrations
 remain per-service batches under the same issue.
+
+### Opaque ID schema publication (#16)
+
+The `*.ids-v2.schema.json` documents publish the complete target reference graph
+before service activation. Their presence is not a claim that a service accepts
+these IDs: each owning service PR updates its active route catalog with its
+implementation and current consumer bindings. Existing schemas remain frozen.
+The shared reference guard checks all proposed definitions and transitive
+references against `common/id-vectors.json` before any catalog activates them.

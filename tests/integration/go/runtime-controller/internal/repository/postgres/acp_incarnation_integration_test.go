@@ -524,7 +524,7 @@ SELECT (SELECT MAX(version) FROM runtime_controller.schema_migrations),
 		if !reflect.DeepEqual(acpIncarnationLegacyRows(t, database, ctx), before) || acpIncarnationMigrationJournal(t, database, ctx) != journal {
 			t.Fatal("incarnation migration changed existing business history or old migration journal")
 		}
-		if err := database.QueryRowContext(ctx, "SELECT MAX(version) FROM runtime_controller.schema_migrations").Scan(&version); err != nil || version != 15 {
+		if err := database.QueryRowContext(ctx, "SELECT MAX(version) FROM runtime_controller.schema_migrations").Scan(&version); err != nil || version != 16 {
 			t.Fatal("incarnation migrations did not install the registry and complete member history")
 		}
 		retained, err := store.GetOperation(ctx, accepted.RequestID)

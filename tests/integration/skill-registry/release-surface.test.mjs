@@ -43,8 +43,8 @@ test("released Controller contract has no legacy Skill migration resources or er
 });
 
 for (const path of [
-  "contracts/runtime-controller/control-api.schema.json",
-  "contracts/agent-controller/control-api.schema.json",
+  "contracts/runtime-controller/control-api.ids-v2.schema.json",
+  "contracts/agent-controller/control-api.ids-v2.schema.json",
 ]) {
   test(`${path} exports no retired legacy Skill DTOs`, async () => {
     const schema = await json(path);

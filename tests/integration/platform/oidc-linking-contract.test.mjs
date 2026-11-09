@@ -381,7 +381,9 @@ test("Gateway self operations inherit Origin, CSRF, Cookie and generation bounda
     if (method !== "GET") assert.equal(route.csrf, "required");
     assert(!gateway.session_security.cookie_writers.includes(name));
     assert(
-      route.response_schema.startsWith("session-response.schema.json#/$defs/"),
+      route.response_schema.startsWith(
+        "session-response.schema.json#/$defs/",
+      ),
     );
     const nameInSchema = route.response_schema.split("/").at(-1);
     assert(
@@ -422,9 +424,9 @@ test("Console declares a limited Provider chooser and current-organization bindi
 });
 
 test("shared revisions and typed binding failures are explicit", () => {
-  assert.equal(identity.revision, 19);
+  assert.equal(identity.revision, 20);
   assert.equal(gateway.version, 24);
-  assert.equal(admin.version, 61);
+  assert.equal(admin.version, 62);
   assert.equal(identity.oidc_linking_contract, "oidc-linking.md");
   for (const code of [
     "external_identity_conflict",
@@ -711,7 +713,7 @@ test("Gateway query and mutation schemas forbid actor and organization overrides
 });
 
 test("Console binding schemas keep signed scope out of browser payloads", () => {
-  const schema = read("admin-console/oidc-linking.schema.json");
+  const schema = read("admin-console/oidc-linking.ids-v2.schema.json");
   const compile = (name) =>
     validator({ $defs: schema.$defs, $ref: `#/$defs/${name}` });
   const create = compile("bind_request");

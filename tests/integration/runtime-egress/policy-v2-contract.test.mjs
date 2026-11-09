@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { test } from "node:test";
 import { withCommonErrorSchema } from "../../support/common-error-schema.mjs";
+import commonIDs from "../../../contracts/common/ids.schema.json" with { type: "json" };
 
 const requireAcp = createRequire(
   new URL("../../../services/agent-acp-service/package.json", import.meta.url),
@@ -136,7 +137,7 @@ test("Egress policy schema accepts v1 shapes and strict v2 rules", () => {
 
 test("Controller network_policy_spec is identical to the Egress policy schema", () => {
   const egressSchema = readEgress("policy.schema.json");
-  const controllerSchema = readController("control-api.schema.json");
+  const controllerSchema = readController("control-api.ids-v2.schema.json");
   const stripped = Object.fromEntries(
     Object.entries(egressSchema).filter(
       ([key]) => !["$schema", "$id", "title"].includes(key),
@@ -159,7 +160,7 @@ test("Controller network_policy_spec is identical to the Egress policy schema", 
 
 test("Controller set_agent_network_policy_request accepts reference or spec tuple, not both", () => {
   const validate = ajv().compile({
-    ...readController("control-api.schema.json"),
+    ...readController("control-api.ids-v2.schema.json"),
     $ref: "#/$defs/set_agent_network_policy_request",
   });
   const base = {
