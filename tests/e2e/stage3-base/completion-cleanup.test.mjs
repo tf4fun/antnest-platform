@@ -13,6 +13,10 @@ const start = source.indexOf("\ncleanup() {");
 const end = source.indexOf("\ntrap cleanup EXIT", start);
 assert(start > 0 && end > start);
 const cleanup = source.slice(start, end);
+const recordFailure = source.match(
+  /^record_stage3_failure\(\) \{[\s\S]+?\n\}/m,
+)?.[0];
+assert(recordFailure);
 
 for (const [entryStatus, failure, expectedStatus, finalized] of [
   [0, "", 0, true],
@@ -44,7 +48,7 @@ docker() {
 node() {
   case "$1" in
     -e) printf 9999999999999 ;;
-    tests/support/startup-failure-summary.mjs) return 0 ;;
+    tests/support/storage.mjs|tests/support/startup-failure-summary.mjs) return 0 ;;
     tests/e2e/stage3-base/completion.mjs)
       printf 'completion %s\\n' "$*" >> "$CALLS"
       [ ! -d "$credentials_root/credentials" ] || return 95
@@ -53,6 +57,7 @@ node() {
     *) printf 'unexpected node %s\\n' "$*" >&2; return 97 ;;
   esac
 }
+${recordFailure}
 ${cleanup}
 trap cleanup EXIT
 exit "$ENTRY_STATUS"
@@ -67,12 +72,21 @@ exit "$ENTRY_STATUS"
           ENTRY_STATUS: String(entryStatus),
           COMPOSE_PROJECT_NAME: "antnest-stage3-e2e-1",
           repository_root: directory,
+          startup_evidence_directory: join(directory, "startup"),
+          stage3_phase: "client-entry",
           temporary_root: join(directory, "temporary"),
           credentials_root: join(directory, "auth"),
         },
       });
       assert.ifError(result.error);
       assert.equal(result.status, expectedStatus, result.stderr);
+      if (entryStatus !== 0)
+        assert.deepEqual(
+          JSON.parse(
+            await readFile(join(directory, "startup/failure.json"), "utf8"),
+          ),
+          { phase: "client-entry", exit_code: entryStatus },
+        );
       const rows = (await readFile(calls, "utf8")).trim().split("\n");
       const completions = rows.filter((line) => line.startsWith("completion "));
       assert.equal(completions.length, finalized ? 1 : 0, rows.join("\n"));

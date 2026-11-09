@@ -9,6 +9,7 @@ assert(
   /^antnest-stage3-e2e-[0-9]+$/.test(project),
   "disposable project required",
 );
+shellStoragePreflight(`artifacts/verification/stage3-startup/${project}`);
 const profiles = {
   MANAGED_MCP: "managed-mcp",
   RPC_RESPONSE_LOSS: "rpc-response-loss",
