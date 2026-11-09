@@ -1,0 +1,31 @@
+name: Runtime maintenance build diagnostic
+
+on:
+  push:
+    branches: [diagnose/runtime-maintenance-build]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build all four Runtime images from PR 611
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: 13f0c22db84065d94da661d1953a4c9844969af1
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+      - uses: docker/setup-buildx-action@v4
+      - name: Write production image definitions
+        run: node tests/support/ci-changes.mjs --bake antnest-runtime,antnest-runtime-fixture,antnest-runtime-managed,antnest-runtime-skill-gate > "$RUNNER_TEMP/runtime.docker-bake.json"
+      - name: Build production and test variants without publishing
+        uses: docker/bake-action@v7
+        with:
+          source: .
+          files: ${{ runner.temp }}/runtime.docker-bake.json
+          load: true
