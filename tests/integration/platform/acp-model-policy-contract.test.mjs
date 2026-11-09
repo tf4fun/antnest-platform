@@ -155,7 +155,8 @@ test("the implemented boundary advertises organization policy GET/PUT with exact
       method: "PUT",
       path: contract.policy_path,
       success_status: 200,
-      request: "control-api.ids-v2.schema.json#/$defs/set_model_call_policy_request",
+      request:
+        "control-api.ids-v2.schema.json#/$defs/set_model_call_policy_request",
       response: "control-api.ids-v2.schema.json#/$defs/model_call_policy",
     },
   };

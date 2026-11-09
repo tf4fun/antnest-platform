@@ -118,7 +118,10 @@ test("the proposal stays separate until the owning producer publishes its target
     )) {
       const expectedDefinition = structuredClone(definition);
       for (const field of Object.keys(sharedRefs))
-        if (activeRevision === 51 && expectedDefinition.properties?.[field]?.$ref === "#/$defs/id")
+        if (
+          activeRevision === 51 &&
+          expectedDefinition.properties?.[field]?.$ref === "#/$defs/id"
+        )
           expectedDefinition.properties[field].$ref = sharedRefs[field];
       assert.deepEqual(schema.$defs[name], expectedDefinition);
     }
@@ -181,7 +184,9 @@ function controlApiValidators() {
     read("runtime/managed-mcp.ids-v2.schema.json"),
     new URL("../runtime/managed-mcp.ids-v2.schema.json", schema.$id).href,
   );
-  ajv.addSchema(read("agent-controller/runtime-barrier-recovery.ids-v2.schema.json"));
+  ajv.addSchema(
+    read("agent-controller/runtime-barrier-recovery.ids-v2.schema.json"),
+  );
   ajv.addSchema(schema);
   return Object.fromEntries(
     [
@@ -262,7 +267,9 @@ test("lifecycle request definitions are strict inline objects over shared identi
     "organization_id",
   ]);
   assert.deepEqual(cancel.properties, {
-    organization_id: { $ref: "../common/ids.schema.json#/$defs/organizationId" },
+    organization_id: {
+      $ref: "../common/ids.schema.json#/$defs/organizationId",
+    },
     actor_principal_id: { $ref: "../common/ids.schema.json#/$defs/userId" },
     operation_request_id: { $ref: "#/$defs/id" },
   });
@@ -275,7 +282,9 @@ test("lifecycle request definitions are strict inline objects over shared identi
     "organization_id",
   ]);
   assert.deepEqual(clear.properties, {
-    organization_id: { $ref: "../common/ids.schema.json#/$defs/organizationId" },
+    organization_id: {
+      $ref: "../common/ids.schema.json#/$defs/organizationId",
+    },
     actor_principal_id: { $ref: "../common/ids.schema.json#/$defs/userId" },
     expected_aggregate_sequence: {
       type: "integer",

@@ -43,7 +43,9 @@ function validators({ useDefaults = false } = {}) {
     read("runtime/managed-mcp.ids-v2.schema.json"),
     new URL("../runtime/managed-mcp.ids-v2.schema.json", schema.$id).href,
   );
-  ajv.addSchema(read("agent-controller/runtime-barrier-recovery.ids-v2.schema.json"));
+  ajv.addSchema(
+    read("agent-controller/runtime-barrier-recovery.ids-v2.schema.json"),
+  );
   ajv.addSchema(schema);
   return Object.fromEntries(
     ["agent", "agent_event", "event_list"].map((name) => [

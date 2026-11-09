@@ -82,8 +82,9 @@ test("Console retains its lifecycle routes with the Identity19 producer", () => 
       catalog.routes[route][field],
       `admin-api.ids-v2.schema.json#/$defs/${wrapper}`,
     );
-    const reference = read("admin-console/admin-api.ids-v2.schema.json").$defs[wrapper]
-      .$ref;
+    const reference = read("admin-console/admin-api.ids-v2.schema.json").$defs[
+      wrapper
+    ].$ref;
     assert.equal(reference, `scim-lifecycle.schema.json#/$defs/${definition}`);
     const validate = schema(reference);
     assert(validate(valid));

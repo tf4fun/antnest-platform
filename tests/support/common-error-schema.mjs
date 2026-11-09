@@ -1,7 +1,13 @@
 import { readFileSync } from "node:fs";
 
 export function withCommonErrorSchema(validator) {
-  for (const name of ["error", "ids", "pagination", "precondition", "idempotency"])
+  for (const name of [
+    "error",
+    "ids",
+    "pagination",
+    "precondition",
+    "idempotency",
+  ])
     validator.addSchema(
       JSON.parse(
         readFileSync(

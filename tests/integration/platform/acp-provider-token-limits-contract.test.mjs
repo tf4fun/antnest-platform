@@ -66,7 +66,8 @@ test("the execution snapshot embeds the same closed observation schema", () => {
     if (Array.isArray(value)) return value.map(inline);
     if (value === null || typeof value !== "object") return value;
     if (value.$ref) {
-      if (value.$ref === "../common/ids.schema.json#/$defs/organizationId") return value;
+      if (value.$ref === "../common/ids.schema.json#/$defs/organizationId")
+        return value;
       assert.ok(value.$ref.startsWith("#/$defs/"));
       return inline(canonical.$defs[value.$ref.split("/").at(-1)]);
     }
@@ -202,7 +203,8 @@ test("every frozen binding member is required", () => {
 
 test("organization, connection and credential revision identifiers retain Controller ID semantics", () => {
   const check = checker();
-  const identity = read("agent-controller/control-api.ids-v2.schema.json").$defs.id;
+  const identity = read("agent-controller/control-api.ids-v2.schema.json").$defs
+    .id;
   const __idsAjv = new Ajv2020({ strict: true });
   __idsAjv.addSchema(commonIDs);
   const validateId = __idsAjv.compile(identity);

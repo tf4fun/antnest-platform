@@ -47,31 +47,41 @@ const validateView = withCommonErrorSchema(
     strict: true,
     validateFormats: false,
   }),
-).addSchema(viewSchema).getSchema(viewSchema.$id + "#/$defs/sessionView");
+)
+  .addSchema(viewSchema)
+  .getSchema(viewSchema.$id + "#/$defs/sessionView");
 const validateAgentView = withCommonErrorSchema(
   new Ajv2020({
     strict: true,
     validateFormats: false,
   }),
-).addSchema(viewSchema).getSchema(viewSchema.$id + "#/$defs/agentView");
+)
+  .addSchema(viewSchema)
+  .getSchema(viewSchema.$id + "#/$defs/agentView");
 const validateStreamEvent = withCommonErrorSchema(
   new Ajv2020({
     strict: true,
     validateFormats: false,
   }),
-).addSchema(viewSchema).getSchema(viewSchema.$id + "#/$defs/streamEvent");
+)
+  .addSchema(viewSchema)
+  .getSchema(viewSchema.$id + "#/$defs/streamEvent");
 const validateProcess = withCommonErrorSchema(
   new Ajv2020({
     strict: true,
     validateFormats: false,
   }),
-).addSchema(viewSchema).getSchema(viewSchema.$id + "#/$defs/processPage");
+)
+  .addSchema(viewSchema)
+  .getSchema(viewSchema.$id + "#/$defs/processPage");
 const validateProcessContent = withCommonErrorSchema(
   new Ajv2020({
     strict: true,
     validateFormats: false,
   }),
-).addSchema(viewSchema).getSchema(viewSchema.$id + "#/$defs/processContentPage");
+)
+  .addSchema(viewSchema)
+  .getSchema(viewSchema.$id + "#/$defs/processContentPage");
 
 test("Node HTTP and SSE expose a coalesced live tool update after skipped versions", async () => {
   let publish;
@@ -2568,7 +2578,9 @@ test("common_error actual 404 envelope matches common and workspace contracts", 
   assert.equal(typeof validateCommon, "function");
   const validateWorkspaceError = withCommonErrorSchema(
     new Ajv2020({ strict: true, validateFormats: false }),
-  ).addSchema(viewSchema).getSchema(viewSchema.$id + "#/$defs/error");
+  )
+    .addSchema(viewSchema)
+    .getSchema(viewSchema.$id + "#/$defs/error");
   for (const { response, body } of bodyByPath.values()) {
     assert.equal(response.headers.get("cache-control"), "no-store");
     const requestId = response.headers.get("x-request-id");

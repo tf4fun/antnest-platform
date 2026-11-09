@@ -48,7 +48,9 @@ const identity =
 const adminSchema = readContractIfPresent(
   "admin-console/admin-api.ids-v2.schema.json",
 );
-const directorySchema = readContractIfPresent("identity/directory.ids-v2.schema.json");
+const directorySchema = readContractIfPresent(
+  "identity/directory.ids-v2.schema.json",
+);
 const errorsView = readContractIfPresent("admin-console/errors.json");
 const goErrors = readFileSync(
   repoPath("services/admin-console/internal/apierror/errors.gen.go"),
@@ -493,7 +495,8 @@ test("route metadata mutations surface deterministic diagnostics", () => {
   delete silentWatch.watch_thing.response_body.data;
   mutations.push([silentWatch, "data"]);
   const wrongRef = structuredClone(valid);
-  wrongRef.watch_thing.response_schema = "admin-api.ids-v2.schema.json#/$defs/status";
+  wrongRef.watch_thing.response_schema =
+    "admin-api.ids-v2.schema.json#/$defs/status";
   mutations.push([wrongRef, "response_schema"]);
   for (const [routes, expected] of mutations) {
     const problems = metadataProblems(routes);

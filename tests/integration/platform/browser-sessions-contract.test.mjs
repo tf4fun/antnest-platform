@@ -709,7 +709,13 @@ test("public response schemas declare no private credential fields or secret-mar
   ]);
   const visited = new Set();
   const documents = new Map([[browser.$id, browser]]);
-  for (const name of ["error", "ids", "pagination", "precondition", "idempotency"]) {
+  for (const name of [
+    "error",
+    "ids",
+    "pagination",
+    "precondition",
+    "idempotency",
+  ]) {
     const document = read(`common/${name}.schema.json`);
     documents.set(document.$id, document);
   }

@@ -86,7 +86,9 @@ test("routeBodyProblems accepts declared request bodies and response maps", () =
         path: "/status",
         request_body: "none",
         responses: {
-          200: { body: "egress/control-response.ids-v2.schema.json#/$defs/status" },
+          200: {
+            body: "egress/control-response.ids-v2.schema.json#/$defs/status",
+          },
         },
       },
       {
@@ -105,7 +107,9 @@ test("routeBodyProblems accepts declared request bodies and response maps", () =
         path: "/internal/agent-networks/{agent_id}",
         request_body: "none",
         responses: {
-          200: { body: "egress/control-response.ids-v2.schema.json#/$defs/network" },
+          200: {
+            body: "egress/control-response.ids-v2.schema.json#/$defs/network",
+          },
           503: {
             body: "common/error.schema.json",
             content_type: "application/json",

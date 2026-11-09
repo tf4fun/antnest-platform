@@ -21,7 +21,7 @@ test("Runtime publication distinguishes executable authority from closed fence-o
     validate: (value) => URL.canParse(value),
   });
   ajv.addSchema(schema);
-const validate = ajv.getSchema(schema.$id + "#/properties/agents/items");
+  const validate = ajv.getSchema(schema.$id + "#/properties/agents/items");
   for (const vector of fixtures.vectors) {
     const agent = {
       agent_id: "agent-1",

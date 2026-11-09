@@ -119,7 +119,13 @@ test("barrier recovery identities retain opaque non-whitespace strings within th
       }
       const value = fixtures[definition]();
       value[field] = "org:Agent/运行-1";
-      check(v, definition, value, false, `${definition}.${field} rejects private-style identity`);
+      check(
+        v,
+        definition,
+        value,
+        false,
+        `${definition}.${field} rejects private-style identity`,
+      );
     }
   }
   for (const [definition, fields] of Object.entries(privateIdentityFields)) {
@@ -156,7 +162,10 @@ test("identity length, type and whitespace rejection applies at every layer", ()
     ["object", {}],
     ["array", ["agent"]],
   ];
-  for (const [definition, fields] of Object.entries({ ...publicIdentityFields, ...privateIdentityFields })) {
+  for (const [definition, fields] of Object.entries({
+    ...publicIdentityFields,
+    ...privateIdentityFields,
+  })) {
     for (const field of fields) {
       for (const [label, identity] of invalid) {
         const value = fixtures[definition]();

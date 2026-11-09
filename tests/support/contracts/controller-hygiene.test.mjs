@@ -69,7 +69,10 @@ test("revision 51 retains the authorization RPC on the global error response", (
     set?.response,
     "control-api.ids-v2.schema.json#/$defs/set_agent_authorization_response",
   );
-  assert.equal(control.errors.response, "control-api.ids-v2.schema.json#/$defs/error");
+  assert.equal(
+    control.errors.response,
+    "control-api.ids-v2.schema.json#/$defs/error",
+  );
   assert.match(
     controlApi,
     /issues\/582/,
@@ -94,7 +97,10 @@ test("policy routes resolve message refs and share the global error response", (
             `${name}.${operationName}.${key}`,
           );
   }
-  assert.equal(control.errors.response, "control-api.ids-v2.schema.json#/$defs/error");
+  assert.equal(
+    control.errors.response,
+    "control-api.ids-v2.schema.json#/$defs/error",
+  );
   assert.deepEqual(
     resolveControllerRef(control.errors.response),
     schema.$defs.error,

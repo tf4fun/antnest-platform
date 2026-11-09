@@ -119,7 +119,9 @@ function controlApiValidators() {
     read("runtime/managed-mcp.ids-v2.schema.json"),
     new URL("../runtime/managed-mcp.ids-v2.schema.json", schema.$id).href,
   );
-  ajv.addSchema(read("agent-controller/runtime-barrier-recovery.ids-v2.schema.json"));
+  ajv.addSchema(
+    read("agent-controller/runtime-barrier-recovery.ids-v2.schema.json"),
+  );
   ajv.addSchema(read("common/pagination.schema.json"));
   ajv.addSchema(read("common/precondition.schema.json"));
   ajv.addSchema(schema);
@@ -186,7 +188,10 @@ test("the proposal stays separate until the owning producer publishes its target
       proposal.schema_definitions,
     )) {
       const expectedDefinition = structuredClone(definition);
-      if (activeRevision === 51 && expectedDefinition.properties?.organization_id?.$ref === "#/$defs/id")
+      if (
+        activeRevision === 51 &&
+        expectedDefinition.properties?.organization_id?.$ref === "#/$defs/id"
+      )
         expectedDefinition.properties.organization_id.$ref =
           "../common/ids.schema.json#/$defs/organizationId";
       assert.deepEqual(schema.$defs[name], expectedDefinition);

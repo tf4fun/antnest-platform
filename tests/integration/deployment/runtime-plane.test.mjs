@@ -148,7 +148,9 @@ test("legacy explicit /24 subnet override stays allowed with its /25 pool", () =
 
 test("Runtime Plane contract keeps single-host bounds and scoped resources", () => {
   const control = read("contracts/runtime-controller/control-contract.json");
-  const schema = read("contracts/runtime-controller/control-api.ids-v2.schema.json");
+  const schema = read(
+    "contracts/runtime-controller/control-api.ids-v2.schema.json",
+  );
   assert.equal(limits.multi_node.in_scope, false);
   assert.equal(limits.multi_node.issue, 74);
   assert.equal(limits.single_docker_host, true);

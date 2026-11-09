@@ -22,7 +22,10 @@ const schema = JSON.parse(
 );
 const controller = JSON.parse(
   readFileSync(
-    new URL("contracts/agent-controller/model-call-policy.ids-v2.schema.json", root),
+    new URL(
+      "contracts/agent-controller/model-call-policy.ids-v2.schema.json",
+      root,
+    ),
     "utf8",
   ),
 );
@@ -37,7 +40,8 @@ test("admin contract version 61 publishes both policy routes", () => {
     request_body: { kind: "none", input: "query_and_path" },
     response_body: {
       kind: "json",
-      schema: "admin-api.ids-v2.schema.json#/$defs/get_model_call_policy_response",
+      schema:
+        "admin-api.ids-v2.schema.json#/$defs/get_model_call_policy_response",
     },
     method: "GET",
     path: "/model-call-policy",
@@ -50,11 +54,13 @@ test("admin contract version 61 publishes both policy routes", () => {
       "admin-api.ids-v2.schema.json#/$defs/set_model_call_policy_response",
     request_body: {
       kind: "json",
-      schema: "admin-api.ids-v2.schema.json#/$defs/set_model_call_policy_request",
+      schema:
+        "admin-api.ids-v2.schema.json#/$defs/set_model_call_policy_request",
     },
     response_body: {
       kind: "json",
-      schema: "admin-api.ids-v2.schema.json#/$defs/set_model_call_policy_response",
+      schema:
+        "admin-api.ids-v2.schema.json#/$defs/set_model_call_policy_response",
     },
     method: "PUT",
     path: "/model-call-policy",

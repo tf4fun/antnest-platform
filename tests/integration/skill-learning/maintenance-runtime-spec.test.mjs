@@ -42,7 +42,10 @@ test(
       .addSchema(
         JSON.parse(
           await readFile(
-            resolve(root, "contracts/runtime/instance-connection.ids-v2.schema.json"),
+            resolve(
+              root,
+              "contracts/runtime/instance-connection.ids-v2.schema.json",
+            ),
           ),
         ),
       )

@@ -23,7 +23,9 @@ function validator(definition) {
     validate: (value) => Number.isFinite(Date.parse(value)),
   });
   ajv.addSchema(read("agent-controller/runtime-barrier-recovery.schema.json"));
-  ajv.addSchema(read("agent-controller/runtime-barrier-recovery.ids-v2.schema.json"));
+  ajv.addSchema(
+    read("agent-controller/runtime-barrier-recovery.ids-v2.schema.json"),
+  );
   const document = read("admin-console/runtime-recovery.schema.json");
   ajv.addSchema(document);
   return ajv.compile({ $ref: `${document.$id}#/$defs/${definition}` });

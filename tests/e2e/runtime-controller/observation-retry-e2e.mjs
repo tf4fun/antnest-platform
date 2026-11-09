@@ -31,10 +31,7 @@ const api = JSON.parse(
 );
 const __idsAjv = new Ajv2020({ strict: true });
 __idsAjv.addSchema(commonIDs);
-const validateStatus = __idsAjv.compile(
-  api.$defs.readiness,
-);
-
+const validateStatus = __idsAjv.compile(api.$defs.readiness);
 
 const { values } = parseArgs({
   options: {

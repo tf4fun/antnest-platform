@@ -13,7 +13,10 @@ const contract = JSON.parse(
   await readFile(new URL("contract.json", contractRoot), "utf8"),
 );
 const schema = JSON.parse(
-  await readFile(new URL("runtime-status.ids-v2.schema.json", contractRoot), "utf8"),
+  await readFile(
+    new URL("runtime-status.ids-v2.schema.json", contractRoot),
+    "utf8",
+  ),
 );
 const __idsAjv = new Ajv2020({ strict: true });
 __idsAjv.addSchema(commonIDs);

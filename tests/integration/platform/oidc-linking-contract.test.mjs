@@ -381,7 +381,9 @@ test("Gateway self operations inherit Origin, CSRF, Cookie and generation bounda
     if (method !== "GET") assert.equal(route.csrf, "required");
     assert(!gateway.session_security.cookie_writers.includes(name));
     assert(
-      route.response_schema.startsWith("session-response.ids-v2.schema.json#/$defs/"),
+      route.response_schema.startsWith(
+        "session-response.ids-v2.schema.json#/$defs/",
+      ),
     );
     const nameInSchema = route.response_schema.split("/").at(-1);
     assert(

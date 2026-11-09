@@ -49,7 +49,10 @@ test("Registry route grants follow the frozen actual callers, not the old illust
 
 test("Registry error envelopes include bounded nonretryable authentication and scope errors", () => {
   const categories = Object.fromEntries(
-    read("../common/errors.json").errors.map(({ code, category }) => [code, category]),
+    read("../common/errors.json").errors.map(({ code, category }) => [
+      code,
+      category,
+    ]),
   );
   const envelope = (code, retryable) => {
     const error = {
@@ -87,8 +90,6 @@ test("Registry error envelopes include bounded nonretryable authentication and s
         `${file}: ${code}: ${JSON.stringify(validate.errors)}`,
       );
     }
-    assert(
-      !validate(envelope("service_unauthenticated", true)),
-    );
+    assert(!validate(envelope("service_unauthenticated", true)));
   }
 });

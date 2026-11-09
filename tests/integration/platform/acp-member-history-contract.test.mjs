@@ -599,7 +599,9 @@ test("the implemented history route has exact RC grants, revision 22 aliases and
   );
   assert.deepEqual(Object.keys(route.path_parameters ?? {}), []);
   assert.deepEqual([...route.errors].sort(), [...wire.errors].sort());
-  const schema = read("contracts/runtime-controller/control-api.ids-v2.schema.json");
+  const schema = read(
+    "contracts/runtime-controller/control-api.ids-v2.schema.json",
+  );
   for (const [alias, definition] of [
     ["acp_history_request", "request"],
     ["acp_history_page", "response"],

@@ -110,7 +110,9 @@ function utcTimestamp(value) {
 }
 
 function pendingValidators({ useDefaults = false } = {}) {
-  const schema = read("agent-controller/runtime-barrier-recovery.ids-v2.schema.json");
+  const schema = read(
+    "agent-controller/runtime-barrier-recovery.ids-v2.schema.json",
+  );
   assert.equal(schema.$id, schemaID);
   const ajv = new Ajv2020({ strict: true, allErrors: true, useDefaults });
   ajv.addSchema(commonIDs);
@@ -146,7 +148,9 @@ function activeValidators() {
     read("runtime/managed-mcp.ids-v2.schema.json"),
     new URL("../runtime/managed-mcp.ids-v2.schema.json", schema.$id).href,
   );
-  ajv.addSchema(read("agent-controller/runtime-barrier-recovery.ids-v2.schema.json"));
+  ajv.addSchema(
+    read("agent-controller/runtime-barrier-recovery.ids-v2.schema.json"),
+  );
   ajv.addSchema(read("common/precondition.schema.json"));
   ajv.addSchema(schema);
   return Object.fromEntries(
@@ -743,7 +747,10 @@ test("Controller IDs stay compatible while barrier IDs retain the ACP opaque ide
   };
   for (const [name, fields] of Object.entries(controllerIdentities))
     for (const field of fields) {
-      assert.equal(v.schema.$defs[name].properties[field].$ref, sharedRefs[field] ?? "#/$defs/id");
+      assert.equal(
+        v.schema.$defs[name].properties[field].$ref,
+        sharedRefs[field] ?? "#/$defs/id",
+      );
       check(
         v,
         name,

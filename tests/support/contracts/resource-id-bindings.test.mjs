@@ -5,7 +5,9 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { test } from "node:test";
 import { validateGolden } from "./golden.mjs";
 
-const contractsRoot = fileURLToPath(new URL("../../../contracts/", import.meta.url));
+const contractsRoot = fileURLToPath(
+  new URL("../../../contracts/", import.meta.url),
+);
 const CANONICAL = "https://schemas.antnest.dev/";
 
 function* idsV2Schemas(dir) {
@@ -18,11 +20,16 @@ function* idsV2Schemas(dir) {
 
 function* walk(node, pointer = "") {
   if (Array.isArray(node)) {
-    for (let i = 0; i < node.length; i += 1) yield* walk(node[i], `${pointer}/${i}`);
+    for (let i = 0; i < node.length; i += 1)
+      yield* walk(node[i], `${pointer}/${i}`);
     return;
   }
   if (node === null || typeof node !== "object") return;
-  for (const [key, value] of Object.entries(node)) yield* walk(value, `${pointer}/${key.replaceAll("~", "~0").replaceAll("/", "~1")}`);
+  for (const [key, value] of Object.entries(node))
+    yield* walk(
+      value,
+      `${pointer}/${key.replaceAll("~", "~0").replaceAll("/", "~1")}`,
+    );
   if (typeof node.$ref === "string") yield [pointer, node.$ref];
 }
 
@@ -43,10 +50,19 @@ test("current ID revisions reference current resource schemas", () => {
       }
       const rootRelative = relative(contractsRoot, targetPath);
       if (rootRelative.startsWith("..")) continue;
-      if (!rootRelative.endsWith(".schema.json") || rootRelative.endsWith(".ids-v2.schema.json")) continue;
-      const newer = targetPath.replace(/\.schema\.json$/, ".ids-v2.schema.json");
+      if (
+        !rootRelative.endsWith(".schema.json") ||
+        rootRelative.endsWith(".ids-v2.schema.json")
+      )
+        continue;
+      const newer = targetPath.replace(
+        /\.schema\.json$/,
+        ".ids-v2.schema.json",
+      );
       if (existsSync(newer)) {
-        failures.push(`${relative(contractsRoot, file)}${pointer || "#"} -> ${ref}`);
+        failures.push(
+          `${relative(contractsRoot, file)}${pointer || "#"} -> ${ref}`,
+        );
       }
     }
   }
@@ -54,29 +70,52 @@ test("current ID revisions reference current resource schemas", () => {
 });
 
 test("published shared reference nodes obey all vectors", async () => {
-  const vectors = JSON.parse(readFileSync(join(contractsRoot, "common/id-vectors.json"), "utf8"));
-  const kindOf = { organizationId: "organizationId", agentId: "agentId", userId: "userId" };
+  const vectors = JSON.parse(
+    readFileSync(join(contractsRoot, "common/id-vectors.json"), "utf8"),
+  );
+  const kindOf = {
+    organizationId: "organizationId",
+    agentId: "agentId",
+    userId: "userId",
+  };
   const nodes = [];
   for (const file of idsV2Schemas(contractsRoot)) {
     const source = JSON.parse(readFileSync(file, "utf8"));
     for (const [pointer, ref] of walk(source)) {
-      const match = /common\/ids\.schema\.json#\/\$defs\/(organizationId|agentId|userId)$/.exec(ref);
+      const match =
+        /common\/ids\.schema\.json#\/\$defs\/(organizationId|agentId|userId)$/.exec(
+          ref,
+        );
       if (match) nodes.push({ pointer, kind: kindOf[match[1]], file });
     }
   }
   const seen = new Set(nodes.map((node) => node.kind));
-  assert.ok(seen.has("organizationId") && seen.has("userId") && seen.has("agentId"),
-    `missing kinds: ${[...seen]}`);
+  assert.ok(
+    seen.has("organizationId") && seen.has("userId") && seen.has("agentId"),
+    `missing kinds: ${[...seen]}`,
+  );
   for (const { pointer, kind, file } of nodes) {
     const ref = `${relative(contractsRoot, file)}#${pointer}`;
     for (const value of vectors[kind].accept) {
-      assert.equal(await validateGolden(ref, value), true, `${ref} must accept ${JSON.stringify(value)}`);
+      assert.equal(
+        await validateGolden(ref, value),
+        true,
+        `${ref} must accept ${JSON.stringify(value)}`,
+      );
     }
     for (const value of vectors[kind].reject) {
-      await assert.rejects(validateGolden(ref, value), undefined, `${ref} must reject ${JSON.stringify(value)}`);
+      await assert.rejects(
+        validateGolden(ref, value),
+        undefined,
+        `${ref} must reject ${JSON.stringify(value)}`,
+      );
     }
     for (const value of [null, 42, {}]) {
-      await assert.rejects(validateGolden(ref, value), undefined, `${ref} must reject ${JSON.stringify(value)}`);
+      await assert.rejects(
+        validateGolden(ref, value),
+        undefined,
+        `${ref} must reject ${JSON.stringify(value)}`,
+      );
     }
   }
 });

@@ -708,7 +708,8 @@ test("RC revision 22 binds registration and inspection to the frozen shared wire
     } else {
       assert.equal(route.request_body, "none");
       assert.deepEqual(route.path_parameters, {
-        registration_id: "control-api.ids-v2.schema.json#/$defs/acp_registration_id",
+        registration_id:
+          "control-api.ids-v2.schema.json#/$defs/acp_registration_id",
       });
     }
   }

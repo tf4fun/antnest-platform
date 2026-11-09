@@ -32,7 +32,9 @@ const schema = JSON.parse(
 const __idsAjv = new Ajv2020({ strict: true, validateFormats: false });
 __idsAjv.addSchema(commonIDs);
 __idsAjv.addSchema(schema);
-const validate = __idsAjv.getSchema(schema.$id + "#/$defs/controlCommandResult");
+const validate = __idsAjv.getSchema(
+  schema.$id + "#/$defs/controlCommandResult",
+);
 
 // Backend-only acceptance: real Gateway authentication/CSRF, Node Bridge,
 // ACP/Postgres and Runtime, with a deterministic model endpoint. Set

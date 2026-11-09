@@ -21,7 +21,9 @@ const credentialsId =
 
 function validators() {
   const legacy = read("agent-acp/execution-snapshot.ids-v2.schema.json");
-  const publication = read("agent-acp/execution-publication-v2.ids-v2.schema.json");
+  const publication = read(
+    "agent-acp/execution-publication-v2.ids-v2.schema.json",
+  );
   const credentials = read(
     "agent-controller/execution-credentials.ids-v2.schema.json",
   );
