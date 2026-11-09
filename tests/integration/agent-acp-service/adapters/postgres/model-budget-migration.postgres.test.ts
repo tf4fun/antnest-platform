@@ -205,7 +205,11 @@ async function originalFacts(pool: Pool) {
       "SELECT (to_jsonb(stored)-$1::text[])::text AS value FROM " +
         table +
         " AS stored ORDER BY id",
-      [table === "acp_sessions" ? ["deleted_at"] : []],
+      [
+        table === "acp_sessions"
+          ? ["deleted_at", "receipt_retained_after_append_version"]
+          : [],
+      ],
     );
     result[table] = rows.rows.map((row) => row.value);
   }
@@ -402,6 +406,8 @@ describe.skipIf(databaseUrl === undefined)(
 
         await migrate(pool);
         const metadataBefore = await contentRetentionFacts(pool);
+        for (const session of metadataBefore)
+          expect(session.receipt_retained_after_append_version).toBeNull();
         const upgraded = await checkedJournal(pool, 36);
         expect(upgraded.slice(0, 31)).toEqual(applied);
         expect(await originalFacts(pool)).toEqual(before);
