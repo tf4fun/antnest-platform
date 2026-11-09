@@ -14,7 +14,7 @@ const read = (name) =>
   );
 const identity = read("identity/identity-contract.json");
 const gateway = read("edge-gateway/session-contract.json");
-const browser = read("edge-gateway/session-response.schema.json");
+const browser = read("edge-gateway/session-response.ids-v2.schema.json");
 const admin = read("admin-console/admin-contract.json");
 
 function validator(schema, definitions = identity.definitions) {
@@ -381,7 +381,9 @@ test("Gateway self operations inherit Origin, CSRF, Cookie and generation bounda
     if (method !== "GET") assert.equal(route.csrf, "required");
     assert(!gateway.session_security.cookie_writers.includes(name));
     assert(
-      route.response_schema.startsWith("session-response.schema.json#/$defs/"),
+      route.response_schema.startsWith(
+        "session-response.ids-v2.schema.json#/$defs/",
+      ),
     );
     const nameInSchema = route.response_schema.split("/").at(-1);
     assert(
@@ -423,7 +425,7 @@ test("Console declares a limited Provider chooser and current-organization bindi
 
 test("shared revisions and typed binding failures are explicit", () => {
   assert.equal(identity.revision, 20);
-  assert.equal(gateway.version, 24);
+  assert.equal(gateway.version, 25);
   assert.equal(admin.version, 62);
   assert.equal(identity.oidc_linking_contract, "oidc-linking.md");
   for (const code of [

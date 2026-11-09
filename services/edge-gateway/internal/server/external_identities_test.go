@@ -58,7 +58,7 @@ func TestGatewayExternalIdentitiesUseSelfAuthorityAndPublicSchemas(t *testing.T)
 			if err != nil {
 				t.Fatal(err)
 			}
-			if err := compileOrganizationSchema(t, "edge-gateway/session-response.schema.json", row.schema).Validate(value); err != nil {
+			if err := compileOrganizationSchema(t, "edge-gateway/session-response.ids-v2.schema.json", row.schema).Validate(value); err != nil {
 				t.Fatal(err)
 			}
 			calls := f.calls()

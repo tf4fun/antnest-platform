@@ -54,12 +54,12 @@ test("Identity's active catalog publishes both password admission failures", () 
 });
 
 test("Gateway revision 24 publishes password failures only on login and password change", () => {
-  assert.equal(gateway.version, 24);
+  assert.equal(gateway.version, 25);
   for (const name of ["login", "change_password"]) {
     const route = gateway.routes[name];
     assert.equal(
       route.password_failure_schema,
-      "session-response.schema.json#/$defs/password_failure",
+      "session-response.ids-v2.schema.json#/$defs/password_failure",
     );
     assert.deepEqual(route.error_status_by_code, {
       credential_busy: 503,
@@ -80,7 +80,7 @@ test("Gateway revision 24 publishes password failures only on login and password
 });
 
 test("Gateway's public password failure body enforces code/message pairs and excludes headers and secrets", () => {
-  const schema = read("edge-gateway/session-response.schema.json").$defs
+  const schema = read("edge-gateway/session-response.ids-v2.schema.json").$defs
     .password_failure;
   assert(schema, "password failure schema is missing");
   const __idsAjv = new Ajv2020({ strict: true });

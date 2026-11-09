@@ -1,6 +1,6 @@
 {
   "contract": "antnest.edge-gateway.session",
-  "version": 24,
+  "version": 25,
   "login_admission_policy": "login-admission-policy.json",
   "password_verification_policy": "../identity/password-verification-policy.json",
   "session_security": {
@@ -57,8 +57,8 @@
         "idle_expires_at",
         "activity_interval_ms"
       ],
-      "response_schema": "session-response.schema.json#/$defs/login",
-      "password_failure_schema": "session-response.schema.json#/$defs/password_failure",
+      "response_schema": "session-response.ids-v2.schema.json#/$defs/login",
+      "password_failure_schema": "session-response.ids-v2.schema.json#/$defs/password_failure",
       "error_status_by_code": {
         "credential_busy": 503,
         "credential_rate_limited": 429
@@ -95,7 +95,7 @@
         "idle_expires_at",
         "activity_interval_ms"
       ],
-      "response_schema": "session-response.schema.json#/$defs/session"
+      "response_schema": "session-response.ids-v2.schema.json#/$defs/session"
     },
     "logout": {
       "method": "DELETE",
@@ -217,7 +217,7 @@
       "authentication": "browser_session",
       "success_status": 200,
       "cache": "no-store",
-      "response_schema": "session-response.schema.json#/$defs/account"
+      "response_schema": "session-response.ids-v2.schema.json#/$defs/account"
     },
     "change_password": {
       "method": "POST",
@@ -225,11 +225,11 @@
       "authentication": "browser_session",
       "success_status": 200,
       "cache": "no-store",
-      "response_schema": "session-response.schema.json#/$defs/password_rotation",
-      "request_schema": "session-response.schema.json#/$defs/password_request",
+      "response_schema": "session-response.ids-v2.schema.json#/$defs/password_rotation",
+      "request_schema": "session-response.ids-v2.schema.json#/$defs/password_request",
       "csrf": "required",
       "origin": "shared origin_admission",
-      "password_failure_schema": "session-response.schema.json#/$defs/password_failure",
+      "password_failure_schema": "session-response.ids-v2.schema.json#/$defs/password_failure",
       "error_status_by_code": {
         "credential_busy": 503,
         "credential_rate_limited": 429
@@ -242,8 +242,8 @@
       "authentication": "browser_session",
       "success_status": 200,
       "cache": "no-store",
-      "response_schema": "session-response.schema.json#/$defs/activity",
-      "request_schema": "session-response.schema.json#/$defs/activity_request",
+      "response_schema": "session-response.ids-v2.schema.json#/$defs/activity",
+      "request_schema": "session-response.ids-v2.schema.json#/$defs/activity_request",
       "csrf": "required",
       "origin": "shared origin_admission"
     },
@@ -253,8 +253,8 @@
       "authentication": "browser_session",
       "success_status": 200,
       "cache": "no-store",
-      "response_schema": "session-response.schema.json#/$defs/session_list",
-      "query_schema": "session-response.schema.json#/$defs/list_sessions_query",
+      "response_schema": "session-response.ids-v2.schema.json#/$defs/session_list",
+      "query_schema": "session-response.ids-v2.schema.json#/$defs/list_sessions_query",
       "scope": "self only; Gateway derives actor and target from signed principal"
     },
     "revoke_sessions": {
@@ -263,8 +263,8 @@
       "authentication": "browser_session",
       "success_status": 200,
       "cache": "no-store",
-      "response_schema": "session-response.schema.json#/$defs/session_revocation",
-      "request_schema": "session-response.schema.json#/$defs/revoke_sessions_request",
+      "response_schema": "session-response.ids-v2.schema.json#/$defs/session_revocation",
+      "request_schema": "session-response.ids-v2.schema.json#/$defs/revoke_sessions_request",
       "csrf": "required",
       "origin": "shared origin_admission",
       "scope": "self only; current SID and exceptions never supplied by browser"
@@ -277,10 +277,10 @@
       "cache": "no-store",
       "cookie_mutation": "forbidden",
       "scope": "self",
-      "response_schema": "session-response.schema.json#/$defs/external_identity_list",
+      "response_schema": "session-response.ids-v2.schema.json#/$defs/external_identity_list",
       "caller_context_profile": "session",
       "origin": "shared origin_admission",
-      "query_schema": "session-response.schema.json#/$defs/external_identity_list_query"
+      "query_schema": "session-response.ids-v2.schema.json#/$defs/external_identity_list_query"
     },
     "unbind_external_identity": {
       "method": "DELETE",
@@ -290,11 +290,11 @@
       "cache": "no-store",
       "cookie_mutation": "forbidden",
       "scope": "self",
-      "response_schema": "session-response.schema.json#/$defs/external_identity_unbind_response",
+      "response_schema": "session-response.ids-v2.schema.json#/$defs/external_identity_unbind_response",
       "caller_context_profile": "session",
       "origin": "shared origin_admission",
       "csrf": "required",
-      "request_schema": "session-response.schema.json#/$defs/external_identity_unbind_request",
+      "request_schema": "session-response.ids-v2.schema.json#/$defs/external_identity_unbind_request",
       "error_status_by_code": {
         "external_identity_last_method": 409,
         "not_found": 404
@@ -308,11 +308,11 @@
       "cache": "no-store",
       "cookie_mutation": "forbidden",
       "scope": "self",
-      "response_schema": "session-response.schema.json#/$defs/external_identity_acknowledge_response",
+      "response_schema": "session-response.ids-v2.schema.json#/$defs/external_identity_acknowledge_response",
       "caller_context_profile": "session",
       "origin": "shared origin_admission",
       "csrf": "required",
-      "request_schema": "session-response.schema.json#/$defs/external_identity_acknowledge_request",
+      "request_schema": "session-response.ids-v2.schema.json#/$defs/external_identity_acknowledge_request",
       "error_status_by_code": {
         "not_found": 404
       }

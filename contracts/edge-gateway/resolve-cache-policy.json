@@ -2,7 +2,7 @@
   "contract": "antnest.edge-gateway.resolve-cache",
   "revision": 4,
   "identity_revision": 20,
-  "gateway_session_revision": 24,
+  "gateway_session_revision": 25,
   "resolve_method": "resolve_access_token",
   "semantics": "resolve-cache.md",
   "historical_measurement": {

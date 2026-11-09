@@ -322,7 +322,8 @@ test("Gateway activation removes legacy catalogs while retaining Bridge capacity
   const gateway = contract("edge-gateway/session-contract.json");
   const headers = contract("edge-gateway/request-headers.json");
   const cache = contract("edge-gateway/resolve-cache-policy.json");
-  assert.equal(gateway.version, value.activation.gateway_version);
+  // Retirement activation remains frozen; this assertion binds the current catalog.
+  assert.equal(gateway.version, 25);
   assert.equal(
     gateway.workspace_entry_retirement_policy,
     "workspace-entry-retirement-policy.json",

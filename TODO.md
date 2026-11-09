@@ -22,6 +22,8 @@ Issue 状态最后核对于 2026-10-28：141 个 issue，87 个已关闭，54 �
 
 ## 当前批次
 
+- **#16 Gateway 审查完成**：session schema 向量与真实 Organization／browser-control／external-identity handler 定向 GREEN，205-document conventions 和 Go 格式 clean；仅共享 ASCII 模式使用 Go 引擎，其余保留 ECMAScript 规则。旧 CI 的合法 `user-1` mismatch 根因仍未确认，不外推新候选 CI 状态。Identity 已交付 PR #599（`3fd33e04`）。
+
 - **#16 Identity 审查完成**：schema 向量先 RED 后 GREEN；RPC directory、principal、producer golden、OIDC/external-identity 契约及生成器定向通过，204-document conventions 和 Go 格式 clean。Controller 已交付 PR #598（`30f410b8`）。Identity 保持已有随机 typed 生成器和独立 OIDC subject 规则，当前候选等待远程准入。
 
 - **#16 Controller 审查完成**：新增 schema 向量测试先因新修订缺失 RED；发布后 ResourceID、execution projection/golden、真实 HTTP/SSE 与服务契约检查 GREEN，确定性生成器原值保持，Go 格式和 203-document conventions clean。Console 已交付 PR #597（`5a1a150f`）。Controller 当前候选等待远程准入，未合并；其余服务和显式集成继续。

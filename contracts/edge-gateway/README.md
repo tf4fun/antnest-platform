@@ -133,7 +133,7 @@ the JSON response schemas described by this contract.
 ## Organization display projection
 
 Browser login and session responses must pass
-[`session-response.schema.json`](session-response.schema.json). Their principal
+[`session-response.ids-v2.schema.json`](session-response.ids-v2.schema.json). Their principal
 preserves Identity revision 13's required `organization_slug` and
 `organization_name`. Missing, null, empty or whitespace-only metadata is an
 unavailable Identity response, not a successful session or evidence of revocation.

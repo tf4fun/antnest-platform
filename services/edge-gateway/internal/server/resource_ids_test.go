@@ -1,10 +1,13 @@
 package server
 
 import (
+	"bytes"
 	"encoding/json"
 	"os"
 	"regexp"
 	"testing"
+
+	"github.com/santhosh-tekuri/jsonschema/v6"
 )
 
 type resourceIDVectors struct {
@@ -23,6 +26,77 @@ func readResourceIDVectors(t *testing.T) map[string]resourceIDVectors {
 		t.Fatal(err)
 	}
 	return vectors
+}
+
+func principalDocument(t *testing.T) map[string]any {
+	t.Helper()
+	data, err := json.Marshal(displayPrincipal(t, "Engineering", false))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var value map[string]any
+	if err := json.Unmarshal(data, &value); err != nil {
+		t.Fatal(err)
+	}
+	return value
+}
+
+func TestResourceIDSessionSchemaVectors(t *testing.T) {
+	vectors := readResourceIDVectors(t)
+	schema := compileOrganizationSchema(t, "edge-gateway/session-response.ids-v2.schema.json", "principal")
+	for _, field := range []struct {
+		name string
+		kind string
+	}{
+		{"organization_id", "organizationId"},
+		{"user_id", "userId"},
+	} {
+		for _, value := range vectors[field.kind].Accept {
+			document := principalDocument(t)
+			document[field.name] = value
+			instance, err := jsonschema.UnmarshalJSON(bytes.NewReader(mustJSON(t, document)))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := schema.Validate(instance); err != nil {
+				t.Errorf("%s must accept %q: %v", field.name, value, err)
+			}
+			if document[field.name] != value {
+				t.Errorf("%s was normalized from %q", field.name, value)
+			}
+		}
+		for _, value := range vectors[field.kind].Reject {
+			document := principalDocument(t)
+			document[field.name] = value
+			instance, err := jsonschema.UnmarshalJSON(bytes.NewReader(mustJSON(t, document)))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := schema.Validate(instance); err == nil {
+				t.Errorf("%s must reject %q", field.name, value)
+			}
+		}
+		for _, value := range []any{42, true, nil, []string{"user-1"}, map[string]string{"id": "user-1"}} {
+			document := principalDocument(t)
+			document[field.name] = value
+			instance, err := jsonschema.UnmarshalJSON(bytes.NewReader(mustJSON(t, document)))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := schema.Validate(instance); err == nil {
+				t.Errorf("%s must reject non-string %v", field.name, value)
+			}
+		}
+	}
+}
+
+func mustJSON(t *testing.T, value any) []byte {
+	t.Helper()
+	data, err := json.Marshal(value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return data
 }
 
 func TestResourceIDSharedPatternEngine(t *testing.T) {

@@ -78,6 +78,17 @@ func compileOrganizationSchema(t *testing.T, path, definition string) *jsonschem
 	// JSON Schema patterns use ECMAScript, including the opaque subject's
 	// Unicode escapes, which the default Go regexp engine cannot parse.
 	compiler.UseRegexpEngine(gatewayContractPattern)
+	commonIDs, err := os.ReadFile("../../../../contracts/common/ids.schema.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	idsDocument, err := jsonschema.UnmarshalJSON(bytes.NewReader(commonIDs))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := compiler.AddResource("https://schemas.antnest.dev/common/ids.schema.json", idsDocument); err != nil {
+		t.Fatal(err)
+	}
 	pagination, err := os.ReadFile("../../../../contracts/common/pagination.schema.json")
 	if err != nil {
 		t.Fatal(err)
@@ -124,7 +135,7 @@ func TestOrganizationSessionHandlersMatchCentralSchemas(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if err := compileOrganizationSchema(t, "edge-gateway/session-response.schema.json", route.definition).Validate(value); err != nil {
+			if err := compileOrganizationSchema(t, "edge-gateway/session-response.ids-v2.schema.json", route.definition).Validate(value); err != nil {
 				t.Fatalf("real Gateway %s output violates its central schema: %v", route.path, err)
 			}
 			actual := value.(map[string]any)["principal"].(map[string]any)
