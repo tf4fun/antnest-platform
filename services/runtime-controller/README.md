@@ -6,6 +6,11 @@ Disable, Enable, and Delete commands; Runtime Controller realizes them as
 private Docker compute and workspace resources and reports a platform-neutral
 result. It is written in Go.
 
+HTTP trace plumbing (server span start, request cloning, body wrapping, the
+response status writer and RPC payload capture) uses the shared Go telemetry
+module in `libs/go/telemetry`; telemetry names come from its generated
+registry constants.
+
 The cross-service identity is `agent_id` plus an opaque `runtime_revision`.
 Physical generations, deployment digests, container IDs, and volume names stay
 private to this service. Docker is the only implemented platform adapter; a

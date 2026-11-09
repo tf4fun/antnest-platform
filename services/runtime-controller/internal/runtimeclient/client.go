@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	semconv "github.com/tf4fun/antnest-platform/libs/go/telemetry"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
@@ -80,10 +81,10 @@ func (c *Client) Verify(
 ) (verified deployment.Inspection, resultErr error) {
 	started := time.Now()
 	ctx, span := statusTracer.Start(ctx, "runtime.status.verify", trace.WithSpanKind(trace.SpanKindInternal))
-	span.SetAttributes(
-		attribute.String("antnest.agent.id", inspection.AgentID),
-		attribute.Int64("antnest.runtime.generation", int64(inspection.Generation)),
-	)
+	span.SetAttributes(semconv.AliasAttributes(
+		attribute.String(semconv.AntnestAgentId, inspection.AgentID),
+		attribute.Int64(semconv.AntnestRuntimeGeneration, int64(inspection.Generation)),
+	)...)
 	defer func() {
 		result := "completed"
 		if resultErr != nil {
@@ -94,13 +95,13 @@ func (c *Client) Verify(
 			telemetry.RecordFailure(ctx, span, resultErr, "runtime_status", result, "Runtime status verification failed")
 		}
 		if verified.RuntimeExecutionID != "" {
-			span.SetAttributes(attribute.String("antnest.runtime.execution_id", telemetry.SafeValue(verified.RuntimeExecutionID)))
+			span.SetAttributes(semconv.AliasAttributes(attribute.String(semconv.AntnestRuntimeExecutionId, telemetry.SafeValue(verified.RuntimeExecutionID)))...)
 		}
-		attributes := []attribute.KeyValue{attribute.String("antnest.result", result)}
-		span.SetAttributes(attributes...)
+		attributes := []attribute.KeyValue{attribute.String(semconv.AntnestOutcome, result)}
+		span.SetAttributes(semconv.AliasAttributes(attributes...)...)
 		span.End()
-		statusChecks.Add(ctx, 1, metric.WithAttributes(attributes...))
-		statusDuration.Record(ctx, time.Since(started).Seconds(), metric.WithAttributes(attributes...))
+		statusChecks.Add(ctx, 1, metric.WithAttributes(semconv.MetricAttributes(attributes...)...))
+		statusDuration.Record(ctx, time.Since(started).Seconds(), metric.WithAttributes(semconv.MetricAttributes(attributes...)...))
 	}()
 	if strings.TrimSpace(inspection.StatusEndpoint) == "" {
 		return deployment.Inspection{}, fmt.Errorf("runtime status endpoint is missing")

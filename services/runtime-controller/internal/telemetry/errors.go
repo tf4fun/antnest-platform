@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"time"
 
+	semconv "github.com/tf4fun/antnest-platform/libs/go/telemetry"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
@@ -30,20 +31,20 @@ func RecordFailure(ctx context.Context, span trace.Span, err error, phase, code,
 		code = "operation_failed"
 	}
 	attrs := []attribute.KeyValue{
-		attribute.String("error.type", errorType), attribute.String("antnest.error.code", SafeValue(code)),
-		attribute.String("antnest.error.type", errorType), attribute.String("antnest.error.stage", SafeValue(phase)),
-		attribute.String("antnest.operation.phase", SafeValue(phase)), attribute.String("antnest.outcome", outcome),
+		attribute.String("error.type", errorType), attribute.String(semconv.AntnestErrorCode, SafeValue(code)),
+		attribute.String(semconv.AntnestErrorType, errorType), attribute.String(semconv.AntnestErrorStage, SafeValue(phase)),
+		attribute.String(semconv.AntnestOperationPhase, SafeValue(phase)), attribute.String(semconv.AntnestOutcome, outcome),
 	}
-	span.SetAttributes(attrs...)
+	span.SetAttributes(semconv.AliasAttributes(attrs...)...)
 	if outcome != "canceled" {
 		span.SetStatus(codes.Error, SafeValue(code))
 	}
 	causes, marshalErr := json.Marshal(diagnostics.Causes(err))
-	attrs = append(attrs, attribute.String("antnest.error.message", message), attribute.StringSlice("antnest.error.cause_types", diagnostics.CauseTypes(err)))
+	attrs = append(attrs, attribute.String(semconv.AntnestErrorMessage, message), attribute.StringSlice(semconv.AntnestErrorCauseTypes, diagnostics.CauseTypes(err)))
 	if marshalErr == nil {
-		attrs = append(attrs, attribute.String("antnest.error.causes", string(causes)))
+		attrs = append(attrs, attribute.String(semconv.AntnestErrorCauses, string(causes)))
 	}
-	span.AddEvent("antnest.error", trace.WithAttributes(attrs...))
+	span.AddEvent(semconv.AntnestError, trace.WithAttributes(semconv.AliasAttributes(attrs...)...))
 	if outcome != "canceled" {
 		slog.ErrorContext(ctx, "Runtime Controller boundary failed", "phase", phase, "error_code", SafeValue(code), "error_type", errorType, "message", message, "causes", diagnostics.Causes(err))
 	}
@@ -51,6 +52,6 @@ func RecordFailure(ctx context.Context, span trace.Span, err error, phase, code,
 
 func setDeadline(span trace.Span, ctx context.Context) {
 	if deadline, ok := ctx.Deadline(); ok {
-		span.SetAttributes(attribute.String("antnest.deadline", deadline.UTC().Format(time.RFC3339Nano)), attribute.Int64("antnest.timeout_ms", max(0, time.Until(deadline).Milliseconds())))
+		span.SetAttributes(semconv.AliasAttributes(attribute.String(semconv.AntnestDeadline, deadline.UTC().Format(time.RFC3339Nano)), attribute.Int64(semconv.AntnestRequestTimeoutMs, max(0, time.Until(deadline).Milliseconds())))...)
 	}
 }

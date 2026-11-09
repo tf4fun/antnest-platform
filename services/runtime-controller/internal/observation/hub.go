@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"sync"
 
+	semconv "github.com/tf4fun/antnest-platform/libs/go/telemetry"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
@@ -164,9 +165,7 @@ func (r *Repository) Ready(ctx context.Context) error {
 var _ repository.Store = (*Repository)(nil)
 
 func recordStoredObservation(ctx context.Context, value deployment.Observation) {
-	storedObservations.Add(ctx, 1, metric.WithAttributes(
-		attribute.String("antnest.observation.kind", string(value.Kind)),
-	))
+	storedObservations.Add(ctx, 1, metric.WithAttributes(semconv.MetricAttributes(attribute.String(semconv.AntnestObservationKind, string(value.Kind)))...))
 }
 
 func mustCounter(instrument metric.Int64Counter, err error) metric.Int64Counter {

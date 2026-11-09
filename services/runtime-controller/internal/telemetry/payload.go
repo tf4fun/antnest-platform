@@ -2,11 +2,11 @@ package telemetry
 
 import (
 	"context"
-	"encoding/json"
 	"net/http"
 	"strings"
 	"unicode/utf8"
 
+	semconv "github.com/tf4fun/antnest-platform/libs/go/telemetry"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 )
@@ -34,8 +34,8 @@ func RPCHandler(method string, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if state, ok := r.Context().Value(observationKey{}).(*httpObservation); ok {
 			state.rpc = true
-			state.span.SetAttributes(attribute.String("rpc.system.name", "antnest.http-json"),
-				attribute.String("rpc.service", "runtime-controller"), attribute.String("rpc.method", method))
+			state.span.SetAttributes(semconv.AliasAttributes(attribute.String("rpc.system.name", "antnest.http-json"),
+				attribute.String("rpc.service", "runtime-controller"), attribute.String("rpc.method", method))...)
 			if r.Body == nil || r.Body == http.NoBody {
 				ObserveRequest(r.Context(), map[string]any{"path": r.URL.Path, "query": r.URL.Query()})
 			}
@@ -59,7 +59,7 @@ func ObserveResponse(w http.ResponseWriter, value any) {
 func ObserveOutcome(w http.ResponseWriter, outcome, code string) {
 	if writer, ok := w.(*statusWriter); ok {
 		writer.observation.outcome = outcome
-		writer.observation.span.SetAttributes(attribute.String("antnest.outcome", outcome))
+		writer.observation.span.SetAttributes(semconv.AliasAttributes(attribute.String(semconv.AntnestOutcome, outcome))...)
 		if outcome == "failed" || outcome == "unknown" {
 			ObserveError(w, nil, "rpc_result", code, "Runtime operation did not complete successfully")
 		}
@@ -69,20 +69,15 @@ func ObserveOutcome(w http.ResponseWriter, outcome, code string) {
 func ObserveError(w http.ResponseWriter, err error, phase, code, message string) {
 	if writer, ok := w.(*statusWriter); ok && !writer.observation.failed {
 		writer.observation.failed = true
-		RecordFailure(writer.ctx, writer.observation.span, err, phase, code, message)
+		RecordFailure(writer.Ctx, writer.observation.span, err, phase, code, message)
 	}
 }
 
 func (s *httpObservation) capture(direction string, value any) {
-	if !s.rpc || !s.captureRPC || !s.span.IsRecording() {
+	if !s.rpc || !s.captureRPC {
 		return
 	}
-	encoded, err := json.Marshal(value)
-	if err != nil {
-		s.span.AddEvent("antnest.capture.error", trace.WithAttributes(attribute.String("error.type", "json_encoding")))
-		return
-	}
-	s.span.AddEvent("antnest."+direction, trace.WithAttributes(attribute.String("antnest.payload.json", string(encoded))))
+	semconv.CaptureRPC(s.span, true, direction, value)
 }
 
 func SafeValue(value string) string {
