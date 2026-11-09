@@ -156,7 +156,7 @@ credentials_root="$repository_root/artifacts/verification/authenticated-e2e/$COM
 temporary_root=
 stage3_phase=network-discovery
 # Setup can fail before the full Docker cleanup trap is installed.
-early_cleanup() {
+cleanup_stage3_setup() {
   status=$?
   trap - EXIT
   if [ "$status" -ne 0 ]; then record_stage3_failure "$status" || true; fi
@@ -164,7 +164,7 @@ early_cleanup() {
   if [ -n "$temporary_root" ]; then rm -rf -- "$temporary_root" || status=1; fi
   exit "$status"
 }
-trap early_cleanup EXIT
+trap cleanup_stage3_setup EXIT
 network_octet=$(node tests/e2e/acp-closeout/network.mjs "$((1 + ($$ % 200)))")
 # Public development secrets and network split use the shared fixture.
 stage3_phase=fixture-environment
