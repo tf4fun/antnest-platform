@@ -131,6 +131,9 @@
         "expires_at": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 }
       }
     },
+    "maintenance_ticket": {
+      "$ref": "https://schemas.antnest.dev/runtime/maintenance-ticket.schema.json#/$defs/ticket"
+    },
     "notice_metadata": {
       "type": "object", "additionalProperties": false,
       "required": ["version", "changeId", "sequence", "agentId", "kind", "occurredAt", "skillName", "changeSummary"],

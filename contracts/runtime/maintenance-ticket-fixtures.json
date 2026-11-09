@@ -1,0 +1,23 @@
+{
+  "valid": [
+    { "action": "install", "generation": 1 },
+    { "action": "install", "generation": 2 },
+    { "action": "digest", "generation": 1 },
+    { "action": "digest", "generation": 2 },
+    { "action": "temporary_install", "generation": 1 },
+    { "action": "temporary_release", "generation": 1 }
+  ],
+  "invalid": [
+    { "action": "unknown", "generation": 1 },
+    { "action": "prepare", "generation": 1 },
+    { "action": "check", "generation": 1 },
+    { "action": "commit", "generation": 1 },
+    { "action": "observe", "generation": 1 },
+    { "action": "cancel", "generation": 1 },
+    { "action": "release", "generation": 1 },
+    { "action": "install", "generation": 0 },
+    { "action": "digest", "generation": 0 },
+    { "action": "temporary_install", "generation": 2 },
+    { "action": "temporary_release", "generation": 2 }
+  ]
+}

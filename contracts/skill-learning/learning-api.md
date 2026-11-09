@@ -286,7 +286,17 @@ ACP signs one short-lived ticket per request using Ed25519. The HTTP
 `Authorization` value is
 `AntnestMaintenance <base64url(header)>.<base64url(payload)>.<base64url(signature)>`.
 Header is strict JSON `{ "version": 1, "algorithm": "Ed25519", "kid": "..." }`;
-payload is the `ticket` definition in the schema. The exact bytes signed are
+payload is the `ticket` definition in the shared
+[maintenance ticket schema](../runtime/maintenance-ticket.schema.json),
+exposed in [learning-api.schema.json](learning-api.schema.json) and
+[learning-api.ids-v2.schema.json](learning-api.ids-v2.schema.json) as the
+canonical `maintenance_ticket` alias; the learning-only `ticket` definition
+remains for N-1 decoding. The signed action is one of `install`, `digest`,
+`temporary_install` or `temporary_release`; this endpoint serves `install`
+and `digest`, and the temporary actions are signed only for the
+[temporary-Skill endpoint](../runtime/temporary-skills.md) with `generation`
+1 and `job_id` equal to the foreground Run ID. The `maintenance_receipt`
+action set stays `install`/`digest`. The exact bytes signed are
 UTF-8 `antnest-skill-maintenance-v1`, one LF byte (`0x0a`), then the two
 encoded segments joined with `.`. JSON parsers reject duplicate/unknown keys, padded or
 noncanonical base64url, oversized tickets and invalid Ed25519 signature.

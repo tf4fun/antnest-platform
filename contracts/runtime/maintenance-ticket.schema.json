@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.antnest.dev/runtime/maintenance-ticket.schema.json",
+  "title": "Runtime maintenance ticket",
+  "$ref": "#/$defs/ticket",
+  "$defs": {
+    "action": { "enum": ["install", "digest", "temporary_install", "temporary_release"] },
+    "ticket": {
+      "type": "object", "additionalProperties": false,
+      "required": ["organization_id", "agent_id", "execution_id", "job_id", "generation", "action", "request_id", "body_sha256", "issued_at", "expires_at"],
+      "properties": {
+        "organization_id": { "$ref": "../common/ids.schema.json#/$defs/organizationId" },
+        "agent_id": { "$ref": "../common/ids.schema.json#/$defs/agentId" },
+        "execution_id": { "type": "string", "minLength": 1, "maxLength": 200, "pattern": "^[!-~]+$", "not": { "pattern": "[^!-~]|[/\\\\]" } },
+        "job_id": { "type": "string", "minLength": 1, "maxLength": 200, "pattern": "^[!-~]+$", "not": { "pattern": "[^!-~]|[/\\\\]" } },
+        "generation": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 },
+        "action": { "$ref": "#/$defs/action" },
+        "request_id": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[!-~]+$", "not": { "pattern": "[^!-~]|[/\\\\]" } },
+        "body_sha256": { "type": "string", "minLength": 71, "maxLength": 71, "pattern": "^sha256:[0-9a-f]{64}$" },
+        "issued_at": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
+        "expires_at": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 }
+      },
+      "allOf": [{
+        "if": { "properties": { "action": { "enum": ["temporary_install", "temporary_release"] } }, "required": ["action"] },
+        "then": { "properties": { "generation": { "const": 1 } } }
+      }]
+    }
+  }
+}
