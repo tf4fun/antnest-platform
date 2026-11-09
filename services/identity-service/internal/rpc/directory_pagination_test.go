@@ -51,7 +51,7 @@ func validatePageSchema(t *testing.T, body []byte, def string) {
 		t.Fatalf("response is not JSON: %v", err)
 	}
 	compiler := newIdentitySchemaCompiler(t)
-	raw, err := os.ReadFile("../../../../contracts/identity/directory.schema.json")
+	raw, err := os.ReadFile("../../../../contracts/identity/directory.ids-v2.schema.json")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -60,12 +60,12 @@ func validatePageSchema(t *testing.T, body []byte, def string) {
 		t.Fatal(err)
 	}
 	if err := compiler.AddResource(
-		"https://schemas.antnest.dev/identity/directory.schema.json", resource,
+		"https://schemas.antnest.dev/identity/directory.ids-v2.schema.json", resource,
 	); err != nil {
 		t.Fatal(err)
 	}
 	schema, err := compiler.Compile(
-		"https://schemas.antnest.dev/identity/directory.schema.json#/$defs/" + def,
+		"https://schemas.antnest.dev/identity/directory.ids-v2.schema.json#/$defs/" + def,
 	)
 	if err != nil {
 		t.Fatal(err)

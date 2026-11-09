@@ -22,6 +22,8 @@ Issue 状态最后核对于 2026-10-28：141 个 issue，87 个已关闭，54 �
 
 ## 当前批次
 
+- **#16 Identity 审查完成**：schema 向量先 RED 后 GREEN；RPC directory、principal、producer golden、OIDC/external-identity 契约及生成器定向通过，204-document conventions 和 Go 格式 clean。Controller 已交付 PR #598（`30f410b8`）。Identity 保持已有随机 typed 生成器和独立 OIDC subject 规则，当前候选等待远程准入。
+
 - **#16 Controller 审查完成**：新增 schema 向量测试先因新修订缺失 RED；发布后 ResourceID、execution projection/golden、真实 HTTP/SSE 与服务契约检查 GREEN，确定性生成器原值保持，Go 格式和 203-document conventions clean。Console 已交付 PR #597（`5a1a150f`）。Controller 当前候选等待远程准入，未合并；其余服务和显式集成继续。
 
 - **#16 已审查交付进度**：共享基础 PR #592（`a43b6dec`）、Skill Registry #593（`dae17d6a`）、ACP #594（`e3e7cb46`）、Runtime Controller #595（`9bf96041`）、Egress #596（`d9b05742`）已提交独立依赖栈 PR，未合并。Console 当前批次定向 RED→GREEN 完成：`TestResourceID*`／`TestSkillSource*`、真实 route response schema、catalog 审计依赖用例通过，4 份 Go 文件 gofmt clean，198-document conventions clean；日志 `artifacts/verification/issue-16-admin-console/`。完整远程准入未确认，Controller／Identity／Gateway／Agent UI／Runtime 及显式集成继续开发；不等待 CI，不运行或跟踪 Docker E2E。

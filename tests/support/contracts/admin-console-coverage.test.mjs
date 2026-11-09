@@ -48,7 +48,9 @@ const identity =
 const adminSchema = readContractIfPresent(
   "admin-console/admin-api.ids-v2.schema.json",
 );
-const directorySchema = readContractIfPresent("identity/directory.schema.json");
+const directorySchema = readContractIfPresent(
+  "identity/directory.ids-v2.schema.json",
+);
 const errorsView = readContractIfPresent("admin-console/errors.json");
 const goErrors = readFileSync(
   repoPath("services/admin-console/internal/apierror/errors.gen.go"),
@@ -70,7 +72,7 @@ const CANONICAL = "https://schemas.antnest.dev/";
 const adminDef = (name) =>
   `${CANONICAL}admin-console/admin-api.ids-v2.schema.json#/$defs/${name}`;
 const identityDef = (name) =>
-  `${CANONICAL}identity/directory.schema.json#/$defs/${name}`;
+  `${CANONICAL}identity/directory.ids-v2.schema.json#/$defs/${name}`;
 
 const schemaRegistry = (async () => {
   const ajv = new Ajv2020({
@@ -954,7 +956,7 @@ test("media types are explicit for multipart uploads, the zip download and the e
 test("identity directory schema documents the bounded member and group methods", async () => {
   assert.ok(
     directorySchema !== undefined,
-    "contracts/identity/directory.schema.json is missing",
+    "contracts/identity/directory.ids-v2.schema.json is missing",
   );
   assert.equal(
     directorySchema.$schema,
@@ -962,7 +964,7 @@ test("identity directory schema documents the bounded member and group methods",
   );
   assert.equal(
     directorySchema.$id,
-    "https://schemas.antnest.dev/identity/directory.schema.json",
+    "https://schemas.antnest.dev/identity/directory.ids-v2.schema.json",
   );
   const filters = {
     list_members: ["active", "email_prefix", "role", "source"],
@@ -1142,7 +1144,7 @@ test("the identity descriptor refs the directory schema and keeps inline shapes"
     for (const side of ["request", "response"]) {
       assert.equal(
         entry[side].$ref,
-        `directory.schema.json#/$defs/${method}_${side}`,
+        `directory.ids-v2.schema.json#/$defs/${method}_${side}`,
         `${method}.${side}.$ref`,
       );
       assert.deepEqual(

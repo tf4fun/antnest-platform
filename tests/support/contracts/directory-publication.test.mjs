@@ -18,7 +18,7 @@ test("Identity publishes directory methods with their producer registration", ()
     );
     assert.equal(name in active.methods, registered, name);
   }
-  assert.equal(active.revision, active.methods.list_members ? 19 : 18);
+  assert.equal(active.revision, active.methods.list_members ? 20 : 18);
 });
 
 test("Console publishes directory pages with their producer registration", () => {

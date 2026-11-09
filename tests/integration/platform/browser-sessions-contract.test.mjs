@@ -309,10 +309,10 @@ test("session feed is separate from Controller offboarding and has bounded curso
         minimum: 1,
       },
       user_id: {
-        $ref: "#/definitions/id",
+        $ref: "https://schemas.antnest.dev/common/ids.schema.json#/$defs/userId",
       },
       organization_id: {
-        $ref: "#/definitions/id",
+        $ref: "https://schemas.antnest.dev/common/ids.schema.json#/$defs/organizationId",
       },
       reason: {
         type: "string",
@@ -560,7 +560,7 @@ test("Console browser-session consumer adopts the current Gateway contract", () 
 });
 
 test("Gateway owns session mutations and records cookie concurrency and stream bounds", () => {
-  assert.equal(identity.revision, 19);
+  assert.equal(identity.revision, 20);
   assert.equal(gateway.version, 24);
   assert.equal(
     gateway.browser_session_contract,
@@ -709,7 +709,13 @@ test("public response schemas declare no private credential fields or secret-mar
   ]);
   const visited = new Set();
   const documents = new Map([[browser.$id, browser]]);
-  for (const name of ["error", "pagination", "precondition", "idempotency"]) {
+  for (const name of [
+    "error",
+    "ids",
+    "pagination",
+    "precondition",
+    "idempotency",
+  ]) {
     const document = read(`common/${name}.schema.json`);
     documents.set(document.$id, document);
   }
