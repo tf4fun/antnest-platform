@@ -1,17 +1,18 @@
 import { z } from "zod";
 import { DomainError } from "./errors.js";
+import { agentIdSchema, organizationIdSchema } from "./ids.js";
 
 const identifier = z.string().regex(/^\S{1,200}$/u);
 
 export const runtimeBarrierQueryRequestSchema = z.strictObject({
-  organization_id: identifier,
-  agent_id: identifier,
+  organization_id: organizationIdSchema,
+  agent_id: agentIdSchema,
   expected_runtime_revision: identifier,
 });
 
 export const runtimeBarrierQueryResultSchema = z.strictObject({
-  organization_id: identifier,
-  agent_id: identifier,
+  organization_id: organizationIdSchema,
+  agent_id: agentIdSchema,
   runtime_revision: identifier,
   barrier: z
     .strictObject({

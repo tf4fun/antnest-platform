@@ -17,7 +17,10 @@ form one boundary. Schema additions to the existing
 [ACP Bridge](../agent-acp/workspace-bridge.schema.json) and
 [workspace View](../agent-ui/workspace-api.schema.json) define consumer fields.
 Organization, Agent and principal IDs follow existing opaque service/Identity
-ID syntax rather than requiring generated `org_`, `agent_` or `user_` prefixes.
+ID syntax defined by the
+[shared grammar](../common/ids.schema.json) via
+[learning-api.ids-v2.schema.json](learning-api.ids-v2.schema.json) rather than
+requiring generated `org_`, `agent_` or `user_` prefixes.
 Syntactic acceptance never establishes ownership; every read and mutation
 checks the stored organization, owner and current authorization.
 
@@ -496,20 +499,20 @@ For `background_task_running` and `managed_call_in_flight`, the bounded
 server (`managed:<id>`). An unattributed process can use `unknown:<pid>`;
 these identifiers are diagnostic, never authorization or a kill target.
 
-| Input or interruption                                                           | Required result                                                                                         |
-| ------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
-| Completed ordinary Q&A, failed/cancelled Run, tool output claiming to be a user | No automatic application; no fake user action                                                           |
-| Completed eligible Run, no new reusable rule                                    | Recorded skip without notice or next review recursion                                                   |
-| User correction plus untrusted external text                                    | Only the authenticated correction can support automatic rule scope                                      |
-| Candidate from user-owned/system/pinned path or different Agent                 | Reject before install                                                                                   |
-| New foreground Prompt during review model call                                  | Run starts at once; review continues off Runtime; no foreground `agent_busy` caused by review           |
-| New foreground call during install                                              | Runtime preempts install and serves the call within 2 seconds; ACP resends install when idle            |
-| Disable, Drain or rebuild during review or install                              | Lifecycle proceeds without waiting; no learning `runtime_barrier_required`; candidate kept              |
-| Bash dev server still alive                                                     | Install blocked with task identity; execution slot released, foreground can stop it                    |
-| Runtime changed during install or signing-key rotation                          | Reject old execution ticket; ACP resends with a fresh ticket; RC resumes from frozen key snapshot       |
-| Install response lost or preempted after the rename                             | Resend settles as `applied` from the active digest; never renames a second time                         |
-| Writer changes package during/after the rename                                  | `conflict`, no success notice and no blind rollback                                                     |
-| Node offline, source Session not subscribed, notice sent twice                  | Learning still completes; record sync restores one system item per change                               |
+| Input or interruption                                                           | Required result                                                                                   |
+| ------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
+| Completed ordinary Q&A, failed/cancelled Run, tool output claiming to be a user | No automatic application; no fake user action                                                     |
+| Completed eligible Run, no new reusable rule                                    | Recorded skip without notice or next review recursion                                             |
+| User correction plus untrusted external text                                    | Only the authenticated correction can support automatic rule scope                                |
+| Candidate from user-owned/system/pinned path or different Agent                 | Reject before install                                                                             |
+| New foreground Prompt during review model call                                  | Run starts at once; review continues off Runtime; no foreground `agent_busy` caused by review     |
+| New foreground call during install                                              | Runtime preempts install and serves the call within 2 seconds; ACP resends install when idle      |
+| Disable, Drain or rebuild during review or install                              | Lifecycle proceeds without waiting; no learning `runtime_barrier_required`; candidate kept        |
+| Bash dev server still alive                                                     | Install blocked with task identity; execution slot released, foreground can stop it               |
+| Runtime changed during install or signing-key rotation                          | Reject old execution ticket; ACP resends with a fresh ticket; RC resumes from frozen key snapshot |
+| Install response lost or preempted after the rename                             | Resend settles as `applied` from the active digest; never renames a second time                   |
+| Writer changes package during/after the rename                                  | `conflict`, no success notice and no blind rollback                                               |
+| Node offline, source Session not subscribed, notice sent twice                  | Learning still completes; record sync restores one system item per change                         |
 
 The [contract tests](../../tests/integration/skill-learning/contracts.test.mjs)
 cover machine-readable values and links to existing Runtime/ACP/UI schemas.

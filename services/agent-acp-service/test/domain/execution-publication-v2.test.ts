@@ -108,8 +108,9 @@ describe("execution publication v2", () => {
         readFileSync(new URL("../../../../contracts/agent-acp/" + file, import.meta.url), "utf8"),
       ) as { $id?: string } & Record<string, unknown>;
     const ajv = new Ajv2020({ strict: true, validateFormats: false });
-    ajv.addSchema(load("execution-snapshot.schema.json"));
-    const v2 = load("execution-publication-v2.schema.json");
+    ajv.addSchema(load("execution-snapshot.ids-v2.schema.json"));
+    ajv.addSchema(load("../common/ids.schema.json"));
+    const v2 = load("execution-publication-v2.ids-v2.schema.json");
     const snapshot = ajv.compile(v2);
     const fixture = v2Fixture();
     expect(snapshot(fixture)).toBe(true);

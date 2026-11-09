@@ -6,14 +6,10 @@ import { DomainError } from "../domain/errors.js";
 import { parseExecutionPublication } from "../domain/execution-publication.js";
 import { parseOwnerRegistration } from "./owner-incarnation.js";
 import { peerDeadline } from "./peer-request.js";
+import { agentIdSchema, organizationIdSchema, userIdSchema } from "../domain/ids.js";
 
-const identifier = z
-  .string()
-  .min(1)
-  .max(200)
-  .refine((value) => value.trim() === value);
-const scope = z.strictObject({ organizationId: identifier, agentId: identifier });
-const identity = scope.extend({ principalId: identifier });
+const scope = z.strictObject({ organizationId: organizationIdSchema, agentId: agentIdSchema });
+const identity = scope.extend({ principalId: userIdSchema });
 const digest = z.string().regex(/^[a-f0-9]{64}$/u);
 const common = {
   request_id: z

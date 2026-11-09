@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { organizationIdSchema } from "./ids.js";
 
 const id = z
   .string()
@@ -29,7 +30,7 @@ export const providerTokenLimitsSchema = z
     source: z.literal("models"),
     source_revision: positive,
     binding: z.strictObject({
-      organization_id: id,
+      organization_id: organizationIdSchema,
       connection_id: id,
       provider_key: z.enum(["deepseek", "openrouter", "openai_compatible"]),
       request_protocol: z.literal("openai_chat_completions"),

@@ -136,6 +136,9 @@ single-process restriction remain when registered owner mode uses fixed Agent
 generations.
 See the [connection admission contract](../../contracts/agent-acp/connection-admission.md).
 
+Referenced organization/user/agent IDs are opaque and validated against the
+[shared grammar](../../contracts/common/ids.schema.json); the service publishes
+`*.ids-v2.schema.json` revisions bound to it.
 The [execution configuration contract](../../contracts/agent-acp/execution-api.md)
 defines how Controller publishes into ACP. Normal ACP operation makes no
 reverse access, admission, credential or finish requests to Controller. Local authorization commits

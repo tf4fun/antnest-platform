@@ -13,14 +13,26 @@ import {
 describe("shared execution snapshot contract", () => {
   const schema: unknown = JSON.parse(
     readFileSync(
-      new URL("../../../../contracts/agent-acp/execution-snapshot.schema.json", import.meta.url),
+      new URL(
+        "../../../../contracts/agent-acp/execution-snapshot.ids-v2.schema.json",
+        import.meta.url,
+      ),
       "utf8",
     ),
   );
   if (typeof schema !== "object" || schema === null || Array.isArray(schema)) {
     throw new Error("Execution snapshot schema must be an object");
   }
-  const validator = new Ajv2020({ strict: true, validateFormats: false }).compile(schema);
+  const ajv = new Ajv2020({ strict: true, validateFormats: false });
+  ajv.addSchema(
+    JSON.parse(
+      readFileSync(
+        new URL("../../../../contracts/common/ids.schema.json", import.meta.url),
+        "utf8",
+      ),
+    ) as object,
+  );
+  const validator = ajv.compile(schema);
 
   it("accepts the same complete snapshot as the domain validator", () => {
     const fixture = executionConfiguration();
@@ -68,14 +80,14 @@ describe("shared execution snapshot contract", () => {
 
   it("preserves opaque identifiers across the wire, stored projection and model selection", () => {
     const fixture = executionConfiguration();
-    fixture.organization_id = "organization+division@example.org";
+    fixture.organization_id = "Organization.Div-9_z";
     fixture.providers[0]!.connection_id = "provider+account@example.org";
     fixture.providers[0]!.credential_revision = "credential+[revision]";
     fixture.models[0]!.connection_id = fixture.providers[0]!.connection_id;
     fixture.models[0]!.model_profile_id = "model+profile@example.org";
     fixture.agents[0]!.default_model_profile_id = fixture.models[0]!.model_profile_id;
-    fixture.agents[0]!.agent_id = "agent/department+1";
-    fixture.agents[0]!.principal_ids = ["owner+team@example.org"];
+    fixture.agents[0]!.agent_id = "Agent.Dept-1";
+    fixture.agents[0]!.principal_ids = ["Owner.Team-9"];
     expect(validator(fixture), JSON.stringify(validator.errors)).toBe(true);
     const configuration = parseExecutionConfiguration(fixture);
     expect(configuration).toEqual(fixture);
@@ -92,11 +104,25 @@ describe("shared execution snapshot contract", () => {
     expect(() =>
       resolveExecutionConfiguration(
         configuration,
-        { ...identity, principalId: "other+team@example.org" },
+        { ...identity, principalId: "Other.Team-9" },
         {},
       ),
     ).toThrow("access");
   });
+
+  it.each(["organization_id", "agent_id", "principal_ids"] as const)(
+    "rejects out-of-grammar public identifiers on %s in both validators",
+    (field) => {
+      for (const value of ["a/b", "a\n", "x".repeat(201), "_a"]) {
+        const fixture = executionConfiguration();
+        if (field === "organization_id") fixture.organization_id = value;
+        if (field === "agent_id") fixture.agents[0]!.agent_id = value;
+        if (field === "principal_ids") fixture.agents[0]!.principal_ids = [value];
+        expect(validator(fixture), `${field} ${JSON.stringify(value)}`).toBe(false);
+        expect(() => parseExecutionConfiguration(fixture)).toThrow();
+      }
+    },
+  );
 
   it("rejects legacy admission fields, missing collections and unsupported credentials", () => {
     const fixture = executionConfiguration();

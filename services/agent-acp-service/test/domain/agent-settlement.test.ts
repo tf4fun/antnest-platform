@@ -24,9 +24,18 @@ function contract(file: string) {
   );
   if (typeof schema !== "object" || schema === null || Array.isArray(schema))
     throw new Error("Expected object schema");
-  return new Ajv2020({ strict: true, validateFormats: false }).compile(schema);
+  const ajv = new Ajv2020({ strict: true, validateFormats: false });
+  ajv.addSchema(
+    JSON.parse(
+      readFileSync(
+        new URL("../../../../contracts/common/ids.schema.json", import.meta.url),
+        "utf8",
+      ),
+    ) as object,
+  );
+  return ajv.compile(schema);
 }
-const requestContract = contract("settle-agent-request");
+const requestContract = contract("settle-agent-request.ids-v2");
 const resultContract = contract("settle-agent-result");
 
 describe("Agent settlement contract", () => {

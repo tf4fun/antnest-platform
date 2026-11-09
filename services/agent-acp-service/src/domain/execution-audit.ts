@@ -2,6 +2,7 @@ import { z } from "zod";
 import { budgetFactSchema } from "./model-budget.js";
 import { DomainError } from "./errors.js";
 import { boundedCursorSchema } from "./pagination.js";
+import { agentIdSchema, organizationIdSchema, userIdSchema } from "./ids.js";
 
 const identifier = z.string().min(1).max(200);
 const timestamp = z.iso.datetime().regex(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?Z$/u);
@@ -11,7 +12,7 @@ const page = {
   cursor: boundedCursorSchema.optional(),
 };
 export const listAuditsSchema = z.strictObject({
-  agent_id: identifier.optional(),
+  agent_id: agentIdSchema.optional(),
   session_id: identifier.optional(),
   created_from: timestamp.optional(),
   created_until: timestamp.optional(),
@@ -24,8 +25,8 @@ export const listAuditEventsSchema = z.strictObject({
   ...page,
 });
 export const auditPrincipalSchema = z.strictObject({
-  principalId: identifier,
-  organizationId: identifier,
+  principalId: userIdSchema,
+  organizationId: organizationIdSchema,
   membershipId: identifier,
   systemRole: z.enum(["admin", "user"]),
   organizationRole: z.enum(["admin", "member"]),
@@ -35,8 +36,8 @@ export type AuditFilters = Omit<z.infer<typeof listAuditsSchema>, "cursor" | "li
 const summarySchema = z.strictObject({
   run_id: identifier,
   session_id: identifier,
-  agent_id: identifier,
-  principal_id: identifier,
+  agent_id: agentIdSchema,
+  principal_id: userIdSchema,
   state: z.enum(["admitting", "running", "completed", "cancelled", "failed", "unresolved"]),
   created_at: timestamp,
   updated_at: timestamp,
@@ -65,16 +66,15 @@ export const auditDetailSchema = z.strictObject({
   usage_measurements: z.array(z.unknown()),
 });
 const eventSchema = z.strictObject({
-  schema_version: z.literal(1).optional(),
   id: opaqueId,
   sequence: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
   kind: z.string(),
   visible: z.boolean(),
   payload: z.unknown(),
   created_at: timestamp,
+  schema_version: z.literal(1).optional().meta({ type: "integer" }),
 });
 const permissionSchema = z.strictObject({
-  schema_version: z.literal(1).optional(),
   tool_call_id: opaqueId,
   request: z.unknown(),
   decision: z
@@ -83,6 +83,7 @@ const permissionSchema = z.strictObject({
   reason: z.string().nullable(),
   created_at: timestamp,
   decided_at: timestamp.nullable(),
+  schema_version: z.literal(1).optional().meta({ type: "integer" }),
 });
 const nextCursor = boundedCursorSchema.nullable();
 export const auditListSchema = z.strictObject({
@@ -92,15 +93,15 @@ export const auditListSchema = z.strictObject({
 export const auditEventsSchema = z.discriminatedUnion("stream", [
   z.strictObject({
     stream: z.literal("execution"),
-    schema_version: z.literal(1).optional(),
     items: z.array(eventSchema),
     next_cursor: nextCursor,
+    schema_version: z.literal(1).optional().meta({ type: "integer" }),
   }),
   z.strictObject({
     stream: z.literal("permissions"),
-    schema_version: z.literal(1).optional(),
     items: z.array(permissionSchema),
     next_cursor: nextCursor,
+    schema_version: z.literal(1).optional().meta({ type: "integer" }),
   }),
 ]);
 export type AuditSummary = z.infer<typeof summarySchema>;

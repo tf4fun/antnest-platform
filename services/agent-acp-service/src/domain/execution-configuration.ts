@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { agentIdSchema, organizationIdSchema, userIdSchema } from "./ids.js";
 import type { ExecutionConfigurationV2 } from "./execution-publication-v2.js";
 import { projectResponse } from "./response-projection.js";
 import { providerTokenLimitsSchema } from "./provider-token-limits.js";
@@ -109,8 +110,8 @@ export const privateRuntimeSchema = publicRuntimeSchema.extend({
 });
 
 export const agentFieldsSchema = z.strictObject({
-  agent_id: identifier,
-  principal_ids: z.array(identifier),
+  agent_id: agentIdSchema,
+  principal_ids: z.array(userIdSchema),
   access_revision: identifier,
   accepting_runs: z.boolean(),
   unavailable_reason: z.string().min(1).max(200).nullable(),
@@ -218,7 +219,7 @@ function validateExecutableRuntime(
 }
 
 export const executionConfigurationSchema = z.strictObject({
-  organization_id: identifier,
+  organization_id: organizationIdSchema,
   revision,
   schema_version: z.literal(1).optional(),
   organization_budget: organizationBudgetSchema.optional(),

@@ -28,7 +28,14 @@ token. State get/watch remain on the workspace listener for Agent UI.
 
 Workspace identity is derived from verified CCT `org`, `sub` and `agt`; HTTP,
 WebSocket and Session ownership are bound to that tuple. Raw `X-Antnest-*`
-fields never select authority. Opaque identifiers preserve punctuation and
+fields never select authority. Referenced organization, Agent and principal
+IDs are opaque values validated against the
+[shared grammar](../common/ids.schema.json); the typed generation format is
+producer-owned per [resource-identifiers](../resource-identifiers.md) and is
+not a reference-format constraint. The `*.ids-v2.schema.json` revisions
+republish the same shapes bound to that grammar. Other protocol-specific
+identifiers (execution, barrier, provider, model and similar opaque values)
+preserve punctuation and
 Unicode without trimming or case normalization. Domain JSON retains its own
 schemas; the signed carrier avoids encoding those identities as individual
 HTTP fields. Runtime MCP still rejects an execution ID that its fence header

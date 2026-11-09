@@ -1,9 +1,10 @@
 import { z } from "zod";
 import type { learningSkillTextPackage } from "./learning-candidate-package.js";
+import { agentIdSchema, organizationIdSchema, userIdSchema } from "./ids.js";
 
-const org = z.string().regex(/^org_[0-9a-f]{32}$/u);
-const agent = z.string().regex(/^agent_[0-9a-f]{32}$/u);
-const user = z.string().regex(/^user_[0-9a-f]{32}$/u);
+const org = organizationIdSchema;
+const agent = agentIdSchema;
+const user = userIdSchema;
 const name = z
   .string()
   .max(64)

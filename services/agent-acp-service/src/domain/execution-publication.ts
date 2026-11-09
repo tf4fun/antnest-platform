@@ -1,14 +1,11 @@
 import { createHash } from "node:crypto";
 import { z } from "zod";
 import { DomainError } from "./errors.js";
+import { organizationIdSchema } from "./ids.js";
 import type { ExecutionConfiguration } from "./execution-configuration.js";
 
 const publicationSchema = z.strictObject({
-  organization_id: z
-    .string()
-    .min(1)
-    .max(200)
-    .refine((value) => value.trim() === value),
+  organization_id: organizationIdSchema,
   revision: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER),
   authority_sha256: z.string().regex(/^[0-9a-f]{64}$/u),
 });

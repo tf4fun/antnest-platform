@@ -1,6 +1,7 @@
 import { z } from "zod";
+import { agentIdSchema, organizationIdSchema, scopedIdPattern, userIdSchema } from "./ids.js";
 
-export const learningScopedId = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,199}$/u;
+export const learningScopedId = scopedIdPattern;
 export const learningPolicyRevision = /^[0-9a-f]{64}$/u;
 export const learningUtcTimestamp = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?Z$/u;
 
@@ -11,9 +12,9 @@ const boundedPaths = z
   .refine((paths) => paths.every((path, index) => index === 0 || paths[index - 1]! < path));
 
 export const learningPolicySchema = z.strictObject({
-  organization_id: z.string().regex(learningScopedId),
-  agent_id: z.string().regex(learningScopedId),
-  owner_principal_id: z.string().regex(learningScopedId),
+  organization_id: organizationIdSchema,
+  agent_id: agentIdSchema,
+  owner_principal_id: userIdSchema,
   revision: z.string().regex(learningPolicyRevision),
   activation_cut_at: z
     .string()
