@@ -134,7 +134,7 @@ describe("execution configuration HTTP contract", () => {
     );
     const input = executionConfiguration();
     input.revision = 2;
-    input.agents[0]!.principal_ids = ["principal\u0000invalid"];
+    input.models[0]!.display_name = "model\u0000invalid";
     const url = await listen(local.directory);
     const response = await post(url, input);
     expect(response.status).toBe(503);

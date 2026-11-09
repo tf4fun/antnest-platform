@@ -87,9 +87,9 @@ describe("AgentAcpHttpServer", () => {
       });
       await server.listen("127.0.0.1", 0);
       const identity = {
-        organizationId: "org+division@example.org",
-        principalId: "owner+team@example.org",
-        agentId: "agent/department+1",
+        organizationId: "Org.Division_1",
+        principalId: "Owner.Team_1",
+        agentId: "Agent.Department_1",
       };
       const socket = await openRawWebSocket(
         server,

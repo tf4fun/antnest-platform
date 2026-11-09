@@ -136,7 +136,7 @@ describe.skipIf(databaseUrl === undefined)(
       onApplied.mockClear();
       const invalid = structuredClone(input);
       invalid.revision = 2;
-      invalid.agents[0]!.principal_ids = ["principal\u0000invalid"];
+      invalid.models[0]!.display_name = "model\u0000invalid";
       await expect(directory.apply(invalid)).rejects.toThrow();
       expect(onApplied).not.toHaveBeenCalled();
       expect(await repository.load(input.organization_id)).toEqual(
