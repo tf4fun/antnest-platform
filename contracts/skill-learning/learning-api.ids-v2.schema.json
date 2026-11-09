@@ -1,0 +1,314 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.antnest.dev/skill-learning/learning-api.ids-v2.schema.json",
+  "title": "Skill learning L0 shared values",
+  "$defs": {
+    "learning_status": {
+      "type": "object", "additionalProperties": false,
+      "required": ["agentId", "blocked"],
+      "properties": {
+        "agentId": { "$ref": "../common/ids.schema.json#/$defs/agentId" },
+        "blocked": { "oneOf": [ { "type": "null" }, {
+          "type": "object", "additionalProperties": false,
+          "required": ["reason"],
+          "properties": {
+            "reason": { "enum": ["writer_present", "unknown_effect", "model_unavailable", "runtime_unavailable", "review_inconclusive"] },
+            "skillName": { "type": "string", "maxLength": 64, "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$" },
+            "sourceSessionId": { "$ref": "#/$defs/id" },
+            "sourceRunId": { "$ref": "#/$defs/id" }
+          }
+        } ] }
+      }
+    },
+    "id": { "type": "string", "minLength": 1, "maxLength": 200 },
+    "organization_id": {"$ref": "../common/ids.schema.json#/$defs/organizationId"},
+    "agent_id": {"$ref": "../common/ids.schema.json#/$defs/agentId"},
+    "user_id": {"$ref": "../common/ids.schema.json#/$defs/userId"},
+    "request_id": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[!-~]+$" },
+    "revision": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "digest": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+    "package_path": { "type": "string", "maxLength": 96, "pattern": "^\\.antnest/skills/[a-z0-9]+(-[a-z0-9]+)*$" },
+    "policy": {
+      "type": "object", "additionalProperties": false,
+      "required": ["organization_id", "agent_id", "owner_principal_id", "revision", "mode", "scope", "pinned_paths", "limits", "activation_cut_at"],
+      "properties": {
+        "organization_id": { "$ref": "../common/ids.schema.json#/$defs/organizationId" },
+        "agent_id": { "$ref": "../common/ids.schema.json#/$defs/agentId" },
+        "owner_principal_id": { "$ref": "../common/ids.schema.json#/$defs/userId" },
+        "revision": { "$ref": "#/$defs/revision" },
+        "activation_cut_at": { "type": "string", "format": "date-time", "pattern": "Z$" },
+        "mode": { "enum": ["automatic", "off"] },
+        "scope": {
+          "type": "object", "additionalProperties": false,
+          "required": ["auto_generated_personal", "adopted_paths"],
+          "properties": {
+            "auto_generated_personal": { "type": "boolean" },
+            "adopted_paths": { "type": "array", "maxItems": 0, "uniqueItems": true,
+              "items": { "$ref": "#/$defs/package_path" } }
+          }
+        },
+        "pinned_paths": { "type": "array", "maxItems": 32, "uniqueItems": true,
+          "items": { "$ref": "#/$defs/package_path" } },
+        "limits": {
+          "type": "object", "additionalProperties": false,
+          "required": ["daily_reviews", "daily_model_input_tokens", "daily_model_output_tokens"],
+          "properties": {
+            "daily_reviews": { "type": "integer", "minimum": 0, "maximum": 20 },
+            "daily_model_input_tokens": { "type": "integer", "minimum": 0, "maximum": 320000 },
+            "daily_model_output_tokens": { "type": "integer", "minimum": 0, "maximum": 80000 }
+          }
+        }
+      }
+    },
+    "policy_mutation_request": {
+      "type": "object", "additionalProperties": false,
+      "required": ["request_id", "organization_id", "actor_principal_id", "mode", "scope", "pinned_paths", "limits"],
+      "properties": {
+        "request_id": { "$ref": "#/$defs/request_id" },
+        "organization_id": { "$ref": "../common/ids.schema.json#/$defs/organizationId" },
+        "actor_principal_id": { "$ref": "../common/ids.schema.json#/$defs/userId" },
+        "expected_revision": { "$ref": "#/$defs/revision", "deprecated": true },
+        "expected_version": {
+          "allOf": [
+            { "$ref": "../common/precondition.schema.json#/$defs/expected_version" },
+            { "$ref": "#/$defs/revision" }
+          ]
+        },
+        "mode": { "enum": ["automatic", "off"] },
+        "scope": { "$ref": "#/$defs/policy/properties/scope" },
+        "pinned_paths": { "$ref": "#/$defs/policy/properties/pinned_paths" },
+        "limits": { "$ref": "#/$defs/policy/properties/limits" }
+      },
+      "allOf": [
+        {
+          "oneOf": [
+            { "required": ["expected_version"], "properties": {"expected_version": true}, "not": { "required": ["expected_revision"], "properties": {"expected_revision": true}} },
+            { "required": ["expected_revision"], "properties": {"expected_revision": true}, "not": { "required": ["expected_version"], "properties": { "expected_version": true } } }
+          ]
+        }
+      ]
+    },
+    "apply_basis": {
+      "oneOf": [
+        {
+          "type": "object", "additionalProperties": false,
+          "required": ["kind", "policy_revision", "package_path", "target_digest", "evidence_ids"],
+          "properties": {
+            "kind": { "const": "policy" },
+            "policy_revision": { "$ref": "#/$defs/revision" },
+            "package_path": { "$ref": "#/$defs/package_path" },
+            "target_digest": { "$ref": "#/$defs/digest" },
+            "evidence_ids": { "type": "array", "minItems": 1, "maxItems": 64,
+              "uniqueItems": true, "items": { "$ref": "#/$defs/id" } }
+          }
+        },
+        {
+          "type": "object", "additionalProperties": false,
+          "required": ["kind", "user_action_id", "confirmation_id", "package_path", "target_digest"],
+          "properties": {
+            "kind": { "const": "user_action" },
+            "user_action_id": { "$ref": "#/$defs/id" },
+            "confirmation_id": { "$ref": "#/$defs/id" },
+            "package_path": { "$ref": "#/$defs/package_path" },
+            "target_digest": { "$ref": "#/$defs/digest" }
+          }
+        }
+      ]
+    },
+    "ticket": {
+      "type": "object", "additionalProperties": false,
+      "required": ["organization_id", "agent_id", "execution_id", "job_id", "generation", "action", "request_id", "body_sha256", "issued_at", "expires_at"],
+      "properties": {
+        "organization_id": { "$ref": "../common/ids.schema.json#/$defs/organizationId" },
+        "agent_id": { "$ref": "../common/ids.schema.json#/$defs/agentId" },
+        "execution_id": { "$ref": "#/$defs/id" },
+        "job_id": { "$ref": "#/$defs/id" },
+        "generation": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 },
+        "action": { "enum": ["install", "digest"] },
+        "request_id": { "$ref": "#/$defs/request_id" },
+        "body_sha256": { "$ref": "#/$defs/digest" },
+        "issued_at": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
+        "expires_at": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 }
+      }
+    },
+    "notice_metadata": {
+      "type": "object", "additionalProperties": false,
+      "required": ["version", "changeId", "sequence", "agentId", "kind", "occurredAt", "skillName", "changeSummary"],
+      "properties": {
+        "version": { "const": 1 },
+        "changeId": { "$ref": "#/$defs/id" },
+        "sequence": { "type": "string", "pattern": "^[1-9][0-9]{0,18}$" },
+        "agentId": { "$ref": "../common/ids.schema.json#/$defs/agentId" },
+        "kind": { "enum": ["skill_created", "skill_updated"] },
+        "occurredAt": { "type": "string", "minLength": 20, "maxLength": 40 },
+        "skillName": { "type": "string", "minLength": 1, "maxLength": 64,
+          "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$" },
+        "changeSummary": { "type": "string", "minLength": 1, "maxLength": 2048 },
+        "sourceSessionId": { "$ref": "#/$defs/id" },
+        "sourceRunId": { "$ref": "#/$defs/id" }
+      }
+    },
+    "change": {
+      "type": "object", "additionalProperties": false,
+      "required": ["changeId", "sequence", "agentId", "kind", "occurredAt", "skillName", "changeSummary"],
+      "properties": {
+        "changeId": { "$ref": "#/$defs/id" },
+        "sequence": { "type": "string", "pattern": "^[1-9][0-9]{0,18}$" },
+        "agentId": { "$ref": "../common/ids.schema.json#/$defs/agentId" },
+        "kind": { "enum": ["skill_created", "skill_updated"] },
+        "occurredAt": { "type": "string", "minLength": 20, "maxLength": 40 },
+        "skillName": { "type": "string", "minLength": 1, "maxLength": 64,
+          "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$" },
+        "changeSummary": { "type": "string", "minLength": 1, "maxLength": 2048 },
+        "sourceSessionId": { "$ref": "#/$defs/id" },
+        "sourceRunId": { "$ref": "#/$defs/id" }
+      }
+    },
+    "change_page": {
+      "type": "object", "additionalProperties": false,
+      "required": ["items", "nextCursor", "olderCursor", "sealedCursor"],
+      "properties": {
+        "items": { "type": "array", "maxItems": 20, "items": { "$ref": "#/$defs/change" } },
+        "nextCursor": { "type": "string", "minLength": 1, "maxLength": 4096 },
+        "olderCursor": { "anyOf": [
+          { "type": "string", "minLength": 1, "maxLength": 4096 },
+          { "type": "null" }
+        ] },
+        "sealedCursor": { "type": "string", "minLength": 1, "maxLength": 4096 }
+      }
+    },
+    "task": {
+      "type": "object", "additionalProperties": false,
+      "required": ["organization_id", "agent_id", "owner_principal_id", "job_id", "trigger", "policy_revision", "review_prompt_version", "package_rules_version", "state"],
+      "properties": {
+        "organization_id": { "$ref": "../common/ids.schema.json#/$defs/organizationId" },
+        "agent_id": { "$ref": "../common/ids.schema.json#/$defs/agentId" },
+        "owner_principal_id": { "$ref": "../common/ids.schema.json#/$defs/userId" },
+        "job_id": { "$ref": "#/$defs/id" },
+        "trigger": { "enum": ["run_completed", "user_action"] },
+        "source_run_id": { "$ref": "#/$defs/id" },
+        "user_action_id": { "$ref": "#/$defs/id" },
+        "policy_revision": { "$ref": "#/$defs/revision" },
+        "review_prompt_version": { "type": "integer", "minimum": 1 },
+        "package_rules_version": { "const": 1 },
+        "state": { "enum": ["pending", "running", "paused", "completed", "cancelled", "failed", "skipped"] }
+      },
+      "allOf": [{
+        "if": { "properties": { "trigger": { "const": "run_completed" } }, "required": ["trigger"] },
+        "then": { "properties": { "source_run_id": { "$ref": "#/$defs/id" } },
+          "required": ["source_run_id"],
+          "not": { "properties": { "user_action_id": true }, "required": ["user_action_id"] } },
+        "else": { "properties": { "user_action_id": { "$ref": "#/$defs/id" } },
+          "required": ["user_action_id"] }
+      }]
+    },
+    "evidence": {
+      "type": "object", "additionalProperties": false,
+      "required": ["evidence_id", "source_run_id", "source_id", "kind", "scope"],
+      "properties": {
+        "evidence_id": { "$ref": "#/$defs/id" },
+        "source_run_id": { "$ref": "#/$defs/id" },
+        "source_id": { "$ref": "#/$defs/id" },
+        "kind": { "enum": ["authenticated_user", "observed_execution", "untrusted_material", "model_inference"] },
+        "scope": { "type": "string", "minLength": 1, "maxLength": 256 }
+      }
+    },
+    "candidate": {
+      "type": "object", "additionalProperties": false,
+      "required": ["candidate_id", "job_id", "package_path", "expected_base_digest", "target_digest", "artifact_digest", "package_rules_version", "state", "evidence_ids"],
+      "properties": {
+        "candidate_id": { "$ref": "#/$defs/id" },
+        "job_id": { "$ref": "#/$defs/id" },
+        "package_path": { "$ref": "#/$defs/package_path" },
+        "expected_base_digest": { "anyOf": [{ "$ref": "#/$defs/digest" }, { "type": "null" }] },
+        "target_digest": { "$ref": "#/$defs/digest" },
+        "artifact_digest": { "$ref": "#/$defs/digest" },
+        "package_rules_version": { "const": 1 },
+        "state": { "enum": ["draft", "check_failed", "ready_waiting_idle", "awaiting_confirmation", "applied", "rejected", "conflict"] },
+        "evidence_ids": { "type": "array", "minItems": 1, "maxItems": 64,
+          "uniqueItems": true, "items": { "$ref": "#/$defs/id" } }
+      }
+    },
+    "install_request": {
+      "type": "object", "additionalProperties": false,
+      "required": ["action", "request_id", "job_id", "generation", "package_path", "expected_base_digest", "target_digest", "artifact_digest", "package_rules_version"],
+      "properties": {
+        "action": { "const": "install" },
+        "request_id": { "$ref": "#/$defs/request_id" },
+        "job_id": { "$ref": "#/$defs/id" },
+        "generation": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 },
+        "package_path": { "$ref": "#/$defs/package_path" },
+        "expected_base_digest": { "anyOf": [{ "$ref": "#/$defs/digest" }, { "type": "null" }] },
+        "target_digest": { "$ref": "#/$defs/digest" },
+        "artifact_digest": { "$ref": "#/$defs/digest" },
+        "package_rules_version": { "const": 1 }
+      }
+    },
+    "digest_request": {
+      "type": "object", "additionalProperties": false,
+      "required": ["action", "request_id", "job_id", "generation", "package_path"],
+      "properties": {
+        "action": { "const": "digest" },
+        "request_id": { "$ref": "#/$defs/request_id" },
+        "job_id": { "$ref": "#/$defs/id" },
+        "generation": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 },
+        "package_path": { "$ref": "#/$defs/package_path" }
+      }
+    },
+    "maintenance_receipt": {
+      "type": "object", "additionalProperties": false,
+      "required": ["request_id", "action", "execution_id", "outcome", "observed_digest"],
+      "properties": {
+        "request_id": { "$ref": "#/$defs/request_id" },
+        "action": { "enum": ["install", "digest"] },
+        "execution_id": { "$ref": "#/$defs/id" },
+        "outcome": { "enum": ["applied", "conflict", "observed", "blocked", "preempted"] },
+        "observed_digest": { "anyOf": [{ "$ref": "#/$defs/digest" }, { "type": "null" }] },
+        "conflict_reason": { "enum": ["base_changed", "target_exists", "content_changed_during_activation"] },
+        "blocked_reason": { "enum": ["foreground_running", "managed_call_in_flight", "background_task_running", "writers_unknown"] },
+        "blocked_subject_id": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^(bash|managed|unknown):[A-Za-z0-9._-]+$" }
+      },
+      "allOf": [{
+        "if": { "properties": { "action": { "const": "install" } }, "required": ["action"] },
+        "then": { "properties": { "outcome": { "enum": ["applied", "conflict", "blocked", "preempted"] } } },
+        "else": { "properties": {
+          "outcome": { "enum": ["observed", "blocked", "preempted"] },
+          "blocked_reason": { "const": "foreground_running" }
+        } }
+      }, {
+        "if": { "properties": { "outcome": { "const": "applied" } }, "required": ["outcome"] },
+        "then": { "properties": { "observed_digest": { "$ref": "#/$defs/digest" } } }
+      }, {
+        "if": { "properties": { "outcome": { "enum": ["blocked", "preempted"] } }, "required": ["outcome"] },
+        "then": { "properties": { "observed_digest": { "type": "null" } } }
+      }, {
+        "if": { "properties": { "outcome": { "const": "conflict" } }, "required": ["outcome"] },
+        "then": { "properties": { "conflict_reason": true }, "required": ["conflict_reason"] },
+        "else": { "not": { "properties": { "conflict_reason": true }, "required": ["conflict_reason"] } }
+      }, {
+        "if": { "properties": { "outcome": { "const": "blocked" } }, "required": ["outcome"] },
+        "then": { "properties": { "blocked_reason": true }, "required": ["blocked_reason"] },
+        "else": { "not": { "properties": { "blocked_reason": true }, "required": ["blocked_reason"] } }
+      }, {
+        "if": { "properties": { "blocked_reason": { "enum": ["background_task_running", "managed_call_in_flight"] } }, "required": ["blocked_reason"] },
+        "then": { "properties": { "blocked_subject_id": true }, "required": ["blocked_subject_id"] }
+      }]
+    },
+    "runtime_verifiers": {
+      "type": "object", "additionalProperties": false,
+      "required": ["keys"],
+      "properties": { "keys": { "type": "array", "maxItems": 2, "uniqueItems": true,
+        "items": {
+          "type": "object", "additionalProperties": false,
+          "required": ["kid", "algorithm", "public_key_base64url"],
+          "properties": {
+            "kid": { "type": "string", "minLength": 1, "maxLength": 64,
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$" },
+            "algorithm": { "const": "Ed25519" },
+            "public_key_base64url": { "type": "string", "pattern": "^[A-Za-z0-9_-]{43}$" }
+          }
+        }
+      } }
+    }
+  }
+}

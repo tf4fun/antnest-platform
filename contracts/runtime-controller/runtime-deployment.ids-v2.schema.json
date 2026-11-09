@@ -1,0 +1,117 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.antnest.dev/runtime-controller/runtime-deployment.ids-v2.schema.json",
+  "title": "Antnest Runtime Configuration",
+  "description": "Caller-owned Runtime policy. Runtime Controller injects identity, internal generation, listener, filesystem, and platform mapping.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["image_ref", "network", "resources"],
+  "dependentRequired": {
+    "organization_id": [
+      "system_skills",
+      "prepared_skill_set",
+      "prepared_reference_id"
+    ],
+    "system_skills": [
+      "organization_id",
+      "prepared_skill_set",
+      "prepared_reference_id"
+    ],
+    "prepared_skill_set": [
+      "organization_id",
+      "system_skills",
+      "prepared_reference_id"
+    ],
+    "prepared_reference_id": [
+      "organization_id",
+      "system_skills",
+      "prepared_skill_set"
+    ]
+  },
+  "properties": {
+    "organization_id": {"$ref": "../common/ids.schema.json#/$defs/organizationId"},
+    "system_skills": {
+      "type": "array",
+      "maxItems": 32,
+      "items": {
+        "$ref": "../skill-registry/runtime-delivery.ids-v2.schema.json#/$defs/frozen_skill"
+      }
+    },
+    "prepared_skill_set": {
+      "$ref": "../skill-registry/runtime-delivery.ids-v2.schema.json#/$defs/prepared_skill_set"
+    },
+    "prepared_reference_id": {
+      "type": "string",
+      "pattern": "^psr_[0-9a-f]{32}$"
+    },
+    "managed_mcp_template": {
+      "$ref": "../runtime/managed-mcp.ids-v2.schema.json#/$defs/template_source"
+    },
+    "mcp_servers": {
+      "$ref": "../runtime/runtime-spec.ids-v2.schema.json#/properties/mcp_servers"
+    },
+    "image_ref": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 512,
+      "pattern": "^\\S+$",
+      "description": "Caller-selected repository tag or SHA256 manifest; subject to the operator allowlist before Docker inspection. New lifecycle operations freeze its installed immutable image ID and create from that ID. Bare image IDs and tag+digest combinations are denied."
+    },
+    "network": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "packet_contract_revision",
+        "egress_endpoint",
+        "tunnel_ipv4",
+        "resolver_ipv4"
+      ],
+      "properties": {
+        "packet_contract_revision": { "type": "integer", "const": 2 },
+        "egress_endpoint": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["ipv4", "port"],
+          "properties": {
+            "ipv4": { "type": "string", "format": "ipv4" },
+            "port": { "type": "integer", "minimum": 1, "maximum": 65535 }
+          }
+        },
+        "tunnel_ipv4": { "type": "string", "format": "ipv4" },
+        "resolver_ipv4": { "type": "string", "format": "ipv4" }
+      }
+    },
+    "resources": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["memory_bytes", "pids_limit", "tmpfs_bytes"],
+      "properties": {
+        "memory_bytes": {
+          "type": "integer",
+          "minimum": 134217728,
+          "maximum": 9223372036854775807
+        },
+        "pids_limit": { "type": "integer", "minimum": 16, "maximum": 32768 },
+        "tmpfs_bytes": {
+          "type": "integer",
+          "minimum": 16777216,
+          "maximum": 9223372036854775807
+        },
+        "cpu_millis": {
+          "type": "integer",
+          "minimum": 100,
+          "maximum": 16000,
+          "default": 1000,
+          "description": "Optional whole-CPU-thousandths limit; omission applies the default, explicit 0 or out-of-range is rejected (N-1 producers may omit it)."
+        },
+        "workspace_bytes": {
+          "type": "integer",
+          "minimum": 67108864,
+          "maximum": 1099511627776,
+          "default": 10737418240,
+          "description": "Optional persistent workspace byte bound; omission applies the default, explicit 0 or out-of-range is rejected (N-1 producers may omit it)."
+        }
+      }
+    }
+  }
+}
