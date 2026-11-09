@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { request as httpRequest } from "node:http";
 import { setImmediate as nextTurn } from "node:timers/promises";
 import { isDeepStrictEqual } from "node:util";
@@ -9,6 +10,10 @@ import type { AcpApplicationPort } from "../../src/ports/acp-application.js";
 import type { RuntimeBarrierReader, RuntimeBarrierState } from "../../src/ports/runtime-barrier.js";
 import { AgentAcpHttpServer } from "../../src/transport/http-server.js";
 import { testAuthentication, workloadHeaders } from "../support/auth-fixture.js";
+
+const resourceVectors = JSON.parse(
+  readFileSync(new URL("../../../../contracts/common/id-vectors.json", import.meta.url), "utf8"),
+) as Record<"organizationId" | "agentId", { accept: string[]; reject: string[] }>;
 
 const path = "/rpc/agent-acp/get-runtime-barrier";
 const canary = "private-runtime-barrier-query-canary";
@@ -220,13 +225,20 @@ describe("runtime barrier control HTTP boundary", () => {
   });
 
   it.each(["organization_id", "agent_id", "expected_runtime_revision"] as const)(
-    "enforces the unnormalized 1–200 non-whitespace character boundary for %s",
+    "enforces the exact resource or private revision boundary for %s",
     async (field) => {
       const read = vi.fn<RuntimeBarrierReader["readCurrentBarrier"]>((selected) =>
         Promise.resolve({ runtimeRevision: selected.expectedRuntimeRevision, barrier: null }),
       );
       const { control } = await start({ reader: { readCurrentBarrier: read } });
+      const publicVectors =
+        field === "organization_id"
+          ? resourceVectors.organizationId
+          : field === "agent_id"
+            ? resourceVectors.agentId
+            : undefined;
       for (const value of [
+        ...(publicVectors?.reject ?? []),
         null,
         true,
         1,
@@ -253,7 +265,13 @@ describe("runtime barrier control HTTP boundary", () => {
         );
       }
       expect(read).not.toHaveBeenCalled();
-      for (const value of ["a", "a".repeat(200), "organization/agent:1", "组织-1"]) {
+      const accepted = publicVectors?.accept ?? [
+        "a",
+        "a".repeat(200),
+        "organization/agent:1",
+        "组织-1",
+      ];
+      for (const value of accepted) {
         const request = { ...input, [field]: value };
         await expectPublicResponse(await post(control, JSON.stringify(request)), 200, {
           organization_id: request.organization_id,
@@ -269,7 +287,7 @@ describe("runtime barrier control HTTP boundary", () => {
           }),
         ).toBe(true);
       }
-      expect(read).toHaveBeenCalledTimes(4);
+      expect(read).toHaveBeenCalledTimes(accepted.length);
     },
   );
 
