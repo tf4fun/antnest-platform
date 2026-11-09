@@ -130,6 +130,76 @@ fn common_error_tool_result_outcome_unknown() {
 }
 
 #[test]
+fn tool_result_never_emits_internal_codes_to_models() {
+    let internal: Vec<_> = ToolErrorCode::ALL
+        .iter()
+        .copied()
+        .filter(|code| !code.is_model_facing())
+        .collect();
+    assert!(!internal.is_empty());
+    for code in internal {
+        for error in [
+            ToolError::new(code, "private-canary"),
+            ToolError::unknown(code, "private-canary"),
+            ToolError::settled(code, "private-canary"),
+        ] {
+            let effect_state = error.effect_state;
+            let result = tool_result::<serde_json::Value>(
+                "probe",
+                &identity(),
+                &RuntimeMetrics::default(),
+                Instant::now(),
+                Err(error),
+            );
+            assert_eq!(result.is_error, Some(true));
+            let content = result.structured_content.expect("structured content");
+            assert_eq!(
+                content["code"],
+                serde_json::json!("runtime_failed"),
+                "{code}"
+            );
+            assert_eq!(
+                content["error_code"],
+                serde_json::json!("runtime_failed"),
+                "{code}"
+            );
+            assert_eq!(content["effect_state"], serde_json::json!(effect_state));
+            assert_eq!(
+                content["details"]["effect_state"],
+                serde_json::json!(effect_state)
+            );
+            assert_eq!(
+                content["effect_source"].is_null(),
+                effect_state != ToolEffectState::Unknown
+            );
+            assert!(!content.to_string().contains(code.as_str()), "{code}");
+            assert!(!content.to_string().contains("private-canary"), "{code}");
+        }
+    }
+}
+
+#[test]
+fn tool_result_keeps_model_facing_codes() {
+    for code in ToolErrorCode::ALL
+        .iter()
+        .copied()
+        .filter(|code| code.is_model_facing())
+    {
+        let result = tool_result::<serde_json::Value>(
+            "probe",
+            &identity(),
+            &RuntimeMetrics::default(),
+            Instant::now(),
+            Err(ToolError::new(code, "public message")),
+        );
+        let content = result.structured_content.expect("structured content");
+        assert_eq!(content["error_code"], serde_json::json!(code.as_str()));
+        assert_eq!(content["code"], serde_json::json!(code.as_str()));
+        assert_eq!(content["message"], serde_json::json!("public message"));
+    }
+}
+
+#[test]
 fn common_error_reject_reserved_maintenance_tool() {
     let Err(error) = reject_reserved_maintenance_tool("antnest_skill_maintenance_x") else {
         panic!("reserved name must be rejected");

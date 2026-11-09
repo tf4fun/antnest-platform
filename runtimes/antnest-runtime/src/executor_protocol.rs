@@ -69,7 +69,7 @@ pub(crate) fn encode_info_reply(
 pub(crate) fn decode_info_reply(
     input: &[u8],
 ) -> Result<Result<RuntimeContext, ExecutorFailure>, serde_json::Error> {
-    decode_reply(input, std::convert::identity)
+    decode_model_reply(input, std::convert::identity)
 }
 
 pub(crate) fn encode_skill_install_request(
@@ -394,7 +394,7 @@ pub(crate) fn encode_bash_reply(
 pub(crate) fn decode_bash_reply(
     input: &[u8],
 ) -> Result<Result<execution::BashResult, ExecutorFailure>, serde_json::Error> {
-    decode_reply(input, |result: WireBashResult| execution::BashResult {
+    decode_model_reply(input, |result: WireBashResult| execution::BashResult {
         exit_code: result.exit_code,
         stdout: result.stdout,
         stderr: result.stderr,
@@ -420,7 +420,7 @@ pub(crate) fn encode_read_reply(
 pub(crate) fn decode_read_reply(
     input: &[u8],
 ) -> Result<Result<execution::ReadResult, ExecutorFailure>, serde_json::Error> {
-    decode_reply(input, |result: WireReadResult| execution::ReadResult {
+    decode_model_reply(input, |result: WireReadResult| execution::ReadResult {
         content: result.content,
         truncated: result.truncated,
         next_offset: result.next_offset,
@@ -444,7 +444,7 @@ pub(crate) fn encode_write_reply(
 pub(crate) fn decode_write_reply(
     input: &[u8],
 ) -> Result<Result<execution::WriteResult, ExecutorFailure>, serde_json::Error> {
-    decode_reply(input, |result: WireWriteResult| execution::WriteResult {
+    decode_model_reply(input, |result: WireWriteResult| execution::WriteResult {
         bytes_written: result.bytes_written,
         file: result.file.map(Into::into),
     })
@@ -466,7 +466,7 @@ pub(crate) fn encode_edit_reply(
 pub(crate) fn decode_edit_reply(
     input: &[u8],
 ) -> Result<Result<execution::EditResult, ExecutorFailure>, serde_json::Error> {
-    decode_reply(input, |result: WireEditResult| execution::EditResult {
+    decode_model_reply(input, |result: WireEditResult| execution::EditResult {
         bytes_written: result.bytes_written,
         file: result.file.map(Into::into),
     })
@@ -531,6 +531,22 @@ where
     }
 }
 
+fn decode_model_reply<T, O>(
+    input: &[u8],
+    convert: impl FnOnce(T) -> O,
+) -> Result<Result<O, ExecutorFailure>, serde_json::Error>
+where
+    T: DeserializeOwned,
+{
+    use serde::de::Error as _;
+    match decode_reply(input, convert)? {
+        Err(failure) if !failure.code.is_model_facing() => Err(serde_json::Error::custom(
+            "executor returned an internal error code for a model-facing tool",
+        )),
+        reply => Ok(reply),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use crate::execution::{
@@ -540,7 +556,8 @@ mod tests {
     use crate::tool_error::{ToolEffectState, ToolError, ToolErrorCode};
 
     use super::{
-        Outcome, decode_bash_request, decode_edit_request, decode_read_reply, decode_read_request,
+        Outcome, decode_bash_reply, decode_bash_request, decode_edit_reply, decode_edit_request,
+        decode_info_reply, decode_read_reply, decode_read_request, decode_skill_install_reply,
         decode_write_reply, decode_write_request, encode_bash_request, encode_edit_request,
         encode_read_reply, encode_read_request, encode_write_reply, encode_write_request,
     };
@@ -615,5 +632,32 @@ mod tests {
             decode_read_reply(&encoded).unwrap().unwrap().content,
             "hello"
         );
+    }
+
+    #[test]
+    fn model_tool_replies_reject_internal_error_codes() {
+        let internal: Vec<_> = ToolErrorCode::ALL
+            .iter()
+            .copied()
+            .filter(|code| !code.is_model_facing())
+            .collect();
+        assert!(!internal.is_empty());
+        for code in internal {
+            let reply = format!(
+                r#"{{"status":"failure","error":{{"code":"{code}","message":"bad","outcome":"known"}}}}"#
+            );
+            let reply = reply.as_bytes();
+            assert!(decode_bash_reply(reply).is_err(), "bash {code}");
+            assert!(decode_read_reply(reply).is_err(), "read {code}");
+            assert!(decode_write_reply(reply).is_err(), "write {code}");
+            assert!(decode_edit_reply(reply).is_err(), "edit {code}");
+            assert!(decode_info_reply(reply).is_err(), "info {code}");
+            assert!(
+                decode_skill_install_reply(reply).is_ok(),
+                "maintenance replies keep internal {code}"
+            );
+        }
+        let model = br#"{"status":"failure","error":{"code":"read_failed","message":"bad","outcome":"known"}}"#;
+        assert!(decode_read_reply(model).unwrap().is_err());
     }
 }

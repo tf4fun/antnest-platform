@@ -1956,14 +1956,29 @@ fn tool_result<T: Serialize>(
             }
         },
         Err(error) => {
+            let internal_code = error.code;
+            let code = internal_code.for_model();
+            let message = if code == internal_code {
+                error.message
+            } else {
+                tracing::error!(
+                    "service.name" = crate::telemetry::SERVICE_NAME,
+                    "antnest.agent.id" = identity.agent_id(),
+                    "antnest.runtime.generation" = %identity.generation(),
+                    trace_id = %trace_id,
+                    span_id = %span_id,
+                    tool = name,
+                    "antnest.error.code" = %internal_code,
+                    "Runtime tool returned an internal error code; replaced with runtime_failed"
+                );
+                diagnostics::safe_tool_message(code).to_owned()
+            };
             diagnostics::error_summary(
                 &tracing::Span::current(),
                 "mcp.tool",
-                error.code.as_str(),
-                diagnostics::safe_tool_message(error.code),
+                code.as_str(),
+                diagnostics::safe_tool_message(code),
             );
-            let code = error.code;
-            let message = error.message;
             let effect_state = error.effect_state;
             metrics.tool(name, "error", code.as_str(), started.elapsed());
             tracing::Span::current().record("mcp.tool.outcome", "error");
