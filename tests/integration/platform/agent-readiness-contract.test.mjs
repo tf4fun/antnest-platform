@@ -563,7 +563,7 @@ test("Console readiness projection rejects unknown and private fields", () => {
       );
 });
 
-test("Console contract 61 declares Controller current readiness without Runtime health inference", () => {
+test("Console contract 62 declares Controller current readiness without Runtime health inference", () => {
   const contract = read("admin-console/admin-contract.json");
   assert.equal(contract.version, 62);
   const policy = contract.response_policy.agent_readiness;
