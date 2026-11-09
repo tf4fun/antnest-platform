@@ -143,7 +143,8 @@ test("only a normally completed, opened, scoped SSE exports one non-error access
       assert.equal(Number(fields(span.attributes)["http.response.status_code"]), 200);
       assert.notEqual(span.status?.code, 2);
       assert.deepEqual(fields(events[0].attributes), { reason: "access_denied", source: "agent-execution-state",
-        "antnest.organization.id": "org-1", "antnest.principal.id": "user-1", "antnest.agent.id": "agent-1" });
+        "antnest.organization.id": "org-1", "antnest.principal.id": "user-1", "antnest.agent.id": "agent-1",
+        "antnest.organization_id": "org-1", "antnest.agent_id": "agent-1" });
       assert(BigInt(events[0].timeUnixNano) >= BigInt(span.startTimeUnixNano));
       assert(BigInt(events[0].timeUnixNano) <= BigInt(span.endTimeUnixNano));
     }
