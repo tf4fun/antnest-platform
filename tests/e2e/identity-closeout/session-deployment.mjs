@@ -221,7 +221,7 @@ export function sessionHarnessArguments(env, { evidence, checkpoints }) {
     "-v",
     `${root}/tests:/app/tests:ro`,
     "-v",
-    `${root}/contracts/agent-ui/workspace-api.schema.json:/app/contracts/agent-ui/workspace-api.schema.json:ro`,
+    `${root}/contracts/agent-ui/workspace-api.ids-v2.schema.json:/app/contracts/agent-ui/workspace-api.ids-v2.schema.json:ro`,
     "-v",
     `${root}/services/agent-ui/web/src/lib:/app/services/agent-ui/web/src/lib:ro`,
     "-v",

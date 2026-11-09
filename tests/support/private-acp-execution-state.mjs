@@ -1,11 +1,14 @@
 import assert from "node:assert/strict";
 import { Ajv2020 } from "ajv/dist/2020.js";
-import schema from "../../contracts/agent-acp/agent-execution-state.schema.json" with { type: "json" };
+import schema from "../../contracts/agent-acp/agent-execution-state.ids-v2.schema.json" with { type: "json" };
 import { serviceClient } from "./service-grants.mjs";
 import { PrivateACPExecutionStateUnavailableError } from "./private-acp-execution-state-error.mjs";
+import commonIDs from "../../contracts/common/ids.schema.json" with { type: "json" };
 
 const path = "/rpc/agent-acp/get-agent-execution-state";
-const validateState = new Ajv2020({ strict: false }).compile(schema);
+const __idsAjv = new Ajv2020({ strict: false });
+__idsAjv.addSchema(commonIDs);
+const validateState = __idsAjv.compile(schema);
 const startupUnavailable = {
   category: "unavailable",
   code: "execution_state_unavailable",

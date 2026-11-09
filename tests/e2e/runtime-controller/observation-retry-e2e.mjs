@@ -15,6 +15,7 @@ import {
 import { runCommand } from "../../support/run-command.mjs";
 import { candidateCommand } from "../../support/candidate-images.mjs";
 import { writeEvidenceFile } from "../../support/storage.mjs";
+import commonIDs from "../../../contracts/common/ids.schema.json" with { type: "json" };
 
 const requireAcp = createRequire(
   new URL("../../../services/agent-acp-service/package.json", import.meta.url),
@@ -23,14 +24,14 @@ const { Ajv2020 } = requireAcp("ajv/dist/2020.js");
 const api = JSON.parse(
   readFileSync(
     new URL(
-      "../../../contracts/runtime-controller/control-api.schema.json",
+      "../../../contracts/runtime-controller/control-api.ids-v2.schema.json",
       import.meta.url,
     ),
   ),
 );
-const validateStatus = new Ajv2020({ strict: true }).compile(
-  api.$defs.readiness,
-);
+const __idsAjv = new Ajv2020({ strict: true });
+__idsAjv.addSchema(commonIDs);
+const validateStatus = __idsAjv.compile(api.$defs.readiness);
 
 const { values } = parseArgs({
   options: {

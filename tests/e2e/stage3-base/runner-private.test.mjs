@@ -76,7 +76,7 @@ else if(!entry.endsWith('/storage.mjs')&&!entry.endsWith('/deployment.mjs')) thr
         project + "_edge",
         "/auth/agent-ui/tokens/agent-acp-service:/run/auth/agent-ui-acp:ro",
         root.replace(/\/$/, "") +
-          "/contracts/agent-acp/agent-execution-state.schema.json:/app/contracts/agent-acp/agent-execution-state.schema.json:ro",
+          "/contracts/agent-acp/agent-execution-state.ids-v2.schema.json:/app/contracts/agent-acp/agent-execution-state.ids-v2.schema.json:ro",
         evidence + ":/evidence",
       ])
         assert(client.includes(value), value);

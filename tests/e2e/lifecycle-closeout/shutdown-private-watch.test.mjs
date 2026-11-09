@@ -107,7 +107,7 @@ async function fixture(t, options = {}) {
       const text =
         options.body ??
         frame("workspace_state", {
-          ...state,
+          ...(options.state ?? state),
           agent_id: options.agentId ?? "agent",
         });
       if (options.fragment) {
@@ -169,7 +169,17 @@ async function fixture(t, options = {}) {
   };
 }
 test("Shutdown private state uses the original login, full split UTF-8 frames and an actual CLIENT across the 12-second request budget", async (t) => {
-  const f = await fixture(t, { agentId: "agent-雪", fragment: true });
+  const observedState = {
+    ...state,
+    agent_id: "Agent.Snow_1",
+    availability: "busy",
+    active_session_id: "session-雪",
+  };
+  const f = await fixture(t, {
+    agentId: observedState.agent_id,
+    state: observedState,
+    fragment: true,
+  });
   const watch = await f.open();
   await watch.ready();
   watch.assertOpen();
@@ -188,14 +198,14 @@ test("Shutdown private state uses the original login, full split UTF-8 frames an
   const snapshot = await watch.closeAndWait();
   assert.equal(watch.closure, closure);
   assert.equal(snapshot.joined, true);
-  assert.deepEqual(snapshot.events, [{ ...state, agent_id: "agent-雪" }]);
+  assert.deepEqual(snapshot.events, [observedState]);
   assert.deepEqual(snapshot.terminal_events, [terminal]);
   assert.equal(snapshot.status, 200);
   assert.equal(snapshot.body_outcome, "eof");
   assert(
     Buffer.from(snapshot.raw_body_base64, "base64")
       .toString()
-      .includes("agent-雪"),
+      .includes("session-雪"),
   );
   await f.telemetry.flush();
   const spans = f.exports

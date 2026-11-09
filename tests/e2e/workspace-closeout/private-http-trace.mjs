@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 import { isDeepStrictEqual } from "node:util";
-import schema from "../../../contracts/agent-acp/agent-execution-state.schema.json" with { type: "json" };
+import schema from "../../../contracts/agent-acp/agent-execution-state.ids-v2.schema.json" with { type: "json" };
 import { assertWorkspaceWatchReceipt } from "./private-watch.mjs";
 import { assertSecretFree } from "../identity-closeout/evidence.mjs";
 import { assertSessionSuccess } from "../identity-closeout/session-diagnostics.mjs";
@@ -15,6 +15,7 @@ import {
   assertPrivateACPApplicationJoined,
 } from "../observability/private-acp-diagnostics.mjs";
 import { privateACPDiagnosticInventory } from "../observability/private-acp-inventory.mjs";
+import commonIDs from "../../../contracts/common/ids.schema.json" with { type: "json" };
 import {
   values,
   end,
@@ -30,7 +31,9 @@ const require = createRequire(
   new URL("../../../services/agent-acp-service/package.json", import.meta.url),
 );
 const { Ajv2020 } = require("ajv/dist/2020.js");
-const validateState = new Ajv2020({ strict: false }).compile(schema);
+const __idsAjv = new Ajv2020({ strict: false });
+__idsAjv.addSchema(commonIDs);
+const validateState = __idsAjv.compile(schema);
 const normalize = (text) => text.replace(/\s+/gu, " ").trim();
 const protection = normalize(`SELECT EXISTS (
   SELECT 1 FROM tool_attempts AS attempt

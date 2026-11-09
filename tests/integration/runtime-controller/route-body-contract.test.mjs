@@ -19,8 +19,8 @@ const callers = JSON.parse(
 );
 const schemaDocs = new Map();
 for (const name of [
-  "control-api.schema.json",
-  "runtime-deployment.schema.json",
+  "control-api.ids-v2.schema.json",
+  "runtime-deployment.ids-v2.schema.json",
 ])
   schemaDocs.set(name, JSON.parse(readFileSync(new URL(name, rcDir), "utf8")));
 

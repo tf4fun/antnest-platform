@@ -22,6 +22,11 @@ Issue 状态最后核对于 2026-10-28：141 个 issue，87 个已关闭，54 �
 
 ## 当前批次
 
+- **#16 最终集成 PR [#603](https://github.com/tf4fun/antnest-platform/pull/603) 已创建（依赖 #602，源码交付完成）**：共享基础及各服务 PR #592–#602 均已提交；集成实现 `80d078b4` 与 Controller 补漏 `4b2c0c48` 已通过普通合并同步至最终分支，未重写历史。合并候选 `ac0899d1` 的定向契约 96/96、Controller 恢复客户端用例、210-document conventions、N-1 零违规及 81 个 MJS/shell 语法检查通过；30 个同步测试／辅助文件补齐机械格式，变更根测试格式检查通过，不重复完整本地 CI。证据保留于 `artifacts/verification/issue-16-integration/final-*.log`；旧 RED／中间失败日志不作为最终准入。完整 unit／contract／component／Integration 仍以精确候选远程 CI 为准，未等待或宣称通过。按用户要求交付后停止查询／轮询 CI，由用户通知结果；不合并或关闭 #16/#83。Docker E2E 由专门流程负责，本批未执行、不计通过；原有 `artifacts/recovery/` 保持原样。
+- **#16 显式集成已审查（分支 `fix/issue-16-integration`，依赖 Agent UI PR #602）**：共享契约及逐服务 PR #592–#602 已创建；同步全部现役 schema/catalog、golden、服务消费测试、认证依赖替身、浏览器辅助模块和系统客户端只读 schema 挂载。修正 4 份 ids-v2 schema 的 12 个陈旧跨服务引用；旧 schema、4 个 N-1 golden、历史 proposal 及私有 SDK/session/barrier/execution/Policy ID 语义保留，无有意延期的公共 ID 消费者。新增跨 schema 引用守卫先 RED，并对发现的全部 shared-reference 节点执行 accept/reject／非字符串向量；producer-backed directory doubles 与私有 state reader 快速替身检查通过。根契约初跑 614 项发现 27 个陈旧绑定／fixture，定向回归后最后 3 个失败文件 80/80 GREEN；不累加重叠运行，不外推完整 CI。210-document conventions、74 个变更 MJS 与 6 个 shell 的语法检查通过；shell 仅解析，未执行 Docker。最小临时日志位于 `artifacts/verification/issue-16-integration/`。完整服务 unit／contract／component／Integration 准入由精确候选远程 CI 负责；PR 交付后停止查询，由用户通知结果，不合并或关闭 #16/#83。
+
+- **#16 Controller 客户端补漏已交付 PR #598（`4b2c0c48`）**：集成审查发现 `RuntimeBarrierQuery.Validate` 将公共 Organization／Agent 与私有恢复身份共用 Unicode 规则。真实客户端向量先 RED：每种公共 ID 有 11 个非法值达到 HTTP；改用既有共享 ASCII 校验器后，原样发送合法 opaque 引用、非法 scope 在 HTTP 前拒绝。Runtime revision、barrier、execution 的 Unicode/codepoint/NUL 语义不变。定向 `internal/acpclient`／`internal/ports` 的 RuntimeBarrier／ResourceID 检查与 Go 格式通过；日志 `artifacts/verification/issue-16-controller-followup/`，完整远程准入尚未等待或查询。
+
 - **#16 Agent UI 审查完成**：真实 Agent 路由、learning status、两种 bootstrap 映射先 RED；定向初跑 124/125 通过，修正旧正例中的非法公共 Agent 后 navigation 4/4 通过（原私有 Session 特殊字符保留并增加非法 Agent 负例）。前后端类型检查、服务端构建与 210-document conventions clean。Runtime 已交付 PR #601（`98426974`）。全部服务候选已写完，下一步仅显式集成同步消费者；没有等待或外推远程 CI。
 
 - **#16 Runtime 审查完成**：真实 parser 的 201 字符错误接受先 RED，修正后 shared vectors／generation 边界 4/4、MCP 契约 7/7、HTTP 路由组件 4/4 GREEN，Rust 格式与 209-document conventions clean。Gateway 已交付 PR #600（`8b88b371`）。Runtime packet／instance-authentication 版本不变，根目录消费者同步与远程准入尚未完成。

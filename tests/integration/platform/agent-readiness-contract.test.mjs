@@ -421,7 +421,7 @@ test("ACP preparing preserves all legacy execution availability and denial shape
 
 test("Workspace preparing is an optional offline reason with no active Session", () => {
   const validate = consumerReadinessValidator(
-    "agent-ui/workspace-api.schema.json",
+    "agent-ui/workspace-api.ids-v2.schema.json",
     "agentView",
   );
   const value = {
@@ -437,7 +437,7 @@ test("Workspace preparing is an optional offline reason with no active Session",
 
 test("Workspace preparing cannot accompany ready, busy, active Session or private fields", () => {
   const validate = consumerReadinessValidator(
-    "agent-ui/workspace-api.schema.json",
+    "agent-ui/workspace-api.ids-v2.schema.json",
     "agentView",
   );
   const original = {
@@ -481,7 +481,7 @@ test("Workspace preparing cannot accompany ready, busy, active Session or privat
 
 test("legacy AgentViews omit preparing without receiving a default", () => {
   const validate = consumerReadinessValidator(
-    "agent-ui/workspace-api.schema.json",
+    "agent-ui/workspace-api.ids-v2.schema.json",
     "agentView",
     true,
   );

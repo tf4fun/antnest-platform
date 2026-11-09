@@ -10,7 +10,7 @@ const require = createRequire(
 );
 const { Ajv2020 } = require("ajv/dist/2020.js");
 const read = (path) => JSON.parse(readFileSync(new URL(path, root), "utf8"));
-const schema = read("contracts/agent-acp/owner-peer.schema.json");
+const schema = read("contracts/agent-acp/owner-peer.ids-v2.schema.json");
 const manifest = read("contracts/agent-acp/owner-peer-contract.json");
 const ajv = withCommonErrorSchema(
   new Ajv2020({ strict: true, allErrors: true }),

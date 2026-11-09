@@ -13,6 +13,7 @@ import {
 import { GatewayClient } from "../identity-closeout/support.mjs";
 import { member, setup, until } from "../workspace-closeout/c4-setup.mjs";
 import { verifyControlsBrowser } from "./workspace-controls-browser.mjs";
+import commonIDs from "../../../contracts/common/ids.schema.json" with { type: "json" };
 
 const root = fileURLToPath(new URL("../../../", import.meta.url));
 const fromAcp = createRequire(
@@ -22,17 +23,18 @@ const { Ajv2020 } = fromAcp("ajv/dist/2020.js");
 const schema = JSON.parse(
   await readFile(
     new URL(
-      "../../../contracts/agent-ui/workspace-api.schema.json",
+      "../../../contracts/agent-ui/workspace-api.ids-v2.schema.json",
       import.meta.url,
     ),
     "utf8",
   ),
 );
-const validate = new Ajv2020({ strict: true, validateFormats: false }).compile({
-  $schema: schema.$schema,
-  $defs: schema.$defs,
-  $ref: "#/$defs/controlCommandResult",
-});
+const __idsAjv = new Ajv2020({ strict: true, validateFormats: false });
+__idsAjv.addSchema(commonIDs);
+__idsAjv.addSchema(schema);
+const validate = __idsAjv.getSchema(
+  schema.$id + "#/$defs/controlCommandResult",
+);
 
 // Backend-only acceptance: real Gateway authentication/CSRF, Node Bridge,
 // ACP/Postgres and Runtime, with a deterministic model endpoint. Set

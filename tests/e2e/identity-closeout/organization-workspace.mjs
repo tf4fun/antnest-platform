@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { workspaceFromBridgeBootstrap } from "../../../services/agent-ui/web/src/lib/bootstrap.ts";
 import { assertSecretFree } from "./evidence.mjs";
+import commonIDs from "../../../contracts/common/ids.schema.json" with { type: "json" };
 
 const requireAcp = createRequire(
   new URL("../../../services/agent-acp-service/package.json", import.meta.url),
@@ -11,20 +12,19 @@ const { Ajv2020 } = requireAcp("ajv/dist/2020.js");
 const schema = JSON.parse(
   readFileSync(
     new URL(
-      "../../../contracts/agent-ui/workspace-api.schema.json",
+      "../../../contracts/agent-ui/workspace-api.ids-v2.schema.json",
       import.meta.url,
     ),
     "utf8",
   ),
 );
-const validBootstrap = new Ajv2020({
+const __idsAjv = new Ajv2020({
   strict: true,
   validateFormats: false,
-}).compile({
-  $schema: schema.$schema,
-  $defs: schema.$defs,
-  $ref: "#/$defs/bootstrap",
 });
+__idsAjv.addSchema(commonIDs);
+__idsAjv.addSchema(schema);
+const validBootstrap = __idsAjv.getSchema(schema.$id + "#/$defs/bootstrap");
 
 // Validate the actual wire value, then hand that same value to the production
 // frontend decoder. Expected display values come from the Identity row oracle.

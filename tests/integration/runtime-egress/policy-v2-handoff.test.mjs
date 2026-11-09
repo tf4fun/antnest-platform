@@ -22,7 +22,7 @@ const egressSchema = JSON.parse(
 const controllerSchema = JSON.parse(
   readFileSync(
     new URL(
-      "../../../contracts/agent-controller/control-api.schema.json",
+      "../../../contracts/agent-controller/control-api.ids-v2.schema.json",
       import.meta.url,
     ),
     "utf8",

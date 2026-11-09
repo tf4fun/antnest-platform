@@ -1,15 +1,18 @@
+import { withCommonErrorSchema } from "../../support/common-error-schema.mjs";
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
-import schema from "../../../contracts/agent-acp/agent-execution-state.schema.json" with { type: "json" };
+import schema from "../../../contracts/agent-acp/agent-execution-state.ids-v2.schema.json" with { type: "json" };
 import { inspectLossBusinessEvidence } from "./loss-business.mjs";
 import { lossPrivateAdmission } from "./loss-private-evidence.mjs";
 import { assertReplacement } from "./loss-evidence.mjs";
 const require = createRequire(
   new URL("../../../services/agent-acp-service/package.json", import.meta.url),
 );
-const validateState = new (require("ajv/dist/2020.js").Ajv2020)({
-  strict: false,
-}).compile(schema);
+const validateState = withCommonErrorSchema(
+  new (require("ajv/dist/2020.js").Ajv2020)({
+    strict: false,
+  }),
+).compile(schema);
 const nonempty = (value) => assert(typeof value === "string" && value.trim());
 
 export async function admitLossBusiness(result, { traceDiagnostics }) {

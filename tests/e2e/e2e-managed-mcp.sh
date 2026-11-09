@@ -63,8 +63,9 @@ docker_cmd create --name "$client" $service_hosts --label "com.docker.compose.pr
   -e TEST_EVIDENCE_DIRECTORY=/evidence -e "COMPOSE_PROJECT_NAME=$COMPOSE_PROJECT_NAME" \
   -v "$evidence:/evidence" \
   -v "$root/tests:/app/tests:ro" \
-  -v "$root/contracts/agent-acp/agent-execution-state.schema.json:/app/contracts/agent-acp/agent-execution-state.schema.json:ro" \
-  -v "$root/contracts/agent-ui/workspace-api.schema.json:/app/contracts/agent-ui/workspace-api.schema.json:ro" \
+  -v "$root/contracts/agent-acp/agent-execution-state.ids-v2.schema.json:/app/contracts/agent-acp/agent-execution-state.ids-v2.schema.json:ro" \
+  -v "$root/contracts/common/ids.schema.json:/app/contracts/common/ids.schema.json:ro" \
+  -v "$root/contracts/agent-ui/workspace-api.ids-v2.schema.json:/app/contracts/agent-ui/workspace-api.ids-v2.schema.json:ro" \
   -v "$root/services/agent-ui/web/src/lib:/app/services/agent-ui/web/src/lib:ro" \
   -v "$root/services/agent-ui/web/server/src/protocol:/app/services/agent-ui/web/server/src/protocol:ro" \
   -v "$root/services/agent-ui/web/server/src/errors.gen.ts:/app/services/agent-ui/web/server/src/errors.gen.ts:ro" \

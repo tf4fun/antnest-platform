@@ -510,7 +510,7 @@ test("Bridge load measures cold sequential HTTP responses using the owning sessi
   const { admission, configuration } = policy();
   const bridge = contract("agent-ui/workspace-api.json");
   const route = bridge.routes.sessions;
-  const schema = contract("agent-ui/workspace-api.schema.json");
+  const schema = contract("agent-ui/workspace-api.ids-v2.schema.json");
   assert.deepEqual(admission.load_request, {
     method: route.method,
     path: bridge.base_path + route.path,

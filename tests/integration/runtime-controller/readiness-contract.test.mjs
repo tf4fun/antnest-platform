@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { test } from "node:test";
+import commonIDs from "../../../contracts/common/ids.schema.json" with { type: "json" };
 
 const requireAcp = createRequire(
   new URL("../../../services/agent-acp-service/package.json", import.meta.url),
@@ -10,7 +11,7 @@ const { Ajv2020 } = requireAcp("ajv/dist/2020.js");
 const api = JSON.parse(
   readFileSync(
     new URL(
-      "../../../contracts/runtime-controller/control-api.schema.json",
+      "../../../contracts/runtime-controller/control-api.ids-v2.schema.json",
       import.meta.url,
     ),
   ),
@@ -23,7 +24,10 @@ const contract = JSON.parse(
     ),
   ),
 );
-const validate = new Ajv2020({ strict: true }).compile(api.$defs.readiness);
+const __idsAjv = new Ajv2020({ strict: true });
+__idsAjv.addSchema(commonIDs);
+const validate = __idsAjv.compile(api.$defs.readiness);
+
 const ready = {
   status: "ready",
   live: true,

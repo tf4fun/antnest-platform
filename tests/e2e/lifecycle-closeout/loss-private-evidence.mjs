@@ -1,7 +1,8 @@
+import { withCommonErrorSchema } from "../../support/common-error-schema.mjs";
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 import { checkPrivateACPConnection } from "../../support/private-acp-recorder.mjs";
-import schema from "../../../contracts/agent-acp/agent-execution-state.schema.json" with { type: "json" };
+import schema from "../../../contracts/agent-acp/agent-execution-state.ids-v2.schema.json" with { type: "json" };
 import { assertLossOwner } from "./loss-private-session.mjs";
 import { assertReplacement } from "./loss-evidence.mjs";
 import { assertRestoreRun } from "./restore-evidence.mjs";
@@ -35,9 +36,11 @@ export function lossPublicResult(result) {
 }
 
 export function lossPrivateAdmission(result) {
-  validateState ??= new (require("ajv/dist/2020.js").Ajv2020)({
-    strict: false,
-  }).compile(schema);
+  validateState ??= withCommonErrorSchema(
+    new (require("ajv/dist/2020.js").Ajv2020)({
+      strict: false,
+    }),
+  ).compile(schema);
   assert.equal(result.profile, "runtime-loss");
   for (const [field, count] of Object.entries({
     operations: 6,
