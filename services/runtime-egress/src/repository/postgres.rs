@@ -1463,7 +1463,7 @@ fn i64_to_u32(value: i64) -> Result<u32, RepositoryError> {
 fn u64_to_i64(value: u64) -> Result<i64, RepositoryError> {
     value
         .try_into()
-        .map_err(|_| operation_failed("value exceeds PostgreSQL bigint"))
+        .map_err(|_| RepositoryError::InvariantViolated("value exceeds PostgreSQL bigint"))
 }
 
 fn duration_seconds_i64(value: std::time::Duration) -> Result<i64, RepositoryError> {
@@ -1601,7 +1601,9 @@ mod tests {
         time::Duration,
     };
 
-    use super::{ConnectionHealth, ConnectionRegistration, database_config, retry_connection};
+    use super::{
+        ConnectionHealth, ConnectionRegistration, database_config, retry_connection, u64_to_i64,
+    };
     use crate::repository::{DatabaseTlsMode, RepositoryError};
 
     #[test]
@@ -1694,6 +1696,24 @@ mod tests {
             Err(RepositoryError::Unavailable("invalid schema".to_owned()))
         );
         assert_eq!(attempts.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn stored_version_u64_to_i64_bounds() {
+        assert_eq!(u64_to_i64(1).unwrap(), 1);
+        assert_eq!(u64_to_i64(i64::MAX as u64).unwrap(), i64::MAX);
+        for rejected in [i64::MAX as u64 + 1, u64::MAX] {
+            let error = u64_to_i64(rejected).expect_err("value above bigint range");
+            assert!(
+                matches!(error, RepositoryError::InvariantViolated(_)),
+                "{rejected}"
+            );
+            assert_eq!(
+                error.to_string(),
+                "repository invariant violated; raw detail omitted",
+                "{rejected}"
+            );
+        }
     }
 }
 

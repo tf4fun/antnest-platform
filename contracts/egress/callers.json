@@ -108,7 +108,7 @@
   },
   "guarded_sources": {
     "services/runtime-egress/src/control.rs": {
-      "sha256": "38ba07b12039cc8e46c4c8e9e823a84579d9de9987b0a014ff2ec67285d5f16f",
+      "sha256": "8538b0f8f42103c413da7f5d8e82e8cc5b8d3a4731a7184115a62950c6d18e32",
       "routes": [
         "PUT /internal/agent-tunnel-keys/{agent_id}",
         "GET /status",

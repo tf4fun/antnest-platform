@@ -1575,7 +1575,25 @@
     "remove_after": "next_release"
   },
   {
+    "file": "egress/attachment-state-body.stored-v2.schema.json",
+    "pointer": "/not/required/1",
+    "field": "expected_resource_version",
+    "replacement": "expected_version",
+    "kind": "deprecated_alias",
+    "reason": "Egress accepts only as a one-release input alias for expected_version; rejects multiple forms.",
+    "remove_after": "next_release"
+  },
+  {
     "file": "egress/attachment-state-body.schema.json",
+    "pointer": "/properties/expected_resource_version",
+    "field": "expected_resource_version",
+    "replacement": "expected_version",
+    "kind": "deprecated_alias",
+    "reason": "Egress accepts only as a one-release input alias for expected_version; rejects multiple forms.",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "egress/attachment-state-body.stored-v2.schema.json",
     "pointer": "/properties/expected_resource_version",
     "field": "expected_resource_version",
     "replacement": "expected_version",
@@ -1593,7 +1611,25 @@
     "remove_after": "next_release"
   },
   {
+    "file": "egress/attachment-state-request.stored-v2.schema.json",
+    "pointer": "/allOf/1/oneOf/0/not/properties/expected_resource_version",
+    "field": "expected_resource_version",
+    "replacement": "expected_version",
+    "reason": "Egress accepts only as a one-release input alias for expected_version; rejects multiple forms.",
+    "kind": "deprecated_alias",
+    "remove_after": "next_release"
+  },
+  {
     "file": "egress/attachment-state-request.schema.json",
+    "pointer": "/allOf/1/oneOf/0/not/required/0",
+    "field": "expected_resource_version",
+    "replacement": "expected_version",
+    "reason": "Egress accepts only as a one-release input alias for expected_version; rejects multiple forms.",
+    "kind": "deprecated_alias",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "egress/attachment-state-request.stored-v2.schema.json",
     "pointer": "/allOf/1/oneOf/0/not/required/0",
     "field": "expected_resource_version",
     "replacement": "expected_version",
@@ -1611,6 +1647,15 @@
     "remove_after": "next_release"
   },
   {
+    "file": "egress/attachment-state-request.stored-v2.schema.json",
+    "pointer": "/allOf/1/oneOf/1/properties/expected_resource_version",
+    "field": "expected_resource_version",
+    "replacement": "expected_version",
+    "reason": "Egress accepts only as a one-release input alias for expected_version; rejects multiple forms.",
+    "kind": "deprecated_alias",
+    "remove_after": "next_release"
+  },
+  {
     "file": "egress/attachment-state-request.schema.json",
     "pointer": "/allOf/1/oneOf/1/required/0",
     "field": "expected_resource_version",
@@ -1620,7 +1665,25 @@
     "remove_after": "next_release"
   },
   {
+    "file": "egress/attachment-state-request.stored-v2.schema.json",
+    "pointer": "/allOf/1/oneOf/1/required/0",
+    "field": "expected_resource_version",
+    "replacement": "expected_version",
+    "reason": "Egress accepts only as a one-release input alias for expected_version; rejects multiple forms.",
+    "kind": "deprecated_alias",
+    "remove_after": "next_release"
+  },
+  {
     "file": "egress/attachment-state-request.schema.json",
+    "pointer": "/properties/expected_resource_version",
+    "field": "expected_resource_version",
+    "replacement": "expected_version",
+    "kind": "deprecated_alias",
+    "reason": "Egress accepts only as a one-release input alias for expected_version; rejects multiple forms.",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "egress/attachment-state-request.stored-v2.schema.json",
     "pointer": "/properties/expected_resource_version",
     "field": "expected_resource_version",
     "replacement": "expected_version",
@@ -1656,7 +1719,25 @@
     "remove_after": "next_release"
   },
   {
+    "file": "egress/policy-assignment-request.stored-v2.schema.json",
+    "pointer": "/not/required/1",
+    "field": "expected_resource_version",
+    "replacement": "expected_version",
+    "kind": "deprecated_alias",
+    "reason": "Egress accepts only as a one-release input alias for expected_version; rejects multiple forms.",
+    "remove_after": "next_release"
+  },
+  {
     "file": "egress/policy-assignment-request.schema.json",
+    "pointer": "/properties/expected_resource_version",
+    "field": "expected_resource_version",
+    "replacement": "expected_version",
+    "kind": "deprecated_alias",
+    "reason": "Egress accepts only as a one-release input alias for expected_version; rejects multiple forms.",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "egress/policy-assignment-request.stored-v2.schema.json",
     "pointer": "/properties/expected_resource_version",
     "field": "expected_resource_version",
     "replacement": "expected_version",
@@ -1674,7 +1755,25 @@
     "remove_after": "next_release"
   },
   {
+    "file": "egress/resource-version-body.stored-v2.schema.json",
+    "pointer": "/not/required/1",
+    "field": "expected_resource_version",
+    "replacement": "expected_version",
+    "kind": "deprecated_alias",
+    "reason": "Egress accepts only as a one-release input alias for expected_version; rejects multiple forms.",
+    "remove_after": "next_release"
+  },
+  {
     "file": "egress/resource-version-body.schema.json",
+    "pointer": "/properties/expected_resource_version",
+    "field": "expected_resource_version",
+    "replacement": "expected_version",
+    "kind": "deprecated_alias",
+    "reason": "Egress accepts only as a one-release input alias for expected_version; rejects multiple forms.",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "egress/resource-version-body.stored-v2.schema.json",
     "pointer": "/properties/expected_resource_version",
     "field": "expected_resource_version",
     "replacement": "expected_version",
@@ -1692,7 +1791,25 @@
     "remove_after": "next_release"
   },
   {
+    "file": "egress/resource-version-request.stored-v2.schema.json",
+    "pointer": "/allOf/0/oneOf/0/not/properties/expected_resource_version",
+    "field": "expected_resource_version",
+    "replacement": "expected_version",
+    "reason": "Egress accepts only as a one-release input alias for expected_version; rejects multiple forms.",
+    "kind": "deprecated_alias",
+    "remove_after": "next_release"
+  },
+  {
     "file": "egress/resource-version-request.schema.json",
+    "pointer": "/allOf/0/oneOf/0/not/required/0",
+    "field": "expected_resource_version",
+    "replacement": "expected_version",
+    "reason": "Egress accepts only as a one-release input alias for expected_version; rejects multiple forms.",
+    "kind": "deprecated_alias",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "egress/resource-version-request.stored-v2.schema.json",
     "pointer": "/allOf/0/oneOf/0/not/required/0",
     "field": "expected_resource_version",
     "replacement": "expected_version",
@@ -1710,6 +1827,15 @@
     "remove_after": "next_release"
   },
   {
+    "file": "egress/resource-version-request.stored-v2.schema.json",
+    "pointer": "/allOf/0/oneOf/1/properties/expected_resource_version",
+    "field": "expected_resource_version",
+    "replacement": "expected_version",
+    "reason": "Egress accepts only as a one-release input alias for expected_version; rejects multiple forms.",
+    "kind": "deprecated_alias",
+    "remove_after": "next_release"
+  },
+  {
     "file": "egress/resource-version-request.schema.json",
     "pointer": "/allOf/0/oneOf/1/required/0",
     "field": "expected_resource_version",
@@ -1719,7 +1845,25 @@
     "remove_after": "next_release"
   },
   {
+    "file": "egress/resource-version-request.stored-v2.schema.json",
+    "pointer": "/allOf/0/oneOf/1/required/0",
+    "field": "expected_resource_version",
+    "replacement": "expected_version",
+    "reason": "Egress accepts only as a one-release input alias for expected_version; rejects multiple forms.",
+    "kind": "deprecated_alias",
+    "remove_after": "next_release"
+  },
+  {
     "file": "egress/resource-version-request.schema.json",
+    "pointer": "/properties/expected_resource_version",
+    "field": "expected_resource_version",
+    "replacement": "expected_version",
+    "kind": "deprecated_alias",
+    "reason": "Egress accepts only as a one-release input alias for expected_version; rejects multiple forms.",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "egress/resource-version-request.stored-v2.schema.json",
     "pointer": "/properties/expected_resource_version",
     "field": "expected_resource_version",
     "replacement": "expected_version",

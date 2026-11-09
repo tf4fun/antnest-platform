@@ -513,7 +513,7 @@ async fn if_match_bodies_validate_against_the_body_schemas() {
         false,
     );
     let body = serde_json::json!({"state": "closed"});
-    assert_valid("attachment-state-body.schema.json", &body);
+    assert_valid("attachment-state-body.stored-v2.schema.json", &body);
     let request = |tag: Option<&str>, body: &serde_json::Value| {
         let mut builder = Request::put(format!("/internal/agent-network-attachments/{agent}"))
             .header("content-type", "application/json")
@@ -532,7 +532,7 @@ async fn if_match_bodies_validate_against_the_body_schemas() {
     let response = app.clone().oneshot(request(None, &body)).await.unwrap();
     assert_eq!(response.status(), StatusCode::BAD_REQUEST);
     let both = serde_json::json!({"state": "closed", "expected_version": "2"});
-    assert_valid("attachment-state-body.schema.json", &both);
+    assert_valid("attachment-state-body.stored-v2.schema.json", &both);
     let response = app
         .clone()
         .oneshot(request(Some("\"2\""), &both))
@@ -541,7 +541,7 @@ async fn if_match_bodies_validate_against_the_body_schemas() {
     assert_eq!(response.status(), StatusCode::BAD_REQUEST);
 
     let release_body = serde_json::json!({});
-    assert_valid("resource-version-body.schema.json", &release_body);
+    assert_valid("resource-version-body.stored-v2.schema.json", &release_body);
     let release = |tag: Option<&str>, body: &serde_json::Value| {
         let mut builder = Request::post(format!("/internal/agent-networks/{agent}/release"))
             .header("content-type", "application/json")
@@ -558,7 +558,7 @@ async fn if_match_bodies_validate_against_the_body_schemas() {
         .unwrap();
     assert_eq!(response.status(), StatusCode::BAD_REQUEST);
     let with_field = serde_json::json!({"expected_version": "1"});
-    assert_valid("resource-version-body.schema.json", &with_field);
+    assert_valid("resource-version-body.stored-v2.schema.json", &with_field);
     let response = app
         .clone()
         .oneshot(release(Some("\"1\""), &with_field))

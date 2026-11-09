@@ -26,7 +26,7 @@ Control callers propagate W3C `traceparent` and optional `tracestate` headers.
 Invalid trace context is ignored without rejecting the business request.
 Runtime Egress does not accept `baggage` as part of its control contract.
 
-This document describes control contract revision 9.
+This document describes control contract revision 11.
 
 The machine-readable [control-contract.json](control-contract.json) declares
 for every route its request body (`request_body`, a schema reference or
@@ -222,7 +222,9 @@ Its strict request follows
 [policy-revision-request.schema.json](policy-revision-request.schema.json): a
 single `spec` member carrying the policy document.
 
-`revision` is a positive integer. A new revision is immutable. Repeating the
+`revision` is a positive integer no greater than `9223372036854775807`; zero
+and larger path revisions are `400 invalid_request`, not missing revisions. A
+new revision is immutable. Repeating the
 same `(policy_id, revision, canonical spec)` is idempotent; reusing the key for
 different content returns `policy_revision_conflict`.
 
@@ -307,8 +309,12 @@ special-address baseline, not access to the deployment platform.
 
 Reading never creates a missing revision or Agent network, changes an
 assignment, clears flows or opens an attachment. Unknown keys return
-`404 policy_revision_not_found`; malformed identifiers or nonpositive revisions
-return `400 invalid_request`. A repository failure uses the existing bounded
+`404 policy_revision_not_found`; malformed identifiers, nonpositive revisions
+and revisions above the stored range return `400 invalid_request`. Every
+malformed path parameter, including a non-UTF-8 percent-encoded segment on any
+control route, uses the same JSON `invalid_request` envelope — never a plain
+text extractor response — while authentication still precedes path validation.
+A repository failure uses the existing bounded
 control error contract. This is a control RPC with W3C trace propagation; it
 does not add any packet-level tracing. PUT responses retain their existing
 metadata-only shape.
@@ -326,9 +332,10 @@ metadata-only shape.
 ```
 
 Its strict request follows
-[policy-assignment-request.schema.json](policy-assignment-request.schema.json):
+[policy-assignment-request.stored-v2.schema.json](policy-assignment-request.stored-v2.schema.json):
 the body carries `policy_id`, `revision` and at most one precondition field,
-because the strong `If-Match` header is an external alternative.
+because the strong `If-Match` header is an external alternative. `revision`
+follows the same stored bound as a revision path parameter.
 
 Ensure creates the initial deny assignment at resource version 1. Callers use
 the assignment's current version; this operation cannot create an assignment
@@ -370,7 +377,10 @@ exactly one strong `If-Match` quoted decimal token in place of the body field �
 both permanent forms. For one release the numeric `expected_resource_version`
 also remains accepted as a deprecated input alias; a request carrying more than
 one form is rejected even when the values agree. Consumers must send the
-canonical form before the alias is removed.
+canonical form before the alias is removed. Every precondition form, including
+the quoted tokens, and every policy `revision` accept exactly the stored range
+`1` through `9223372036854775807`; out-of-range values are `400 invalid_request`
+and never reach the compare-and-swap.
 
 Ensure may restore an already-open attachment's route, but must complete flow
 and conntrack cleanup before removing a hard fence. Explicit attachment open
@@ -415,10 +425,18 @@ Errors have one stable shape:
 | `tunnel_key_unavailable`    |     409 | Open references an absent or unreadable prepared generation; no mutation occurs                          |
 | `tunnel_key_conflict`       |     409 | Existing key ID has different identity or key material                                                   |
 | `attachment_open`          |     409 | A new candidate cannot be registered while traffic is open                                              |
-| `internal`               |     500 | Canonical fallback for unregistered error codes                                                       |
+| `internal`               |     500 | Internal invariant failure or canonical fallback for unregistered codes; nonretryable, unlike the transient 503 operation errors |
 
 Internal failures never expose SQL, credentials, packet payloads, or command
 stderr in the response.
+
+Revision 11 tightens the five active request schemas to their
+`*.stored-v2.schema.json` copies: numeric `revision` and
+`expected_resource_version` gain `maximum: 9223372036854775807` and the
+canonical `expected_version` token enforces the same decimal range. The
+original schema files remain byte-identical immutable N-1 definitions whose
+historical over-permissiveness does not promise that out-of-range values are
+valid on the wire.
 
 ## Cross-service contract and component handoff
 

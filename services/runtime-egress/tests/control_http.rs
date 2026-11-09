@@ -67,7 +67,7 @@ fn machine_contract_matches_the_complete_control_surface() {
     )))
     .expect("control contract");
 
-    assert_eq!(contract.revision, 10);
+    assert_eq!(contract.revision, 11);
     assert_eq!(contract.transport, "json-over-http");
     assert_eq!(
         contract.trust_boundary,
@@ -103,19 +103,19 @@ fn machine_contract_matches_the_complete_control_surface() {
     );
     assert_eq!(
         contract.schemas["attachment_state_request"],
-        "attachment-state-request.schema.json"
+        "attachment-state-request.stored-v2.schema.json"
     );
     assert_eq!(
         contract.schemas["attachment_state_body"],
-        "attachment-state-body.schema.json"
+        "attachment-state-body.stored-v2.schema.json"
     );
     assert_eq!(
         contract.schemas["resource_version_request"],
-        "resource-version-request.schema.json"
+        "resource-version-request.stored-v2.schema.json"
     );
     assert_eq!(
         contract.schemas["resource_version_body"],
-        "resource-version-body.schema.json"
+        "resource-version-body.stored-v2.schema.json"
     );
     let state_routes = contract
         .routes
@@ -135,12 +135,12 @@ fn machine_contract_matches_the_complete_control_surface() {
         (
             "PUT",
             "/internal/agent-network-attachments/{agent_id}",
-            "attachment-state-body.schema.json",
+            "attachment-state-body.stored-v2.schema.json",
         ),
         (
             "POST",
             "/internal/agent-networks/{agent_id}/release",
-            "resource-version-body.schema.json",
+            "resource-version-body.stored-v2.schema.json",
         ),
         (
             "PUT",
@@ -160,7 +160,7 @@ fn machine_contract_matches_the_complete_control_surface() {
         (
             "PUT",
             "/internal/agent-policy-assignments/{agent_id}",
-            "policy-assignment-request.schema.json",
+            "policy-assignment-request.stored-v2.schema.json",
         ),
     ];
     assert_eq!(
@@ -240,7 +240,13 @@ fn machine_contract_matches_the_complete_control_surface() {
         contract.precondition["deprecated_alias"],
         "expected_resource_version"
     );
-    assert_eq!(contract.fallback_errors.len(), 2);
+    assert!(
+        contract.precondition["note"]
+            .as_str()
+            .unwrap()
+            .contains("9223372036854775807")
+    );
+    assert_eq!(contract.fallback_errors.len(), 3);
     for error in &contract.fallback_errors {
         assert!(contract.error_codes.contains(&error.code));
         assert!((100..=599).contains(&error.status));
@@ -267,10 +273,10 @@ fn machine_contract_matches_the_complete_control_surface() {
         }
     }
     assert!(state_routes.iter().any(|route| {
-        route.request_schema.as_deref() == Some("attachment-state-request.schema.json")
+        route.request_schema.as_deref() == Some("attachment-state-request.stored-v2.schema.json")
     }));
     assert!(state_routes.iter().any(|route| {
-        route.request_schema.as_deref() == Some("resource-version-request.schema.json")
+        route.request_schema.as_deref() == Some("resource-version-request.stored-v2.schema.json")
     }));
 
     let private_route = &contract.routes[0];
@@ -1174,4 +1180,550 @@ async fn contract_conventions_precondition_rejections() {
         let after_document = to_bytes(assignment.into_body(), 8192).await.unwrap();
         assert_eq!(after_document, before_document, "assign {body}");
     }
+}
+
+async fn assert_stored_version_error(
+    response: axum::response::Response,
+    status: StatusCode,
+    code: &str,
+) {
+    assert_eq!(response.status(), status, "{code}");
+    assert_eq!(response.headers()["content-type"], "application/json");
+    let body = to_bytes(response.into_body(), 4096).await.unwrap();
+    let document: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    support::schemas::assert_valid("../common/error.schema.json", &document);
+    assert_eq!(document["code"], code);
+    assert_eq!(document["retryable"], false);
+}
+
+async fn stored_network(application: axum::Router, agent: &str) -> serde_json::Value {
+    let response = application
+        .oneshot(
+            Request::get(format!("/internal/agent-networks/{agent}"))
+                .header("antnest-service-authorization", support::workload_header())
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    serde_json::from_slice(&to_bytes(response.into_body(), 8192).await.unwrap()).unwrap()
+}
+
+async fn stored_assignment(application: axum::Router, agent: &str) -> serde_json::Value {
+    let response = application
+        .oneshot(
+            Request::get(format!("/internal/agent-policy-assignments/{agent}"))
+                .header("antnest-service-authorization", support::workload_header())
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    serde_json::from_slice(&to_bytes(response.into_body(), 8192).await.unwrap()).unwrap()
+}
+
+fn stored_version_cases(fields: &str) -> Vec<(String, Option<String>)> {
+    let separator = if fields.is_empty() { "" } else { "," };
+    let mut cases = Vec::new();
+    for value in ["0", "9223372036854775808", "18446744073709551615"] {
+        cases.push((
+            format!("{{\"expected_resource_version\":{value}{separator}{fields}}}"),
+            None,
+        ));
+        cases.push((
+            format!("{{\"expected_version\":\"{value}\"{separator}{fields}}}"),
+            None,
+        ));
+        cases.push((format!("{{{fields}}}"), Some(format!("\"{value}\""))));
+    }
+    cases
+}
+
+fn stored_version_max_cases(fields: &str) -> Vec<(String, Option<String>)> {
+    let separator = if fields.is_empty() { "" } else { "," };
+    vec![
+        (
+            format!("{{\"expected_resource_version\":9223372036854775807{separator}{fields}}}"),
+            None,
+        ),
+        (
+            format!("{{\"expected_version\":\"9223372036854775807\"{separator}{fields}}}"),
+            None,
+        ),
+        (
+            format!("{{{fields}}}"),
+            Some("\"9223372036854775807\"".to_owned()),
+        ),
+    ]
+}
+
+#[tokio::test]
+async fn stored_version_policy_revision_path_bounds() {
+    let app = app().await;
+    let spec = r#"{"spec":{"schema_version":1,"action":"allow_all"}}"#;
+    for revision in ["0", "9223372036854775808", "18446744073709551615"] {
+        let path = format!("/internal/policies/stored-bounds/revisions/{revision}");
+        let read = app
+            .clone()
+            .oneshot(
+                Request::get(path.as_str())
+                    .header("antnest-service-authorization", support::workload_header())
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_stored_version_error(read, StatusCode::BAD_REQUEST, "invalid_request").await;
+        let write = app
+            .clone()
+            .oneshot(
+                Request::put(path.as_str())
+                    .header("content-type", "application/json")
+                    .header("antnest-service-authorization", support::workload_header())
+                    .body(Body::from(spec))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_stored_version_error(write, StatusCode::BAD_REQUEST, "invalid_request").await;
+    }
+
+    let max_path = "/internal/policies/stored-bounds/revisions/9223372036854775807";
+    let missing = app
+        .clone()
+        .oneshot(
+            Request::get(max_path)
+                .header("antnest-service-authorization", support::workload_header())
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_stored_version_error(missing, StatusCode::NOT_FOUND, "policy_revision_not_found").await;
+
+    let written = app
+        .clone()
+        .oneshot(
+            Request::put(max_path)
+                .header("content-type", "application/json")
+                .header("antnest-service-authorization", support::workload_header())
+                .body(Body::from(spec))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(written.status(), StatusCode::OK);
+    let written_body = to_bytes(written.into_body(), 4096).await.unwrap();
+    let written_document: serde_json::Value = serde_json::from_slice(&written_body).unwrap();
+    assert_eq!(
+        written_document["revision"].as_u64(),
+        Some(9223372036854775807)
+    );
+
+    let read = app
+        .oneshot(
+            Request::get(max_path)
+                .header("antnest-service-authorization", support::workload_header())
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(read.status(), StatusCode::OK);
+    assert_eq!(read.headers()["content-type"], "application/json");
+    let body = to_bytes(read.into_body(), 4096).await.unwrap();
+    let document: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    support::schemas::assert_valid(
+        "control-response.ids-v2.schema.json#/$defs/policy_revision",
+        &document,
+    );
+    assert_eq!(document["revision"].as_u64(), Some(9223372036854775807));
+    assert!(
+        body.windows(19)
+            .any(|window| window == "9223372036854775807".as_bytes()),
+        "revision must serialize as an exact JSON integer"
+    );
+}
+
+#[tokio::test]
+async fn stored_version_assignment_revision_bounds() {
+    for (case, revision) in [
+        ("zero", "0"),
+        ("overflow", "9223372036854775808"),
+        ("umax", "18446744073709551615"),
+    ] {
+        let agent = format!("agent-stored-rev-{case}");
+        let application = conventions_app(&agent).await;
+        let before = stored_assignment(application.clone(), &agent).await;
+        let body = format!(
+            "{{\"policy_id\":\"builtin/allow-all\",\"revision\":{revision},\"expected_version\":\"1\"}}"
+        );
+        let response = application
+            .clone()
+            .oneshot(conventions_request(
+                axum::http::Method::PUT,
+                &format!("/internal/agent-policy-assignments/{agent}"),
+                body,
+                None,
+            ))
+            .await
+            .unwrap();
+        assert_stored_version_error(response, StatusCode::BAD_REQUEST, "invalid_request").await;
+        assert_eq!(
+            stored_assignment(application, &agent).await,
+            before,
+            "{revision}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn stored_version_attachment_rejects_out_of_range_expected_versions() {
+    let agent = "agent-stored-attach";
+    let application = conventions_app(agent).await;
+    let path = format!("/internal/agent-network-attachments/{agent}");
+    for (body, tag) in stored_version_cases("\"state\":\"pending\"") {
+        let response = application
+            .clone()
+            .oneshot(conventions_request(
+                axum::http::Method::PUT,
+                &path,
+                body.clone(),
+                tag.as_deref(),
+            ))
+            .await
+            .unwrap();
+        assert_stored_version_error(response, StatusCode::BAD_REQUEST, "invalid_request").await;
+        let network = stored_network(application.clone(), agent).await;
+        assert_eq!(network["attachment_resource_version"], 1, "{body}");
+        assert_eq!(network["attachment_state"], "closed", "{body}");
+    }
+    for (body, tag) in stored_version_max_cases("\"state\":\"pending\"") {
+        let response = application
+            .clone()
+            .oneshot(conventions_request(
+                axum::http::Method::PUT,
+                &path,
+                body.clone(),
+                tag.as_deref(),
+            ))
+            .await
+            .unwrap();
+        assert_stored_version_error(response, StatusCode::CONFLICT, "resource_version_conflict")
+            .await;
+        let network = stored_network(application.clone(), agent).await;
+        assert_eq!(network["attachment_resource_version"], 1, "{body}");
+        assert_eq!(network["attachment_state"], "closed", "{body}");
+    }
+}
+
+#[tokio::test]
+async fn stored_version_release_rejects_out_of_range_expected_versions() {
+    let agent = "agent-stored-release";
+    let application = conventions_app(agent).await;
+    let path = format!("/internal/agent-networks/{agent}/release");
+    for (body, tag) in stored_version_cases("") {
+        let response = application
+            .clone()
+            .oneshot(conventions_request(
+                axum::http::Method::POST,
+                &path,
+                body.clone(),
+                tag.as_deref(),
+            ))
+            .await
+            .unwrap();
+        assert_stored_version_error(response, StatusCode::BAD_REQUEST, "invalid_request").await;
+        let network = stored_network(application.clone(), agent).await;
+        assert_eq!(network["state"], "active", "{body}");
+        assert_eq!(network["network_resource_version"], 1, "{body}");
+    }
+    for (body, tag) in stored_version_max_cases("") {
+        let response = application
+            .clone()
+            .oneshot(conventions_request(
+                axum::http::Method::POST,
+                &path,
+                body.clone(),
+                tag.as_deref(),
+            ))
+            .await
+            .unwrap();
+        assert_stored_version_error(response, StatusCode::CONFLICT, "resource_version_conflict")
+            .await;
+        let network = stored_network(application.clone(), agent).await;
+        assert_eq!(network["state"], "active", "{body}");
+        assert_eq!(network["network_resource_version"], 1, "{body}");
+    }
+}
+
+#[tokio::test]
+async fn stored_version_assignment_rejects_out_of_range_expected_versions() {
+    let agent = "agent-stored-assign";
+    let application = conventions_app(agent).await;
+    let path = format!("/internal/agent-policy-assignments/{agent}");
+    let fields = "\"policy_id\":\"builtin/allow-all\",\"revision\":1";
+    for (body, tag) in stored_version_cases(fields) {
+        let response = application
+            .clone()
+            .oneshot(conventions_request(
+                axum::http::Method::PUT,
+                &path,
+                body.clone(),
+                tag.as_deref(),
+            ))
+            .await
+            .unwrap();
+        assert_stored_version_error(response, StatusCode::BAD_REQUEST, "invalid_request").await;
+        let assignment = stored_assignment(application.clone(), agent).await;
+        assert_eq!(assignment["policy_id"], "builtin/deny-all", "{body}");
+        assert_eq!(assignment["resource_version"], 1, "{body}");
+    }
+    for (body, tag) in stored_version_max_cases(fields) {
+        let response = application
+            .clone()
+            .oneshot(conventions_request(
+                axum::http::Method::PUT,
+                &path,
+                body.clone(),
+                tag.as_deref(),
+            ))
+            .await
+            .unwrap();
+        assert_stored_version_error(response, StatusCode::CONFLICT, "resource_version_conflict")
+            .await;
+        let assignment = stored_assignment(application.clone(), agent).await;
+        assert_eq!(assignment["policy_id"], "builtin/deny-all", "{body}");
+        assert_eq!(assignment["resource_version"], 1, "{body}");
+    }
+}
+
+#[tokio::test]
+async fn stored_version_path_parameters_reject_invalid_utf8() {
+    let app = app().await;
+    let spec = r#"{"spec":{"schema_version":1,"action":"allow_all"}}"#;
+    let attachment = r#"{"state":"pending","expected_version":"1"}"#;
+    let release = r#"{"expected_version":"1"}"#;
+    let assignment = r#"{"policy_id":"builtin/allow-all","revision":1,"expected_version":"1"}"#;
+    let cases: [(axum::http::Method, &str, Option<&str>); 10] = [
+        (
+            axum::http::Method::GET,
+            "/internal/agent-networks/%FF",
+            None,
+        ),
+        (
+            axum::http::Method::PUT,
+            "/internal/agent-networks/%FF",
+            None,
+        ),
+        (
+            axum::http::Method::PUT,
+            "/internal/agent-network-attachments/%FF",
+            Some(attachment),
+        ),
+        (
+            axum::http::Method::POST,
+            "/internal/agent-networks/%FF/release",
+            Some(release),
+        ),
+        (
+            axum::http::Method::GET,
+            "/internal/policies/%FF/revisions/1",
+            None,
+        ),
+        (
+            axum::http::Method::GET,
+            "/internal/policies/stored-utf8/revisions/%FF",
+            None,
+        ),
+        (
+            axum::http::Method::PUT,
+            "/internal/policies/%FF/revisions/1",
+            Some(spec),
+        ),
+        (
+            axum::http::Method::PUT,
+            "/internal/policies/stored-utf8/revisions/%FF",
+            Some(spec),
+        ),
+        (
+            axum::http::Method::GET,
+            "/internal/agent-policy-assignments/%FF",
+            None,
+        ),
+        (
+            axum::http::Method::PUT,
+            "/internal/agent-policy-assignments/%FF",
+            Some(assignment),
+        ),
+    ];
+    for (method, path, body) in cases {
+        let mut builder = Request::builder()
+            .method(method.clone())
+            .uri(path)
+            .header("antnest-service-authorization", support::workload_header());
+        if body.is_some() {
+            builder = builder.header("content-type", "application/json");
+        }
+        let request = builder
+            .body(body.map_or_else(Body::empty, Body::from))
+            .unwrap();
+        let response = app.clone().oneshot(request).await.unwrap();
+        assert_stored_version_error(response, StatusCode::BAD_REQUEST, "invalid_request").await;
+    }
+
+    let input = support::auth::tunnel_registration("agent-utf8", "100.64.0.2".parse().unwrap());
+    let registration = serde_json::json!({"key_id":input.key_id,"runtime_revision":input.runtime_revision,"tunnel_ipv4":input.tunnel_ipv4,"egress_private_key":input.egress_private_key,"runtime_public_key":input.runtime_public_key,"preshared_key":input.preshared_key}).to_string();
+    let registration_app = support::app_for_caller("runtime-controller").await;
+    let response = registration_app
+        .oneshot(
+            Request::put("/internal/agent-tunnel-keys/%FF")
+                .header("content-type", "application/json")
+                .header("antnest-service-authorization", support::workload_header())
+                .body(Body::from(registration))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_stored_version_error(response, StatusCode::BAD_REQUEST, "invalid_request").await;
+
+    for (method, path, body) in [
+        (
+            axum::http::Method::GET,
+            "/internal/agent-networks/%FF",
+            None,
+        ),
+        (
+            axum::http::Method::PUT,
+            "/internal/agent-tunnel-keys/%FF",
+            Some(r#"{"key_id":"key"}"#),
+        ),
+    ] {
+        let mut builder = Request::builder().method(method).uri(path);
+        if body.is_some() {
+            builder = builder.header("content-type", "application/json");
+        }
+        let request = builder
+            .body(body.map_or_else(Body::empty, Body::from))
+            .unwrap();
+        let response = app.clone().oneshot(request).await.unwrap();
+        assert_stored_version_error(
+            response,
+            StatusCode::UNAUTHORIZED,
+            "service_unauthenticated",
+        )
+        .await;
+    }
+}
+
+#[test]
+fn stored_version_active_schemas_enforce_the_stored_range() {
+    const FILES: &[&str] = &[
+        "attachment-state-request.stored-v2.schema.json",
+        "attachment-state-body.stored-v2.schema.json",
+        "resource-version-request.stored-v2.schema.json",
+        "resource-version-body.stored-v2.schema.json",
+        "policy-assignment-request.stored-v2.schema.json",
+    ];
+    for file in FILES {
+        let text = std::fs::read_to_string(format!(
+            "{}/../../contracts/egress/{file}",
+            env!("CARGO_MANIFEST_DIR")
+        ))
+        .unwrap();
+        let schema: serde_json::Value = serde_json::from_str(&text).unwrap();
+        for field in ["expected_resource_version", "revision"] {
+            let property = &schema["properties"][field];
+            if property.is_null() {
+                continue;
+            }
+            assert_eq!(property["minimum"].as_u64(), Some(1), "{file} {field}");
+            assert_eq!(
+                property["maximum"].as_u64(),
+                Some(9223372036854775807),
+                "{file} {field}"
+            );
+        }
+        let validator = support::schemas::validator(file);
+        let base = if file.contains("policy-assignment") {
+            serde_json::json!({"policy_id": "internet-enabled", "revision": 3})
+        } else if file.contains("attachment-state") {
+            serde_json::json!({"state": "closed"})
+        } else {
+            serde_json::json!({})
+        };
+        let merge = |fields: serde_json::Value| {
+            let mut document = base.as_object().unwrap().clone();
+            for (key, value) in fields.as_object().unwrap() {
+                document.insert(key.clone(), value.clone());
+            }
+            serde_json::Value::Object(document)
+        };
+        for token in ["1", "9223372036854775806", "9223372036854775807"] {
+            assert!(
+                validator.is_valid(&merge(serde_json::json!({"expected_version": token}))),
+                "{file} {token}"
+            );
+        }
+        for token in [
+            "0",
+            "01",
+            "+1",
+            "9223372036854775808",
+            "9223372036854775809",
+            "9223372036854775899",
+            "18446744073709551615",
+            "9999999999999999999",
+            "abc",
+            "",
+            "1.5",
+            "1\n",
+            "1\r",
+            "1\r\n",
+            "1 ",
+            "\n1",
+            "1\t",
+            "１",
+            "１2",
+        ] {
+            assert!(
+                !validator.is_valid(&merge(serde_json::json!({"expected_version": token}))),
+                "{file} {token}"
+            );
+        }
+        for accepted in [1_u64, 9223372036854775807] {
+            let document = merge(serde_json::json!({"expected_resource_version": accepted}));
+            assert!(validator.is_valid(&document), "{file} {accepted}");
+        }
+        for rejected in [0_u64, 9223372036854775808, u64::MAX] {
+            let document = merge(serde_json::json!({"expected_resource_version": rejected}));
+            assert!(!validator.is_valid(&document), "{file} {rejected}");
+        }
+    }
+    let assignment = support::schemas::validator("policy-assignment-request.stored-v2.schema.json");
+    for accepted in [1_u64, 9223372036854775807] {
+        let document = serde_json::json!({
+            "policy_id": "internet-enabled",
+            "revision": accepted,
+            "expected_version": "1"
+        });
+        assert!(assignment.is_valid(&document), "{accepted}");
+    }
+    for rejected in [0_u64, 9223372036854775808, u64::MAX] {
+        let document = serde_json::json!({
+            "policy_id": "internet-enabled",
+            "revision": rejected,
+            "expected_version": "1"
+        });
+        assert!(!assignment.is_valid(&document), "{rejected}");
+    }
+    let historical = support::schemas::validator("resource-version-request.schema.json");
+    assert!(historical.is_valid(&serde_json::json!({
+        "expected_version": "18446744073709551615"
+    })));
+    assert!(historical.is_valid(&serde_json::json!({
+        "expected_resource_version": u64::MAX
+    })));
 }

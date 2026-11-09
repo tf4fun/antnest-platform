@@ -49,7 +49,7 @@ test("egress policy revision request wraps a policy spec strictly", async () => 
 });
 
 test("egress policy assignment request accepts each precondition form", async () => {
-  const ref = "egress/policy-assignment-request.schema.json";
+  const ref = "egress/policy-assignment-request.stored-v2.schema.json";
   const base = { policy_id: "internet-enabled", revision: 3 };
   await valid(ref, { ...base, expected_version: "7" });
   await valid(ref, { ...base, expected_resource_version: 7 });
@@ -57,7 +57,7 @@ test("egress policy assignment request accepts each precondition form", async ()
 });
 
 test("egress policy assignment request rejects conflicting and null preconditions", async () => {
-  const ref = "egress/policy-assignment-request.schema.json";
+  const ref = "egress/policy-assignment-request.stored-v2.schema.json";
   const base = { policy_id: "internet-enabled", revision: 3 };
   await invalid(ref, {
     ...base,
@@ -69,7 +69,7 @@ test("egress policy assignment request rejects conflicting and null precondition
 });
 
 test("egress policy assignment request rejects malformed versions", async () => {
-  const ref = "egress/policy-assignment-request.schema.json";
+  const ref = "egress/policy-assignment-request.stored-v2.schema.json";
   const base = { policy_id: "internet-enabled", revision: 3 };
   await invalid(ref, { ...base, expected_version: 7 });
   await invalid(ref, { ...base, expected_version: "0" });
@@ -81,7 +81,7 @@ test("egress policy assignment request rejects malformed versions", async () => 
 });
 
 test("egress policy assignment request requires identity and rejects unknown fields", async () => {
-  const ref = "egress/policy-assignment-request.schema.json";
+  const ref = "egress/policy-assignment-request.stored-v2.schema.json";
   const base = { policy_id: "internet-enabled", revision: 3 };
   await invalid(ref, { revision: 3 });
   await invalid(ref, { policy_id: "internet-enabled" });
@@ -91,6 +91,181 @@ test("egress policy assignment request requires identity and rejects unknown fie
   await invalid(ref, { ...base, policy_id: "has space" });
   await invalid(ref, { ...base, if_match: '"7"' });
   await invalid(ref, { ...base, expected_version: "7", extra: true });
+});
+
+test("egress control contract publishes the stored v2 active request schemas", () => {
+  const descriptor = contract("egress/control-contract.json");
+  assert.equal(
+    descriptor.schemas.attachment_state_request,
+    "attachment-state-request.stored-v2.schema.json",
+  );
+  assert.equal(
+    descriptor.schemas.attachment_state_body,
+    "attachment-state-body.stored-v2.schema.json",
+  );
+  assert.equal(
+    descriptor.schemas.resource_version_request,
+    "resource-version-request.stored-v2.schema.json",
+  );
+  assert.equal(
+    descriptor.schemas.resource_version_body,
+    "resource-version-body.stored-v2.schema.json",
+  );
+  assert.equal(
+    descriptor.schemas.policy_assignment_request,
+    "policy-assignment-request.stored-v2.schema.json",
+  );
+  const route = (method, path) =>
+    descriptor.routes.find(
+      (entry) => entry.method === method && entry.path === path,
+    );
+  const attachment = route(
+    "PUT",
+    "/internal/agent-network-attachments/{agent_id}",
+  );
+  assert.equal(
+    attachment.request_schema,
+    "attachment-state-request.stored-v2.schema.json",
+  );
+  assert.equal(
+    attachment.request_body,
+    "attachment-state-body.stored-v2.schema.json",
+  );
+  const release = route("POST", "/internal/agent-networks/{agent_id}/release");
+  assert.equal(
+    release.request_schema,
+    "resource-version-request.stored-v2.schema.json",
+  );
+  assert.equal(
+    release.request_body,
+    "resource-version-body.stored-v2.schema.json",
+  );
+  assert.equal(
+    route("PUT", "/internal/agent-policy-assignments/{agent_id}").request_body,
+    "policy-assignment-request.stored-v2.schema.json",
+  );
+});
+
+test("egress stored v2 request schemas bound version tokens to the stored range", async () => {
+  const files = [
+    "egress/attachment-state-request.stored-v2.schema.json",
+    "egress/attachment-state-body.stored-v2.schema.json",
+    "egress/resource-version-request.stored-v2.schema.json",
+    "egress/resource-version-body.stored-v2.schema.json",
+    "egress/policy-assignment-request.stored-v2.schema.json",
+  ];
+  const base = (ref) =>
+    ref.includes("policy-assignment")
+      ? { policy_id: "internet-enabled", revision: 3 }
+      : ref.includes("attachment-state")
+        ? { state: "closed" }
+        : {};
+  for (const ref of files) {
+    const document = base(ref);
+    await valid(ref, { ...document, expected_version: "1" });
+    await valid(ref, {
+      ...document,
+      expected_version: "9223372036854775807",
+    });
+    await valid(ref, {
+      ...document,
+      expected_version: "9223372036854775806",
+    });
+    for (const token of [
+      "0",
+      "01",
+      "+1",
+      "9223372036854775808",
+      "9223372036854775809",
+      "9223372036854775899",
+      "18446744073709551615",
+      "9999999999999999999",
+      "abc",
+      "",
+      "1.5",
+      "1\n",
+      "1\r",
+      "1\r\n",
+      "1 ",
+      "\n1",
+      "1\t",
+      "１",
+      "１2",
+      1,
+    ])
+      await invalid(ref, { ...document, expected_version: token });
+    for (const value of [0, -1])
+      await invalid(ref, {
+        ...document,
+        expected_resource_version: value,
+      });
+    await valid(ref, {
+      ...document,
+      expected_resource_version: 9007199254740991,
+    });
+  }
+});
+
+test("egress stored v2 assignment schema bounds the revision integer", async () => {
+  const ref = "egress/policy-assignment-request.stored-v2.schema.json";
+  const base = { policy_id: "internet-enabled", expected_version: "1" };
+  await valid(ref, { ...base, revision: 1 });
+  await valid(ref, { ...base, revision: 9007199254740991 });
+  for (const revision of [0, -1, "3"])
+    await invalid(ref, { ...base, revision });
+});
+
+test("egress stored v2 numeric maximum stays the literal stored bound", () => {
+  for (const name of [
+    "attachment-state-request",
+    "attachment-state-body",
+    "resource-version-request",
+    "resource-version-body",
+    "policy-assignment-request",
+  ]) {
+    const source = readFileSync(
+      fileURLToPath(
+        new URL(
+          `../../../contracts/egress/${name}.stored-v2.schema.json`,
+          import.meta.url,
+        ),
+      ),
+      "utf8",
+    );
+    for (const match of source.matchAll(/"maximum":\s*(\d+)/g))
+      assert.equal(match[1], "9223372036854775807", `${name} maximum`);
+    assert.match(source, /"maximum":\s*9223372036854775807/, name);
+  }
+});
+
+test("historical egress request schemas keep their unchanged N-1 definitions", async () => {
+  for (const [ref, document] of [
+    [
+      "egress/attachment-state-request.schema.json",
+      { state: "closed", expected_version: "18446744073709551615" },
+    ],
+    [
+      "egress/attachment-state-body.schema.json",
+      { state: "closed", expected_version: "18446744073709551615" },
+    ],
+    [
+      "egress/resource-version-request.schema.json",
+      { expected_version: "18446744073709551615" },
+    ],
+    [
+      "egress/resource-version-body.schema.json",
+      { expected_version: "18446744073709551615" },
+    ],
+    [
+      "egress/policy-assignment-request.schema.json",
+      {
+        policy_id: "internet-enabled",
+        revision: 3,
+        expected_version: "18446744073709551615",
+      },
+    ],
+  ])
+    await valid(ref, document);
 });
 
 test("egress control status reports ready and degraded shapes", async () => {

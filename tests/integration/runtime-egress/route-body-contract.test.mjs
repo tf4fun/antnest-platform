@@ -42,7 +42,7 @@ const REPRESENTATIVE = {
   "policy-revision-request.schema.json": () => ({
     spec: { schema_version: 1, action: "allow_all" },
   }),
-  "policy-assignment-request.schema.json": () => ({
+  "policy-assignment-request.stored-v2.schema.json": () => ({
     policy_id: "builtin/allow-all",
     revision: 1,
     expected_version: "1",
@@ -55,13 +55,15 @@ const REPRESENTATIVE = {
     runtime_public_key: "A".repeat(43),
     preshared_key: "A".repeat(43),
   }),
-  "attachment-state-request.schema.json": () => ({
+  "attachment-state-request.stored-v2.schema.json": () => ({
     state: "closed",
     expected_version: "1",
   }),
-  "attachment-state-body.schema.json": () => ({ state: "closed" }),
-  "resource-version-request.schema.json": () => ({ expected_version: "1" }),
-  "resource-version-body.schema.json": () => ({}),
+  "attachment-state-body.stored-v2.schema.json": () => ({ state: "closed" }),
+  "resource-version-request.stored-v2.schema.json": () => ({
+    expected_version: "1",
+  }),
+  "resource-version-body.stored-v2.schema.json": () => ({}),
   "../common/error.schema.json": () => ({
     code: "route_not_found",
     category: "not_found",
@@ -129,7 +131,7 @@ function sourceRoutes(source = controlSource) {
 }
 
 test("control contract declares a complete body contract for every route", () => {
-  assert.equal(contract.revision, 10);
+  assert.equal(contract.revision, 11);
   assert.deepEqual(routeBodyProblems(contract.routes), []);
 });
 
