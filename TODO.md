@@ -1,5 +1,7 @@
 # Antnest Platform 全局 TODO
 
+- **#69 共享遥测基础批次（2026-11-09，基于 origin/main d4e05333，分支 fix/issue-69-observability-contract）**：293 个现役／兼容遥测名称的类型、unit、cardinality、PII、owner 及 10 组别名已冻结于 contracts/observability/attributes.yaml（JSON 子集 YAML）；包含 Gateway 动态拼接名称，不把 credentials HMAC domain 或 Node diagnostics channel 误算为遥测。生成 Go／TS／Rust 常量和文档表；命名 lint 的正负 fixture 与 registry 16/16 GREEN。共享 Go 模块 test-first 缺 API RED→最终 unit GREEN、go vet clean，提供别名标准化／metric 维度过滤、递归 secret-key redaction、W3C clone／server、透明 body／writer 与有界 cause 类型。模块尚未被六服务消费，逐服务迁移与显式集成待后续独立 PR；完整远程准入不计通过，CI 异步不等待，不合并／关闭 #69/#83，不运行 Docker E2E。
+
 - **#15 PR #616 CI 收尾（2026-11-09，用户授权接手）**：原候选 `2cda6bd5` 的 Repository、Egress 两套 Rust 与 PostgreSQL 等检查通过，Integration 被 Controller unit 和 PostgreSQL／Temporal component 中相同的 `TestRouteSchemaEgressRequests/closed`、`release` 拦截。真实 Go client 消费新 active stored-v2 schema 的合法请求样例仍用 `math.MaxUint64`（`18446744073709551615`），已先定向复现两个失败，再同步为 `math.MaxInt64`（`9223372036854775807`），保留实际发送字段、路径和共享 producer schema 验证。盘点其余 uint64 上界：生产溢出保护以及 Node 的越界负例／历史 N-1 正例均有意保留。
 
   完整 `internal/egressclient` 定向包通过；初次完整包在沙箱被 httptest loopback listener 权限阻止，同一命令在沙箱外重跑成功，不把权限失败归因于源码。现有 runtime-plane schema 文件 19/19 通过，涵盖 1／MAX／MAX-1 正例、MAX+1／MaxUint64／非法 token 负例，以及旧 N-1 定义仍接受历史值。gofmt 与 diff clean。仅补 Go 消费方测试输入同步与本交接，不改 Controller 实现、不放宽生产范围或 schema；最终新 head 的完整远程 Repository／Integration、Controller 与 Egress 服务／组件准入待确认。不自动合并或关闭 #15/#83，不运行／查询独立 system E2E；最小日志暂存 `artifacts/verification/issue-15-ci/`。

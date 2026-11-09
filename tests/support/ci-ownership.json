@@ -39,6 +39,18 @@
     "edge-gateway",
     "skill-registry"
   ],
+  "observability": [
+    "admin-console",
+    "agent-acp-service",
+    "agent-controller",
+    "agent-ui",
+    "antnest-runtime",
+    "edge-gateway",
+    "identity-service",
+    "runtime-controller",
+    "runtime-egress",
+    "skill-registry"
+  ],
   "platform": [
     "admin-console",
     "agent-acp-service",
