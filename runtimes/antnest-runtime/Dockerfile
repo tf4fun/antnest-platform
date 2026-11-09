@@ -13,6 +13,7 @@ COPY modules/runtime-tunnel ./modules/runtime-tunnel
 COPY tests/support/runtime-tunnel ./tests/support/runtime-tunnel
 COPY tests/integration/antnest-runtime ./tests/integration/antnest-runtime
 COPY tests/integration/skill-registry/package-rules-v1.json ./tests/integration/skill-registry/package-rules-v1.json
+COPY tests/integration/skill-learning/maintenance-ticket-captures.json ./tests/integration/skill-learning/maintenance-ticket-captures.json
 COPY contracts/runtime ./contracts/runtime
 COPY contracts/common ./contracts/common
 COPY contracts/platform/service-token-fixtures.json ./contracts/platform/service-token-fixtures.json
