@@ -109,7 +109,7 @@ func TestRuntimeSpecGolden(t *testing.T) {
 	if *updateGolden {
 		writeGoldenDocument(t, golden, body)
 	}
-	definition, err := contractCompiler(t).Compile("https://schemas.antnest.dev/runtime/runtime-spec.schema.json")
+	definition, err := contractCompiler(t).Compile("https://schemas.antnest.dev/runtime/runtime-spec.ids-v2.schema.json")
 	if err != nil {
 		t.Fatalf("compile runtime spec schema: %v", err)
 	}
