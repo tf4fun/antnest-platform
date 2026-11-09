@@ -1,8 +1,9 @@
 import { createHash, generateKeyPairSync, verify } from "node:crypto";
 import { once } from "node:events";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { createServer, type ServerResponse } from "node:http";
 import { join } from "node:path";
+import { Ajv2020 } from "ajv/dist/2020.js";
 import { expect, it, vi } from "vitest";
 import { RuntimeSkillMaintenanceClient } from "../../../../services/agent-acp-service/src/adapters/runtime-skill-maintenance-client.js";
 import { RuntimeSkillMaintenanceSigner } from "../../../../services/agent-acp-service/src/adapters/runtime-skill-maintenance-signer.js";
@@ -15,6 +16,25 @@ import { RuntimeMaintenanceUnknownError } from "../../../../services/agent-acp-s
 import type { LearningTaskClaim } from "../../../../services/agent-acp-service/src/domain/learning-scan.js";
 import type { SkillSourceRecord } from "../../../../services/agent-acp-service/src/domain/skill-source.js";
 import { runtimeAuthority } from "../support/runtime-authority.js";
+
+const ticketContract = JSON.parse(
+  readFileSync(
+    new URL(
+      "../../../../contracts/runtime/maintenance-ticket.schema.json",
+      import.meta.url,
+    ),
+    "utf8",
+  ),
+) as object;
+const commonIDs = JSON.parse(
+  readFileSync(
+    new URL("../../../../contracts/common/ids.schema.json", import.meta.url),
+    "utf8",
+  ),
+) as object;
+const ticketValidator = new Ajv2020({ strict: true, validateFormats: false });
+ticketValidator.addSchema(commonIDs);
+const validateTicket = ticketValidator.compile(ticketContract);
 
 const organizationId = `org_${"a".repeat(32)}`;
 const agentId = `agent_${"b".repeat(32)}`;
@@ -116,6 +136,7 @@ async function withPeer(
       const ticket = JSON.parse(
         Buffer.from(payload, "base64url").toString(),
       ) as Ticket;
+      expect(validateTicket(ticket)).toBe(true);
       const chunks: Buffer[] = [];
       for await (const chunk of request as AsyncIterable<Buffer>)
         chunks.push(chunk);

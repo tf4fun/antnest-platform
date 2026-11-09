@@ -43,7 +43,27 @@ const commonSchema = JSON.parse(
   ),
 ) as Record<string, unknown>;
 ajv.addSchema(commonSchema);
+const commonIDs = JSON.parse(
+  readFileSync(
+    new URL("../../../../contracts/common/ids.schema.json", import.meta.url),
+    "utf8",
+  ),
+) as Record<string, unknown>;
+const maintenanceSchema = JSON.parse(
+  readFileSync(
+    new URL(
+      "../../../../contracts/runtime/maintenance-ticket.schema.json",
+      import.meta.url,
+    ),
+    "utf8",
+  ),
+) as Record<string, unknown>;
+ajv.addSchema(commonIDs);
+ajv.addSchema(maintenanceSchema);
 ajv.addSchema(schema);
+const validateTicket = ajv.getSchema(
+  `${schema.$id}#/$defs/maintenance_ticket`,
+)!;
 const common = {
   request_id: "request_1",
   job_id: "run_1",
@@ -187,6 +207,7 @@ describe("ACP consumer of shared Runtime temporary wire contract", () => {
         const authority = JSON.parse(
           Buffer.from(payload, "base64url").toString(),
         ) as Record<string, unknown>;
+        expect(validateTicket(authority)).toBe(true);
         expect(authority.body_sha256).toBe(
           `sha256:${createHash("sha256").update(bytes).digest("hex")}`,
         );

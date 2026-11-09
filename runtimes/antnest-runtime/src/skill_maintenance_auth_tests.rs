@@ -323,3 +323,128 @@ fn a_signed_ticket_cannot_serve_another_route_action() {
         }
     }
 }
+
+#[test]
+fn acp_captured_tickets_verify_against_the_canonical_ticket_schema() {
+    let captures: Value = serde_json::from_str(
+        &std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../tests/integration/skill-learning/maintenance-ticket-captures.json"
+        ))
+        .unwrap(),
+    )
+    .unwrap();
+    let vectors: Value = serde_json::from_str(MAINTENANCE_VECTORS).unwrap();
+    let identity = RuntimeIdentity::new(captures["agent_id"].as_str().unwrap(), 1).unwrap();
+    let public_key: [u8; 32] = URL_SAFE_NO_PAD
+        .decode(captures["public_key_base64url"].as_str().unwrap())
+        .unwrap()
+        .try_into()
+        .unwrap();
+    let keys = vec![SkillMaintenanceVerifier::new("key-1".into(), public_key)];
+    let execution_id = captures["execution_id"].as_str().unwrap();
+    let now_epoch = captures["now_epoch"].as_u64().unwrap();
+    let expected: Vec<(String, u64)> = vectors["valid"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|vector| {
+            (
+                vector["action"].as_str().unwrap().to_owned(),
+                vector["generation"].as_u64().unwrap(),
+            )
+        })
+        .collect();
+    let captured: Vec<(String, u64)> = captures["tickets"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|ticket| {
+            (
+                ticket["action"].as_str().unwrap().to_owned(),
+                ticket["generation"].as_u64().unwrap(),
+            )
+        })
+        .collect();
+    assert_eq!(captured, expected);
+    for ticket in captures["tickets"].as_array().unwrap() {
+        let action = ticket["action"].as_str().unwrap();
+        let generation = ticket["generation"].as_u64().unwrap();
+        let body = URL_SAFE_NO_PAD
+            .decode(ticket["body_base64url"].as_str().unwrap())
+            .unwrap();
+        let authorization = ticket["authorization"].as_str().unwrap();
+        let verified = verify_maintenance_ticket(
+            authorization,
+            &body,
+            action,
+            &identity,
+            execution_id,
+            &keys,
+            now_epoch,
+        )
+        .unwrap_or_else(|error| panic!("captured {action} ticket rejected: {error:?}"));
+        let request: Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(
+            (
+                verified.action.as_str(),
+                verified.generation,
+                verified.job_id.as_str()
+            ),
+            (action, generation, request["job_id"].as_str().unwrap())
+        );
+        let encoded_payload = authorization
+            .strip_prefix("AntnestMaintenance ")
+            .and_then(|value| value.split('.').nth(1))
+            .unwrap();
+        let payload: Value =
+            serde_json::from_slice(&URL_SAFE_NO_PAD.decode(encoded_payload).unwrap()).unwrap();
+        crate::http_route_contract_tests::assert_valid(
+            "maintenance-ticket.schema.json#/$defs/ticket",
+            &payload,
+        );
+        for other in [
+            "install",
+            "digest",
+            "temporary_install",
+            "temporary_release",
+        ]
+        .into_iter()
+        .filter(|other| *other != action)
+        {
+            assert_eq!(
+                verify_maintenance_ticket(
+                    authorization,
+                    &body,
+                    other,
+                    &identity,
+                    execution_id,
+                    &keys,
+                    now_epoch
+                ),
+                Err(MaintenanceAuthError::Unauthorized),
+                "captured {action} ticket accepted under route action {other}"
+            );
+        }
+        let mut altered = body.clone();
+        altered.push(b'!');
+        for (message, body, execution) in [
+            ("altered body", altered.as_slice(), execution_id),
+            ("another execution", body.as_slice(), "execution-2"),
+        ] {
+            assert_eq!(
+                verify_maintenance_ticket(
+                    authorization,
+                    body,
+                    action,
+                    &identity,
+                    execution,
+                    &keys,
+                    now_epoch
+                ),
+                Err(MaintenanceAuthError::Unauthorized),
+                "captured {action} ticket accepted with {message}"
+            );
+        }
+    }
+}
