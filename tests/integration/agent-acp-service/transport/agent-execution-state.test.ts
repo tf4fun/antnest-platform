@@ -202,9 +202,9 @@ describe("workspace state HTTP and SSE", () => {
     async (path) => {
       const local = await localState(false);
       const identity = {
-        organizationId: "org+division@example.org",
-        principalId: "owner+team@example.org",
-        agentId: "agent/department+1",
+        organizationId: "Org.Division_1",
+        principalId: "Owner.Team_1",
+        agentId: "Agent.Department_1",
       };
       const configuration = executionConfiguration();
       configuration.organization_id = identity.organizationId;
@@ -236,7 +236,7 @@ describe("workspace state HTTP and SSE", () => {
         path,
         identityHeaders({
           ...identity,
-          principalId: "other+owner@example.org",
+          principalId: "Other.Owner_1",
         }),
       );
       expect(rejected.status).toBe(200);

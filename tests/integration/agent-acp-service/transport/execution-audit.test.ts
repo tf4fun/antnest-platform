@@ -113,15 +113,15 @@ describe("administrative audit RPC boundary", () => {
     const summary = {
       run_id: "run+[1]",
       session_id: "session+[1]",
-      agent_id: "agent/department+1",
-      principal_id: "owner+team@example.org",
+      agent_id: "Agent.Department_1",
+      principal_id: "Owner.Team_1",
       state: "completed" as const,
       created_at: "2026-09-14T00:00:00Z",
       updated_at: "2026-09-14T00:00:01Z",
     };
     const identity = {
-      "X-Antnest-User-ID": "admin+team@example.org",
-      "X-Antnest-Organization-ID": "org+department@example.org",
+      "X-Antnest-User-ID": "Admin.Team_1",
+      "X-Antnest-Organization-ID": "Org.Department_1",
       "X-Antnest-Membership-ID": "membership+[1]",
     };
     test.repository.list.mockResolvedValue([summary]);
