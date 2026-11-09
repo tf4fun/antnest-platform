@@ -170,7 +170,13 @@ The maintenance signing key ID follows the shared
 [RuntimeSpec grammar](../../contracts/runtime/runtime-spec.schema.json#/$defs/maintenanceKid)
 and [fixtures](../../contracts/runtime/maintenance-kid-fixtures.json).
 It is matched exactly against the Runtime's trusted verifier IDs; startup
-rejects invalid IDs without trimming whitespace.
+rejects invalid IDs without trimming whitespace. The signed payload follows the
+canonical
+[maintenance ticket schema](../../contracts/runtime/maintenance-ticket.schema.json)
+and [shared vectors](../../contracts/runtime/maintenance-ticket-fixtures.json):
+the action set is exactly `install`, `digest`, `temporary_install` and
+`temporary_release`, with `generation` pinned to 1 for the temporary actions;
+the learning schemas keep their older learning-only `ticket` definition for N-1.
 
 Runtime calls require RC-issued per-instance ACP authority privately published
 by Controller. Database and Run projections contain only the public reference;
