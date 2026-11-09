@@ -6,12 +6,11 @@ import (
 	"sync"
 	"time"
 
+	semconv "github.com/tf4fun/antnest-platform/libs/go/telemetry"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
 )
-
-const resolveMetricName = "antnest.gateway.identity.resolve."
 
 type resolveMetrics struct {
 	meter        metric.Meter
@@ -24,9 +23,9 @@ type resolveMetrics struct {
 
 func newResolveMetrics() (*resolveMetrics, error) {
 	meter := otel.Meter(resolveInstrumentation)
-	decisions, decisionErr := meter.Int64Counter(resolveMetricName+"decisions", metric.WithDescription("Resolve request decisions, including cache and shared work"))
-	calls, callErr := meter.Int64Counter(resolveMetricName+"rpc.calls", metric.WithDescription("Actual live Resolve attempts, including background refresh"))
-	duration, durationErr := meter.Float64Histogram(resolveMetricName+"rpc.duration", metric.WithUnit("s"),
+	decisions, decisionErr := meter.Int64Counter(semconv.AntnestGatewayIdentityResolveDecisions, metric.WithDescription("Resolve request decisions, including cache and shared work"))
+	calls, callErr := meter.Int64Counter(semconv.AntnestGatewayIdentityResolveRpcCalls, metric.WithDescription("Actual live Resolve attempts, including background refresh"))
+	duration, durationErr := meter.Float64Histogram(semconv.AntnestGatewayIdentityResolveRpcDuration, metric.WithUnit("s"),
 		metric.WithDescription("Actual Resolve attempt duration through response validation"))
 	if err := errors.Join(decisionErr, callErr, durationErr); err != nil {
 		return nil, err
@@ -40,7 +39,7 @@ func (metrics *resolveMetrics) decision(ctx context.Context, source, profile, ou
 }
 
 func (metrics *resolveMetrics) rpc(ctx context.Context, profile, outcome string, elapsed time.Duration) {
-	attributes := metric.WithAttributes(attribute.String("profile", profile), attribute.String("outcome", outcome))
+	attributes := metric.WithAttributes(semconv.MetricAttributes(attribute.String("profile", profile), attribute.String("outcome", outcome))...)
 	metrics.calls.Add(ctx, 1, attributes)
 	metrics.duration.Record(ctx, elapsed.Seconds(), attributes)
 }
@@ -48,13 +47,13 @@ func (metrics *resolveMetrics) rpc(ctx context.Context, profile, outcome string,
 func (metrics *resolveMetrics) observeCache(cache *resolveCache) error {
 	// The Gateway owns one Identity client. These gauges describe its retained
 	// state, not process RSS or the number of currently reusable entries.
-	entries, entriesErr := metrics.meter.Int64ObservableGauge(resolveMetricName + "cache.entries")
-	bytes, bytesErr := metrics.meter.Int64ObservableGauge(resolveMetricName+"cache.accounted_bytes", metric.WithUnit("By"))
-	work, workErr := metrics.meter.Int64ObservableGauge(resolveMetricName + "cache.work")
-	waiters, waitersErr := metrics.meter.Int64ObservableGauge(resolveMetricName + "cache.waiters")
-	available, availableErr := metrics.meter.Int64ObservableGauge(resolveMetricName + "cache.proof.available")
-	fresh, freshErr := metrics.meter.Int64ObservableGauge(resolveMetricName + "cache.proof.fresh")
-	age, ageErr := metrics.meter.Float64ObservableGauge(resolveMetricName+"cache.proof.age", metric.WithUnit("s"))
+	entries, entriesErr := metrics.meter.Int64ObservableGauge(semconv.AntnestGatewayIdentityResolveCacheEntries)
+	bytes, bytesErr := metrics.meter.Int64ObservableGauge(semconv.AntnestGatewayIdentityResolveCacheAccountedBytes, metric.WithUnit("By"))
+	work, workErr := metrics.meter.Int64ObservableGauge(semconv.AntnestGatewayIdentityResolveCacheWork)
+	waiters, waitersErr := metrics.meter.Int64ObservableGauge(semconv.AntnestGatewayIdentityResolveCacheWaiters)
+	available, availableErr := metrics.meter.Int64ObservableGauge(semconv.AntnestGatewayIdentityResolveCacheProofAvailable)
+	fresh, freshErr := metrics.meter.Int64ObservableGauge(semconv.AntnestGatewayIdentityResolveCacheProofFresh)
+	age, ageErr := metrics.meter.Float64ObservableGauge(semconv.AntnestGatewayIdentityResolveCacheProofAge, metric.WithUnit("s"))
 	if err := errors.Join(entriesErr, bytesErr, workErr, waitersErr, availableErr, freshErr, ageErr); err != nil {
 		return err
 	}

@@ -18,10 +18,10 @@ func (c *bodyObservation) readError() error {
 	return c.err
 }
 
-func (c *bodyObservation) add(data []byte, err error) {
+func (c *bodyObservation) add(n int, err error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	c.observed += int64(len(data))
+	c.observed += int64(n)
 	if err != nil && err != io.EOF {
 		c.err = err
 	}

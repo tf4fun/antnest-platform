@@ -293,6 +293,7 @@ const AntnestUiPromptInput = "antnest.ui.prompt_input"
 const AntnestUiStreamDelegationExpiresAtUnixMs = "antnest.ui.stream.delegation_expires_at_unix_ms"
 const AntnestUiStreamDelegationRemainingMs = "antnest.ui.stream.delegation_remaining_ms"
 const AntnestWatchTermination = "antnest.watch.termination"
+const AntnestEdgeLoginAdmissionTotal = "antnest_edge_login_admission_total"
 
 var DeprecatedAliases = func() map[string]string {
 	values := map[string]string{}

@@ -311,8 +311,10 @@ export function checkTelemetrySource(source, path, registry) {
   const { code, strings } = lexSource(working, LEXERS[language]);
   const lineAt = lineLocator(working);
   const exempt = new Set(Object.keys(registry.namespace_literals ?? {}));
+  const registered = new Set(registry.attributes.map((e) => e.name));
   for (const token of strings) {
-    if (!token.inner.startsWith("antnest.")) continue;
+    if (!token.inner.startsWith("antnest.") && !registered.has(token.inner))
+      continue;
     if (exempt.has(token.inner)) continue;
     problems.push(
       `${path}:${lineAt(token.start)} literal ${JSON.stringify(token.inner)} must come from generated semconv constants`,
