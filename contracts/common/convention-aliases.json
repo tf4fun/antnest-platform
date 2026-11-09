@@ -1,30 +1,255 @@
 [
   {
-    "file": "skill-learning/examples/learning-changes.empty.json",
-    "pointer": "/nextCursor",
-    "field": "nextCursor",
-    "replacement": "next_cursor",
-    "kind": "protocol_exception",
-    "reason": "Real producer capture of the existing ACP/Workspace sealed bidirectional change history protocol.",
-    "remove_after": "protocol"
+    "file": "admin-console/admin-api.ids-v2.schema.json",
+    "pointer": "/$defs/list_model_profiles_request/not/required/1",
+    "field": "after_id",
+    "replacement": "cursor",
+    "reason": "One-release deprecated request alias; Console normalizes to the canonical wire field.",
+    "kind": "deprecated_alias",
+    "remove_after": "next_release"
   },
   {
-    "file": "skill-learning/examples/learning-changes.empty.json",
-    "pointer": "/olderCursor",
-    "field": "olderCursor",
-    "replacement": "older_cursor",
-    "kind": "protocol_exception",
-    "reason": "Real producer capture of the existing ACP/Workspace sealed bidirectional change history protocol.",
-    "remove_after": "protocol"
+    "file": "admin-console/admin-api.ids-v2.schema.json",
+    "pointer": "/$defs/list_model_profiles_request/properties/after_id",
+    "field": "after_id",
+    "replacement": "cursor",
+    "reason": "One-release deprecated request alias; Console normalizes to the canonical wire field.",
+    "kind": "deprecated_alias",
+    "remove_after": "next_release"
   },
   {
-    "file": "skill-learning/examples/learning-changes.empty.json",
-    "pointer": "/sealedCursor",
-    "field": "sealedCursor",
-    "replacement": "sealed_cursor",
-    "kind": "protocol_exception",
-    "reason": "Real producer capture of the existing ACP/Workspace sealed bidirectional change history protocol.",
-    "remove_after": "protocol"
+    "file": "admin-console/admin-api.ids-v2.schema.json",
+    "pointer": "/$defs/list_organization_sessions_request/not/required/1",
+    "field": "after_id",
+    "replacement": "cursor",
+    "reason": "One-release deprecated request alias; Console normalizes to the canonical wire field.",
+    "kind": "deprecated_alias",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "admin-console/admin-api.ids-v2.schema.json",
+    "pointer": "/$defs/list_organization_sessions_request/properties/after_id",
+    "field": "after_id",
+    "replacement": "cursor",
+    "reason": "One-release deprecated request alias; Console normalizes to the canonical wire field.",
+    "kind": "deprecated_alias",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "admin-console/admin-api.ids-v2.schema.json",
+    "pointer": "/$defs/list_provider_connections_request/not/required/1",
+    "field": "after_id",
+    "replacement": "cursor",
+    "reason": "One-release deprecated request alias; Console normalizes to the canonical wire field.",
+    "kind": "deprecated_alias",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "admin-console/admin-api.ids-v2.schema.json",
+    "pointer": "/$defs/list_provider_connections_request/properties/after_id",
+    "field": "after_id",
+    "replacement": "cursor",
+    "reason": "One-release deprecated request alias; Console normalizes to the canonical wire field.",
+    "kind": "deprecated_alias",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "admin-console/admin-api.ids-v2.schema.json",
+    "pointer": "/$defs/list_skill_versions_request/not/required/1",
+    "field": "after_version",
+    "replacement": "cursor",
+    "reason": "One-release deprecated request alias; Console normalizes to the canonical wire field.",
+    "kind": "deprecated_alias",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "admin-console/admin-api.ids-v2.schema.json",
+    "pointer": "/$defs/list_skill_versions_request/properties/after_version",
+    "field": "after_version",
+    "replacement": "cursor",
+    "reason": "One-release deprecated request alias; Console normalizes to the canonical wire field.",
+    "kind": "deprecated_alias",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "admin-console/admin-api.ids-v2.schema.json",
+    "pointer": "/$defs/list_skills_request/not/required/1",
+    "field": "after_id",
+    "replacement": "cursor",
+    "reason": "One-release deprecated request alias; Console normalizes to the canonical wire field.",
+    "kind": "deprecated_alias",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "admin-console/admin-api.ids-v2.schema.json",
+    "pointer": "/$defs/list_skills_request/properties/after_id",
+    "field": "after_id",
+    "replacement": "cursor",
+    "reason": "One-release deprecated request alias; Console normalizes to the canonical wire field.",
+    "kind": "deprecated_alias",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "admin-console/admin-api.ids-v2.schema.json",
+    "pointer": "/$defs/list_templates_request/not/required/1",
+    "field": "after_id",
+    "replacement": "cursor",
+    "reason": "One-release deprecated request alias; Console normalizes to the canonical wire field.",
+    "kind": "deprecated_alias",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "admin-console/admin-api.ids-v2.schema.json",
+    "pointer": "/$defs/list_templates_request/properties/after_id",
+    "field": "after_id",
+    "replacement": "cursor",
+    "reason": "One-release deprecated request alias; Console normalizes to the canonical wire field.",
+    "kind": "deprecated_alias",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "admin-console/admin-api.ids-v2.schema.json",
+    "pointer": "/$defs/set_agent_network_policy_request/not/required/1",
+    "field": "expected_resource_version",
+    "replacement": "expected_version",
+    "reason": "One-release deprecated CAS alias; Console normalizes to the canonical expected_version.",
+    "kind": "deprecated_alias",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "admin-console/admin-api.ids-v2.schema.json",
+    "pointer": "/$defs/set_agent_network_policy_request/properties/expected_resource_version",
+    "field": "expected_resource_version",
+    "replacement": "expected_version",
+    "reason": "One-release deprecated CAS alias; Console normalizes to the canonical expected_version.",
+    "kind": "deprecated_alias",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "admin-console/admin-api.schema.json",
+    "pointer": "/$defs/list_model_profiles_request/not/required/1",
+    "field": "after_id",
+    "replacement": "cursor",
+    "reason": "One-release deprecated request alias; Console normalizes to the canonical wire field.",
+    "kind": "deprecated_alias",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "admin-console/admin-api.schema.json",
+    "pointer": "/$defs/list_model_profiles_request/properties/after_id",
+    "field": "after_id",
+    "replacement": "cursor",
+    "reason": "One-release deprecated request alias; Console normalizes to the canonical wire field.",
+    "kind": "deprecated_alias",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "admin-console/admin-api.schema.json",
+    "pointer": "/$defs/list_organization_sessions_request/not/required/1",
+    "field": "after_id",
+    "replacement": "cursor",
+    "reason": "One-release deprecated request alias; Console normalizes to the canonical wire field.",
+    "kind": "deprecated_alias",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "admin-console/admin-api.schema.json",
+    "pointer": "/$defs/list_organization_sessions_request/properties/after_id",
+    "field": "after_id",
+    "replacement": "cursor",
+    "reason": "One-release deprecated request alias; Console normalizes to the canonical wire field.",
+    "kind": "deprecated_alias",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "admin-console/admin-api.schema.json",
+    "pointer": "/$defs/list_provider_connections_request/not/required/1",
+    "field": "after_id",
+    "replacement": "cursor",
+    "reason": "One-release deprecated request alias; Console normalizes to the canonical wire field.",
+    "kind": "deprecated_alias",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "admin-console/admin-api.schema.json",
+    "pointer": "/$defs/list_provider_connections_request/properties/after_id",
+    "field": "after_id",
+    "replacement": "cursor",
+    "reason": "One-release deprecated request alias; Console normalizes to the canonical wire field.",
+    "kind": "deprecated_alias",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "admin-console/admin-api.schema.json",
+    "pointer": "/$defs/list_skill_versions_request/not/required/1",
+    "field": "after_version",
+    "replacement": "cursor",
+    "reason": "One-release deprecated request alias; Console normalizes to the canonical wire field.",
+    "kind": "deprecated_alias",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "admin-console/admin-api.schema.json",
+    "pointer": "/$defs/list_skill_versions_request/properties/after_version",
+    "field": "after_version",
+    "replacement": "cursor",
+    "reason": "One-release deprecated request alias; Console normalizes to the canonical wire field.",
+    "kind": "deprecated_alias",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "admin-console/admin-api.schema.json",
+    "pointer": "/$defs/list_skills_request/not/required/1",
+    "field": "after_id",
+    "replacement": "cursor",
+    "reason": "One-release deprecated request alias; Console normalizes to the canonical wire field.",
+    "kind": "deprecated_alias",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "admin-console/admin-api.schema.json",
+    "pointer": "/$defs/list_skills_request/properties/after_id",
+    "field": "after_id",
+    "replacement": "cursor",
+    "reason": "One-release deprecated request alias; Console normalizes to the canonical wire field.",
+    "kind": "deprecated_alias",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "admin-console/admin-api.schema.json",
+    "pointer": "/$defs/list_templates_request/not/required/1",
+    "field": "after_id",
+    "replacement": "cursor",
+    "reason": "One-release deprecated request alias; Console normalizes to the canonical wire field.",
+    "kind": "deprecated_alias",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "admin-console/admin-api.schema.json",
+    "pointer": "/$defs/list_templates_request/properties/after_id",
+    "field": "after_id",
+    "replacement": "cursor",
+    "reason": "One-release deprecated request alias; Console normalizes to the canonical wire field.",
+    "kind": "deprecated_alias",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "admin-console/admin-api.schema.json",
+    "pointer": "/$defs/set_agent_network_policy_request/not/required/1",
+    "field": "expected_resource_version",
+    "replacement": "expected_version",
+    "reason": "One-release deprecated CAS alias; Console normalizes to the canonical expected_version.",
+    "kind": "deprecated_alias",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "admin-console/admin-api.schema.json",
+    "pointer": "/$defs/set_agent_network_policy_request/properties/expected_resource_version",
+    "field": "expected_resource_version",
+    "replacement": "expected_version",
+    "reason": "One-release deprecated CAS alias; Console normalizes to the canonical expected_version.",
+    "kind": "deprecated_alias",
+    "remove_after": "next_release"
   },
   {
     "file": "admin-console/admin-contract.json",
@@ -144,6 +369,123 @@
     "remove_after": "next_release"
   },
   {
+    "file": "admin-console/directory-publication-proposal.json",
+    "pointer": "/catalog_patch/response_policy/agent_network_policy/deprecated_input/0",
+    "field": "expected_resource_version",
+    "replacement": "expected_version",
+    "reason": "One-release deprecated request alias; Console normalizes to the canonical wire field.",
+    "kind": "deprecated_alias",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "admin-console/directory-publication-proposal.json",
+    "pointer": "/catalog_patch/routes/list_model_profiles/query/deprecated/0",
+    "field": "after_id",
+    "replacement": "cursor",
+    "reason": "One-release deprecated request alias; Console normalizes to the canonical wire field.",
+    "kind": "deprecated_alias",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "admin-console/directory-publication-proposal.json",
+    "pointer": "/catalog_patch/routes/list_model_profiles/query/optional/1",
+    "field": "after_id",
+    "replacement": "cursor",
+    "reason": "One-release deprecated request alias; Console normalizes to the canonical wire field.",
+    "kind": "deprecated_alias",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "admin-console/directory-publication-proposal.json",
+    "pointer": "/catalog_patch/routes/list_organization_sessions/query/deprecated/0",
+    "field": "after_id",
+    "replacement": "cursor",
+    "reason": "One-release deprecated request alias; Console normalizes to the canonical wire field.",
+    "kind": "deprecated_alias",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "admin-console/directory-publication-proposal.json",
+    "pointer": "/catalog_patch/routes/list_organization_sessions/query/optional/1",
+    "field": "after_id",
+    "replacement": "cursor",
+    "reason": "One-release deprecated request alias; Console normalizes to the canonical wire field.",
+    "kind": "deprecated_alias",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "admin-console/directory-publication-proposal.json",
+    "pointer": "/catalog_patch/routes/list_provider_connections/query/deprecated/0",
+    "field": "after_id",
+    "replacement": "cursor",
+    "reason": "One-release deprecated request alias; Console normalizes to the canonical wire field.",
+    "kind": "deprecated_alias",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "admin-console/directory-publication-proposal.json",
+    "pointer": "/catalog_patch/routes/list_provider_connections/query/optional/1",
+    "field": "after_id",
+    "replacement": "cursor",
+    "reason": "One-release deprecated request alias; Console normalizes to the canonical wire field.",
+    "kind": "deprecated_alias",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "admin-console/directory-publication-proposal.json",
+    "pointer": "/catalog_patch/routes/list_skill_versions/query/deprecated/0",
+    "field": "after_version",
+    "replacement": "cursor",
+    "reason": "One-release deprecated request alias; Console normalizes to the canonical wire field.",
+    "kind": "deprecated_alias",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "admin-console/directory-publication-proposal.json",
+    "pointer": "/catalog_patch/routes/list_skill_versions/query/optional/1",
+    "field": "after_version",
+    "replacement": "cursor",
+    "reason": "One-release deprecated request alias; Console normalizes to the canonical wire field.",
+    "kind": "deprecated_alias",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "admin-console/directory-publication-proposal.json",
+    "pointer": "/catalog_patch/routes/list_skills/query/deprecated/0",
+    "field": "after_id",
+    "replacement": "cursor",
+    "reason": "One-release deprecated request alias; Console normalizes to the canonical wire field.",
+    "kind": "deprecated_alias",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "admin-console/directory-publication-proposal.json",
+    "pointer": "/catalog_patch/routes/list_skills/query/optional/1",
+    "field": "after_id",
+    "replacement": "cursor",
+    "reason": "One-release deprecated request alias; Console normalizes to the canonical wire field.",
+    "kind": "deprecated_alias",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "admin-console/directory-publication-proposal.json",
+    "pointer": "/catalog_patch/routes/list_templates/query/deprecated/0",
+    "field": "after_id",
+    "replacement": "cursor",
+    "reason": "One-release deprecated request alias; Console normalizes to the canonical wire field.",
+    "kind": "deprecated_alias",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "admin-console/directory-publication-proposal.json",
+    "pointer": "/catalog_patch/routes/list_templates/query/optional/1",
+    "field": "after_id",
+    "replacement": "cursor",
+    "reason": "One-release deprecated request alias; Console normalizes to the canonical wire field.",
+    "kind": "deprecated_alias",
+    "remove_after": "next_release"
+  },
+  {
     "file": "admin-console/model-call-policy.schema.json",
     "pointer": "/$defs/set_model_call_policy_request/not/properties/expected_revision",
     "field": "expected_revision",
@@ -166,6 +508,33 @@
     "pointer": "/$defs/set_model_call_policy_request/properties/expected_revision",
     "field": "expected_revision",
     "replacement": "expected_version",
+    "reason": "One-release deprecated request alias; Console normalizes to the canonical wire field.",
+    "kind": "deprecated_alias",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "admin-console/oidc-linking.ids-v2.schema.json",
+    "pointer": "/$defs/list_query/not/properties/after_id",
+    "field": "after_id",
+    "replacement": "cursor",
+    "reason": "One-release deprecated request alias; Console normalizes to the canonical wire field.",
+    "kind": "deprecated_alias",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "admin-console/oidc-linking.ids-v2.schema.json",
+    "pointer": "/$defs/list_query/not/required/1",
+    "field": "after_id",
+    "replacement": "cursor",
+    "reason": "One-release deprecated request alias; Console normalizes to the canonical wire field.",
+    "kind": "deprecated_alias",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "admin-console/oidc-linking.ids-v2.schema.json",
+    "pointer": "/$defs/list_query/properties/after_id",
+    "field": "after_id",
+    "replacement": "cursor",
     "reason": "One-release deprecated request alias; Console normalizes to the canonical wire field.",
     "kind": "deprecated_alias",
     "remove_after": "next_release"
@@ -196,6 +565,15 @@
     "reason": "One-release deprecated request alias; Console normalizes to the canonical wire field.",
     "kind": "deprecated_alias",
     "remove_after": "next_release"
+  },
+  {
+    "file": "admin-console/skill-discovery.ids-v2.schema.json",
+    "pointer": "/$defs/search_response",
+    "field": "$pagination",
+    "replacement": "bounded_items",
+    "kind": "protocol_exception",
+    "reason": "Finite bounded discovery/resolution result, not a continuation list.",
+    "remove_after": "protocol"
   },
   {
     "file": "admin-console/skill-discovery.schema.json",
@@ -241,6 +619,105 @@
     "kind": "protocol_exception",
     "reason": "ACP and Agent UI retain their specified camelCase protocol; the server adapter translates service calls.",
     "remove_after": "protocol"
+  },
+  {
+    "file": "agent-controller/control-api.ids-v2.schema.json",
+    "pointer": "/$defs/model_profile_event_list",
+    "field": "$pagination",
+    "replacement": "next_after_revision",
+    "kind": "protocol_exception",
+    "reason": "Model revision journal is an ordered revision feed, not an ordinary page.",
+    "remove_after": "protocol"
+  },
+  {
+    "file": "agent-controller/control-api.ids-v2.schema.json",
+    "pointer": "/$defs/set_agent_network_policy_request/allOf/0/oneOf/0/not/properties/expected_resource_version",
+    "field": "expected_resource_version",
+    "replacement": "expected_version",
+    "reason": "Controller accepts only as a one-release input alias for expected_version/cursor; rejects multiple forms.",
+    "kind": "deprecated_alias",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "agent-controller/control-api.ids-v2.schema.json",
+    "pointer": "/$defs/set_agent_network_policy_request/allOf/0/oneOf/0/not/required/0",
+    "field": "expected_resource_version",
+    "replacement": "expected_version",
+    "reason": "Controller accepts only as a one-release input alias for expected_version/cursor; rejects multiple forms.",
+    "kind": "deprecated_alias",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "agent-controller/control-api.ids-v2.schema.json",
+    "pointer": "/$defs/set_agent_network_policy_request/allOf/0/oneOf/1/properties/expected_resource_version",
+    "field": "expected_resource_version",
+    "replacement": "expected_version",
+    "reason": "Controller accepts only as a one-release input alias for expected_version/cursor; rejects multiple forms.",
+    "kind": "deprecated_alias",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "agent-controller/control-api.ids-v2.schema.json",
+    "pointer": "/$defs/set_agent_network_policy_request/allOf/0/oneOf/1/required/0",
+    "field": "expected_resource_version",
+    "replacement": "expected_version",
+    "reason": "Controller accepts only as a one-release input alias for expected_version/cursor; rejects multiple forms.",
+    "kind": "deprecated_alias",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "agent-controller/control-api.ids-v2.schema.json",
+    "pointer": "/$defs/set_agent_network_policy_request/properties/expected_resource_version",
+    "field": "expected_resource_version",
+    "replacement": "expected_version",
+    "kind": "deprecated_alias",
+    "reason": "Controller accepts only as a one-release input alias for expected_version/cursor; rejects multiple forms.",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "agent-controller/control-api.ids-v2.schema.json",
+    "pointer": "/$defs/set_model_call_policy_request/allOf/0/oneOf/0/not/properties/expected_revision",
+    "field": "expected_revision",
+    "replacement": "expected_version",
+    "reason": "Controller accepts only as a one-release input alias for expected_version/cursor; rejects multiple forms.",
+    "kind": "deprecated_alias",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "agent-controller/control-api.ids-v2.schema.json",
+    "pointer": "/$defs/set_model_call_policy_request/allOf/0/oneOf/0/not/required/0",
+    "field": "expected_revision",
+    "replacement": "expected_version",
+    "reason": "Controller accepts only as a one-release input alias for expected_version/cursor; rejects multiple forms.",
+    "kind": "deprecated_alias",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "agent-controller/control-api.ids-v2.schema.json",
+    "pointer": "/$defs/set_model_call_policy_request/allOf/0/oneOf/1/properties/expected_revision",
+    "field": "expected_revision",
+    "replacement": "expected_version",
+    "reason": "Controller accepts only as a one-release input alias for expected_version/cursor; rejects multiple forms.",
+    "kind": "deprecated_alias",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "agent-controller/control-api.ids-v2.schema.json",
+    "pointer": "/$defs/set_model_call_policy_request/allOf/0/oneOf/1/required/0",
+    "field": "expected_revision",
+    "replacement": "expected_version",
+    "reason": "Controller accepts only as a one-release input alias for expected_version/cursor; rejects multiple forms.",
+    "kind": "deprecated_alias",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "agent-controller/control-api.ids-v2.schema.json",
+    "pointer": "/$defs/set_model_call_policy_request/properties/expected_revision",
+    "field": "expected_revision",
+    "replacement": "expected_version",
+    "kind": "deprecated_alias",
+    "reason": "Controller accepts only as a one-release input alias for expected_version/cursor; rejects multiple forms.",
+    "remove_after": "next_release"
   },
   {
     "file": "agent-controller/control-api.schema.json",
@@ -396,6 +873,51 @@
     "remove_after": "next_release"
   },
   {
+    "file": "agent-controller/model-call-policy.ids-v2.schema.json",
+    "pointer": "/$defs/policy_update_request/allOf/0/oneOf/0/not/properties/expected_revision",
+    "field": "expected_revision",
+    "replacement": "expected_version",
+    "reason": "Controller accepts only as a one-release input alias for expected_version/cursor; rejects multiple forms.",
+    "kind": "deprecated_alias",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "agent-controller/model-call-policy.ids-v2.schema.json",
+    "pointer": "/$defs/policy_update_request/allOf/0/oneOf/0/not/required/0",
+    "field": "expected_revision",
+    "replacement": "expected_version",
+    "reason": "Controller accepts only as a one-release input alias for expected_version/cursor; rejects multiple forms.",
+    "kind": "deprecated_alias",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "agent-controller/model-call-policy.ids-v2.schema.json",
+    "pointer": "/$defs/policy_update_request/allOf/0/oneOf/1/properties/expected_revision",
+    "field": "expected_revision",
+    "replacement": "expected_version",
+    "reason": "Controller accepts only as a one-release input alias for expected_version/cursor; rejects multiple forms.",
+    "kind": "deprecated_alias",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "agent-controller/model-call-policy.ids-v2.schema.json",
+    "pointer": "/$defs/policy_update_request/allOf/0/oneOf/1/required/0",
+    "field": "expected_revision",
+    "replacement": "expected_version",
+    "reason": "Controller accepts only as a one-release input alias for expected_version/cursor; rejects multiple forms.",
+    "kind": "deprecated_alias",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "agent-controller/model-call-policy.ids-v2.schema.json",
+    "pointer": "/$defs/policy_update_request/properties/expected_revision",
+    "field": "expected_revision",
+    "replacement": "expected_version",
+    "kind": "deprecated_alias",
+    "reason": "Controller accepts only as a one-release input alias for expected_version/cursor; rejects multiple forms.",
+    "remove_after": "next_release"
+  },
+  {
     "file": "agent-controller/model-call-policy.schema.json",
     "pointer": "/$defs/policy_update_request/allOf/0/oneOf/0/not/properties/expected_revision",
     "field": "expected_revision",
@@ -504,6 +1026,51 @@
     "remove_after": "next_release"
   },
   {
+    "file": "agent-controller/runtime-barrier-recovery.ids-v2.schema.json",
+    "pointer": "/$defs/policy_update_request/allOf/0/oneOf/0/not/properties/expected_revision",
+    "field": "expected_revision",
+    "replacement": "expected_version",
+    "reason": "Controller accepts only as a one-release input alias for expected_version/cursor; rejects multiple forms.",
+    "kind": "deprecated_alias",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "agent-controller/runtime-barrier-recovery.ids-v2.schema.json",
+    "pointer": "/$defs/policy_update_request/allOf/0/oneOf/0/not/required/0",
+    "field": "expected_revision",
+    "replacement": "expected_version",
+    "reason": "Controller accepts only as a one-release input alias for expected_version/cursor; rejects multiple forms.",
+    "kind": "deprecated_alias",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "agent-controller/runtime-barrier-recovery.ids-v2.schema.json",
+    "pointer": "/$defs/policy_update_request/allOf/0/oneOf/1/properties/expected_revision",
+    "field": "expected_revision",
+    "replacement": "expected_version",
+    "reason": "Controller accepts only as a one-release input alias for expected_version/cursor; rejects multiple forms.",
+    "kind": "deprecated_alias",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "agent-controller/runtime-barrier-recovery.ids-v2.schema.json",
+    "pointer": "/$defs/policy_update_request/allOf/0/oneOf/1/required/0",
+    "field": "expected_revision",
+    "replacement": "expected_version",
+    "reason": "Controller accepts only as a one-release input alias for expected_version/cursor; rejects multiple forms.",
+    "kind": "deprecated_alias",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "agent-controller/runtime-barrier-recovery.ids-v2.schema.json",
+    "pointer": "/$defs/policy_update_request/properties/expected_revision",
+    "field": "expected_revision",
+    "replacement": "expected_version",
+    "kind": "deprecated_alias",
+    "reason": "Controller accepts only as a one-release input alias for expected_version/cursor; rejects multiple forms.",
+    "remove_after": "next_release"
+  },
+  {
     "file": "agent-controller/runtime-barrier-recovery.schema.json",
     "pointer": "/$defs/policy_update_request/allOf/0/oneOf/0/not/properties/expected_revision",
     "field": "expected_revision",
@@ -547,6 +1114,168 @@
     "kind": "deprecated_alias",
     "reason": "Controller accepts only as a one-release input alias for expected_version/cursor; rejects multiple forms.",
     "remove_after": "next_release"
+  },
+  {
+    "file": "agent-ui/workspace-api.ids-v2.schema.json",
+    "pointer": "/$defs/contentPage",
+    "field": "$pagination",
+    "replacement": "nextCursor",
+    "kind": "protocol_exception",
+    "reason": "ACP and Agent UI retain their specified camelCase protocol; the server adapter translates service calls.",
+    "remove_after": "protocol"
+  },
+  {
+    "file": "agent-ui/workspace-api.ids-v2.schema.json",
+    "pointer": "/$defs/contentPage/properties/nextCursor",
+    "field": "nextCursor",
+    "replacement": "nextCursor",
+    "kind": "protocol_exception",
+    "reason": "ACP and Agent UI retain their specified camelCase protocol; the server adapter translates service calls.",
+    "remove_after": "protocol"
+  },
+  {
+    "file": "agent-ui/workspace-api.ids-v2.schema.json",
+    "pointer": "/$defs/contentPage/required/2",
+    "field": "nextCursor",
+    "replacement": "nextCursor",
+    "kind": "protocol_exception",
+    "reason": "ACP and Agent UI retain their specified camelCase protocol; the server adapter translates service calls.",
+    "remove_after": "protocol"
+  },
+  {
+    "file": "agent-ui/workspace-api.ids-v2.schema.json",
+    "pointer": "/$defs/processContentPage",
+    "field": "$pagination",
+    "replacement": "nextCursor",
+    "kind": "protocol_exception",
+    "reason": "ACP and Agent UI retain their specified camelCase protocol; the server adapter translates service calls.",
+    "remove_after": "protocol"
+  },
+  {
+    "file": "agent-ui/workspace-api.ids-v2.schema.json",
+    "pointer": "/$defs/processContentPage/properties/nextCursor",
+    "field": "nextCursor",
+    "replacement": "nextCursor",
+    "kind": "protocol_exception",
+    "reason": "ACP and Agent UI retain their specified camelCase protocol; the server adapter translates service calls.",
+    "remove_after": "protocol"
+  },
+  {
+    "file": "agent-ui/workspace-api.ids-v2.schema.json",
+    "pointer": "/$defs/processContentPage/required/3",
+    "field": "nextCursor",
+    "replacement": "nextCursor",
+    "kind": "protocol_exception",
+    "reason": "ACP and Agent UI retain their specified camelCase protocol; the server adapter translates service calls.",
+    "remove_after": "protocol"
+  },
+  {
+    "file": "agent-ui/workspace-api.ids-v2.schema.json",
+    "pointer": "/$defs/processPage",
+    "field": "$pagination",
+    "replacement": "nextCursor",
+    "kind": "protocol_exception",
+    "reason": "ACP and Agent UI retain their specified camelCase protocol; the server adapter translates service calls.",
+    "remove_after": "protocol"
+  },
+  {
+    "file": "agent-ui/workspace-api.ids-v2.schema.json",
+    "pointer": "/$defs/processPage/properties/nextCursor",
+    "field": "nextCursor",
+    "replacement": "nextCursor",
+    "kind": "protocol_exception",
+    "reason": "ACP and Agent UI retain their specified camelCase protocol; the server adapter translates service calls.",
+    "remove_after": "protocol"
+  },
+  {
+    "file": "agent-ui/workspace-api.ids-v2.schema.json",
+    "pointer": "/$defs/processPage/required/3",
+    "field": "nextCursor",
+    "replacement": "nextCursor",
+    "kind": "protocol_exception",
+    "reason": "ACP and Agent UI retain their specified camelCase protocol; the server adapter translates service calls.",
+    "remove_after": "protocol"
+  },
+  {
+    "file": "agent-ui/workspace-api.ids-v2.schema.json",
+    "pointer": "/$defs/promptRequest/properties/expectedAppendVersion",
+    "field": "expectedAppendVersion",
+    "replacement": "expectedAppendVersion",
+    "kind": "protocol_exception",
+    "reason": "ACP and Agent UI retain their specified camelCase protocol; the server adapter translates service calls.",
+    "remove_after": "protocol"
+  },
+  {
+    "file": "agent-ui/workspace-api.ids-v2.schema.json",
+    "pointer": "/$defs/promptRequest/required/1",
+    "field": "expectedAppendVersion",
+    "replacement": "expectedAppendVersion",
+    "kind": "protocol_exception",
+    "reason": "ACP and Agent UI retain their specified camelCase protocol; the server adapter translates service calls.",
+    "remove_after": "protocol"
+  },
+  {
+    "file": "agent-ui/workspace-api.ids-v2.schema.json",
+    "pointer": "/$defs/sessionPage",
+    "field": "$pagination",
+    "replacement": "nextCursor",
+    "kind": "protocol_exception",
+    "reason": "ACP and Agent UI retain their specified camelCase protocol; the server adapter translates service calls.",
+    "remove_after": "protocol"
+  },
+  {
+    "file": "agent-ui/workspace-api.ids-v2.schema.json",
+    "pointer": "/$defs/sessionPage/properties/nextCursor",
+    "field": "nextCursor",
+    "replacement": "nextCursor",
+    "kind": "protocol_exception",
+    "reason": "ACP and Agent UI retain their specified camelCase protocol; the server adapter translates service calls.",
+    "remove_after": "protocol"
+  },
+  {
+    "file": "agent-ui/workspace-api.ids-v2.schema.json",
+    "pointer": "/$defs/sessionPage/required/1",
+    "field": "nextCursor",
+    "replacement": "nextCursor",
+    "kind": "protocol_exception",
+    "reason": "ACP and Agent UI retain their specified camelCase protocol; the server adapter translates service calls.",
+    "remove_after": "protocol"
+  },
+  {
+    "file": "agent-ui/workspace-api.ids-v2.schema.json",
+    "pointer": "/$defs/turn/properties/liveProcessDelta",
+    "field": "$pagination",
+    "replacement": "processVersion",
+    "kind": "protocol_exception",
+    "reason": "Bounded process delta stream, not a continuation page.",
+    "remove_after": "protocol"
+  },
+  {
+    "file": "agent-ui/workspace-api.ids-v2.schema.json",
+    "pointer": "/$defs/turnPage",
+    "field": "$pagination",
+    "replacement": "nextCursor",
+    "kind": "protocol_exception",
+    "reason": "ACP and Agent UI retain their specified camelCase protocol; the server adapter translates service calls.",
+    "remove_after": "protocol"
+  },
+  {
+    "file": "agent-ui/workspace-api.ids-v2.schema.json",
+    "pointer": "/$defs/turnPage/properties/nextCursor",
+    "field": "nextCursor",
+    "replacement": "nextCursor",
+    "kind": "protocol_exception",
+    "reason": "ACP and Agent UI retain their specified camelCase protocol; the server adapter translates service calls.",
+    "remove_after": "protocol"
+  },
+  {
+    "file": "agent-ui/workspace-api.ids-v2.schema.json",
+    "pointer": "/$defs/turnPage/required/1",
+    "field": "nextCursor",
+    "replacement": "nextCursor",
+    "kind": "protocol_exception",
+    "reason": "ACP and Agent UI retain their specified camelCase protocol; the server adapter translates service calls.",
+    "remove_after": "protocol"
   },
   {
     "file": "agent-ui/workspace-api.json",
@@ -729,6 +1458,60 @@
     "remove_after": "protocol"
   },
   {
+    "file": "edge-gateway/session-response.ids-v2.schema.json",
+    "pointer": "/$defs/external_identity_list_query/not/properties/after_id",
+    "field": "after_id",
+    "replacement": "cursor",
+    "reason": "One-release deprecated request alias; Gateway forwards only canonical cursor.",
+    "kind": "deprecated_alias",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "edge-gateway/session-response.ids-v2.schema.json",
+    "pointer": "/$defs/external_identity_list_query/not/required/1",
+    "field": "after_id",
+    "replacement": "cursor",
+    "reason": "One-release deprecated request alias; Gateway forwards only canonical cursor.",
+    "kind": "deprecated_alias",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "edge-gateway/session-response.ids-v2.schema.json",
+    "pointer": "/$defs/external_identity_list_query/properties/after_id",
+    "field": "after_id",
+    "replacement": "cursor",
+    "reason": "One-release deprecated request alias; Gateway forwards only canonical cursor.",
+    "kind": "deprecated_alias",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "edge-gateway/session-response.ids-v2.schema.json",
+    "pointer": "/$defs/list_sessions_query/not/properties/after_id",
+    "field": "after_id",
+    "replacement": "cursor",
+    "reason": "One-release deprecated request alias; Gateway forwards only canonical cursor.",
+    "kind": "deprecated_alias",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "edge-gateway/session-response.ids-v2.schema.json",
+    "pointer": "/$defs/list_sessions_query/not/required/1",
+    "field": "after_id",
+    "replacement": "cursor",
+    "reason": "One-release deprecated request alias; Gateway forwards only canonical cursor.",
+    "kind": "deprecated_alias",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "edge-gateway/session-response.ids-v2.schema.json",
+    "pointer": "/$defs/list_sessions_query/properties/after_id",
+    "field": "after_id",
+    "replacement": "cursor",
+    "reason": "One-release deprecated request alias; Gateway forwards only canonical cursor.",
+    "kind": "deprecated_alias",
+    "remove_after": "next_release"
+  },
+  {
     "file": "edge-gateway/session-response.schema.json",
     "pointer": "/$defs/external_identity_list_query/not/properties/after_id",
     "field": "after_id",
@@ -783,6 +1566,24 @@
     "remove_after": "next_release"
   },
   {
+    "file": "egress/attachment-state-body.schema.json",
+    "pointer": "/not/required/1",
+    "field": "expected_resource_version",
+    "replacement": "expected_version",
+    "kind": "deprecated_alias",
+    "reason": "Egress accepts only as a one-release input alias for expected_version; rejects multiple forms.",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "egress/attachment-state-body.schema.json",
+    "pointer": "/properties/expected_resource_version",
+    "field": "expected_resource_version",
+    "replacement": "expected_version",
+    "kind": "deprecated_alias",
+    "reason": "Egress accepts only as a one-release input alias for expected_version; rejects multiple forms.",
+    "remove_after": "next_release"
+  },
+  {
     "file": "egress/attachment-state-request.schema.json",
     "pointer": "/allOf/1/oneOf/0/not/properties/expected_resource_version",
     "field": "expected_resource_version",
@@ -820,6 +1621,60 @@
   },
   {
     "file": "egress/attachment-state-request.schema.json",
+    "pointer": "/properties/expected_resource_version",
+    "field": "expected_resource_version",
+    "replacement": "expected_version",
+    "kind": "deprecated_alias",
+    "reason": "Egress accepts only as a one-release input alias for expected_version; rejects multiple forms.",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "egress/control-contract.json",
+    "pointer": "/precondition/deprecated_alias",
+    "field": "expected_resource_version",
+    "replacement": "expected_version",
+    "kind": "deprecated_alias",
+    "reason": "Descriptor names the deprecated one-release input alias for the Egress precondition contract; requests may still carry it.",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "egress/control-contract.json",
+    "pointer": "/precondition/forms/1",
+    "field": "expected_resource_version",
+    "replacement": "expected_version",
+    "kind": "deprecated_alias",
+    "reason": "Descriptor names the deprecated one-release input alias for the Egress precondition contract; requests may still carry it.",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "egress/policy-assignment-request.schema.json",
+    "pointer": "/not/required/1",
+    "field": "expected_resource_version",
+    "replacement": "expected_version",
+    "kind": "deprecated_alias",
+    "reason": "Egress accepts only as a one-release input alias for expected_version; rejects multiple forms.",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "egress/policy-assignment-request.schema.json",
+    "pointer": "/properties/expected_resource_version",
+    "field": "expected_resource_version",
+    "replacement": "expected_version",
+    "kind": "deprecated_alias",
+    "reason": "Egress accepts only as a one-release input alias for expected_version; rejects multiple forms.",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "egress/resource-version-body.schema.json",
+    "pointer": "/not/required/1",
+    "field": "expected_resource_version",
+    "replacement": "expected_version",
+    "kind": "deprecated_alias",
+    "reason": "Egress accepts only as a one-release input alias for expected_version; rejects multiple forms.",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "egress/resource-version-body.schema.json",
     "pointer": "/properties/expected_resource_version",
     "field": "expected_resource_version",
     "replacement": "expected_version",
@@ -954,6 +1809,96 @@
     "remove_after": "next_release"
   },
   {
+    "file": "runtime-controller/control-api.ids-v2.schema.json",
+    "pointer": "/$defs/revision_configuration_request/allOf/0/oneOf/0/not/properties/expected_revision",
+    "field": "expected_revision",
+    "replacement": "expected_version",
+    "reason": "Runtime Controller accepts only as a one-release input alias for expected_version; rejects multiple forms.",
+    "kind": "deprecated_alias",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "runtime-controller/control-api.ids-v2.schema.json",
+    "pointer": "/$defs/revision_configuration_request/allOf/0/oneOf/0/not/required/0",
+    "field": "expected_revision",
+    "replacement": "expected_version",
+    "reason": "Runtime Controller accepts only as a one-release input alias for expected_version; rejects multiple forms.",
+    "kind": "deprecated_alias",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "runtime-controller/control-api.ids-v2.schema.json",
+    "pointer": "/$defs/revision_configuration_request/allOf/0/oneOf/1/properties/expected_revision",
+    "field": "expected_revision",
+    "replacement": "expected_version",
+    "reason": "Runtime Controller accepts only as a one-release input alias for expected_version; rejects multiple forms.",
+    "kind": "deprecated_alias",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "runtime-controller/control-api.ids-v2.schema.json",
+    "pointer": "/$defs/revision_configuration_request/allOf/0/oneOf/1/required/0",
+    "field": "expected_revision",
+    "replacement": "expected_version",
+    "reason": "Runtime Controller accepts only as a one-release input alias for expected_version; rejects multiple forms.",
+    "kind": "deprecated_alias",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "runtime-controller/control-api.ids-v2.schema.json",
+    "pointer": "/$defs/revision_configuration_request/properties/expected_revision",
+    "field": "expected_revision",
+    "replacement": "expected_version",
+    "kind": "deprecated_alias",
+    "reason": "Runtime Controller accepts only as a one-release input alias for expected_version; rejects multiple forms.",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "runtime-controller/control-api.ids-v2.schema.json",
+    "pointer": "/$defs/revision_request/allOf/0/oneOf/0/not/properties/expected_revision",
+    "field": "expected_revision",
+    "replacement": "expected_version",
+    "reason": "Runtime Controller accepts only as a one-release input alias for expected_version; rejects multiple forms.",
+    "kind": "deprecated_alias",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "runtime-controller/control-api.ids-v2.schema.json",
+    "pointer": "/$defs/revision_request/allOf/0/oneOf/0/not/required/0",
+    "field": "expected_revision",
+    "replacement": "expected_version",
+    "reason": "Runtime Controller accepts only as a one-release input alias for expected_version; rejects multiple forms.",
+    "kind": "deprecated_alias",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "runtime-controller/control-api.ids-v2.schema.json",
+    "pointer": "/$defs/revision_request/allOf/0/oneOf/1/properties/expected_revision",
+    "field": "expected_revision",
+    "replacement": "expected_version",
+    "reason": "Runtime Controller accepts only as a one-release input alias for expected_version; rejects multiple forms.",
+    "kind": "deprecated_alias",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "runtime-controller/control-api.ids-v2.schema.json",
+    "pointer": "/$defs/revision_request/allOf/0/oneOf/1/required/0",
+    "field": "expected_revision",
+    "replacement": "expected_version",
+    "reason": "Runtime Controller accepts only as a one-release input alias for expected_version; rejects multiple forms.",
+    "kind": "deprecated_alias",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "runtime-controller/control-api.ids-v2.schema.json",
+    "pointer": "/$defs/revision_request/properties/expected_revision",
+    "field": "expected_revision",
+    "replacement": "expected_version",
+    "kind": "deprecated_alias",
+    "reason": "Runtime Controller accepts only as a one-release input alias for expected_version; rejects multiple forms.",
+    "remove_after": "next_release"
+  },
+  {
     "file": "runtime-controller/control-api.schema.json",
     "pointer": "/$defs/revision_configuration_request/allOf/0/oneOf/0/not/properties/expected_revision",
     "field": "expected_revision",
@@ -1044,16 +1989,34 @@
     "remove_after": "next_release"
   },
   {
-    "file": "skill-learning/learning-api.ids-v2.schema.json",
-    "pointer": "/$defs/change_page",
-    "field": "$pagination",
-    "replacement": "sealed_history_feed",
+    "file": "skill-learning/examples/learning-changes.empty.json",
+    "pointer": "/nextCursor",
+    "field": "nextCursor",
+    "replacement": "next_cursor",
     "kind": "protocol_exception",
-    "reason": "ACP/Workspace sealed bidirectional change history; cursor names are protocol fields, not request aliases.",
+    "reason": "Real producer capture of the existing ACP/Workspace sealed bidirectional change history protocol.",
     "remove_after": "protocol"
   },
   {
-    "file": "skill-learning/learning-api.schema.json",
+    "file": "skill-learning/examples/learning-changes.empty.json",
+    "pointer": "/olderCursor",
+    "field": "olderCursor",
+    "replacement": "older_cursor",
+    "kind": "protocol_exception",
+    "reason": "Real producer capture of the existing ACP/Workspace sealed bidirectional change history protocol.",
+    "remove_after": "protocol"
+  },
+  {
+    "file": "skill-learning/examples/learning-changes.empty.json",
+    "pointer": "/sealedCursor",
+    "field": "sealedCursor",
+    "replacement": "sealed_cursor",
+    "kind": "protocol_exception",
+    "reason": "Real producer capture of the existing ACP/Workspace sealed bidirectional change history protocol.",
+    "remove_after": "protocol"
+  },
+  {
+    "file": "skill-learning/learning-api.ids-v2.schema.json",
     "pointer": "/$defs/change_page",
     "field": "$pagination",
     "replacement": "sealed_history_feed",
@@ -1071,25 +2034,7 @@
     "remove_after": "protocol"
   },
   {
-    "file": "skill-learning/learning-api.schema.json",
-    "pointer": "/$defs/change_page/properties/nextCursor",
-    "field": "nextCursor",
-    "replacement": "next_cursor",
-    "kind": "protocol_exception",
-    "reason": "ACP/Workspace sealed bidirectional change history; cursor names are protocol fields, not request aliases.",
-    "remove_after": "protocol"
-  },
-  {
     "file": "skill-learning/learning-api.ids-v2.schema.json",
-    "pointer": "/$defs/change_page/properties/olderCursor",
-    "field": "olderCursor",
-    "replacement": "older_cursor",
-    "kind": "protocol_exception",
-    "reason": "ACP/Workspace sealed bidirectional change history; cursor names are protocol fields, not request aliases.",
-    "remove_after": "protocol"
-  },
-  {
-    "file": "skill-learning/learning-api.schema.json",
     "pointer": "/$defs/change_page/properties/olderCursor",
     "field": "olderCursor",
     "replacement": "older_cursor",
@@ -1107,25 +2052,7 @@
     "remove_after": "protocol"
   },
   {
-    "file": "skill-learning/learning-api.schema.json",
-    "pointer": "/$defs/change_page/properties/sealedCursor",
-    "field": "sealedCursor",
-    "replacement": "sealed_cursor",
-    "kind": "protocol_exception",
-    "reason": "ACP/Workspace sealed bidirectional change history; cursor names are protocol fields, not request aliases.",
-    "remove_after": "protocol"
-  },
-  {
     "file": "skill-learning/learning-api.ids-v2.schema.json",
-    "pointer": "/$defs/change_page/required/1",
-    "field": "nextCursor",
-    "replacement": "next_cursor",
-    "kind": "protocol_exception",
-    "reason": "ACP/Workspace sealed bidirectional change history; cursor names are protocol fields, not request aliases.",
-    "remove_after": "protocol"
-  },
-  {
-    "file": "skill-learning/learning-api.schema.json",
     "pointer": "/$defs/change_page/required/1",
     "field": "nextCursor",
     "replacement": "next_cursor",
@@ -1143,25 +2070,7 @@
     "remove_after": "protocol"
   },
   {
-    "file": "skill-learning/learning-api.schema.json",
-    "pointer": "/$defs/change_page/required/2",
-    "field": "olderCursor",
-    "replacement": "older_cursor",
-    "kind": "protocol_exception",
-    "reason": "ACP/Workspace sealed bidirectional change history; cursor names are protocol fields, not request aliases.",
-    "remove_after": "protocol"
-  },
-  {
     "file": "skill-learning/learning-api.ids-v2.schema.json",
-    "pointer": "/$defs/change_page/required/3",
-    "field": "sealedCursor",
-    "replacement": "sealed_cursor",
-    "kind": "protocol_exception",
-    "reason": "ACP/Workspace sealed bidirectional change history; cursor names are protocol fields, not request aliases.",
-    "remove_after": "protocol"
-  },
-  {
-    "file": "skill-learning/learning-api.schema.json",
     "pointer": "/$defs/change_page/required/3",
     "field": "sealedCursor",
     "replacement": "sealed_cursor",
@@ -1179,25 +2088,7 @@
     "remove_after": "next_release"
   },
   {
-    "file": "skill-learning/learning-api.schema.json",
-    "pointer": "/$defs/policy_mutation_request/allOf/0/oneOf/0/not/properties/expected_revision",
-    "field": "expected_revision",
-    "replacement": "expected_version",
-    "reason": "Controller accepts only as a one-release input alias for expected_version/cursor; rejects multiple forms.",
-    "kind": "deprecated_alias",
-    "remove_after": "next_release"
-  },
-  {
     "file": "skill-learning/learning-api.ids-v2.schema.json",
-    "pointer": "/$defs/policy_mutation_request/allOf/0/oneOf/0/not/required/0",
-    "field": "expected_revision",
-    "replacement": "expected_version",
-    "reason": "Controller accepts only as a one-release input alias for expected_version/cursor; rejects multiple forms.",
-    "kind": "deprecated_alias",
-    "remove_after": "next_release"
-  },
-  {
-    "file": "skill-learning/learning-api.schema.json",
     "pointer": "/$defs/policy_mutation_request/allOf/0/oneOf/0/not/required/0",
     "field": "expected_revision",
     "replacement": "expected_version",
@@ -1215,25 +2106,7 @@
     "remove_after": "next_release"
   },
   {
-    "file": "skill-learning/learning-api.schema.json",
-    "pointer": "/$defs/policy_mutation_request/allOf/0/oneOf/1/properties/expected_revision",
-    "field": "expected_revision",
-    "replacement": "expected_version",
-    "reason": "Controller accepts only as a one-release input alias for expected_version/cursor; rejects multiple forms.",
-    "kind": "deprecated_alias",
-    "remove_after": "next_release"
-  },
-  {
     "file": "skill-learning/learning-api.ids-v2.schema.json",
-    "pointer": "/$defs/policy_mutation_request/allOf/0/oneOf/1/required/0",
-    "field": "expected_revision",
-    "replacement": "expected_version",
-    "reason": "Controller accepts only as a one-release input alias for expected_version/cursor; rejects multiple forms.",
-    "kind": "deprecated_alias",
-    "remove_after": "next_release"
-  },
-  {
-    "file": "skill-learning/learning-api.schema.json",
     "pointer": "/$defs/policy_mutation_request/allOf/0/oneOf/1/required/0",
     "field": "expected_revision",
     "replacement": "expected_version",
@@ -1248,6 +2121,105 @@
     "replacement": "expected_version",
     "kind": "deprecated_alias",
     "reason": "Controller accepts only as a one-release input alias for expected_version/cursor; rejects multiple forms.",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "skill-learning/learning-api.schema.json",
+    "pointer": "/$defs/change_page",
+    "field": "$pagination",
+    "replacement": "sealed_history_feed",
+    "kind": "protocol_exception",
+    "reason": "ACP/Workspace sealed bidirectional change history; cursor names are protocol fields, not request aliases.",
+    "remove_after": "protocol"
+  },
+  {
+    "file": "skill-learning/learning-api.schema.json",
+    "pointer": "/$defs/change_page/properties/nextCursor",
+    "field": "nextCursor",
+    "replacement": "next_cursor",
+    "kind": "protocol_exception",
+    "reason": "ACP/Workspace sealed bidirectional change history; cursor names are protocol fields, not request aliases.",
+    "remove_after": "protocol"
+  },
+  {
+    "file": "skill-learning/learning-api.schema.json",
+    "pointer": "/$defs/change_page/properties/olderCursor",
+    "field": "olderCursor",
+    "replacement": "older_cursor",
+    "kind": "protocol_exception",
+    "reason": "ACP/Workspace sealed bidirectional change history; cursor names are protocol fields, not request aliases.",
+    "remove_after": "protocol"
+  },
+  {
+    "file": "skill-learning/learning-api.schema.json",
+    "pointer": "/$defs/change_page/properties/sealedCursor",
+    "field": "sealedCursor",
+    "replacement": "sealed_cursor",
+    "kind": "protocol_exception",
+    "reason": "ACP/Workspace sealed bidirectional change history; cursor names are protocol fields, not request aliases.",
+    "remove_after": "protocol"
+  },
+  {
+    "file": "skill-learning/learning-api.schema.json",
+    "pointer": "/$defs/change_page/required/1",
+    "field": "nextCursor",
+    "replacement": "next_cursor",
+    "kind": "protocol_exception",
+    "reason": "ACP/Workspace sealed bidirectional change history; cursor names are protocol fields, not request aliases.",
+    "remove_after": "protocol"
+  },
+  {
+    "file": "skill-learning/learning-api.schema.json",
+    "pointer": "/$defs/change_page/required/2",
+    "field": "olderCursor",
+    "replacement": "older_cursor",
+    "kind": "protocol_exception",
+    "reason": "ACP/Workspace sealed bidirectional change history; cursor names are protocol fields, not request aliases.",
+    "remove_after": "protocol"
+  },
+  {
+    "file": "skill-learning/learning-api.schema.json",
+    "pointer": "/$defs/change_page/required/3",
+    "field": "sealedCursor",
+    "replacement": "sealed_cursor",
+    "kind": "protocol_exception",
+    "reason": "ACP/Workspace sealed bidirectional change history; cursor names are protocol fields, not request aliases.",
+    "remove_after": "protocol"
+  },
+  {
+    "file": "skill-learning/learning-api.schema.json",
+    "pointer": "/$defs/policy_mutation_request/allOf/0/oneOf/0/not/properties/expected_revision",
+    "field": "expected_revision",
+    "replacement": "expected_version",
+    "reason": "Controller accepts only as a one-release input alias for expected_version/cursor; rejects multiple forms.",
+    "kind": "deprecated_alias",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "skill-learning/learning-api.schema.json",
+    "pointer": "/$defs/policy_mutation_request/allOf/0/oneOf/0/not/required/0",
+    "field": "expected_revision",
+    "replacement": "expected_version",
+    "reason": "Controller accepts only as a one-release input alias for expected_version/cursor; rejects multiple forms.",
+    "kind": "deprecated_alias",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "skill-learning/learning-api.schema.json",
+    "pointer": "/$defs/policy_mutation_request/allOf/0/oneOf/1/properties/expected_revision",
+    "field": "expected_revision",
+    "replacement": "expected_version",
+    "reason": "Controller accepts only as a one-release input alias for expected_version/cursor; rejects multiple forms.",
+    "kind": "deprecated_alias",
+    "remove_after": "next_release"
+  },
+  {
+    "file": "skill-learning/learning-api.schema.json",
+    "pointer": "/$defs/policy_mutation_request/allOf/0/oneOf/1/required/0",
+    "field": "expected_revision",
+    "replacement": "expected_version",
+    "reason": "Controller accepts only as a one-release input alias for expected_version/cursor; rejects multiple forms.",
+    "kind": "deprecated_alias",
     "remove_after": "next_release"
   },
   {
@@ -1312,320 +2284,5 @@
     "kind": "protocol_exception",
     "reason": "Finite bounded discovery/resolution result, not a continuation list.",
     "remove_after": "protocol"
-  },
-  {
-    "file": "egress/policy-assignment-request.schema.json",
-    "pointer": "/properties/expected_resource_version",
-    "field": "expected_resource_version",
-    "replacement": "expected_version",
-    "kind": "deprecated_alias",
-    "reason": "Egress accepts only as a one-release input alias for expected_version; rejects multiple forms.",
-    "remove_after": "next_release"
-  },
-  {
-    "file": "egress/policy-assignment-request.schema.json",
-    "pointer": "/not/required/1",
-    "field": "expected_resource_version",
-    "replacement": "expected_version",
-    "kind": "deprecated_alias",
-    "reason": "Egress accepts only as a one-release input alias for expected_version; rejects multiple forms.",
-    "remove_after": "next_release"
-  },
-  {
-    "file": "egress/attachment-state-body.schema.json",
-    "pointer": "/properties/expected_resource_version",
-    "field": "expected_resource_version",
-    "replacement": "expected_version",
-    "kind": "deprecated_alias",
-    "reason": "Egress accepts only as a one-release input alias for expected_version; rejects multiple forms.",
-    "remove_after": "next_release"
-  },
-  {
-    "file": "egress/attachment-state-body.schema.json",
-    "pointer": "/not/required/1",
-    "field": "expected_resource_version",
-    "replacement": "expected_version",
-    "kind": "deprecated_alias",
-    "reason": "Egress accepts only as a one-release input alias for expected_version; rejects multiple forms.",
-    "remove_after": "next_release"
-  },
-  {
-    "file": "egress/resource-version-body.schema.json",
-    "pointer": "/properties/expected_resource_version",
-    "field": "expected_resource_version",
-    "replacement": "expected_version",
-    "kind": "deprecated_alias",
-    "reason": "Egress accepts only as a one-release input alias for expected_version; rejects multiple forms.",
-    "remove_after": "next_release"
-  },
-  {
-    "file": "egress/resource-version-body.schema.json",
-    "pointer": "/not/required/1",
-    "field": "expected_resource_version",
-    "replacement": "expected_version",
-    "kind": "deprecated_alias",
-    "reason": "Egress accepts only as a one-release input alias for expected_version; rejects multiple forms.",
-    "remove_after": "next_release"
-  },
-  {
-    "file": "egress/control-contract.json",
-    "pointer": "/precondition/deprecated_alias",
-    "field": "expected_resource_version",
-    "replacement": "expected_version",
-    "kind": "deprecated_alias",
-    "reason": "Descriptor names the deprecated one-release input alias for the Egress precondition contract; requests may still carry it.",
-    "remove_after": "next_release"
-  },
-  {
-    "file": "egress/control-contract.json",
-    "pointer": "/precondition/forms/1",
-    "field": "expected_resource_version",
-    "replacement": "expected_version",
-    "kind": "deprecated_alias",
-    "reason": "Descriptor names the deprecated one-release input alias for the Egress precondition contract; requests may still carry it.",
-    "remove_after": "next_release"
-  },
-  {
-    "file": "admin-console/admin-api.schema.json",
-    "pointer": "/$defs/list_skills_request/properties/after_id",
-    "field": "after_id",
-    "replacement": "cursor",
-    "reason": "One-release deprecated request alias; Console normalizes to the canonical wire field.",
-    "kind": "deprecated_alias",
-    "remove_after": "next_release"
-  },
-  {
-    "file": "admin-console/admin-api.schema.json",
-    "pointer": "/$defs/list_skills_request/not/required/1",
-    "field": "after_id",
-    "replacement": "cursor",
-    "reason": "One-release deprecated request alias; Console normalizes to the canonical wire field.",
-    "kind": "deprecated_alias",
-    "remove_after": "next_release"
-  },
-  {
-    "file": "admin-console/admin-api.schema.json",
-    "pointer": "/$defs/list_skill_versions_request/properties/after_version",
-    "field": "after_version",
-    "replacement": "cursor",
-    "reason": "One-release deprecated request alias; Console normalizes to the canonical wire field.",
-    "kind": "deprecated_alias",
-    "remove_after": "next_release"
-  },
-  {
-    "file": "admin-console/admin-api.schema.json",
-    "pointer": "/$defs/list_skill_versions_request/not/required/1",
-    "field": "after_version",
-    "replacement": "cursor",
-    "reason": "One-release deprecated request alias; Console normalizes to the canonical wire field.",
-    "kind": "deprecated_alias",
-    "remove_after": "next_release"
-  },
-  {
-    "file": "admin-console/admin-api.schema.json",
-    "pointer": "/$defs/list_organization_sessions_request/properties/after_id",
-    "field": "after_id",
-    "replacement": "cursor",
-    "reason": "One-release deprecated request alias; Console normalizes to the canonical wire field.",
-    "kind": "deprecated_alias",
-    "remove_after": "next_release"
-  },
-  {
-    "file": "admin-console/admin-api.schema.json",
-    "pointer": "/$defs/list_organization_sessions_request/not/required/1",
-    "field": "after_id",
-    "replacement": "cursor",
-    "reason": "One-release deprecated request alias; Console normalizes to the canonical wire field.",
-    "kind": "deprecated_alias",
-    "remove_after": "next_release"
-  },
-  {
-    "file": "admin-console/admin-api.schema.json",
-    "pointer": "/$defs/list_model_profiles_request/properties/after_id",
-    "field": "after_id",
-    "replacement": "cursor",
-    "reason": "One-release deprecated request alias; Console normalizes to the canonical wire field.",
-    "kind": "deprecated_alias",
-    "remove_after": "next_release"
-  },
-  {
-    "file": "admin-console/admin-api.schema.json",
-    "pointer": "/$defs/list_model_profiles_request/not/required/1",
-    "field": "after_id",
-    "replacement": "cursor",
-    "reason": "One-release deprecated request alias; Console normalizes to the canonical wire field.",
-    "kind": "deprecated_alias",
-    "remove_after": "next_release"
-  },
-  {
-    "file": "admin-console/admin-api.schema.json",
-    "pointer": "/$defs/list_templates_request/properties/after_id",
-    "field": "after_id",
-    "replacement": "cursor",
-    "reason": "One-release deprecated request alias; Console normalizes to the canonical wire field.",
-    "kind": "deprecated_alias",
-    "remove_after": "next_release"
-  },
-  {
-    "file": "admin-console/admin-api.schema.json",
-    "pointer": "/$defs/list_templates_request/not/required/1",
-    "field": "after_id",
-    "replacement": "cursor",
-    "reason": "One-release deprecated request alias; Console normalizes to the canonical wire field.",
-    "kind": "deprecated_alias",
-    "remove_after": "next_release"
-  },
-  {
-    "file": "admin-console/admin-api.schema.json",
-    "pointer": "/$defs/list_provider_connections_request/properties/after_id",
-    "field": "after_id",
-    "replacement": "cursor",
-    "reason": "One-release deprecated request alias; Console normalizes to the canonical wire field.",
-    "kind": "deprecated_alias",
-    "remove_after": "next_release"
-  },
-  {
-    "file": "admin-console/admin-api.schema.json",
-    "pointer": "/$defs/list_provider_connections_request/not/required/1",
-    "field": "after_id",
-    "replacement": "cursor",
-    "reason": "One-release deprecated request alias; Console normalizes to the canonical wire field.",
-    "kind": "deprecated_alias",
-    "remove_after": "next_release"
-  },
-  {
-    "file": "admin-console/admin-api.schema.json",
-    "pointer": "/$defs/set_agent_network_policy_request/properties/expected_resource_version",
-    "field": "expected_resource_version",
-    "replacement": "expected_version",
-    "reason": "One-release deprecated CAS alias; Console normalizes to the canonical expected_version.",
-    "kind": "deprecated_alias",
-    "remove_after": "next_release"
-  },
-  {
-    "file": "admin-console/admin-api.schema.json",
-    "pointer": "/$defs/set_agent_network_policy_request/not/required/1",
-    "field": "expected_resource_version",
-    "replacement": "expected_version",
-    "reason": "One-release deprecated CAS alias; Console normalizes to the canonical expected_version.",
-    "kind": "deprecated_alias",
-    "remove_after": "next_release"
-  },
-  {
-    "file": "admin-console/directory-publication-proposal.json",
-    "pointer": "/catalog_patch/response_policy/agent_network_policy/deprecated_input/0",
-    "field": "expected_resource_version",
-    "replacement": "expected_version",
-    "reason": "One-release deprecated request alias; Console normalizes to the canonical wire field.",
-    "kind": "deprecated_alias",
-    "remove_after": "next_release"
-  },
-  {
-    "file": "admin-console/directory-publication-proposal.json",
-    "pointer": "/catalog_patch/routes/list_model_profiles/query/deprecated/0",
-    "field": "after_id",
-    "replacement": "cursor",
-    "reason": "One-release deprecated request alias; Console normalizes to the canonical wire field.",
-    "kind": "deprecated_alias",
-    "remove_after": "next_release"
-  },
-  {
-    "file": "admin-console/directory-publication-proposal.json",
-    "pointer": "/catalog_patch/routes/list_model_profiles/query/optional/1",
-    "field": "after_id",
-    "replacement": "cursor",
-    "reason": "One-release deprecated request alias; Console normalizes to the canonical wire field.",
-    "kind": "deprecated_alias",
-    "remove_after": "next_release"
-  },
-  {
-    "file": "admin-console/directory-publication-proposal.json",
-    "pointer": "/catalog_patch/routes/list_organization_sessions/query/deprecated/0",
-    "field": "after_id",
-    "replacement": "cursor",
-    "reason": "One-release deprecated request alias; Console normalizes to the canonical wire field.",
-    "kind": "deprecated_alias",
-    "remove_after": "next_release"
-  },
-  {
-    "file": "admin-console/directory-publication-proposal.json",
-    "pointer": "/catalog_patch/routes/list_organization_sessions/query/optional/1",
-    "field": "after_id",
-    "replacement": "cursor",
-    "reason": "One-release deprecated request alias; Console normalizes to the canonical wire field.",
-    "kind": "deprecated_alias",
-    "remove_after": "next_release"
-  },
-  {
-    "file": "admin-console/directory-publication-proposal.json",
-    "pointer": "/catalog_patch/routes/list_provider_connections/query/deprecated/0",
-    "field": "after_id",
-    "replacement": "cursor",
-    "reason": "One-release deprecated request alias; Console normalizes to the canonical wire field.",
-    "kind": "deprecated_alias",
-    "remove_after": "next_release"
-  },
-  {
-    "file": "admin-console/directory-publication-proposal.json",
-    "pointer": "/catalog_patch/routes/list_provider_connections/query/optional/1",
-    "field": "after_id",
-    "replacement": "cursor",
-    "reason": "One-release deprecated request alias; Console normalizes to the canonical wire field.",
-    "kind": "deprecated_alias",
-    "remove_after": "next_release"
-  },
-  {
-    "file": "admin-console/directory-publication-proposal.json",
-    "pointer": "/catalog_patch/routes/list_skill_versions/query/deprecated/0",
-    "field": "after_version",
-    "replacement": "cursor",
-    "reason": "One-release deprecated request alias; Console normalizes to the canonical wire field.",
-    "kind": "deprecated_alias",
-    "remove_after": "next_release"
-  },
-  {
-    "file": "admin-console/directory-publication-proposal.json",
-    "pointer": "/catalog_patch/routes/list_skill_versions/query/optional/1",
-    "field": "after_version",
-    "replacement": "cursor",
-    "reason": "One-release deprecated request alias; Console normalizes to the canonical wire field.",
-    "kind": "deprecated_alias",
-    "remove_after": "next_release"
-  },
-  {
-    "file": "admin-console/directory-publication-proposal.json",
-    "pointer": "/catalog_patch/routes/list_skills/query/deprecated/0",
-    "field": "after_id",
-    "replacement": "cursor",
-    "reason": "One-release deprecated request alias; Console normalizes to the canonical wire field.",
-    "kind": "deprecated_alias",
-    "remove_after": "next_release"
-  },
-  {
-    "file": "admin-console/directory-publication-proposal.json",
-    "pointer": "/catalog_patch/routes/list_skills/query/optional/1",
-    "field": "after_id",
-    "replacement": "cursor",
-    "reason": "One-release deprecated request alias; Console normalizes to the canonical wire field.",
-    "kind": "deprecated_alias",
-    "remove_after": "next_release"
-  },
-  {
-    "file": "admin-console/directory-publication-proposal.json",
-    "pointer": "/catalog_patch/routes/list_templates/query/deprecated/0",
-    "field": "after_id",
-    "replacement": "cursor",
-    "reason": "One-release deprecated request alias; Console normalizes to the canonical wire field.",
-    "kind": "deprecated_alias",
-    "remove_after": "next_release"
-  },
-  {
-    "file": "admin-console/directory-publication-proposal.json",
-    "pointer": "/catalog_patch/routes/list_templates/query/optional/1",
-    "field": "after_id",
-    "replacement": "cursor",
-    "reason": "One-release deprecated request alias; Console normalizes to the canonical wire field.",
-    "kind": "deprecated_alias",
-    "remove_after": "next_release"
   }
 ]
