@@ -1621,9 +1621,9 @@ describe("ACP v1 Streamable HTTP", () => {
   it("preserves opaque identity through the official HTTP client", async () => {
     await start();
     const identity = {
-      organizationId: "org+division@example.org",
-      principalId: "owner+team@example.org",
-      agentId: "agent/department+1",
+      organizationId: "Org.Division_1",
+      principalId: "Owner.Team_1",
+      agentId: "Agent.Department_1",
     };
     const connection = acp
       .client()
