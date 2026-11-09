@@ -2,15 +2,16 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { test } from "node:test";
+import commonIDs from "../../../contracts/common/ids.schema.json" with { type: "json" };
 
 const require = createRequire(
   new URL("../../../services/agent-acp-service/package.json", import.meta.url),
 );
 const { Ajv2020 } = require("ajv/dist/2020.js");
 const contracts = new URL("../../../contracts/", import.meta.url);
-const schemaPath = "agent-controller/provider-token-limits.schema.json";
+const schemaPath = "agent-controller/provider-token-limits.ids-v2.schema.json";
 const schemaId =
-  "https://schemas.antnest.dev/agent-controller/provider-token-limits.schema.json";
+  "https://schemas.antnest.dev/agent-controller/provider-token-limits.ids-v2.schema.json";
 const read = (path) =>
   JSON.parse(readFileSync(new URL(path, contracts), "utf8"));
 
@@ -26,6 +27,7 @@ function checker() {
     useDefaults: false,
     removeAdditional: false,
   });
+  ajv.addSchema(commonIDs);
   const validate = ajv.compile(schema);
   return (value, expected = true, label = "provider token limits") => {
     const before = structuredClone(value);
@@ -64,6 +66,8 @@ test("the execution snapshot embeds the same closed observation schema", () => {
     if (Array.isArray(value)) return value.map(inline);
     if (value === null || typeof value !== "object") return value;
     if (value.$ref) {
+      if (value.$ref === "../common/ids.schema.json#/$defs/organizationId")
+        return value;
       assert.ok(value.$ref.startsWith("#/$defs/"));
       return inline(canonical.$defs[value.$ref.split("/").at(-1)]);
     }
@@ -73,7 +77,7 @@ test("the execution snapshot embeds the same closed observation schema", () => {
         .map(([key, item]) => [key, inline(item)]),
     );
   };
-  const execution = read("agent-acp/execution-snapshot.schema.json");
+  const execution = read("agent-acp/execution-snapshot.ids-v2.schema.json");
   assert.deepEqual(execution.$defs.provider_token_limits, inline(canonical));
   assert.deepEqual(
     execution.properties.models.items.properties.provider_token_limits,
@@ -199,8 +203,12 @@ test("every frozen binding member is required", () => {
 
 test("organization, connection and credential revision identifiers retain Controller ID semantics", () => {
   const check = checker();
-  const identity = read("agent-controller/control-api.schema.json").$defs.id;
-  const validateId = new Ajv2020({ strict: true }).compile(identity);
+  const identity = read("agent-controller/control-api.ids-v2.schema.json").$defs
+    .id;
+  const __idsAjv = new Ajv2020({ strict: true });
+  __idsAjv.addSchema(commonIDs);
+  const validateId = __idsAjv.compile(identity);
+
   const accepted = ["id-1", "org.team_owner-1", "x".repeat(200)];
   const rejected = [
     "",

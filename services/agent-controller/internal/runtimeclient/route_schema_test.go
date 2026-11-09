@@ -20,7 +20,7 @@ func (fn schemaTransport) RoundTrip(request *http.Request) (*http.Response, erro
 	return fn(request)
 }
 
-const contractSchema = "runtime-controller/control-api.schema.json#/$defs/"
+const contractSchema = "runtime-controller/control-api.ids-v2.schema.json#/$defs/"
 
 func operationReply(kind, lifecycle string) []byte {
 	health := "unknown"

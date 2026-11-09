@@ -970,18 +970,18 @@ func compileControlSchema(t *testing.T, path string) *jsonschema.Compiler {
 	compiler := jsonschema.NewCompiler()
 	compiler.AssertFormat()
 	var instanceConnectionContract any
-	readContractJSON(t, filepath.Join(repositoryRoot(t), "contracts/runtime/instance-connection.schema.json"), &instanceConnectionContract)
-	if err := compiler.AddResource("https://schemas.antnest.dev/runtime/instance-connection.schema.json", instanceConnectionContract); err != nil {
+	readContractJSON(t, filepath.Join(repositoryRoot(t), "contracts/runtime/instance-connection.ids-v2.schema.json"), &instanceConnectionContract)
+	if err := compiler.AddResource("https://schemas.antnest.dev/runtime/instance-connection.ids-v2.schema.json", instanceConnectionContract); err != nil {
 		t.Fatalf("load Runtime instance connection contract: %v", err)
 	}
 	var managedSecretContract any
-	readContractJSON(t, filepath.Join(repositoryRoot(t), "contracts/runtime/managed-mcp.schema.json"), &managedSecretContract)
-	if err := compiler.AddResource("https://schemas.antnest.dev/runtime/managed-mcp.schema.json", managedSecretContract); err != nil {
+	readContractJSON(t, filepath.Join(repositoryRoot(t), "contracts/runtime/managed-mcp.ids-v2.schema.json"), &managedSecretContract)
+	if err := compiler.AddResource("https://schemas.antnest.dev/runtime/managed-mcp.ids-v2.schema.json", managedSecretContract); err != nil {
 		t.Fatal(err)
 	}
 	var runtimeContract any
-	readContractJSON(t, filepath.Join(repositoryRoot(t), "contracts/runtime/runtime-spec.schema.json"), &runtimeContract)
-	if err := compiler.AddResource("https://schemas.antnest.dev/runtime/runtime-spec.schema.json", runtimeContract); err != nil {
+	readContractJSON(t, filepath.Join(repositoryRoot(t), "contracts/runtime/runtime-spec.ids-v2.schema.json"), &runtimeContract)
+	if err := compiler.AddResource("https://schemas.antnest.dev/runtime/runtime-spec.ids-v2.schema.json", runtimeContract); err != nil {
 		t.Fatalf("load Runtime MCP contract: %v", err)
 	}
 	var runtimeControllerContract any
@@ -989,6 +989,11 @@ func compileControlSchema(t *testing.T, path string) *jsonschema.Compiler {
 	var runtimeDeploymentContract any
 	readContractJSON(t, filepath.Join(repositoryRoot(t), "contracts/runtime-controller/runtime-deployment.ids-v2.schema.json"), &runtimeDeploymentContract)
 	if err := compiler.AddResource("https://schemas.antnest.dev/runtime-controller/runtime-deployment.ids-v2.schema.json", runtimeDeploymentContract); err != nil {
+		t.Fatal(err)
+	}
+	var runtimeDeliveryContract any
+	readContractJSON(t, filepath.Join(repositoryRoot(t), "contracts/skill-registry/runtime-delivery.ids-v2.schema.json"), &runtimeDeliveryContract)
+	if err := compiler.AddResource("https://schemas.antnest.dev/skill-registry/runtime-delivery.ids-v2.schema.json", runtimeDeliveryContract); err != nil {
 		t.Fatal(err)
 	}
 	if err := compiler.AddResource("https://schemas.antnest.dev/runtime-controller/control-api.ids-v2.schema.json", runtimeControllerContract); err != nil {

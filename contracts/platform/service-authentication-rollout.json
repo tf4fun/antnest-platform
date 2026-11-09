@@ -336,7 +336,7 @@
     "version": 1,
     "contract": "../runtime/instance-connection.md",
     "machine_contract": "../runtime/instance-connection-contract.json",
-    "schema": "../runtime/instance-connection.schema.json",
+    "schema": "../runtime/instance-connection.ids-v2.schema.json",
     "fixtures": "../runtime/instance-connection-fixtures.json",
     "status": "integration-admitted",
     "issuer": "runtime-controller",

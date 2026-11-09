@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { test } from "node:test";
+import commonIDs from "../../../contracts/common/ids.schema.json" with { type: "json" };
 
 const require = createRequire(
   new URL("../../../services/agent-acp-service/package.json", import.meta.url),
@@ -42,7 +43,7 @@ function read(path) {
       value.routes[`${route.method} ${route.path}`] = structuredClone(
         proposal.caller_policy,
       );
-  } else if (path === "agent-controller/control-api.schema.json") {
+  } else if (path === "agent-controller/control-api.ids-v2.schema.json") {
     Object.assign(value.$defs, structuredClone(proposal.schema_definitions));
     Object.assign(
       value.$defs.agent.properties,
@@ -79,6 +80,7 @@ const fragmentNames = () => [
 
 function proposalValidators() {
   const ajv = new Ajv2020({ strict: false, allErrors: true });
+  ajv.addSchema(commonIDs);
   ajv.addFormat("date-time", { type: "string", validate: utcTimestamp });
   const $id =
     "https://schemas.antnest.dev/agent-controller/live-model-semantics-proposal.schema.json";
@@ -101,22 +103,25 @@ function proposalValidators() {
 }
 
 function controlApiValidators() {
-  const schema = read("agent-controller/control-api.schema.json");
+  const schema = read("agent-controller/control-api.ids-v2.schema.json");
   const ajv = new Ajv2020({
     strict: false,
     allErrors: true,
     useDefaults: true,
   });
+  ajv.addSchema(commonIDs);
   ajv.addFormat("date-time", { type: "string", validate: utcTimestamp });
   ajv.addFormat("uri", {
     type: "string",
     validate: (value) => URL.canParse(value),
   });
   ajv.addSchema(
-    read("runtime/managed-mcp.schema.json"),
-    new URL("../runtime/managed-mcp.schema.json", schema.$id).href,
+    read("runtime/managed-mcp.ids-v2.schema.json"),
+    new URL("../runtime/managed-mcp.ids-v2.schema.json", schema.$id).href,
   );
-  ajv.addSchema(read("agent-controller/runtime-barrier-recovery.schema.json"));
+  ajv.addSchema(
+    read("agent-controller/runtime-barrier-recovery.ids-v2.schema.json"),
+  );
   ajv.addSchema(read("common/pagination.schema.json"));
   ajv.addSchema(read("common/precondition.schema.json"));
   ajv.addSchema(schema);
@@ -143,12 +148,12 @@ test("the proposal stays separate until the owning producer publishes its target
   assert.equal(proposal.target_control_revision, 48);
   assert.equal(proposal.route_resource, "model_profiles");
   assert(
-    [47, 48, 49, 50].includes(activeRevision),
+    [47, 48, 49, 50, 51].includes(activeRevision),
     "unknown publication revision",
   );
   const contract = readRaw("agent-controller/control-contract.json");
   const callers = readRaw("agent-controller/callers.json");
-  const schema = readRaw("agent-controller/control-api.schema.json");
+  const schema = readRaw("agent-controller/control-api.ids-v2.schema.json");
   assert.deepEqual(proposal.shared_defs.id, schema.$defs.id);
   assert.deepEqual(proposal.shared_defs.timestamp, schema.$defs.timestamp);
   if (activeRevision === proposal.base_control_revision) {
@@ -167,7 +172,13 @@ test("the proposal stays separate until the owning producer publishes its target
       proposal.live_model_semantics,
     );
     for (const [name, route] of Object.entries(proposal.routes)) {
-      assert.deepEqual(contract.resources.model_profiles[name], route);
+      const expectedRoute = structuredClone(route);
+      for (const key of activeRevision === 51 ? ["response"] : [])
+        expectedRoute[key] = expectedRoute[key].replace(
+          "control-api.schema.json",
+          "control-api.ids-v2.schema.json",
+        );
+      assert.deepEqual(contract.resources.model_profiles[name], expectedRoute);
       assert.deepEqual(
         callers.routes[`${route.method} ${route.path}`],
         proposal.caller_policy,
@@ -175,8 +186,16 @@ test("the proposal stays separate until the owning producer publishes its target
     }
     for (const [name, definition] of Object.entries(
       proposal.schema_definitions,
-    ))
-      assert.deepEqual(schema.$defs[name], definition);
+    )) {
+      const expectedDefinition = structuredClone(definition);
+      if (
+        activeRevision === 51 &&
+        expectedDefinition.properties?.organization_id?.$ref === "#/$defs/id"
+      )
+        expectedDefinition.properties.organization_id.$ref =
+          "../common/ids.schema.json#/$defs/organizationId";
+      assert.deepEqual(schema.$defs[name], expectedDefinition);
+    }
     for (const [name, definition] of Object.entries(proposal.agent_properties))
       assert.deepEqual(schema.$defs.agent.properties[name], definition);
   }
@@ -190,14 +209,14 @@ test("the control contract declares model profile usage and event routes", () =>
     path: usagePath,
     query: ["organization_id"],
     success_status: 200,
-    response: "control-api.schema.json#/$defs/model_profile_usage",
+    response: "control-api.ids-v2.schema.json#/$defs/model_profile_usage",
   });
   assert.deepEqual(profiles.events, {
     method: "GET",
     path: eventsPath,
     query: ["organization_id", "after_revision", "limit"],
     success_status: 200,
-    response: "control-api.schema.json#/$defs/model_profile_event_list",
+    response: "control-api.ids-v2.schema.json#/$defs/model_profile_event_list",
   });
 });
 
@@ -588,7 +607,7 @@ test("the persisted snapshot, candidate and audit fragments freeze admission rev
 
 test("the model profile journal stays outside the Agent event_type enum", () => {
   const contract = read("agent-controller/control-contract.json");
-  const schema = read("agent-controller/control-api.schema.json");
+  const schema = read("agent-controller/control-api.ids-v2.schema.json");
   assert.equal(contract.live_model_semantics.event_type, eventType);
   assert.equal(contract.live_model_semantics.events_default_limit, 50);
   assert.equal(contract.live_model_semantics.events_max_limit, 100);
@@ -606,7 +625,7 @@ test("the model profile journal stays outside the Agent event_type enum", () => 
 });
 
 test("the proposal introduces no optional model revision pinning", () => {
-  const schema = read("agent-controller/control-api.schema.json");
+  const schema = read("agent-controller/control-api.ids-v2.schema.json");
   for (const name of [
     "create_template_request",
     "revise_template_request",
