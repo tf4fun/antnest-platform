@@ -6,7 +6,9 @@ a personal Skill; Registry projects it as a dynamic source mapping; another
 Agent of the same owner finds and temporarily uses it; an administrator
 promotes it to an immutable formal version that Templates can reference.
 The [JSON schema](discovery-api.schema.json) supplements the
-[fixed-version API](registry-api.md). Skill Registry implements the projection,
+[fixed-version API](registry-api.md). The
+[opaque-ID revision](discovery-api.ids-v2.schema.json) republishes the same
+shapes with referenced IDs bound to the shared grammar. Skill Registry implements the projection,
 search, load and promotion routes; Agent ACP Service implements the source
 routes and the model `find_skill`/`load_skill` tools; Antnest Runtime
 implements temporary file delivery; Admin Console implements source preview
@@ -28,6 +30,11 @@ organization and actor; model/browser inputs cannot choose them.
 
 Projection keys are (organization_id, agent_id, name); different Agents with
 the same Skill name remain distinct. Names and digests use package-rules-v1.
+Referenced organization, Agent and owner IDs are opaque values validated
+against the [shared grammar](../common/ids.schema.json); the `<kind>_<32hex>`
+generation format is producer-owned per
+[resource-identifiers](../resource-identifiers.md) and is not a
+reference-format constraint.
 A producer assigns a durable, monotonically increasing positive safe-integer
 sequence to each source-state event, including removal/revocation. Reconciliation
 replays these events without running the learning model again. Removed entries

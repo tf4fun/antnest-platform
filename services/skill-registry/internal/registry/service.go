@@ -14,8 +14,8 @@ import (
 const MaxResolvedBytes = 128 << 20
 
 var (
-	organizationID = regexp.MustCompile(`^org_[0-9a-f]{32}$`)
-	userID         = regexp.MustCompile(`^user_[0-9a-f]{32}$`)
+	organizationID = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,199}$`)
+	userID         = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,199}$`)
 	skillID        = regexp.MustCompile(`^skill_[0-9a-f]{32}$`)
 )
 

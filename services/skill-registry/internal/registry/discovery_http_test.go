@@ -100,7 +100,7 @@ func TestDiscoveryHTTPCallerSearchKeepsFormalResultsWithoutInspectingBusyCaller(
 	if len(result.Items) != 1 || result.Items[0].SkillRef.Kind != "registry" || result.Items[0].SkillRef.SkillID != published.SkillID {
 		t.Fatalf("formal versions must survive excluding their current source Agent: %+v", result.Items)
 	}
-	for _, caller := range []any{nil, "", testActor, "agent", 1} {
+	for _, caller := range []any{nil, "", "agent/invalid", "agent:invalid", 1} {
 		input["requesting_agent_id"] = caller
 		if response := invoke(input); response.Code != http.StatusBadRequest {
 			t.Fatalf("invalid caller %v accepted: %d", caller, response.Code)

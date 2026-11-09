@@ -5,6 +5,10 @@ system-Skill collections: preparation, lifecycle consumption, Docker startup
 gating, reference transfer and bounded cleanup. Registry owns the versioned ZIP; Runtime Controller
 owns preparation, its Docker volume and lifecycle consumption. The old
 `skill_instructions` execution-snapshot body channel remains permanently empty.
+The [opaque-ID revision](runtime-delivery.ids-v2.schema.json) binds referenced
+`organization_id`/`agent_id` values to the [shared grammar](../common/ids.schema.json);
+the typed generation format shown below remains producer-owned per
+[resource-identifiers](../resource-identifiers.md).
 
 ## Identity and preparation
 
@@ -17,17 +21,19 @@ owns preparation, its Docker volume and lifecycle consumption. The old
   "owner_operation_id": "agent-build-123",
   "layout_version": 1,
   "skill_set_digest": "sha256:...",
-  "system_skills": [{
-    "skill_id": "skill_11111111111111111111111111111111",
-    "version": 1,
-    "name": "code-review",
-    "description": "Review code",
-    "artifact_digest": "sha256:...",
-    "content_digest": "sha256:...",
-    "artifact_size": 100,
-    "unpacked_size": 200,
-    "package_rules_version": 1
-  }]
+  "system_skills": [
+    {
+      "skill_id": "skill_11111111111111111111111111111111",
+      "version": 1,
+      "name": "code-review",
+      "description": "Review code",
+      "artifact_digest": "sha256:...",
+      "content_digest": "sha256:...",
+      "artifact_size": 100,
+      "unpacked_size": 200,
+      "package_rules_version": 1
+    }
+  ]
 }
 ```
 

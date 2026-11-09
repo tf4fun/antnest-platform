@@ -13,7 +13,7 @@ import (
 const MaxDiscoveryLimit = 50
 const MaxSourceSequence int64 = 9007199254740991
 
-var agentID = regexp.MustCompile("^agent_[0-9a-f]{32}$")
+var agentID = regexp.MustCompile("^[A-Za-z0-9][A-Za-z0-9_.-]{0,199}$")
 var contentDigest = regexp.MustCompile("^sha256:[0-9a-f]{64}$")
 
 type Projection struct {
