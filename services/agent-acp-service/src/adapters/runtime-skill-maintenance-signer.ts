@@ -1,7 +1,12 @@
 import { createHash, sign, type KeyObject } from "node:crypto";
 
-const ACTIONS = ["install", "digest", "temporary_install", "temporary_release"] as const;
-export type SkillMaintenanceAction = (typeof ACTIONS)[number];
+export const SKILL_MAINTENANCE_ACTIONS = [
+  "install",
+  "digest",
+  "temporary_install",
+  "temporary_release",
+] as const;
+export type SkillMaintenanceAction = (typeof SKILL_MAINTENANCE_ACTIONS)[number];
 
 export type SkillMaintenanceTicketInput = {
   organizationId: string;
@@ -43,7 +48,7 @@ export class RuntimeSkillMaintenanceSigner {
       !validOpaque(input.requestId, REQUEST_ID) ||
       !Number.isSafeInteger(input.generation) ||
       input.generation < 1 ||
-      !ACTIONS.includes(input.action) ||
+      !SKILL_MAINTENANCE_ACTIONS.includes(input.action) ||
       !(input.body instanceof Buffer) ||
       input.body.length >
         (["install", "temporary_install"].includes(input.action)
