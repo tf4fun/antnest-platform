@@ -7,7 +7,19 @@ import { AcpHttpTransport } from "../../../services/agent-acp-service/dist/trans
 import { SessionOutputStreams } from "../../../services/agent-acp-service/dist/transport/acp/session-output.js";
 import { bindAuthenticatedRequest } from "../../../services/agent-acp-service/dist/transport/trusted-identity.js";
 import { ConnectionCapacity } from "../../../services/agent-acp-service/dist/application/connection-capacity.js";
-import { AcpHttpBridge } from "../../../services/agent-ui/web/server/dist/adapters/acp-http.js";
+import {
+  AcpHttpBridge,
+  parseIntentObservation,
+  SessionNotFoundError,
+} from "../../../services/agent-ui/web/server/dist/adapters/acp-http.js";
+import { OperationCoordinator } from "../../../services/agent-ui/web/server/dist/bridge/operations.js";
+import { PostgresBridgeObservationRepository } from "../../../services/agent-acp-service/dist/adapters/postgres/bridge-observation-repository.js";
+import { BridgeObservationService } from "../../../services/agent-acp-service/dist/application/bridge-observation.js";
+import {
+  bridgeObservationRoute,
+  serveBridgeObservation,
+} from "../../../services/agent-acp-service/dist/transport/bridge-observation.js";
+import { validateGolden } from "../../support/contracts/golden.mjs";
 import { bindScopeContext } from "../../../services/agent-ui/web/server/dist/http/trusted-identity.js";
 import { DomainError } from "../../../services/agent-acp-service/dist/domain/errors.js";
 import { readFileSync } from "node:fs";
@@ -829,5 +841,314 @@ test(
     );
     assert.equal(resumes.length, 1);
     assert.equal(ingressFailures.length, 0, JSON.stringify(ingressFailures));
+  },
+);
+
+test(
+  "a real ACP observation route feeds the production UI intent-observation consumer",
+  { timeout: 20000 },
+  async () => {
+    const SESSION = "session-obs-interop";
+    const receiptCols = {
+      bridge_intent_id: "intent-kept",
+      session_id: SESSION,
+      run_id: "run-kept",
+      state: "failed",
+      append_version: "2",
+      output_watermark: "4",
+      stop_reason: null,
+      error_class: "model_unsupported_content",
+    };
+    const absentCols = Object.fromEntries(
+      Object.keys(receiptCols).map((key) => [key, null]),
+    );
+    const watermark = new Map([[SESSION, null]]);
+    const receiptRows = new Map();
+    const queries = [];
+    const kernel = {
+      query: async (sql, params) => {
+        assert(sql.includes("LATERAL"), "combined snapshot query");
+        assert.equal(
+          params[0],
+          SESSION,
+          "a denied or foreign Session must never reach storage",
+        );
+        queries.push([...params]);
+        const found = receiptRows.get(`${params[0]}/${params[1]}`);
+        return {
+          rows: [
+            {
+              receipt_retained_after_append_version: watermark.get(params[0]),
+              ...(found ?? absentCols),
+            },
+          ],
+        };
+      },
+      transaction: async () => {
+        throw new Error("readSession is out of scope for this test");
+      },
+    };
+    const repository = new PostgresBridgeObservationRepository(kernel);
+    const bindingFor = (claims) => ({
+      connectionId: claims.jti,
+      organizationId: claims.org,
+      principalId: claims.sub,
+      agentId: claims.agt,
+    });
+    const service = new BridgeObservationService({
+      access: {
+        assert: (binding) => {
+          const expected = bindingFor(CLAIMS);
+          return binding.organizationId === expected.organizationId &&
+            binding.principalId === expected.principalId &&
+            binding.agentId === expected.agentId
+            ? Promise.resolve()
+            : Promise.reject(new DomainError("access_denied", "Denied"));
+        },
+      },
+      sessions: {
+        requireAuthorized: (sessionId, binding) =>
+          sessionId === SESSION &&
+          binding.agentId === bindingFor(CLAIMS).agentId
+            ? Promise.resolve()
+            : Promise.reject(
+                new DomainError("session_access_denied", "Foreign Session"),
+              ),
+      },
+      repository,
+    });
+    const ingressFailures = [];
+    const sockets = new Set();
+    const handles = new Set();
+    const listener = createServer((request, response) => {
+      if (request.headers["antnest-caller-context"] !== TOKEN) {
+        ingressFailures.push(`${request.method} ${request.url}`);
+        response.writeHead(401).end();
+        return;
+      }
+      bindAuthenticatedRequest(request, "agent-ui", CLAIMS);
+      const route = bridgeObservationRoute(request.url);
+      if (route === undefined) {
+        response.writeHead(404).end();
+        return;
+      }
+      const pending = serveBridgeObservation(
+        request,
+        response,
+        route,
+        service,
+        () => Promise.resolve(true),
+      );
+      handles.add(pending);
+      pending
+        .catch((error) => {
+          ingressFailures.push(error);
+          if (!response.headersSent && !response.destroyed)
+            response.writeHead(500).end();
+        })
+        .finally(() => handles.delete(pending));
+    });
+    listener.on("connection", (socket) => {
+      sockets.add(socket);
+      socket.once("close", () => sockets.delete(socket));
+    });
+    let coordinator;
+    const errors = [];
+    try {
+      await new Promise((resolve, reject) => {
+        listener.once("error", reject);
+        listener.listen(0, "127.0.0.1", resolve);
+      });
+      const port = listener.address().port;
+      const intentUrl = (sessionId, intentId) =>
+        `http://127.0.0.1:${port}/rpc/agent-acp/workspace/sessions/${sessionId}/intents/${intentId}`;
+      const authed = { headers: { "Antnest-Caller-Context": TOKEN } };
+      const readIntentHttp = async (sessionId, intentId) =>
+        parseIntentObservation(
+          await fetch(intentUrl(sessionId, intentId), authed),
+        );
+
+      const OBSERVATION_ERROR =
+        "agent-acp/workspace-bridge.schema.json#/$defs/observationError";
+      const INTENT_RECEIPT =
+        "agent-acp/workspace-bridge.schema.json#/$defs/intentReceipt";
+      const unknownEnvelope = await fetch(
+        intentUrl(SESSION, "intent-absent"),
+        authed,
+      );
+      assert.equal(unknownEnvelope.status, 404);
+      const unknownBody = await unknownEnvelope.json();
+      await validateGolden(OBSERVATION_ERROR, unknownBody);
+      assert.deepEqual(
+        await parseIntentObservation(
+          new Response(JSON.stringify(unknownBody), { status: 404 }),
+        ),
+        { kind: "unknown" },
+      );
+      assert.deepEqual(
+        await parseIntentObservation(
+          new Response(
+            JSON.stringify({ code: "intent_unknown", retryable: false }),
+            { status: 404 },
+          ),
+        ),
+        { kind: "unknown" },
+        "the legacy N-1 unknown body stays an unknown read",
+      );
+
+      const calls = { prompts: 0 };
+      let acquisitions = 0;
+      const released = new Set();
+      coordinator = new OperationCoordinator({
+        prompt: async () => {
+          calls.prompts += 1;
+          return undefined;
+        },
+        readIntent: readIntentHttp,
+        retainWork: () => {
+          const lease = ++acquisitions;
+          return () => {
+            assert(
+              !released.has(lease),
+              "a work lease must release exactly once",
+            );
+            released.add(lease);
+          };
+        },
+      });
+      const intent = {
+        sessionId: SESSION,
+        intentId: "intent-original",
+        expectedAppendVersion: 1,
+        prompt: [{ type: "text", text: "original" }],
+      };
+      coordinator.submit(intent);
+      for (let i = 0; i < 10 && calls.prompts === 0; i += 1)
+        await new Promise((resolve) => setImmediate(resolve));
+      assert.equal(calls.prompts, 1, "one original dispatch");
+
+      watermark.set(SESSION, "1");
+      const expiredResponse = await fetch(
+        intentUrl(SESSION, "intent-expired"),
+        authed,
+      );
+      assert.equal(expiredResponse.status, 410);
+      const expiredBody = await expiredResponse.json();
+      await validateGolden(OBSERVATION_ERROR, expiredBody);
+      assert.deepEqual(
+        await parseIntentObservation(
+          new Response(JSON.stringify(expiredBody), { status: 410 }),
+        ),
+        { kind: "expired" },
+      );
+
+      const expired = await coordinator.read(SESSION, "intent-original");
+      assert.equal(expired.phase, "uncertain");
+      assert.equal(expired.acceptance, "unknown");
+      assert.equal(expired.error?.code, "intent_receipt_expired");
+      assert.equal(expired.error?.retryable, false);
+
+      watermark.set(SESSION, null);
+      const stale = await coordinator.read(SESSION, "intent-original");
+      assert.equal(
+        stale.error?.code,
+        "intent_receipt_expired",
+        "a later stale unknown cannot unlatch expiry",
+      );
+      watermark.set(SESSION, "1");
+      const prepared = await coordinator.prepare(intent);
+      const retryAck = await coordinator.retryPrepared(prepared);
+      assert.equal(retryAck.operationId, "intent-original");
+      await coordinator.joinRetryDecisions();
+      await coordinator.settled(SESSION, "intent-original");
+      assert.equal(
+        calls.prompts,
+        1,
+        "an explicit retry after expiry stays query-only",
+      );
+      assert.equal(
+        coordinator.snapshot(SESSION, [])[0]?.error?.code,
+        "intent_receipt_expired",
+      );
+
+      receiptRows.set(`${SESSION}/intent-original`, {
+        ...receiptCols,
+        bridge_intent_id: "intent-original",
+        run_id: "run-original",
+        append_version: "3",
+      });
+      const adopted = await coordinator.read(SESSION, "intent-original");
+      assert.equal(
+        adopted.acceptance,
+        "acp",
+        "a retained durable receipt wins over the expired marker",
+      );
+      assert.equal(adopted.error, undefined);
+      assert.equal(calls.prompts, 1);
+      assert.equal(
+        released.size,
+        acquisitions,
+        "every work lease releases exactly once",
+      );
+
+      receiptRows.set(`${SESSION}/intent-kept`, receiptCols);
+      const keptResponse = await fetch(
+        intentUrl(SESSION, "intent-kept"),
+        authed,
+      );
+      assert.equal(keptResponse.status, 200);
+      const keptBody = await keptResponse.json();
+      await validateGolden(INTENT_RECEIPT, keptBody);
+      const kept = await parseIntentObservation(
+        new Response(JSON.stringify(keptBody), { status: 200 }),
+      );
+      assert.equal(kept.kind, "receipt");
+      assert.equal(kept.receipt.intentId, "intent-kept");
+      assert.equal(kept.receipt.errorClass, "model_unsupported_content");
+
+      await assert.rejects(
+        readIntentHttp("other-session", "intent-1"),
+        SessionNotFoundError,
+        "missing or foreign Session maps to session_not_found at the producer",
+      );
+      const denied = await fetch(
+        intentUrl("other-session", "intent-1"),
+        authed,
+      );
+      assert.equal(denied.status, 404);
+      const deniedBody = await denied.json();
+      assert.equal(deniedBody.code, "session_not_found");
+      assert.notEqual(deniedBody.code, "intent_unknown");
+      await validateGolden(OBSERVATION_ERROR, deniedBody);
+      assert.equal(ingressFailures.length, 0, JSON.stringify(ingressFailures));
+      assert.deepEqual(queries, [
+        [SESSION, "intent-absent"],
+        [SESSION, "intent-expired"],
+        [SESSION, "intent-original"],
+        [SESSION, "intent-original"],
+        [SESSION, "intent-original"],
+        [SESSION, "intent-original"],
+        [SESSION, "intent-kept"],
+      ]);
+    } finally {
+      coordinator?.beginDrain();
+      await coordinator
+        ?.joinRetryDecisions()
+        .catch((error) => errors.push(error));
+      for (const pending of await Promise.allSettled([...handles]))
+        if (pending.status === "rejected") errors.push(pending.reason);
+      listener.closeAllConnections();
+      await new Promise((resolve, reject) =>
+        listener.close((error) => (error ? reject(error) : resolve())),
+      ).catch((error) => errors.push(error));
+      for (const socket of await Promise.allSettled(
+        [...sockets].map((entry) => once(entry, "close")),
+      ))
+        if (socket.status === "rejected") errors.push(socket.reason);
+      assert.equal(listener.listening, false);
+      assert.equal(sockets.size, 0, "all sockets closed");
+      if (errors.length)
+        throw new AggregateError(errors, "interop cleanup failed");
+    }
   },
 );

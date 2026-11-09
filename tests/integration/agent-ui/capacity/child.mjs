@@ -12,6 +12,7 @@ import { RequestAuthentication } from "../../../../services/agent-ui/web/server/
 import { ServiceAuthentication } from "../../../../services/agent-ui/web/server/dist/adapters/service-authentication.js";
 import { CallerContextVerifier } from "../../../../services/agent-ui/web/server/dist/adapters/caller-context.js";
 import { AcpHttpBridge } from "../../../../services/agent-ui/web/server/dist/adapters/acp-http.js";
+import { intentObservationFailure } from "../../../support/intent-observation.mjs";
 
 const requireUi = createRequire(
   new URL("../../../../services/agent-ui/web/package.json", import.meta.url),
@@ -421,7 +422,8 @@ async function upstream(input) {
       });
       return;
     }
-    json({ code: "intent_unknown" }, 404);
+    const failure = intentObservationFailure("intent_unknown");
+    json(failure.body, failure.status);
   });
   const origin = await listen(server);
   emit("ready", { origin, role: "upstream" });
