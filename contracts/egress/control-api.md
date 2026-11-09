@@ -60,7 +60,10 @@ both states; callers inspect `control_plane_ready` before issuing mutations.
 When degraded, the last published packet snapshot may continue forwarding,
 while control mutations fail with a retryable stable error. The response body
 follows the `status` definition in
-[control-response.schema.json](control-response.schema.json).
+[control-response.ids-v2.schema.json](control-response.ids-v2.schema.json). The
+`ids-v2` revision binds `agent_id` to the [shared opaque-ID
+grammar](../common/ids.schema.json); `policy_id` keeps its independent
+identifier rules.
 
 ## Agent Network
 
