@@ -380,6 +380,14 @@ error. The browser validates the existing error envelope, shows the message
 and original-operation query hint only in its owning Session, and removes that
 hint when the durable operation replaces the uncertain state.
 
+An `intent_receipt_expired` lookup means retention may already have pruned the
+receipt inside a surviving Session, so the original Prompt may have executed.
+Node keeps the operation `uncertain` with a `query_operation` error whose `code`
+is `intent_receipt_expired` — the terminal resend-forbidden marker, not an
+execution-failure claim. It stops the automatic backoff chain and the explicit
+original retry, releases the retained browser input, and cannot be cleared by a
+later stale `intent_unknown` or Bridge ACK; only a durable receipt replaces it.
+
 Once the local submission finishes, Refresh workspace and both New conversation
 controls remain available while an operation is uncertain. Refresh only rereads
 state; opening a new conversation selects a local draft without creating a

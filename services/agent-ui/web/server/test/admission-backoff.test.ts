@@ -5,12 +5,13 @@ import { RequestError } from "@agentclientprotocol/sdk/unstable";
 import {
   AcpPromptError,
   AgentAccessRevokedError,
+  type IntentObservation,
   type IntentReceipt,
 } from "../src/adapters/acp-http.ts";
 import { OperationConflictError, OperationCoordinator, operationFromReceipt } from "../src/bridge/operations.ts";
 
 type Input = Parameters<OperationCoordinator["submit"]>[0];
-type Observation = { kind: "unknown" } | { kind: "receipt"; receipt: IntentReceipt };
+type Observation = IntentObservation;
 type Reader = (sessionId: string, intentId: string, signal?: AbortSignal) => Promise<Observation>;
 const catalog = JSON.parse(readFileSync(
   new URL("../../../../../contracts/agent-acp/errors.json", import.meta.url), "utf8",
@@ -689,5 +690,49 @@ test("an observed completed receipt wins over an older running receipt returned 
     assert.equal(f.active(), 0);
     await f.advance(60000);
     assert.equal(f.calls.length, 1);
+  });
+});
+
+test("an expired automatic lookup stops the first retry and a later unknown cannot unlatch it", async (t) => {
+  let expiredLookup = true;
+  await usingFixture(t, async () =>
+    expiredLookup ? { kind: "expired" as const } : { kind: "unknown" as const },
+  async (f) => {
+    await f.start();
+    f.calls[0]!.reject(refusal());
+    await f.flush();
+    await f.advance(999);
+    assert.equal(f.calls.length, 1);
+    await f.advance(1);
+    assert.equal(f.queries.length, 1, "the canonical authorized lookup must actually execute");
+    assert.equal(f.queries[0]!.finished, true);
+    await f.advance(60000);
+    assert.equal(f.calls.length, 1, "an expired lookup must stop automatic dispatch");
+    const projected = f.operations.snapshot(f.original.sessionId, [])[0]!;
+    assert.equal(projected.phase, "uncertain");
+    assert.equal(projected.acceptance, "unknown");
+    assert.equal(projected.error?.code, "intent_receipt_expired");
+    assert.equal(projected.error?.category, "not_found");
+    assert.equal(projected.error?.retryable, false);
+    await f.operations.settled(f.original.sessionId, f.original.intentId);
+    assert.equal(f.active(), 0, "the stopped chain must release its work lease");
+    expiredLookup = false;
+    const explicit = f.retry();
+    let explicitSettled = false;
+    void explicit.then(
+      () => { explicitSettled = true; },
+      () => { explicitSettled = true; },
+    );
+    await f.flush();
+    assert.equal(explicitSettled, true, "an expired explicit decision stays query-only");
+    await f.advance(60000);
+    assert.equal(f.calls.length, 1, "a later unknown read cannot unlatch expiry");
+    assert.equal(f.queries.length, 2);
+    assert.equal(
+      f.operations.snapshot(f.original.sessionId, [])[0]!.error?.code,
+      "intent_receipt_expired",
+    );
+    await f.operations.settled(f.original.sessionId, f.original.intentId);
+    assert.equal(f.active(), 0);
   });
 });

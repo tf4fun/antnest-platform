@@ -361,10 +361,19 @@ remain admitted; the budget does not replace their cancellation deadline test.
 
 A new scope denied because every Bridge owner slot is busy receives
 `bridge_capacity_exceeded`; a cold owner may be retired to admit it.
-A missing/expired durable
+A missing durable
 receipt stays unknown. `retryable` alone never authorizes automatic Prompt replay;
 the bounded admission-backoff exception below additionally requires a settled
 canonical refusal and a current authorized intent-unknown lookup.
+When ACP reports `410 intent_receipt_expired` for the original intent, the
+Bridge projects the operation as `uncertain`/`unknown` carrying
+`error.code === "intent_receipt_expired"`: the terminal resend-forbidden marker
+meaning retention may already have pruned the receipt and the original Prompt
+may have executed. It is not an execution-failure claim. Both the bounded
+automatic admission path and the explicit original retry are then permanently
+query-only for that intent — expiry latches even if a later stale lookup
+returns `intent_unknown` — while a retained durable receipt always wins and
+replaces the marker.
 When the producer confirms that a selected Session is absent or invisible, its
 Agent/Session View, event stream, history, operation and configuration routes
 return `404 session_not_found` with
@@ -495,7 +504,9 @@ assertion of absence. Only a successful query that remains unknown, a settled
 original ACP call and an explicit user action allow another dispatch of that
 same immutable input. Settled means the original ACP dispatch has finished,
 not merely that its browser HTTP response returned. Unknown remains uncertain;
-it is never proof that the original Prompt was unaccepted.
+it is never proof that the original Prompt was unaccepted. An expired lookup
+is terminal for resend: the action stays query-only, the retained original is
+released, and no later stale `intent_unknown` can rearm it.
 
 The complete query and retry decision is single-flight for
 `(organization, principal, agent, session, intent)`. Concurrent clicks join the
@@ -554,7 +565,10 @@ missing receipt alone does not. Unknown delivery permanently disables the
 automatic path for that retained original intent. Any durable receipt is
 adopted without dispatch, even if it arrives during a query or wait. Query
 failure, expired receipt, malformed/missing metadata, `access_denied`, access
-revocation or owner shutdown stops automatic dispatch. Recheck cancellation,
+revocation or owner shutdown stops automatic dispatch. An
+`intent_receipt_expired` lookup additionally latches resend-forbidden on the
+retained original: neither a later `intent_unknown` nor an explicit action can
+dispatch it again. Recheck cancellation,
 current scope, receipt state and limits immediately before every actual call.
 ACP's existing atomic duplicate lookup, digest equality and append CAS remain
 the final protection for a receipt racing that decision.

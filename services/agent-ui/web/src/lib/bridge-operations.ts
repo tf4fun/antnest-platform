@@ -250,6 +250,7 @@ export class BridgeOperationTracker {
       (current.runId !== undefined && next.runId === undefined) ||
       (isTerminal(current.phase) && !isTerminal(next.phase)) ||
       (current.acceptance === "acp" && next.acceptance !== "acp") ||
+      (current.error?.code === "intent_receipt_expired" && next.acceptance !== "acp") ||
       (current.phase === "uncertain" && next.acceptance === "bridge" && next.phase === "dispatching") ||
       (current.outputWatermark !== undefined && next.outputWatermark !== undefined &&
         next.outputWatermark < current.outputWatermark)
@@ -260,7 +261,8 @@ export class BridgeOperationTracker {
     if (current !== undefined && JSON.stringify(current) === JSON.stringify(next))
       return { ...current };
     this.operations.set(item, { ...next });
-    if (next.acceptance === "acp" || next.runId !== undefined || isTerminal(next.phase))
+    if (next.acceptance === "acp" || next.runId !== undefined || isTerminal(next.phase) ||
+      next.error?.code === "intent_receipt_expired")
       this.releaseInput(item);
     this.terminals.delete(item);
     if (isTerminal(next.phase)) {
@@ -344,7 +346,7 @@ function key(sessionId: string, intentId: string): string {
 
 function retryUnknown(operation: BridgeOperation): boolean {
   return operation.phase === "uncertain" && operation.acceptance === "unknown" &&
-    operation.runId === undefined;
+    operation.runId === undefined && operation.error?.code !== "intent_receipt_expired";
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

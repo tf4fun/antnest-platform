@@ -314,6 +314,81 @@ test("an unknown intent stays uncertain while a hidden Session remains denied", 
   );
 });
 
+test("a canonical expired envelope maps to expired while malformed 410 fails closed", async () => {
+  const expired = (patch: Record<string, unknown> = {}, status = 410) =>
+    new Response(JSON.stringify({
+      code: "intent_receipt_expired",
+      category: "not_found",
+      message: "Intent receipt expired",
+      retryable: false,
+      request_id: "req-410-1",
+      ...patch,
+    }), { status });
+  assert.deepEqual(await parseIntentObservation(expired()), { kind: "expired" });
+  assert.deepEqual(
+    await parseIntentObservation(expired({
+      details: { session: "retained" },
+      future_extension: { anything: true },
+    })),
+    { kind: "expired" },
+    "future common envelope fields must be tolerated",
+  );
+  for (const retryable of [true, false]) {
+    assert.deepEqual(
+      await parseIntentObservation(new Response(
+        JSON.stringify({ code: "intent_unknown", retryable }),
+        { status: 404 },
+      )),
+      { kind: "unknown" },
+      `legacy intent_unknown retryable:${retryable} stays an unknown read`,
+    );
+  }
+  for (const patch of [
+    { code: "intent_unknown" },
+    { code: "session_not_found" },
+    { code: "not_found" },
+    { category: "conflict" },
+    { category: "unavailable" },
+    { retryable: true },
+    { retryable: "false" },
+    { message: "" },
+    { message: 410 },
+    { request_id: "" },
+    { request_id: "contains spaces" },
+    { request_id: 42 },
+    { request_id: "x".repeat(129) },
+    { request_id: "req-1\n" },
+    { request_id: "req-1\r\n" },
+    { details: ["not", "an", "object"] },
+    { details: "opaque" },
+    { details: null },
+  ] as const) {
+    await assert.rejects(
+      parseIntentObservation(expired(patch)),
+      BridgeCapabilityError,
+      `malformed 410 ${JSON.stringify(patch)} must never become a successful observation`,
+    );
+  }
+  for (const field of ["code", "category", "message", "retryable", "request_id"]) {
+    const body = JSON.parse(await expired().text()) as Record<string, unknown>;
+    delete body[field];
+    await assert.rejects(
+      parseIntentObservation(new Response(JSON.stringify(body), { status: 410 })),
+      BridgeCapabilityError,
+      `a 410 missing ${field} must fail closed`,
+    );
+  }
+  await assert.rejects(
+    parseIntentObservation(new Response("not json", { status: 410 })),
+    BridgeCapabilityError,
+  );
+  await assert.rejects(
+    parseIntentObservation(expired({}, 404)),
+    BridgeCapabilityError,
+    "an expired envelope at another status must not become expired",
+  );
+});
+
 test("a hidden or deleted Session keeps its permanent absence across ACP observations", async () => {
   await assert.rejects(
     parseAgentExecutionState(new Response(JSON.stringify({
