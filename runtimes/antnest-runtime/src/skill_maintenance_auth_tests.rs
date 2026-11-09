@@ -1,6 +1,7 @@
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use ring::signature::{Ed25519KeyPair, KeyPair};
 use serde_json::{Value, json};
+use std::collections::BTreeSet;
 
 use crate::skill_maintenance_auth::{MaintenanceAuthError, verify_maintenance_ticket};
 use crate::spec::{RuntimeIdentity, SkillMaintenanceVerifier};
@@ -180,4 +181,145 @@ fn verification_fails_closed_for_missing_keys_or_noncanonical_credentials() {
         ),
         Err(MaintenanceAuthError::Unauthorized)
     );
+}
+
+const MAINTENANCE_VECTORS: &str = include_str!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../contracts/runtime/maintenance-ticket-fixtures.json"
+));
+
+#[test]
+fn shared_valid_vectors_sign_schema_clean_tickets_for_all_four_actions() {
+    let (pair, identity, keys) = fixture();
+    let vectors: Value = serde_json::from_str(MAINTENANCE_VECTORS).unwrap();
+    assert_eq!(
+        vectors["valid"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|vector| vector["action"].as_str().unwrap())
+            .collect::<BTreeSet<_>>(),
+        [
+            "digest",
+            "install",
+            "temporary_install",
+            "temporary_release"
+        ]
+        .into_iter()
+        .collect::<BTreeSet<_>>()
+    );
+    for vector in vectors["valid"].as_array().unwrap() {
+        let action = vector["action"].as_str().unwrap();
+        let generation = vector["generation"].as_u64().unwrap();
+        let token = signed(&pair, BODY, |payload| {
+            payload["action"] = json!(action);
+            payload["generation"] = json!(generation);
+        });
+        let ticket = verify_maintenance_ticket(
+            &token,
+            BODY,
+            action,
+            &identity,
+            "execution-1",
+            &keys,
+            1_790_000_030,
+        )
+        .unwrap_or_else(|error| panic!("shared valid vector {vector} rejected: {error:?}"));
+        assert_eq!(
+            (ticket.action.as_str(), ticket.generation),
+            (action, generation)
+        );
+        let encoded_payload = token
+            .strip_prefix("AntnestMaintenance ")
+            .and_then(|value| value.split('.').nth(1))
+            .unwrap();
+        let payload: Value =
+            serde_json::from_slice(&URL_SAFE_NO_PAD.decode(encoded_payload).unwrap()).unwrap();
+        crate::http_route_contract_tests::assert_valid(
+            "maintenance-ticket.schema.json#/$defs/ticket",
+            &payload,
+        );
+    }
+}
+
+#[test]
+fn shared_invalid_vectors_and_temporary_generation_zero_fail_closed() {
+    let (pair, identity, keys) = fixture();
+    let vectors: Value = serde_json::from_str(MAINTENANCE_VECTORS).unwrap();
+    for vector in vectors["invalid"].as_array().unwrap() {
+        let action = vector["action"].as_str().unwrap();
+        let generation = vector["generation"].as_u64().unwrap();
+        let token = signed(&pair, BODY, |payload| {
+            payload["action"] = json!(action);
+            payload["generation"] = json!(generation);
+        });
+        assert_eq!(
+            verify_maintenance_ticket(
+                &token,
+                BODY,
+                action,
+                &identity,
+                "execution-1",
+                &keys,
+                1_790_000_030
+            ),
+            Err(MaintenanceAuthError::Unauthorized),
+            "shared invalid vector {vector} accepted"
+        );
+    }
+    for action in ["temporary_install", "temporary_release"] {
+        let token = signed(&pair, BODY, |payload| {
+            payload["action"] = json!(action);
+            payload["generation"] = json!(0);
+        });
+        assert_eq!(
+            verify_maintenance_ticket(
+                &token,
+                BODY,
+                action,
+                &identity,
+                "execution-1",
+                &keys,
+                1_790_000_030
+            ),
+            Err(MaintenanceAuthError::Unauthorized),
+            "temporary action {action} accepted at generation zero"
+        );
+    }
+}
+
+#[test]
+fn a_signed_ticket_cannot_serve_another_route_action() {
+    let (pair, identity, keys) = fixture();
+    let vectors: Value = serde_json::from_str(MAINTENANCE_VECTORS).unwrap();
+    for vector in vectors["valid"].as_array().unwrap() {
+        let action = vector["action"].as_str().unwrap();
+        let generation = vector["generation"].as_u64().unwrap();
+        let token = signed(&pair, BODY, |payload| {
+            payload["action"] = json!(action);
+            payload["generation"] = json!(generation);
+        });
+        for other in vectors["valid"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|entry| entry["action"].as_str())
+            .filter(|other| *other != action)
+            .collect::<BTreeSet<_>>()
+        {
+            assert_eq!(
+                verify_maintenance_ticket(
+                    &token,
+                    BODY,
+                    other,
+                    &identity,
+                    "execution-1",
+                    &keys,
+                    1_790_000_030
+                ),
+                Err(MaintenanceAuthError::Unauthorized),
+                "ticket for {action} accepted under route action {other}"
+            );
+        }
+    }
 }

@@ -94,6 +94,14 @@ pub(crate) fn verify_maintenance_ticket(
         || !valid_opaque_id(&ticket.request_id, 128)
         || ticket.generation == 0
         || ticket.action != action
+        || !matches!(
+            ticket.action.as_str(),
+            "install" | "digest" | "temporary_install" | "temporary_release"
+        )
+        || (matches!(
+            ticket.action.as_str(),
+            "temporary_install" | "temporary_release"
+        ) && ticket.generation != 1)
         || ticket.expires_at <= ticket.issued_at
         || ticket.expires_at - ticket.issued_at > 60
         || ticket.issued_at > now_epoch.saturating_add(30)
