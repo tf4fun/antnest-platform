@@ -7,6 +7,7 @@ import {
 } from "../../../../services/agent-acp-service/src/domain/execution-configuration.js";
 import { runSnapshot } from "../../../../services/agent-acp-service/src/domain/run-snapshot.js";
 import { parseStoredRunSnapshot } from "../../../../services/agent-acp-service/src/domain/stored-run-snapshot.js";
+import commonIDs from "../../../../contracts/common/ids.schema.json" with { type: "json" };
 import {
   executionConfiguration,
   executionIdentity,
@@ -20,6 +21,7 @@ const ajvRequire = createRequire(
 );
 const { Ajv2020 } = ajvRequire("ajv/dist/2020.js") as {
   Ajv2020: new (options: object) => {
+    addSchema: (schema: object) => unknown;
     compile: (schema: object) => {
       (data: unknown): boolean;
       errors?: unknown;
@@ -29,7 +31,7 @@ const { Ajv2020 } = ajvRequire("ajv/dist/2020.js") as {
 const snapshotContract: object = JSON.parse(
   readFileSync(
     new URL(
-      "../../../../contracts/agent-acp/execution-snapshot.schema.json",
+      "../../../../contracts/agent-acp/execution-snapshot.ids-v2.schema.json",
       import.meta.url,
     ),
     "utf8",
@@ -93,6 +95,7 @@ function capture(configuration: unknown) {
 describe("live model revision delivery boundary", () => {
   it("keeps admitted 7/4/9 revisions while the live head advances", () => {
     const ajv = new Ajv2020({ strict: false, allErrors: true });
+    ajv.addSchema(commonIDs);
     const validate = ajv.compile(snapshotContract);
     const live = liveConfiguration();
     expect(validate(live), JSON.stringify(validate.errors)).toBe(true);

@@ -25,19 +25,19 @@ const schemaRef = (body) =>
   body.startsWith("../") ? body.slice(3) : `egress/${body}`;
 
 const REPRESENTATIVE = {
-  "control-response.schema.json#/$defs/status": () => ({
+  "control-response.ids-v2.schema.json#/$defs/status": () => ({
     status: "ready",
     data_plane_ready: true,
     control_plane_ready: true,
     snapshot_revision: 1,
   }),
-  "control-response.schema.json#/$defs/network": () =>
+  "control-response.ids-v2.schema.json#/$defs/network": () =>
     loadGolden("egress", "network.open.json"),
-  "control-response.schema.json#/$defs/policy_revision": () =>
+  "control-response.ids-v2.schema.json#/$defs/policy_revision": () =>
     loadGolden("egress", "policy.v1.json"),
-  "control-response.schema.json#/$defs/policy_metadata": () =>
+  "control-response.ids-v2.schema.json#/$defs/policy_metadata": () =>
     loadGolden("egress", "policy-metadata.v1.json"),
-  "control-response.schema.json#/$defs/assignment": () =>
+  "control-response.ids-v2.schema.json#/$defs/assignment": () =>
     loadGolden("egress", "assignment.current.json"),
   "policy-revision-request.schema.json": () => ({
     spec: { schema_version: 1, action: "allow_all" },
@@ -129,7 +129,7 @@ function sourceRoutes(source = controlSource) {
 }
 
 test("control contract declares a complete body contract for every route", () => {
-  assert.equal(contract.revision, 9);
+  assert.equal(contract.revision, 10);
   assert.deepEqual(routeBodyProblems(contract.routes), []);
 });
 

@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { test } from "node:test";
+import commonIDs from "../../../contracts/common/ids.schema.json" with { type: "json" };
+import commonError from "../../../contracts/common/error.schema.json" with { type: "json" };
 
 const require = createRequire(
   new URL("../../../services/agent-acp-service/package.json", import.meta.url),
@@ -46,13 +48,31 @@ test("Registry route grants follow the frozen actual callers, not the old illust
 });
 
 test("Registry error envelopes include bounded nonretryable authentication and scope errors", () => {
+  const categories = Object.fromEntries(
+    read("../common/errors.json").errors.map(({ code, category }) => [
+      code,
+      category,
+    ]),
+  );
+  const envelope = (code, retryable) => {
+    const error = {
+      code,
+      category: categories[code],
+      message: "Request rejected",
+      retryable,
+      request_id: "request-authentication-1",
+    };
+    return { ...error, error: { ...error } };
+  };
   for (const file of [
-    "registry-api.schema.json",
-    "discovery-api.schema.json",
+    "registry-api.ids-v2.schema.json",
+    "discovery-api.ids-v2.schema.json",
   ]) {
     const ajv = new Ajv2020({ strict: true, validateFormats: false });
-    ajv.addSchema(read("registry-api.schema.json"));
-    if (file !== "registry-api.schema.json") ajv.addSchema(read(file));
+    ajv.addSchema(commonIDs);
+    ajv.addSchema(commonError);
+    ajv.addSchema(read("registry-api.ids-v2.schema.json"));
+    if (file !== "registry-api.ids-v2.schema.json") ajv.addSchema(read(file));
     const validate = ajv.getSchema(`${read(file).$id}#/$defs/error`);
     for (const code of [
       "service_unauthenticated",
@@ -66,24 +86,10 @@ test("Registry error envelopes include bounded nonretryable authentication and s
       "identity_dependency_unavailable",
     ]) {
       assert(
-        validate({
-          error: {
-            code,
-            message: "Request rejected",
-            retryable: code === "identity_dependency_unavailable",
-          },
-        }),
-        `${file}: ${code}`,
+        validate(envelope(code, code === "identity_dependency_unavailable")),
+        `${file}: ${code}: ${JSON.stringify(validate.errors)}`,
       );
     }
-    assert(
-      !validate({
-        error: {
-          code: "service_unauthenticated",
-          message: "Request rejected",
-          retryable: true,
-        },
-      }),
-    );
+    assert(!validate(envelope("service_unauthenticated", true)));
   }
 });

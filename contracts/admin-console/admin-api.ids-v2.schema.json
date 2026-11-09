@@ -4243,7 +4243,7 @@
           }
         },
         "mcp_servers": {
-          "$ref": "../runtime/managed-mcp.schema.json#/$defs/servers_write"
+          "$ref": "../runtime/managed-mcp.ids-v2.schema.json#/$defs/servers_write"
         }
       }
     }

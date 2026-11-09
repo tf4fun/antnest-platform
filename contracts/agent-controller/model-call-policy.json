@@ -2,7 +2,7 @@
   "contract": "antnest.model-call-policy",
   "revision": 2,
   "status": "implemented",
-  "schema": "model-call-policy.schema.json",
+  "schema": "model-call-policy.ids-v2.schema.json",
   "fixtures": "model-call-policy-fixtures.json",
   "policy_path": "/internal/model-call-policy",
   "operations": {

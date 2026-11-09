@@ -122,16 +122,17 @@ func replayPlanUsesIndex(node any, index string) bool {
 	return false
 }
 
-const controllerHygieneErrorURI = "https://schemas.antnest.dev/agent-controller/control-api.schema.json#/$defs/error"
-const controllerHygienePolicyURI = "https://schemas.antnest.dev/skill-learning/learning-api.schema.json#/$defs/policy"
+const controllerHygieneErrorURI = "https://schemas.antnest.dev/agent-controller/control-api.ids-v2.schema.json#/$defs/error"
+const controllerHygienePolicyURI = "https://schemas.antnest.dev/skill-learning/learning-api.ids-v2.schema.json#/$defs/policy"
 
 func controllerHygieneSchemaCompiler(t *testing.T) *jsonschema.Compiler {
 	t.Helper()
 	compiler := jsonschema.NewCompiler()
 	for _, resource := range []string{
 		"common/error.schema.json",
-		"agent-controller/control-api.schema.json",
-		"skill-learning/learning-api.schema.json",
+		"common/ids.schema.json",
+		"agent-controller/control-api.ids-v2.schema.json",
+		"skill-learning/learning-api.ids-v2.schema.json",
 	} {
 		payload, err := os.ReadFile(filepath.Join("..", "..", "..", "..", "..", "contracts", resource))
 		require.NoError(t, err)
