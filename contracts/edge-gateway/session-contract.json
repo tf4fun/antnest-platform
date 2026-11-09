@@ -348,7 +348,7 @@
     "transport": "X-Antnest-Organization-Slug and X-Antnest-Organization-Name; one canonical unpadded Base64URL value per header, encoding the exact UTF-8 string",
     "scope": "authenticated Agent UI Workspace API and SSR HTML only; anonymous assets and other upstreams receive neither header",
     "validation": "required non-whitespace strings; Node rejects missing, duplicate, non-canonical Base64URL or invalid UTF-8 values with 401 before discovery",
-    "bootstrap_principal_schema": "../agent-ui/workspace-api.schema.json#/$defs/verifiedWorkspacePrincipal",
+    "bootstrap_principal_schema": "../agent-ui/workspace-api.ids-v2.schema.json#/$defs/verifiedWorkspacePrincipal",
     "authorization": "display only; signed caller-context identities/roles and existing consumer business authorization determine access",
     "freshness": "complete principal snapshot no older than configured Resolve cache TTL, anchored to actual RPC start; next real read observes a newer snapshot after expiry and successful Identity resolution; hits and feed pages do not renew it",
     "deployment": "Gateway producer #92 first; Agent UI bootstrap consumer #93 then activates the verifiedWorkspacePrincipal schema; full integration follows both local admissions",

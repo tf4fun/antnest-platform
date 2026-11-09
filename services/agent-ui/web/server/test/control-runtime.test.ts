@@ -8,12 +8,15 @@ import { AgentAccessRevokedError, SessionNotFoundError } from "../src/adapters/a
 
 const requireAcp = createRequire(new URL("../../../../agent-acp-service/package.json", import.meta.url));
 const { Ajv2020 } = requireAcp("ajv/dist/2020.js");
-const schema = JSON.parse(readFileSync(new URL("../../../../../contracts/agent-ui/workspace-api.schema.json", import.meta.url), "utf8"));
+const schema = JSON.parse(readFileSync(new URL("../../../../../contracts/agent-ui/workspace-api.ids-v2.schema.json", import.meta.url), "utf8"));
 const commonSchema = JSON.parse(readFileSync(new URL("../../../../../contracts/common/error.schema.json", import.meta.url), "utf8"));
+const idsSchema = JSON.parse(readFileSync(new URL("../../../../../contracts/common/ids.schema.json", import.meta.url), "utf8"));
 const validate = (name: string) => {
   const ajv = new Ajv2020({ strict: true, validateFormats: false });
   ajv.addSchema(commonSchema);
-  return ajv.compile({ $schema: schema.$schema, $defs: schema.$defs, $ref: `#/$defs/${name}` });
+  ajv.addSchema(idsSchema);
+  ajv.addSchema(schema);
+  return ajv.getSchema(schema.$id + "#/$defs/" + name)!;
 };
 const validView = validate("agentView"); const validResult = validate("controlCommandResult");
 const validStream = validate("streamEvent");

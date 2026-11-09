@@ -23,7 +23,7 @@ function definition(relativePath, name) {
   return validator.getSchema(`${schema.$id}#/$defs/${name}`);
 }
 
-const ui = "../../../contracts/agent-ui/workspace-api.schema.json";
+const ui = "../../../contracts/agent-ui/workspace-api.ids-v2.schema.json";
 const acp = "../../../contracts/agent-acp/workspace-bridge.schema.json";
 const promptRetryFixtures = "../../support/fixtures/agent-ui/prompt-retry.json";
 

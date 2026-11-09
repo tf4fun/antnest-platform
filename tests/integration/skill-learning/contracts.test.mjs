@@ -795,7 +795,7 @@ test("L0 links notice negotiation, Runtime bootstrap, and Agent View without a s
     [
       "agent-acp/workspace-bridge.schema.json",
       "runtime/runtime-spec.ids-v2.schema.json",
-      "agent-ui/workspace-api.schema.json",
+      "agent-ui/workspace-api.ids-v2.schema.json",
     ].map(async (path) =>
       JSON.parse(
         await readFile(new URL(`../../../contracts/${path}`, import.meta.url)),

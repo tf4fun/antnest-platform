@@ -214,15 +214,15 @@
   },
   "guarded_sources": {
     "services/agent-ui/web/server/src/http/agent-view-routes.ts": {
-      "sha256": "895f2a543e77322c9a55d9cc11a6efa6ec53f795446b5bc5645fa20539f92abd",
+      "sha256": "58ff8019829915f4bac416fcd47c9ae396153b4f600c15ba5c16fbaa047f892d",
       "routes": ["GET /api/app/workspace/v1/agents/{agentId}/view"]
     },
     "services/agent-ui/web/server/src/http/bootstrap-routes.ts": {
-      "sha256": "4343d04263617af1685a537be2e46dcc797e7f01d62cff907ba43e010c96381f",
+      "sha256": "5bf6c64c3d76dc88d7146ca0cfe89ed49088d1ac5a7e32c7da6feb54fccc01d5",
       "routes": ["GET /api/app/workspace/v1/bootstrap"]
     },
     "services/agent-ui/web/server/src/http/command-routes.ts": {
-      "sha256": "a54109cc7344d1d8083dcdc523a8c253647db2fdba423f45a9873478edf91d6f",
+      "sha256": "150958c2d9e9d663f2b76532e4746020e7bf7a7ee63afd4bf593cfa7e542d9aa",
       "routes": [
         "POST /api/app/workspace/v1/agents/{agentId}/sessions/{sessionId}/prompts",
         "GET /api/app/workspace/v1/agents/{agentId}/sessions/{sessionId}/operations/{intentId}",
@@ -236,11 +236,11 @@
       ]
     },
     "services/agent-ui/web/server/src/http/control-routes.ts": {
-      "sha256": "be0efbde2265f0a9e79ecc15cd1f330542e99cf1eb24ece1a822a90432dc478d",
+      "sha256": "802700f6fe557844aa71308c72b523382a20f6df8f6f79c36581b8c7a68450e1",
       "routes": ["POST /api/app/workspace/v1/agents/{agentId}/commands"]
     },
     "services/agent-ui/web/server/src/http/event-routes.ts": {
-      "sha256": "1feeffa34eca04ac50333e62962caf50e158b7ef1c766d901231ad1d24ae2cb0",
+      "sha256": "509b4ea0ddc747c0f300405d34d3171a8105218972a3415e13b2eebe14ea6fb0",
       "routes": ["GET /api/app/workspace/v1/agents/{agentId}/events"]
     },
     "services/agent-ui/web/server/src/http/history-routes.ts": {
@@ -268,13 +268,13 @@
       ]
     },
     "services/agent-ui/web/server/src/http/permission-routes.ts": {
-      "sha256": "bcb0ffcfe8148b5eeb90042a006423d1e418f27a5bd9f4e45b8b2a0d79ab83f7",
+      "sha256": "0dc9434ed3e72fb3491c731d03c50dc6ee5d9e81ba30a32ad1beb9686b71fcd8",
       "routes": [
         "POST /api/app/workspace/v1/agents/{agentId}/permissions/{permissionId}/decision"
       ]
     },
     "services/agent-ui/web/server/src/http/session-routes.ts": {
-      "sha256": "5ecf0f86f5911a2529385ad6f27e17f73d0f8115466613ae239bbcef7e7b70be",
+      "sha256": "cc7f1a7f4cca220fdb2cefa705dbbbbcdd54bcc173d3a923b9c40b69469b677a",
       "routes": [
         "GET /api/app/workspace/v1/agents/{agentId}/sessions",
         "POST /api/app/workspace/v1/agents/{agentId}/sessions"
@@ -287,7 +287,7 @@
       ]
     },
     "services/agent-ui/web/server/src/protocol/workspace-route.ts": {
-      "sha256": "68b9fbf374cc5a3026cceb1e3968c345c77a48e35bb12e2e66a20a01ef723509",
+      "sha256": "d770ecbef5792d839c77e54cdbfb1eb814892b8df56926d45540d8c2ed200a72",
       "routes": []
     },
     "services/agent-ui/web/server/src/workspace-runtime.ts": {
@@ -295,7 +295,7 @@
       "routes": []
     },
     "services/agent-ui/web/server/src/http/request-authentication.ts": {
-      "sha256": "2cdd5d237ed2e90458bbcd561c48f9ffc1bae5c328612b0207ef48ec4e5d9aec",
+      "sha256": "de5d76cb242d96cd68cbb70dad2b895990c355687556f03322698e06cf99d51d",
       "routes": [
         "GET /api/app/workspace/v1/agents/{agentId}/events",
         "GET /api/app/workspace/v1/agents/{agentId}/sessions",
