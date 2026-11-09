@@ -217,7 +217,7 @@ func TestRouteSchemaEgressRequests(t *testing.T) {
 		var captured capturedRequest
 		client, response := exchangeClient(t, &captured)
 		*response = networkClosed
-		result, err := client.SetAgentNetworkAttachment(ctx, agent, "closed", math.MaxUint64, "", "")
+		result, err := client.SetAgentNetworkAttachment(ctx, agent, "closed", math.MaxInt64, "", "")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -225,7 +225,7 @@ func TestRouteSchemaEgressRequests(t *testing.T) {
 			t.Fatalf("decoded %+v", result)
 		}
 		assertExchange(t, route, captured, "/internal/agent-network-attachments/"+agent, *response)
-		assertCanonicalVersion(t, "closed", "18446744073709551615", captured)
+		assertCanonicalVersion(t, "closed", "9223372036854775807", captured)
 	})
 
 	t.Run("pending", func(t *testing.T) {
@@ -273,7 +273,7 @@ func TestRouteSchemaEgressRequests(t *testing.T) {
 		*response = goldenVariant(t, "egress/examples/network.closed.json", func(doc map[string]any) {
 			doc["state"] = "quarantined"
 		})
-		result, err := client.ReleaseAgentNetwork(ctx, agent, math.MaxUint64)
+		result, err := client.ReleaseAgentNetwork(ctx, agent, math.MaxInt64)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -281,7 +281,7 @@ func TestRouteSchemaEgressRequests(t *testing.T) {
 			t.Fatalf("decoded %+v", result)
 		}
 		assertExchange(t, route, captured, "/internal/agent-networks/"+agent+"/release", *response)
-		assertCanonicalVersion(t, "release", "18446744073709551615", captured)
+		assertCanonicalVersion(t, "release", "9223372036854775807", captured)
 	})
 
 	t.Run("assignment-get", func(t *testing.T) {
