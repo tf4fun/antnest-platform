@@ -171,6 +171,7 @@ for (const directory of ["go-integration", "stage2-boundary"])
   });
 
 for (const [flag, directory] of [
+  ["", "stage3-startup"],
   ["", "stage3-base"],
   ["MANAGED_MCP", "managed-mcp"],
   ["RPC_RESPONSE_LOSS", "rpc-response-loss"],

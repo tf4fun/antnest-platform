@@ -33,6 +33,10 @@ for (const [name, initial, residual, expected, diagnostics, logFailure] of [
     );
     const cleanup = source.match(/^cleanup\(\) \{[\s\S]+?\n\}/m)?.[0];
     assert(cleanup);
+    const recordFailure = source.match(
+      /^record_stage3_failure\(\) \{[\s\S]+?\n\}/m,
+    )?.[0];
+    assert(recordFailure);
     const directory = await mkdtemp(join(tmpdir(), "antnest-stage3-cleanup-"));
     const temporary = join(directory, "work");
     const calls = join(directory, "calls");
@@ -66,6 +70,7 @@ for (const [name, initial, residual, expected, diagnostics, logFailure] of [
               elif [ "$RESIDUAL" = true ]; then echo leftover; fi ;;
           esac
         }
+        ${recordFailure}
         ${cleanup}
         (exit "$INITIAL")
         cleanup
@@ -84,6 +89,8 @@ for (const [name, initial, residual, expected, diagnostics, logFailure] of [
             identity_diagnostic_log: diagnostics
               ? join(directory, "identity.private.log")
               : "",
+            startup_evidence_directory: join(directory, "startup"),
+            stage3_phase: "compose-up",
             temporary_root: temporary,
             credentials_root: join(directory, "credentials-root"),
             tool_profile: "stage3-base",
@@ -108,8 +115,15 @@ for (const [name, initial, residual, expected, diagnostics, logFailure] of [
       const summary = commands.indexOf(
         `node tests/support/startup-failure-summary.mjs antnest-stage3-fixture ${join(directory, "credentials-root", "credentials")}`,
       );
-      if (initial !== 0) assert(summary >= 0 && summary < stop);
-      else assert.equal(summary, -1);
+      if (initial !== 0) {
+        assert(summary >= 0 && summary < stop);
+        assert.deepEqual(
+          JSON.parse(
+            await readFile(join(directory, "startup/failure.json"), "utf8"),
+          ),
+          { phase: "compose-up", exit_code: initial },
+        );
+      } else assert.equal(summary, -1);
       const capture = commands.indexOf(
         "compose logs --no-color identity-service admin-console edge-gateway agent-ui agent-controller agent-acp-service",
       );

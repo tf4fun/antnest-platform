@@ -180,6 +180,13 @@ empty or `false` keeps the stack disposable. This driver verifies Workspace
 HTML, bootstrap and protocol behavior; browser interaction is covered by the
 [workspace browser profile](../workspace-closeout/README.md#browser-profile).
 
+Stage 3 launch failures retain `failure.json` under
+`artifacts/verification/stage3-startup/<project>/`, with the failed setup phase
+and original exit code. Compose startup failures also retain the existing
+credential-filtered container health/error summary as `startup-summary.json`.
+These files survive cleanup and the CI exclusions for raw logs. They do not
+replace business completion or resource cleanup evidence.
+
 Raw lifecycle diagnostics, when collected, stay in the ignored private
 `artifacts/verification/stage3-base/<project>/traces/` directory. Only aggregate business,
 topology, warning and cleanup evidence is printed.
