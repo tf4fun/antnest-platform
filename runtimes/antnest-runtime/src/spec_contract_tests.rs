@@ -52,8 +52,8 @@ fn runtime_spec_rejects_an_unusable_listener() {
 }
 
 #[test]
-fn runtime_identity_uses_the_shared_visible_ascii_profile() {
-    assert!(RuntimeIdentity::new("a".repeat(255), 1).is_ok());
-    assert!(RuntimeIdentity::new("a".repeat(256), 1).is_err());
+fn runtime_identity_uses_the_shared_agent_id_profile() {
+    assert!(RuntimeIdentity::new("a".repeat(200), 1).is_ok());
+    assert!(RuntimeIdentity::new("a".repeat(201), 1).is_err());
     assert!(RuntimeIdentity::new("agent-一", 1).is_err());
 }

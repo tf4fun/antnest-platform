@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import test from "node:test";
+import commonIDs from "../../../contracts/common/ids.schema.json" with { type: "json" };
 
 const require = createRequire(
   new URL("../../../services/agent-acp-service/package.json", import.meta.url),
@@ -16,11 +17,15 @@ const read = (name) =>
   );
 function validator(definition) {
   const ajv = new Ajv2020({ strict: true });
+  ajv.addSchema(commonIDs);
   ajv.addFormat("date-time", {
     type: "string",
     validate: (value) => Number.isFinite(Date.parse(value)),
   });
   ajv.addSchema(read("agent-controller/runtime-barrier-recovery.schema.json"));
+  ajv.addSchema(
+    read("agent-controller/runtime-barrier-recovery.ids-v2.schema.json"),
+  );
   const document = read("admin-console/runtime-recovery.schema.json");
   ajv.addSchema(document);
   return ajv.compile({ $ref: `${document.$id}#/$defs/${definition}` });
@@ -47,7 +52,7 @@ const input = () => ({
 
 test("Console freezes an administrator-only recovery extension on the existing Rebuild route", () => {
   const contract = read("admin-console/admin-contract.json");
-  assert.equal(contract.version, 61);
+  assert.equal(contract.version, 62);
   const route = contract.routes.rebuild_agent;
   assert.equal(route.method, "POST");
   assert.equal(route.path, "/agents/{agent_id}/rebuild");

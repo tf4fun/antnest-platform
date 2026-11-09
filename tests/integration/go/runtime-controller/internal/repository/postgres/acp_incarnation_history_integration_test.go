@@ -294,7 +294,7 @@ VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`, record.Scope, record.Registration.
 		if err := database.QueryRowContext(ctx, "SELECT jsonb_agg(to_jsonb(m) ORDER BY version)::text FROM runtime_controller.schema_migrations m WHERE version<=14").Scan(&repeatedJournal); err != nil || repeatedJournal != journal || acpHistoryLegacyRows(t, database, ctx) != originalRows {
 			t.Fatal("history backfill changed an original registration, receipt or migration")
 		}
-		if err := database.QueryRowContext(ctx, "SELECT MAX(version) FROM runtime_controller.schema_migrations").Scan(&version); err != nil || version != 15 {
+		if err := database.QueryRowContext(ctx, "SELECT MAX(version) FROM runtime_controller.schema_migrations").Scan(&version); err != nil || version != 16 {
 			t.Fatal("history backfill did not install exactly migration fifteen")
 		}
 		groups := make(map[string][]acpincarnation.Record)

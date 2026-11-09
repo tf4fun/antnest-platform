@@ -200,14 +200,14 @@ test("Runtime outage cancellation proves timing without extending Node quantizat
 });
 
 test("Gateway cache revision reuses the issued Identity wire contract", () => {
-  assert.equal(gateway.version, 24);
+  assert.equal(gateway.version, 25);
   assert.equal(gateway.identity_resolve_cache, "resolve-cache-policy.json");
   const value = policy();
   assert.equal(value.contract, "antnest.edge-gateway.resolve-cache");
   assert.equal(value.revision, 4);
   assert.equal(value.gateway_session_revision, gateway.version);
   assert.equal(value.identity_revision, identity.revision);
-  assert.equal(identity.revision, 19);
+  assert.equal(identity.revision, 20);
   assert.equal(
     identity.methods[value.resolve_method].path,
     "/resolve-access-token",
@@ -473,7 +473,7 @@ test("organization labels share snapshot age without changing the browser wire o
     "change_password",
     "logout",
   ]);
-  const browser = contract("edge-gateway/session-response.schema.json");
+  const browser = contract("edge-gateway/session-response.ids-v2.schema.json");
   const publicFields = JSON.stringify(browser);
   for (const field of value.streams.private_provenance)
     assert.equal(publicFields.includes(`"${field}"`), false, field);

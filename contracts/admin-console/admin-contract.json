@@ -1291,7 +1291,7 @@
       "deprecated_input": ["expected_resource_version"],
       "input_exclusivity": "action_or_spec_never_both",
       "action": ["allow_all", "deny_all"],
-      "spec": "../agent-controller/control-api.schema.json#/$defs/network_policy_spec",
+      "spec": "../agent-controller/control-api.ids-v2.schema.json#/$defs/network_policy_spec",
       "controller_mapping": "action_to_builtin_reference_tuple_or_spec_to_controller_spec_only",
       "query": "reject_all",
       "expected_principal": "uri_encoded_organization_user_pair_compared_with_trusted_principal_not_used_as_authority",
@@ -1315,7 +1315,7 @@
     },
     "model_pricing": {
       "owner": "agent_controller_current_model",
-      "schema": "../agent-controller/control-api.schema.json#/$defs/model_pricing",
+      "schema": "../agent-controller/control-api.ids-v2.schema.json#/$defs/model_pricing",
       "input": "optional_model_pricing_forwarded_unchanged_for_owner_validation",
       "projection": "explicit_price_field_allowlist_without_internal_metadata",
       "history": "historical_usage_comes_from_agent_and_run_snapshots_not_model_history",
@@ -1337,8 +1337,8 @@
     "managed_mcp": {
       "configuration_owner": "agent_controller_immutable_template_runtime",
       "input": "runtime.mcp_servers_raw_json_on_create_and_revise",
-      "schema": "../runtime/managed-mcp.schema.json#/$defs/servers_write",
-      "read_schema": "../runtime/managed-mcp.schema.json#/$defs/servers_read",
+      "schema": "../runtime/managed-mcp.ids-v2.schema.json#/$defs/servers_write",
+      "read_schema": "../runtime/managed-mcp.ids-v2.schema.json#/$defs/servers_read",
       "secret_env": "write_only_value_or_keep_true_read_set_and_fingerprint_omit_to_clear",
       "clear": "explicit_empty_array_in_new_revision",
       "full_configuration_except_secret_values": [
@@ -1401,8 +1401,8 @@
     },
     "account_security": {
       "browser_session_contract": "../identity/browser-sessions.md",
-      "gateway_revision": 24,
-      "identity_revision": 19,
+      "gateway_revision": 25,
+      "identity_revision": 20,
       "password_owner": "edge_gateway_POST_/api/session/password",
       "retired_console_password_route": "deny_without_dependency_effect",
       "profile_fields": [

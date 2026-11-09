@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { test } from "node:test";
+import commonIDs from "../../../contracts/common/ids.schema.json" with { type: "json" };
 
 const require = createRequire(
   new URL("../../../services/agent-acp-service/package.json", import.meta.url),
@@ -12,12 +13,17 @@ const contract = JSON.parse(
   await readFile(new URL("contract.json", contractRoot), "utf8"),
 );
 const schema = JSON.parse(
-  await readFile(new URL("runtime-status.schema.json", contractRoot), "utf8"),
+  await readFile(
+    new URL("runtime-status.ids-v2.schema.json", contractRoot),
+    "utf8",
+  ),
 );
-const validate = new Ajv2020({ strict: true }).compile(schema);
+const __idsAjv = new Ajv2020({ strict: true });
+__idsAjv.addSchema(commonIDs);
+const validate = __idsAjv.compile(schema);
 
 test("Runtime status contract identifies the schema and a feature-free release", () => {
-  assert.equal(contract.status_schema, "runtime-status.schema.json");
+  assert.equal(contract.status_schema, "runtime-status.ids-v2.schema.json");
   assert.deepEqual(contract.status.test_features, []);
   assert(validate(contract.status), JSON.stringify(validate.errors));
 });

@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import test from "node:test";
+import commonIDs from "../../../contracts/common/ids.schema.json" with { type: "json" };
 
 const require = createRequire(
   new URL("../../../services/agent-acp-service/package.json", import.meta.url),
@@ -53,12 +54,12 @@ test("Identity's active catalog publishes both password admission failures", () 
 });
 
 test("Gateway revision 24 publishes password failures only on login and password change", () => {
-  assert.equal(gateway.version, 24);
+  assert.equal(gateway.version, 25);
   for (const name of ["login", "change_password"]) {
     const route = gateway.routes[name];
     assert.equal(
       route.password_failure_schema,
-      "session-response.schema.json#/$defs/password_failure",
+      "session-response.ids-v2.schema.json#/$defs/password_failure",
     );
     assert.deepEqual(route.error_status_by_code, {
       credential_busy: 503,
@@ -79,10 +80,13 @@ test("Gateway revision 24 publishes password failures only on login and password
 });
 
 test("Gateway's public password failure body enforces code/message pairs and excludes headers and secrets", () => {
-  const schema = read("edge-gateway/session-response.schema.json").$defs
+  const schema = read("edge-gateway/session-response.ids-v2.schema.json").$defs
     .password_failure;
   assert(schema, "password failure schema is missing");
-  const validate = new Ajv2020({ strict: true }).compile(schema);
+  const __idsAjv = new Ajv2020({ strict: true });
+  __idsAjv.addSchema(commonIDs);
+  const validate = __idsAjv.compile(schema);
+
   for (const code of ["credential_busy", "credential_rate_limited"]) {
     const { body } = failure(code);
     assert.equal(validate(body), true);
@@ -388,7 +392,9 @@ test("rehash keeps expected-hash authorization and is atomic with issuance and a
 });
 
 function failureValidator() {
-  return new Ajv2020({ strict: true }).compile(policy().wire.failure_schema);
+  const __idsAjv = new Ajv2020({ strict: true });
+  __idsAjv.addSchema(commonIDs);
+  return __idsAjv.compile(policy().wire.failure_schema);
 }
 
 function failure(code = "credential_rate_limited") {
@@ -506,7 +512,7 @@ test("Console user creation has an explicit bounded busy-error consumer batch", 
 });
 
 test("active Console retains busy admission only on user creation", () => {
-  assert.equal(consoleContract.version, 61);
+  assert.equal(consoleContract.version, 62);
   const route = consoleContract.routes.create_local_user;
   assert.equal(route.password_failure_schema, "password-failure.schema.json");
   assert.deepEqual(route.error_status_by_code, { credential_busy: 503 });
@@ -518,9 +524,12 @@ test("active Console retains busy admission only on user creation", () => {
     if (name !== "create_local_user")
       assert.equal(value.password_failure_schema, undefined);
   }
-  const validate = new Ajv2020({ strict: true }).compile(
+  const __idsAjv = new Ajv2020({ strict: true });
+  __idsAjv.addSchema(commonIDs);
+  const validate = __idsAjv.compile(
     read("admin-console/password-failure.schema.json"),
   );
+
   const busy = failure("credential_busy").body;
   assert.equal(validate(busy), true);
   for (const candidate of [

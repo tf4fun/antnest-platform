@@ -12,9 +12,9 @@ const ajv = withCommonErrorSchema(
   new Ajv2020({ strict: true, validateFormats: false }),
 );
 for (const path of [
-  "skill-registry/registry-api.schema.json",
-  "skill-registry/discovery-api.schema.json",
-  "admin-console/skill-discovery.schema.json",
+  "skill-registry/registry-api.ids-v2.schema.json",
+  "skill-registry/discovery-api.ids-v2.schema.json",
+  "admin-console/skill-discovery.ids-v2.schema.json",
 ]) {
   ajv.addSchema(
     JSON.parse(
@@ -23,7 +23,7 @@ for (const path of [
   );
 }
 const id =
-  "https://schemas.antnest.dev/admin-console/skill-discovery.schema.json";
+  "https://schemas.antnest.dev/admin-console/skill-discovery.ids-v2.schema.json";
 const accepts = (type, value) => ajv.getSchema(`${id}#/$defs/${type}`)(value);
 const ref = {
   kind: "agent",

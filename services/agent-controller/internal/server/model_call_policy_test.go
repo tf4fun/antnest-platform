@@ -120,8 +120,8 @@ func TestTemplateModelPolicyControlSchemaMatchesCanonical(t *testing.T) {
 	var canonical, control struct {
 		Definitions map[string]json.RawMessage `json:"$defs"`
 	}
-	readContractJSON(t, repositoryRoot(t)+"/contracts/agent-controller/model-call-policy.schema.json", &canonical)
-	readContractJSON(t, repositoryRoot(t)+"/contracts/agent-controller/control-api.schema.json", &control)
+	readContractJSON(t, repositoryRoot(t)+"/contracts/agent-controller/model-call-policy.ids-v2.schema.json", &canonical)
+	readContractJSON(t, repositoryRoot(t)+"/contracts/agent-controller/control-api.ids-v2.schema.json", &control)
 	for _, name := range []string{"model_retry", "run_budget", "period_caps"} {
 		require.JSONEq(t, string(canonical.Definitions[name]), string(control.Definitions[name]), name)
 	}

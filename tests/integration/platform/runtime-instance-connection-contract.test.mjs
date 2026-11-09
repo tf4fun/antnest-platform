@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { test } from "node:test";
+import commonIDs from "../../../contracts/common/ids.schema.json" with { type: "json" };
 
 const require = createRequire(
   new URL("../../../services/agent-acp-service/package.json", import.meta.url),
@@ -46,9 +47,10 @@ test("private Runtime connection contract fixes ownership, admission and deliver
 });
 
 test("Runtime reference, private handoff and liveness shapes reject authority leaks", () => {
-  const schema = read("instance-connection.schema.json");
+  const schema = read("instance-connection.ids-v2.schema.json");
   const fixtures = read("instance-connection-fixtures.json");
   const ajv = new Ajv2020({ strict: true, allErrors: true });
+  ajv.addSchema(commonIDs);
   ajv.addSchema(schema);
   for (const vector of fixtures.schema_vectors) {
     const validate = ajv.compile({

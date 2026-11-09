@@ -11,10 +11,10 @@ const { Ajv2020 } = requireAcp("ajv/dist/2020.js");
 const load = async (path) =>
   JSON.parse(await readFile(new URL(path, import.meta.url)));
 const original = await load(
-  "../../../contracts/skill-registry/registry-api.schema.json",
+  "../../../contracts/skill-registry/registry-api.ids-v2.schema.json",
 );
 const schema = await load(
-  "../../../contracts/skill-registry/discovery-api.schema.json",
+  "../../../contracts/skill-registry/discovery-api.ids-v2.schema.json",
 );
 const ajv = withCommonErrorSchema(
   new Ajv2020({ strict: true, validateFormats: false }),
@@ -49,6 +49,7 @@ const ref = {
 
 test("projection is a bounded metadata mapping with no content, URLs or publishing authority", () => {
   assert(accepts("projection", projection));
+  assert(accepts("projection", { ...projection, owner_id: "owner" }));
   assert(accepts("projection", { ...projection, active: false, sequence: 2 }));
   for (const extra of [
     { artifact: "ZIP" },
@@ -63,7 +64,7 @@ test("projection is a bounded metadata mapping with no content, URLs or publishi
     { sequence: 0 },
     { sequence: 9007199254740992 },
     { name: "../escape" },
-    { owner_id: "owner" },
+    { owner_id: "owner invalid" },
     { active: "yes" },
   ]) {
     assert.equal(accepts("projection", { ...projection, ...extra }), false);
@@ -130,10 +131,15 @@ test("only trusted search context can identify the requesting Agent", () => {
     requesting_agent_id: agent,
   };
   assert(accepts("search_request", input));
-  for (const id of [null, "", owner, "agent", 1])
+  for (const id of [null, "", "agent invalid", 1])
     assert.equal(
       accepts("search_request", { ...input, requesting_agent_id: id }),
       false,
+    );
+  for (const id of [owner, "agent"])
+    assert.equal(
+      accepts("search_request", { ...input, requesting_agent_id: id }),
+      true,
     );
   assert.equal(
     accepts("find_skill_input", {
@@ -236,7 +242,7 @@ test("source inspection is bounded and the binary fetch uses the same selected i
 
 test("Template references remain fixed formal versions and reject dynamic Agent mappings", async () => {
   const controller = await load(
-    "../../../contracts/agent-controller/control-api.schema.json",
+    "../../../contracts/agent-controller/control-api.ids-v2.schema.json",
   );
   const fixed = ajv.compile(controller.$defs.skill_reference);
   assert(fixed({ skill_id: `skill_${"e".repeat(32)}`, version: 1 }));

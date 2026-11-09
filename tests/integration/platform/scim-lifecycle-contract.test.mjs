@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import test from "node:test";
+import commonIDs from "../../../contracts/common/ids.schema.json" with { type: "json" };
 
 const require = createRequire(
   new URL("../../../services/agent-acp-service/package.json", import.meta.url),
@@ -23,6 +24,7 @@ const compiler = (catalog = false) => {
   }
   // Match the existing browser-session/OIDC timestamp profile. Calendar syntax
   // is a contract gate; production clocks and persisted precision need PG gates.
+  ajv.addSchema(commonIDs);
   ajv.addFormat("date-time", {
     type: "string",
     validate(value) {
@@ -174,7 +176,7 @@ test("active Identity catalog advertises SCIM versions under the shared lifecycl
   const document = read("identity/identity-contract.json");
   const value = policy();
   assert.equal(value.activation.identity_revision, 18);
-  assert.equal(document.revision, 19);
+  assert.equal(document.revision, 20);
   assert.equal(document.protocols.scim.unsupported.includes("etag"), false);
   assert.deepEqual(document.protocols.scim.versioning, {
     policy: "scim-lifecycle-policy.json",
