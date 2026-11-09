@@ -1,3 +1,4 @@
+use crate::semconv;
 use std::net::IpAddr;
 use std::time::{Duration, Instant};
 
@@ -25,6 +26,52 @@ use crate::network::PlatformNetwork;
 use crate::spec::RuntimeIdentity;
 
 pub(crate) const SERVICE_NAME: &str = "antnest-runtime";
+
+pub(crate) trait TelemetrySpanExt {
+    fn set_contract_attribute(
+        &self,
+        key: impl Into<opentelemetry::Key>,
+        value: impl Into<opentelemetry::Value>,
+    );
+    fn set_contract_attributes(
+        &self,
+        attributes: impl IntoIterator<Item = opentelemetry::KeyValue>,
+    );
+    fn add_contract_event(&self, name: &'static str, attributes: Vec<opentelemetry::KeyValue>);
+}
+
+impl TelemetrySpanExt for tracing::Span {
+    fn set_contract_attribute(
+        &self,
+        key: impl Into<opentelemetry::Key>,
+        value: impl Into<opentelemetry::Value>,
+    ) {
+        self.set_contract_attributes([opentelemetry::KeyValue::new(key, value)]);
+    }
+
+    fn set_contract_attributes(
+        &self,
+        attributes: impl IntoIterator<Item = opentelemetry::KeyValue>,
+    ) {
+        for attribute in
+            crate::telemetry_contract::alias_attributes(attributes.into_iter().collect())
+        {
+            tracing_opentelemetry::OpenTelemetrySpanExt::set_attribute(
+                self,
+                attribute.key,
+                attribute.value,
+            );
+        }
+    }
+
+    fn add_contract_event(&self, name: &'static str, attributes: Vec<opentelemetry::KeyValue>) {
+        tracing_opentelemetry::OpenTelemetrySpanExt::add_event(
+            self,
+            name,
+            crate::telemetry_contract::alias_attributes(attributes),
+        );
+    }
+}
 
 #[derive(Debug, Error)]
 pub(crate) enum TelemetryError {
@@ -118,66 +165,66 @@ impl RuntimeMetrics {
         Self {
             capture_rpc_content: false,
             http_requests: meter
-                .u64_counter("antnest.runtime.http.requests")
+                .u64_counter(semconv::ANTNEST_RUNTIME_HTTP_REQUESTS)
                 .with_description("Completed Runtime HTTP requests")
                 .build(),
             http_duration_ms: meter
-                .f64_histogram("antnest.runtime.http.duration")
+                .f64_histogram(semconv::ANTNEST_RUNTIME_HTTP_DURATION)
                 .with_description("Runtime HTTP response-body completion latency")
                 .with_unit("ms")
                 .build(),
             mcp_operations: meter
-                .u64_counter("antnest.runtime.mcp.operations")
+                .u64_counter(semconv::ANTNEST_RUNTIME_MCP_OPERATIONS)
                 .with_description("Completed MCP protocol operations")
                 .build(),
             mcp_duration_ms: meter
-                .f64_histogram("antnest.runtime.mcp.duration")
+                .f64_histogram(semconv::ANTNEST_RUNTIME_MCP_DURATION)
                 .with_description("MCP protocol operation latency")
                 .with_unit("ms")
                 .build(),
             tool_calls: meter
-                .u64_counter("antnest.runtime.tool.calls")
+                .u64_counter(semconv::ANTNEST_RUNTIME_TOOL_CALLS)
                 .with_description("Completed Runtime tool calls")
                 .build(),
             tool_duration_ms: meter
-                .f64_histogram("antnest.runtime.tool.duration")
+                .f64_histogram(semconv::ANTNEST_RUNTIME_TOOL_DURATION)
                 .with_description("Runtime tool call latency")
                 .with_unit("ms")
                 .build(),
             executor_calls: meter
-                .u64_counter("antnest.runtime.executor.calls")
+                .u64_counter(semconv::ANTNEST_RUNTIME_EXECUTOR_CALLS)
                 .with_description("Completed non-privileged Executor calls")
                 .build(),
             executor_duration_ms: meter
-                .f64_histogram("antnest.runtime.executor.duration")
+                .f64_histogram(semconv::ANTNEST_RUNTIME_EXECUTOR_DURATION)
                 .with_description("Non-privileged Executor latency")
                 .with_unit("ms")
                 .build(),
             network_outbound_packets: meter
-                .u64_counter("antnest.runtime.network.outbound.packets")
+                .u64_counter(semconv::ANTNEST_RUNTIME_NETWORK_OUTBOUND_PACKETS)
                 .build(),
             network_outbound_bytes: meter
-                .u64_counter("antnest.runtime.network.outbound.bytes")
+                .u64_counter(semconv::ANTNEST_RUNTIME_NETWORK_OUTBOUND_BYTES)
                 .with_unit("By")
                 .build(),
             network_inbound_packets: meter
-                .u64_counter("antnest.runtime.network.inbound.packets")
+                .u64_counter(semconv::ANTNEST_RUNTIME_NETWORK_INBOUND_PACKETS)
                 .build(),
             network_inbound_bytes: meter
-                .u64_counter("antnest.runtime.network.inbound.bytes")
+                .u64_counter(semconv::ANTNEST_RUNTIME_NETWORK_INBOUND_BYTES)
                 .with_unit("By")
                 .build(),
             network_unsupported_packets: meter
-                .u64_counter("antnest.runtime.network.unsupported.packets")
+                .u64_counter(semconv::ANTNEST_RUNTIME_NETWORK_UNSUPPORTED_PACKETS)
                 .build(),
             network_local_rejections: meter
-                .u64_counter("antnest.runtime.network.local_rejections")
+                .u64_counter(semconv::ANTNEST_RUNTIME_NETWORK_LOCAL_REJECTIONS)
                 .build(),
             network_malformed_packets: meter
-                .u64_counter("antnest.runtime.network.malformed.packets")
+                .u64_counter(semconv::ANTNEST_RUNTIME_NETWORK_MALFORMED_PACKETS)
                 .build(),
             network_connection_refused: meter
-                .u64_counter("antnest.runtime.network.connection_refused")
+                .u64_counter(semconv::ANTNEST_RUNTIME_NETWORK_CONNECTION_REFUSED)
                 .build(),
         }
     }
@@ -203,6 +250,7 @@ impl RuntimeMetrics {
         if !error_type.is_empty() {
             attributes.push(KeyValue::new("error.type", error_type));
         }
+        let attributes = crate::telemetry_contract::metric_attributes(attributes);
         self.http_requests.add(1, &attributes);
         self.http_duration_ms
             .record(duration.as_secs_f64() * 1000.0, &attributes);
@@ -216,6 +264,7 @@ impl RuntimeMetrics {
         duration: Duration,
     ) {
         let attributes = operation_attributes("mcp.operation", operation, outcome, error_type);
+        let attributes = crate::telemetry_contract::metric_attributes(attributes);
         self.mcp_operations.add(1, &attributes);
         self.mcp_duration_ms
             .record(duration.as_secs_f64() * 1000.0, &attributes);
@@ -229,6 +278,7 @@ impl RuntimeMetrics {
         duration: Duration,
     ) {
         let attributes = operation_attributes("tool", tool, outcome, error_type);
+        let attributes = crate::telemetry_contract::metric_attributes(attributes);
         self.tool_calls.add(1, &attributes);
         self.tool_duration_ms
             .record(duration.as_secs_f64() * 1000.0, &attributes);
@@ -242,6 +292,7 @@ impl RuntimeMetrics {
         duration: Duration,
     ) {
         let attributes = operation_attributes("tool", tool, outcome, error_type);
+        let attributes = crate::telemetry_contract::metric_attributes(attributes);
         self.executor_calls.add(1, &attributes);
         self.executor_duration_ms
             .record(duration.as_secs_f64() * 1000.0, &attributes);
@@ -356,8 +407,8 @@ impl Telemetry {
                 error.type = warning.error_type,
                 reason = %warning.reason,
                 "service.name" = SERVICE_NAME,
-                "antnest.agent.id" = identity.agent_id(),
-                "antnest.runtime.generation" = %identity.generation(),
+                { semconv::ANTNEST_AGENT_ID } = identity.agent_id(),
+                { semconv::ANTNEST_RUNTIME_GENERATION } = %identity.generation(),
                 trace_id = "",
                 span_id = "",
                 "telemetry configuration was not applied"
@@ -366,12 +417,12 @@ impl Telemetry {
         tracing::info!(
             trace_otlp_enabled,
             metrics_otlp_enabled,
-            "antnest.runtime.image.reference" = %config.image_reference,
-            "antnest.runtime.image.id" = %config.image_id,
+            { semconv::ANTNEST_RUNTIME_IMAGE_REFERENCE } = %config.image_reference,
+            { semconv::ANTNEST_RUNTIME_IMAGE_ID } = %config.image_id,
             "service.name" = SERVICE_NAME,
             "service.version" = env!("CARGO_PKG_VERSION"),
-            "antnest.agent.id" = identity.agent_id(),
-            "antnest.runtime.generation" = %identity.generation(),
+            { semconv::ANTNEST_AGENT_ID } = identity.agent_id(),
+            { semconv::ANTNEST_RUNTIME_GENERATION } = %identity.generation(),
             trace_id = "",
             span_id = "",
             "Runtime telemetry initialized"
@@ -401,8 +452,8 @@ impl Telemetry {
         {
             tracing::error!(
                 "service.name" = SERVICE_NAME,
-                "antnest.agent.id" = self.identity.agent_id(),
-                "antnest.runtime.generation" = %self.identity.generation(),
+                { semconv::ANTNEST_AGENT_ID } = self.identity.agent_id(),
+                { semconv::ANTNEST_RUNTIME_GENERATION } = %self.identity.generation(),
                 error.type = if self.metrics_otlp_enabled {
                     "otlp_metrics_shutdown_failed"
                 } else {
@@ -428,8 +479,8 @@ impl Telemetry {
             };
             tracing::error!(
                 "service.name" = SERVICE_NAME,
-                "antnest.agent.id" = self.identity.agent_id(),
-                "antnest.runtime.generation" = %self.identity.generation(),
+                { semconv::ANTNEST_AGENT_ID } = self.identity.agent_id(),
+                { semconv::ANTNEST_RUNTIME_GENERATION } = %self.identity.generation(),
                 error.type = error_type,
                 reason = %error,
                 trace_id = "",
@@ -439,8 +490,8 @@ impl Telemetry {
         } else {
             tracing::info!(
                 "service.name" = SERVICE_NAME,
-                "antnest.agent.id" = self.identity.agent_id(),
-                "antnest.runtime.generation" = %self.identity.generation(),
+                { semconv::ANTNEST_AGENT_ID } = self.identity.agent_id(),
+                { semconv::ANTNEST_RUNTIME_GENERATION } = %self.identity.generation(),
                 trace_otlp_enabled = self.trace_otlp_enabled,
                 metrics_otlp_enabled = self.metrics_otlp_enabled,
                 trace_id = "",
@@ -691,16 +742,19 @@ fn runtime_resource(identity: &RuntimeIdentity, config: &TelemetryConfig) -> Res
         .with_attributes([
             KeyValue::new("service.namespace", "antnest"),
             KeyValue::new("service.version", env!("CARGO_PKG_VERSION")),
-            KeyValue::new("antnest.agent.id", identity.agent_id().to_owned()),
+            KeyValue::new(semconv::ANTNEST_AGENT_ID, identity.agent_id().to_owned()),
             KeyValue::new(
-                "antnest.runtime.generation",
+                semconv::ANTNEST_RUNTIME_GENERATION,
                 identity.generation().to_string(),
             ),
         ])
         .with_attributes(
             [
-                ("antnest.runtime.image.reference", &config.image_reference),
-                ("antnest.runtime.image.id", &config.image_id),
+                (
+                    semconv::ANTNEST_RUNTIME_IMAGE_REFERENCE,
+                    &config.image_reference,
+                ),
+                (semconv::ANTNEST_RUNTIME_IMAGE_ID, &config.image_id),
             ]
             .into_iter()
             .filter(|(_, value)| !value.is_empty())

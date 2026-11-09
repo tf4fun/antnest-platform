@@ -6,6 +6,8 @@ pub mod api_errors_gen;
 mod build_info;
 mod command;
 mod config;
+#[rustfmt::skip]
+pub mod semconv;
 mod diagnostics;
 mod evidence;
 mod execution;
@@ -34,6 +36,7 @@ mod roots;
 mod service_auth;
 #[cfg(test)]
 mod service_auth_tests;
+mod telemetry_contract;
 mod tunnel_auth;
 #[cfg(test)]
 mod tunnel_auth_tests;
@@ -182,8 +185,8 @@ fn report_server_exit(result: Result<(), ExitError>) {
                 "component": component,
                 "error.type": error_type,
                 "reason": reason,
-                "antnest.agent.id": identity.map(spec::RuntimeIdentity::agent_id),
-                "antnest.runtime.generation": identity.map(|value| value.generation().to_string()),
+                (semconv::ANTNEST_AGENT_ID): identity.map(spec::RuntimeIdentity::agent_id),
+                (semconv::ANTNEST_RUNTIME_GENERATION): identity.map(|value| value.generation().to_string()),
                 "trace_id": "",
                 "span_id": "",
             })
@@ -488,8 +491,8 @@ fn bootstrap_stage_event(
         "service.name": telemetry::SERVICE_NAME,
         "lifecycle.event": "bootstrap_stage_completed",
         "bootstrap.stage": stage.as_str(),
-        "antnest.agent.id": identity.map(spec::RuntimeIdentity::agent_id),
-        "antnest.runtime.generation": identity.map(|value| value.generation().to_string()),
+        (semconv::ANTNEST_AGENT_ID): identity.map(spec::RuntimeIdentity::agent_id),
+        (semconv::ANTNEST_RUNTIME_GENERATION): identity.map(|value| value.generation().to_string()),
         "trace_id": "",
         "span_id": "",
     })
@@ -533,8 +536,8 @@ async fn run_runtime(
     let process_span = tracing::info_span!(
         "runtime.process",
         "service.name" = telemetry::SERVICE_NAME,
-        "antnest.agent.id" = spec.identity().agent_id(),
-        "antnest.runtime.generation" = %spec.identity().generation(),
+        { semconv::ANTNEST_AGENT_ID } = spec.identity().agent_id(),
+        { semconv::ANTNEST_RUNTIME_GENERATION } = %spec.identity().generation(),
         otel.status_code = tracing::field::Empty,
         error.type = tracing::field::Empty,
         trace_id = tracing::field::Empty,
@@ -552,8 +555,8 @@ async fn run_runtime(
     process_span.in_scope(|| {
         tracing::info!(
             "service.name" = telemetry::SERVICE_NAME,
-            "antnest.agent.id" = identity.agent_id(),
-            "antnest.runtime.generation" = %identity.generation(),
+            { semconv::ANTNEST_AGENT_ID } = identity.agent_id(),
+            { semconv::ANTNEST_RUNTIME_GENERATION } = %identity.generation(),
             outcome = if result.is_ok() { "success" } else { "error" },
             "Runtime service stopped"
         );
@@ -611,8 +614,8 @@ async fn supervise_runtime(
             component = error.component,
             error.type = error.error_type.as_str(),
             reason = error.message,
-            "antnest.agent.id" = agent_id,
-            "antnest.runtime.generation" = %generation,
+            { semconv::ANTNEST_AGENT_ID } = agent_id,
+            { semconv::ANTNEST_RUNTIME_GENERATION } = %generation,
             "Runtime stopped after a fatal error"
         );
     }
@@ -647,8 +650,8 @@ async fn serve_runtime(
         .map_err(|error| runtime_failure(identity.clone(), "network", error.code(), error))?;
     tracing::info!(
         lifecycle.event = "egress_path_verified",
-        "antnest.agent.id" = spec.identity().agent_id(),
-        "antnest.runtime.generation" = %spec.identity().generation(),
+        { semconv::ANTNEST_AGENT_ID } = spec.identity().agent_id(),
+        { semconv::ANTNEST_RUNTIME_GENERATION } = %spec.identity().generation(),
         "Runtime Egress packet path verified"
     );
     let service_shutdown = shutdown.child_token();
@@ -677,8 +680,8 @@ async fn serve_runtime(
             component = "skill.install.cleanup",
             error.type = error.code.as_str(),
             reason = error.message,
-            "antnest.agent.id" = identity.agent_id(),
-            "antnest.runtime.generation" = %identity.generation(),
+            { semconv::ANTNEST_AGENT_ID } = identity.agent_id(),
+            { semconv::ANTNEST_RUNTIME_GENERATION } = %identity.generation(),
             "Skill install staging cleanup failed before readiness"
         );
     }
@@ -729,8 +732,8 @@ async fn serve_runtime(
     .with_management_ipv4(management_ipv4);
     tracing::info!(
         listen = %spec.listen(),
-        "antnest.agent.id" = spec.identity().agent_id(),
-        "antnest.runtime.generation" = %spec.identity().generation(),
+        { semconv::ANTNEST_AGENT_ID } = spec.identity().agent_id(),
+        { semconv::ANTNEST_RUNTIME_GENERATION } = %spec.identity().generation(),
         "Runtime is ready"
     );
 
@@ -1006,8 +1009,8 @@ fn log_secondary_failure(identity: &spec::RuntimeIdentity, failure: &ServiceFail
         component = failure.component,
         error.type = failure.error_type.as_str(),
         reason = failure.message,
-        "antnest.agent.id" = identity.agent_id(),
-        "antnest.runtime.generation" = %identity.generation(),
+        { semconv::ANTNEST_AGENT_ID } = identity.agent_id(),
+        { semconv::ANTNEST_RUNTIME_GENERATION } = %identity.generation(),
         "Runtime component also failed while stopping"
     );
 }
@@ -1016,8 +1019,8 @@ fn log_secondary_failure(identity: &spec::RuntimeIdentity, failure: &ServiceFail
 fn log_shutdown(signal: &'static str, agent_id: &str, generation: u64) {
     tracing::info!(
         signal,
-        "antnest.agent.id" = agent_id,
-        "antnest.runtime.generation" = %generation,
+        { semconv::ANTNEST_AGENT_ID } = agent_id,
+        { semconv::ANTNEST_RUNTIME_GENERATION } = %generation,
         "Runtime shutdown requested"
     );
 }

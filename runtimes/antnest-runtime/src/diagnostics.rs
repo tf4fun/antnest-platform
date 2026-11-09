@@ -1,10 +1,11 @@
+use crate::semconv;
+use crate::telemetry::TelemetrySpanExt as _;
 use crate::tool_error::{ToolError, ToolErrorCode};
 use opentelemetry::{Array, KeyValue, Value as OtelValue};
 use rmcp::model::{ClientRequest, ServerResult};
 use serde::Serialize;
 use serde_json::{Value, json};
 use std::error::Error as _;
-use tracing_opentelemetry::OpenTelemetrySpanExt as _;
 
 pub(crate) fn rpc_content<T: Serialize>(
     span: &tracing::Span,
@@ -15,13 +16,13 @@ pub(crate) fn rpc_content<T: Serialize>(
     if !enabled || span.is_disabled() {
         return;
     }
-    match serde_json::to_string(value) {
-        Ok(encoded) => span.add_event(
+    match crate::telemetry_contract::capture_rpc_json(value) {
+        Ok(encoded) => span.add_contract_event(
             direction,
-            vec![KeyValue::new("antnest.payload.json", encoded)],
+            vec![KeyValue::new(semconv::ANTNEST_PAYLOAD_JSON, encoded)],
         ),
-        Err(_) => span.add_event(
-            "antnest.capture.error",
+        Err(_) => span.add_contract_event(
+            semconv::ANTNEST_CAPTURE_ERROR,
             vec![KeyValue::new("error.type", "json_encoding")],
         ),
     }
@@ -71,7 +72,7 @@ macro_rules! plain_result {
     ($($result:ty),+ $(,)?) => { $(
         impl ProtocolResult for $result {
             fn capture(&self, span: &tracing::Span, enabled: bool) {
-                rpc_content(span, "antnest.response", enabled, self);
+                rpc_content(span, semconv::ANTNEST_RESPONSE, enabled, self);
             }
         }
     )+ };
@@ -89,7 +90,7 @@ impl ProtocolResult for rmcp::model::ReadResourceResponse {
         if enabled && !span.is_disabled() {
             rpc_content(
                 span,
-                "antnest.response",
+                semconv::ANTNEST_RESPONSE,
                 true,
                 &ServerResult::from(self.clone()),
             );
@@ -98,7 +99,7 @@ impl ProtocolResult for rmcp::model::ReadResourceResponse {
 }
 impl ProtocolResult for rmcp::model::CallToolResult {
     fn capture(&self, span: &tracing::Span, enabled: bool) {
-        rpc_content(span, "antnest.response", enabled, self);
+        rpc_content(span, semconv::ANTNEST_RESPONSE, enabled, self);
     }
     fn error_code(&self, tool: Option<&str>) -> Option<&'static str> {
         tool_protocol_error(tool, self)
@@ -109,7 +110,7 @@ impl ProtocolResult for rmcp::model::CallToolResponse {
         if enabled && !span.is_disabled() {
             rpc_content(
                 span,
-                "antnest.response",
+                semconv::ANTNEST_RESPONSE,
                 true,
                 &ServerResult::from(self.clone()),
             );
@@ -124,7 +125,7 @@ impl ProtocolResult for rmcp::model::CallToolResponse {
 }
 impl ProtocolResult for ServerResult {
     fn capture(&self, span: &tracing::Span, enabled: bool) {
-        rpc_content(span, "antnest.response", enabled, self);
+        rpc_content(span, semconv::ANTNEST_RESPONSE, enabled, self);
     }
     fn error_code(&self, tool: Option<&str>) -> Option<&'static str> {
         match self {
@@ -203,24 +204,27 @@ pub(crate) fn error_summary(
     code: &str,
     message: &'static str,
 ) {
-    span.set_attribute("error.type", code.to_owned());
-    span.add_event(
-        "antnest.error",
+    span.set_contract_attribute("error.type", code.to_owned());
+    span.add_contract_event(
+        semconv::ANTNEST_ERROR,
         vec![
-            KeyValue::new("antnest.error.stage", stage),
-            KeyValue::new("antnest.error.type", code.to_owned()),
-            KeyValue::new("antnest.error.code", code.to_owned()),
-            KeyValue::new("antnest.error.message", message),
+            KeyValue::new(semconv::ANTNEST_ERROR_STAGE, stage),
+            KeyValue::new(semconv::ANTNEST_ERROR_TYPE, code.to_owned()),
+            KeyValue::new(semconv::ANTNEST_ERROR_CODE, code.to_owned()),
+            KeyValue::new(semconv::ANTNEST_ERROR_MESSAGE, message),
         ],
     );
 }
 
 pub(crate) fn tool_error_attributes(stage: &'static str, error: &ToolError) -> Vec<KeyValue> {
     let mut attributes = vec![
-        KeyValue::new("antnest.error.stage", stage),
-        KeyValue::new("antnest.error.type", error.code.as_str()),
-        KeyValue::new("antnest.error.code", error.code.as_str()),
-        KeyValue::new("antnest.error.message", safe_tool_message(error.code)),
+        KeyValue::new(semconv::ANTNEST_ERROR_STAGE, stage),
+        KeyValue::new(semconv::ANTNEST_ERROR_TYPE, error.code.as_str()),
+        KeyValue::new(semconv::ANTNEST_ERROR_CODE, error.code.as_str()),
+        KeyValue::new(
+            semconv::ANTNEST_ERROR_MESSAGE,
+            safe_tool_message(error.code),
+        ),
     ];
     let mut source = error.source();
     let mut causes = Vec::new();
@@ -271,13 +275,13 @@ pub(crate) fn tool_error_attributes(stage: &'static str, error: &ToolError) -> V
     }
     if !causes.is_empty() {
         attributes.push(KeyValue::new(
-            "antnest.error.cause_types",
+            semconv::ANTNEST_ERROR_CAUSE_TYPES,
             string_array(&causes),
         ));
     }
     if !summaries.is_empty() {
         attributes.push(KeyValue::new(
-            "antnest.error.causes",
+            semconv::ANTNEST_ERROR_CAUSES,
             Value::Array(summaries).to_string(),
         ));
     }
@@ -285,7 +289,7 @@ pub(crate) fn tool_error_attributes(stage: &'static str, error: &ToolError) -> V
 }
 
 pub(crate) fn record_tool_error(span: &tracing::Span, stage: &'static str, error: &ToolError) {
-    span.add_event("antnest.error", tool_error_attributes(stage, error));
+    span.add_contract_event(semconv::ANTNEST_ERROR, tool_error_attributes(stage, error));
 }
 
 #[cfg(test)]

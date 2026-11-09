@@ -1,3 +1,4 @@
+use crate::semconv;
 use std::borrow::Cow;
 use std::net::{Ipv4Addr, SocketAddr};
 use std::pin::Pin;
@@ -6,6 +7,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::task::{Context, Poll};
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
+use crate::telemetry::TelemetrySpanExt as _;
 use axum::{
     Json, Router,
     body::{Body, Bytes, to_bytes},
@@ -605,9 +607,9 @@ async fn trace_http_request(
         "runtime.http",
         otel.name = %format!("HTTP {} {path}", method_label(&method)),
         "service.name" = crate::telemetry::SERVICE_NAME,
-        "antnest.agent.id" = status.agent_id,
-        "antnest.runtime.generation" = %status.generation,
-        "antnest.runtime.execution.id" = status.execution_id,
+        { semconv::ANTNEST_AGENT_ID } = status.agent_id,
+        { semconv::ANTNEST_RUNTIME_GENERATION } = %status.generation,
+        { semconv::ANTNEST_RUNTIME_EXECUTION_ID } = status.execution_id,
         "http.request.method" = method_label(&method),
         "http.route" = tracing::field::Empty,
         "url.path" = path,
@@ -621,6 +623,13 @@ async fn trace_http_request(
     );
     crate::telemetry::set_remote_parent(&span, remote.as_ref());
     crate::telemetry::record_span_identity(&span);
+    span.set_contract_attributes([
+        opentelemetry::KeyValue::new(semconv::ANTNEST_AGENT_ID, status.agent_id.clone()),
+        opentelemetry::KeyValue::new(
+            semconv::ANTNEST_RUNTIME_EXECUTION_ID,
+            status.execution_id.clone(),
+        ),
+    ]);
     if path != "unmatched" {
         span.record("http.route", path);
     }
@@ -839,12 +848,12 @@ impl HttpCompletion {
                 "UNSET"
             },
         );
-        self.span.set_attribute(
+        self.span.set_contract_attribute(
             "http.response.body.size",
             i64::try_from(self.response_bytes).unwrap_or(i64::MAX),
         );
         if let Some(observation) = &self.observation {
-            self.span.set_attribute(
+            self.span.set_contract_attribute(
                 "http.request.body.size",
                 i64::try_from(observation.request_bytes.load(Ordering::Relaxed))
                     .unwrap_or(i64::MAX),
@@ -852,14 +861,17 @@ impl HttpCompletion {
         }
         if !error_type.is_empty() {
             self.span
-                .set_attribute("http.transport.error.type", error_type);
+                .set_contract_attribute("http.transport.error.type", error_type);
             if completed_mcp_disconnect {
-                self.span.add_event(
-                    "antnest.cancelled",
+                self.span.add_contract_event(
+                    semconv::ANTNEST_CANCELLED,
                     vec![
-                        opentelemetry::KeyValue::new("antnest.phase", "http"),
-                        opentelemetry::KeyValue::new("antnest.cancellation.type", error_type),
-                        opentelemetry::KeyValue::new("antnest.protocol.outcome", "success"),
+                        opentelemetry::KeyValue::new(semconv::ANTNEST_PHASE, "http"),
+                        opentelemetry::KeyValue::new(
+                            semconv::ANTNEST_CANCELLATION_TYPE,
+                            error_type,
+                        ),
+                        opentelemetry::KeyValue::new(semconv::ANTNEST_PROTOCOL_OUTCOME, "success"),
                     ],
                 );
             } else if !protocol_failed {
@@ -889,8 +901,8 @@ impl HttpCompletion {
             if outcome == "success" {
                 tracing::info!(
                     "service.name" = crate::telemetry::SERVICE_NAME,
-                    "antnest.agent.id" = self.identity.agent_id(),
-                    "antnest.runtime.generation" = %self.identity.generation(),
+                    { semconv::ANTNEST_AGENT_ID } = self.identity.agent_id(),
+                    { semconv::ANTNEST_RUNTIME_GENERATION } = %self.identity.generation(),
                     trace_id = %trace_id,
                     span_id = %span_id,
                     "http.request.method" = method_label(&self.method),
@@ -903,8 +915,8 @@ impl HttpCompletion {
             } else {
                 tracing::warn!(
                     "service.name" = crate::telemetry::SERVICE_NAME,
-                    "antnest.agent.id" = self.identity.agent_id(),
-                    "antnest.runtime.generation" = %self.identity.generation(),
+                    { semconv::ANTNEST_AGENT_ID } = self.identity.agent_id(),
+                    { semconv::ANTNEST_RUNTIME_GENERATION } = %self.identity.generation(),
                     trace_id = %trace_id,
                     span_id = %span_id,
                     "http.request.method" = method_label(&self.method),
@@ -1656,13 +1668,13 @@ where
         parent: None,
         "runtime.mcp.operation",
         "service.name" = crate::telemetry::SERVICE_NAME,
-        "antnest.agent.id" = identity.agent_id(),
-        "antnest.runtime.generation" = %identity.generation(),
+        { semconv::ANTNEST_AGENT_ID } = identity.agent_id(),
+        { semconv::ANTNEST_RUNTIME_GENERATION } = %identity.generation(),
         "mcp.operation.name" = operation,
         "rpc.system" = "jsonrpc",
         "rpc.service" = "antnest-runtime",
         "rpc.method" = operation,
-        "antnest.runtime.execution.id" = server.execution_id,
+        { semconv::ANTNEST_RUNTIME_EXECUTION_ID } = server.execution_id,
         "mcp.operation.outcome" = tracing::field::Empty,
         "jsonrpc.error_code" = tracing::field::Empty,
         otel.status_code = tracing::field::Empty,
@@ -1672,10 +1684,17 @@ where
     );
     let _ = span.set_parent(parent);
     crate::telemetry::record_span_identity(&span);
+    span.set_contract_attributes([
+        opentelemetry::KeyValue::new(semconv::ANTNEST_AGENT_ID, identity.agent_id().to_owned()),
+        opentelemetry::KeyValue::new(
+            semconv::ANTNEST_RUNTIME_EXECUTION_ID,
+            server.execution_id.clone(),
+        ),
+    ]);
     if let rmcp::model::ClientRequest::CallToolRequest(request) = &request
         && (tool.is_some() || server.managed.contains(&request.params.name))
     {
-        span.set_attribute("mcp.tool.name", request.params.name.to_string());
+        span.set_contract_attribute("mcp.tool.name", request.params.name.to_string());
     }
     let request_id = context.id.to_string();
     if request_id.len() <= 128
@@ -1683,11 +1702,11 @@ where
             .bytes()
             .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
     {
-        span.set_attribute("antnest.request.id", request_id.clone());
+        span.set_contract_attribute(semconv::ANTNEST_REQUEST_ID, request_id.clone());
     }
     diagnostics::rpc_content(
         &span,
-        "antnest.request",
+        semconv::ANTNEST_REQUEST,
         metrics.capture_rpc_content,
         &request,
     );
@@ -1708,8 +1727,8 @@ where
         ),
     };
     span.record("mcp.operation.outcome", outcome);
-    span.set_attribute(
-        "antnest.operation.outcome",
+    span.set_contract_attribute(
+        semconv::ANTNEST_OPERATION_OUTCOME,
         match error_type {
             crate::api_errors_gen::CANCELED => crate::api_errors_gen::CANCELED,
             crate::api_errors_gen::RUNTIME_BUSY
@@ -1726,13 +1745,16 @@ where
     span.record("error.type", error_type);
     if let Some(code) = error_code {
         span.record("jsonrpc.error_code", i64::from(code));
-        span.add_event(
-            "antnest.error",
+        span.add_contract_event(
+            semconv::ANTNEST_ERROR,
             vec![
-                opentelemetry::KeyValue::new("antnest.error.stage", "mcp.dispatch"),
-                opentelemetry::KeyValue::new("antnest.error.type", error_type),
-                opentelemetry::KeyValue::new("antnest.error.code", code.to_string()),
-                opentelemetry::KeyValue::new("antnest.error.message", jsonrpc_safe_message(code)),
+                opentelemetry::KeyValue::new(semconv::ANTNEST_ERROR_STAGE, "mcp.dispatch"),
+                opentelemetry::KeyValue::new(semconv::ANTNEST_ERROR_TYPE, error_type),
+                opentelemetry::KeyValue::new(semconv::ANTNEST_ERROR_CODE, code.to_string()),
+                opentelemetry::KeyValue::new(
+                    semconv::ANTNEST_ERROR_MESSAGE,
+                    jsonrpc_safe_message(code),
+                ),
             ],
         );
     } else if outcome == "error" {
@@ -1744,12 +1766,13 @@ where
         );
     }
     if let Some(http) = &http {
-        http.span.set_attribute("rpc.system", "jsonrpc");
-        http.span.set_attribute("rpc.method", operation);
-        http.span.set_attribute("antnest.protocol.outcome", outcome);
+        http.span.set_contract_attribute("rpc.system", "jsonrpc");
+        http.span.set_contract_attribute("rpc.method", operation);
+        http.span
+            .set_contract_attribute(semconv::ANTNEST_PROTOCOL_OUTCOME, outcome);
         if outcome == "error" {
             http.protocol_failed.store(true, Ordering::Relaxed);
-            http.span.set_attribute("error.type", error_type);
+            http.span.set_contract_attribute("error.type", error_type);
         } else {
             http.protocol_succeeded.store(true, Ordering::Relaxed);
         }
@@ -1758,7 +1781,7 @@ where
         Ok(value) => value.capture(&span, metrics.capture_rpc_content),
         Err(error) => diagnostics::rpc_content(
             &span,
-            "antnest.response",
+            semconv::ANTNEST_RESPONSE,
             metrics.capture_rpc_content,
             error,
         ),
@@ -1768,8 +1791,8 @@ where
     span.in_scope(|| {
         tracing::info!(
             "service.name" = crate::telemetry::SERVICE_NAME,
-            "antnest.agent.id" = identity.agent_id(),
-            "antnest.runtime.generation" = %identity.generation(),
+            { semconv::ANTNEST_AGENT_ID } = identity.agent_id(),
+            { semconv::ANTNEST_RUNTIME_GENERATION } = %identity.generation(),
             trace_id = %trace_id,
             span_id = %span_id,
             "mcp.operation.name" = operation,
@@ -1850,8 +1873,8 @@ fn tool_span(name: &'static str, identity: &RuntimeIdentity) -> tracing::Span {
     let span = tracing::info_span!(
         "runtime.mcp.tool",
         "service.name" = crate::telemetry::SERVICE_NAME,
-        "antnest.agent.id" = identity.agent_id(),
-        "antnest.runtime.generation" = %identity.generation(),
+        { semconv::ANTNEST_AGENT_ID } = identity.agent_id(),
+        { semconv::ANTNEST_RUNTIME_GENERATION } = %identity.generation(),
         "mcp.tool.name" = name,
         "mcp.tool.outcome" = tracing::field::Empty,
         otel.status_code = tracing::field::Empty,
@@ -1903,8 +1926,8 @@ fn tool_result<T: Serialize>(
                 tracing::Span::current().record("otel.status_code", "OK");
                 tracing::info!(
                     "service.name" = crate::telemetry::SERVICE_NAME,
-                    "antnest.agent.id" = identity.agent_id(),
-                    "antnest.runtime.generation" = %identity.generation(),
+                    { semconv::ANTNEST_AGENT_ID } = identity.agent_id(),
+                    { semconv::ANTNEST_RUNTIME_GENERATION } = %identity.generation(),
                     trace_id = %trace_id,
                     span_id = %span_id,
                     tool = name,
@@ -1926,8 +1949,8 @@ fn tool_result<T: Serialize>(
                     .record("error.type", ToolErrorCode::EncodeResultFailed.as_str());
                 tracing::warn!(
                     "service.name" = crate::telemetry::SERVICE_NAME,
-                    "antnest.agent.id" = identity.agent_id(),
-                    "antnest.runtime.generation" = %identity.generation(),
+                    { semconv::ANTNEST_AGENT_ID } = identity.agent_id(),
+                    { semconv::ANTNEST_RUNTIME_GENERATION } = %identity.generation(),
                     trace_id = %trace_id,
                     span_id = %span_id,
                     tool = name,
@@ -1963,12 +1986,12 @@ fn tool_result<T: Serialize>(
             } else {
                 tracing::error!(
                     "service.name" = crate::telemetry::SERVICE_NAME,
-                    "antnest.agent.id" = identity.agent_id(),
-                    "antnest.runtime.generation" = %identity.generation(),
+                    { semconv::ANTNEST_AGENT_ID } = identity.agent_id(),
+                    { semconv::ANTNEST_RUNTIME_GENERATION } = %identity.generation(),
                     trace_id = %trace_id,
                     span_id = %span_id,
                     tool = name,
-                    "antnest.error.code" = %internal_code,
+                    { semconv::ANTNEST_ERROR_CODE } = %internal_code,
                     "Runtime tool returned an internal error code; replaced with runtime_failed"
                 );
                 diagnostics::safe_tool_message(code).to_owned()
@@ -1986,8 +2009,8 @@ fn tool_result<T: Serialize>(
             tracing::Span::current().record("error.type", code.as_str());
             tracing::warn!(
                 "service.name" = crate::telemetry::SERVICE_NAME,
-                "antnest.agent.id" = identity.agent_id(),
-                "antnest.runtime.generation" = %identity.generation(),
+                { semconv::ANTNEST_AGENT_ID } = identity.agent_id(),
+                { semconv::ANTNEST_RUNTIME_GENERATION } = %identity.generation(),
                 trace_id = %trace_id,
                 span_id = %span_id,
                 tool = name,

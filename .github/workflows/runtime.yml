@@ -13,6 +13,10 @@ on:
       - tests/integration/skill-learning/maintenance-ticket-captures.json
       - contracts/runtime/**
       - contracts/platform/**
+      - contracts/observability/**
+      - scripts/generate-telemetry.mjs
+      - scripts/check-telemetry-names.mjs
+      - scripts/lib/telemetry-registry.mjs
       - contracts/common/**
       - contracts/skill-learning/**
       - contracts/skill-registry/**
@@ -32,6 +36,10 @@ on:
       - tests/integration/skill-learning/maintenance-ticket-captures.json
       - contracts/runtime/**
       - contracts/platform/**
+      - contracts/observability/**
+      - scripts/generate-telemetry.mjs
+      - scripts/check-telemetry-names.mjs
+      - scripts/lib/telemetry-registry.mjs
       - contracts/common/**
       - contracts/skill-learning/**
       - contracts/skill-registry/**

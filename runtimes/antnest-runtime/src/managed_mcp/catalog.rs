@@ -1,5 +1,7 @@
 use super::progress::ProgressSource;
 use crate::progress::ProgressSink;
+use crate::semconv;
+use crate::telemetry::TelemetrySpanExt as _;
 use crate::tool_error::{ToolError, ToolErrorCode};
 use rmcp::{
     Peer, RoleClient,
@@ -13,7 +15,6 @@ use sha2::{Digest, Sha256};
 use std::{collections::BTreeMap, fmt::Write as _, sync::Arc, time::Duration};
 use tokio_util::sync::CancellationToken;
 use tracing::Instrument as _;
-use tracing_opentelemetry::OpenTelemetrySpanExt as _;
 
 const MAX_TOOLS: usize = 128;
 const MAX_CATALOG_BYTES: usize = 1024 * 1024;
@@ -162,7 +163,8 @@ impl Catalog {
             "rpc.system" = "jsonrpc",
             "rpc.method" = "tools/call",
             "mcp.tool.name" = name,
-            "antnest.execution.timeout_ms" = u64::try_from(timeout.as_millis()).unwrap_or(u64::MAX),
+            { semconv::ANTNEST_EXECUTION_TIMEOUT_MS } =
+                u64::try_from(timeout.as_millis()).unwrap_or(u64::MAX),
             otel.status_code = tracing::field::Empty,
             "error.type" = tracing::field::Empty,
             trace_id = tracing::field::Empty,
@@ -235,8 +237,8 @@ impl Catalog {
                 Err(_) => true,
             };
             span.record("otel.status_code", if failed { "ERROR" } else { "OK" });
-            span.set_attribute(
-                "antnest.protocol.outcome",
+            span.set_contract_attribute(
+                semconv::ANTNEST_PROTOCOL_OUTCOME,
                 if failed { "error" } else { "success" },
             );
             match &result {

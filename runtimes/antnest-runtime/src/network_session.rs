@@ -1,3 +1,4 @@
+use crate::semconv;
 use std::fs::File;
 use std::io;
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
@@ -96,8 +97,8 @@ impl NetworkSession {
         let span = tracing::info_span!(
             "runtime.network",
             "service.name" = crate::telemetry::SERVICE_NAME,
-            "antnest.agent.id" = identity.agent_id(),
-            "antnest.runtime.generation" = %identity.generation(),
+            { semconv::ANTNEST_AGENT_ID } = identity.agent_id(),
+            { semconv::ANTNEST_RUNTIME_GENERATION } = %identity.generation(),
             "network.transport" = "wireguard_over_udp",
             "network.session.outcome" = tracing::field::Empty,
             "network.session.duration_ms" = tracing::field::Empty,
