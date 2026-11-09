@@ -13,6 +13,7 @@ import {
   PermissionDecisionError,
 } from "../../../services/agent-ui/web/server/dist/bridge/permission-inbox.js";
 import { startBridgeTelemetry } from "../../../services/agent-ui/web/server/dist/telemetry.js";
+import { intentObservationFailure } from "../../support/intent-observation.mjs";
 import { ServiceAuthentication } from "../../../services/agent-ui/web/server/dist/adapters/service-authentication.js";
 import { bridgeHeaders } from "../../../services/agent-ui/web/server/dist/adapters/acp-http.js";
 import { refreshScopeContext } from "../../../services/agent-ui/web/server/dist/http/trusted-identity.js";
@@ -282,8 +283,17 @@ test("Node Bridge uses official ACP HTTP/SSE with scoped headers and durable met
       );
       return;
     }
-    response.writeHead(404, { "content-type": "application/json" });
-    response.end(JSON.stringify({ code: "intent_unknown" }));
+    if (request.url?.endsWith("/intents/intent-expired")) {
+      const expired = intentObservationFailure("intent_receipt_expired");
+      response.writeHead(expired.status, {
+        "content-type": "application/json",
+      });
+      response.end(JSON.stringify(expired.body));
+      return;
+    }
+    const failure = intentObservationFailure("intent_unknown");
+    response.writeHead(failure.status, { "content-type": "application/json" });
+    response.end(JSON.stringify(failure.body));
   });
   await new Promise((resolve) => listener.listen(0, "127.0.0.1", resolve));
   const address = listener.address();
@@ -426,6 +436,12 @@ test("Node Bridge uses official ACP HTTP/SSE with scoped headers and durable met
         .errorClass,
       "model_unsupported_content",
     );
+    assert.deepEqual(await bridge.readIntent("session-1", "intent-expired"), {
+      kind: "expired",
+    });
+    assert.deepEqual(await bridge.readIntent("session-1", "intent-absent"), {
+      kind: "unknown",
+    });
     assert.deepEqual(await bridge.readAgentExecutionState(), {
       availability: "busy",
       activeSessionId: "session-2",
