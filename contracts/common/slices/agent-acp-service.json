@@ -49,6 +49,7 @@
     "idempotency_conflict",
     "identity_dependency_unavailable",
     "intent_already_recorded",
+    "intent_receipt_expired",
     "intent_unknown",
     "internal",
     "internal_error",

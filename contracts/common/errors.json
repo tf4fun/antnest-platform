@@ -2051,6 +2051,14 @@
       "description": "Session not found"
     },
     {
+      "code": "intent_receipt_expired",
+      "category": "not_found",
+      "retryable": false,
+      "http_status": 410,
+      "owner": "agent-acp-service",
+      "description": "Intent receipt expired"
+    },
+    {
       "code": "intent_unknown",
       "category": "not_found",
       "retryable": false,
