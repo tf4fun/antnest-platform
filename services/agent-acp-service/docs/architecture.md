@@ -691,6 +691,25 @@ erasure is claimed.
 | `model_budget_baseline_receipts` | baseline attempt receipts                    | accounting              | retained, never reduced or zeroed                                                 | model-budget.ts             |
 | `skill_source_projections`       | managed Skill source projections             | published artifact      | retained; reprojectable after source Session purge                                | skill-source-projections.ts |
 
+Migration `0036_bridge_receipt_retention.sql` adds the nullable
+`acp_sessions.receipt_retained_after_append_version` watermark and the
+`runs_retain_bridge_receipt_watermark` delete-statement trigger. When a Bridge
+intent Run row is deleted while its Session survives, the trigger records the
+bulk maximum `COALESCE(append_version, expected_append_version, 0)` of the
+removed bridge intents on the Session; `GREATEST` keeps the watermark
+monotonic. A `NULL` watermark means no bridge receipt deletion was ever
+observed on that Session, while any stored value including `0` counts as
+observed pruning. The intent lookup reads the receipt row and the watermark in
+one snapshot: the existing access and Session authorization checks still run
+before the receipt lookup for missing, purged or foreign Sessions, and a
+Session soft-deleted racing authorization is excluded by that same query; a
+surviving receipt row always wins; otherwise a non-NULL
+watermark makes every absent opaque intent ID `intent_receipt_expired`
+(`410`, `retryable: false`), and `NULL` keeps `intent_unknown` (`404`,
+`retryable: true` for repeating the lookup only). Purging an entire Session
+still yields `session_not_found`, and this column grants no cleanup or TTL
+permission by itself. Non-bridge Run deletions do not touch it.
+
 There are no cross-service foreign keys, views, triggers, or SQL queries.
 External identifiers are opaque text values. One transaction may update only
 this service's records.

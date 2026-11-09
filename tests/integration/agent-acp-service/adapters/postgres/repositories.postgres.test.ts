@@ -194,9 +194,14 @@ describe.skipIf(databaseUrl === undefined)(
         createdAt: new Date(),
         bridgeIntent: { intentId: "intent-observe", expectedAppendVersion: 0 },
       });
-      await expect(
-        bridgeObservations.readIntent(sessionId, "intent-observe"),
-      ).resolves.toMatchObject({
+      const intent = await bridgeObservations.readIntent(
+        sessionId,
+        "intent-observe",
+      );
+      expect(intent.kind).toBe("receipt");
+      if (intent.kind !== "receipt")
+        throw new Error("Expected a retained intent receipt");
+      expect(intent.receipt).toMatchObject({
         intentId: "intent-observe",
         sessionId,
         runId,
@@ -235,7 +240,10 @@ describe.skipIf(databaseUrl === undefined)(
       });
       await expect(
         bridgeObservations.readIntent(sessionId, "intent-observe"),
-      ).resolves.toMatchObject({ phase: "running", outputWatermark: 1 });
+      ).resolves.toMatchObject({
+        kind: "receipt",
+        receipt: { phase: "running", outputWatermark: 1 },
+      });
       await expect(
         sessions.readOutput(sessionId, 0, true),
       ).resolves.toMatchObject({
@@ -254,7 +262,7 @@ describe.skipIf(databaseUrl === undefined)(
       });
       await expect(
         bridgeObservations.readIntent(sessionId, "another-intent"),
-      ).resolves.toBeNull();
+      ).resolves.toEqual({ kind: "unknown" });
     });
 
     it.each(["failed", "cancelled_before_accept", "cancelled_before_reject"])(

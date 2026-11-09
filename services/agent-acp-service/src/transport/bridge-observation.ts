@@ -61,15 +61,19 @@ export async function serveBridgeObservation(
     if (service === undefined || !(await ready()))
       throw new Error("Bridge observation unavailable");
     const binding = { ...identity, connectionId: randomUUID() };
-    const result =
-      route.kind === "intent"
-        ? await service.readIntent(binding, route.sessionId, route.intentId)
-        : await service.readSession(binding, route.sessionId);
-    if (result === null) {
-      failure(response, ERROR_CODES.INTENT_UNKNOWN);
+    if (route.kind === "intent") {
+      const result = await service.readIntent(binding, route.sessionId, route.intentId);
+      if (result.kind === "receipt") {
+        json(response, 200, result.receipt);
+        return;
+      }
+      failure(
+        response,
+        result.kind === "expired" ? ERROR_CODES.INTENT_RECEIPT_EXPIRED : ERROR_CODES.INTENT_UNKNOWN,
+      );
       return;
     }
-    json(response, 200, result);
+    json(response, 200, await service.readSession(binding, route.sessionId));
   } catch (error) {
     const failure = mapFailure(error);
     if (span !== undefined) recordBoundaryError(span, error, "workspace.bridge_observation");

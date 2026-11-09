@@ -175,6 +175,7 @@ describe.skipIf(databaseUrl === undefined)(
         "0033_context_compaction.sql",
         "0034_model_token_calibration.sql",
         "0035_content_retention.sql",
+        "0036_bridge_receipt_retention.sql",
       ]);
       expect(
         (

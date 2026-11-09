@@ -395,6 +395,15 @@ describe.skipIf(databaseUrl === undefined)(
       const client = await pool.connect();
       try {
         await client.query("BEGIN");
+        await client.query(
+          "DROP TRIGGER runs_retain_bridge_receipt_watermark ON runs",
+        );
+        await client.query(
+          "DROP FUNCTION retain_deleted_bridge_receipt_watermark()",
+        );
+        await client.query(
+          "ALTER TABLE acp_sessions DROP COLUMN receipt_retained_after_append_version",
+        );
         await client.query("DROP VIEW model_token_calibration");
         await client.query(
           "ALTER TABLE context_checkpoints DROP COLUMN compaction_prompt_version, DROP COLUMN pinned_message_ids",
@@ -470,7 +479,7 @@ describe.skipIf(databaseUrl === undefined)(
           ALTER TABLE acp_sessions DROP CONSTRAINT acp_sessions_forked_from_session_id_fkey, ADD CONSTRAINT acp_sessions_forked_from_session_id_fkey FOREIGN KEY(forked_from_session_id) REFERENCES acp_sessions(id) ON DELETE RESTRICT`,
         );
         const removed = await client.query(
-          "DELETE FROM schema_migrations WHERE version IN ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)",
+          "DELETE FROM schema_migrations WHERE version IN ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)",
           [
             "0023_runtime_barrier_cycles.sql",
             "0024_agent_run_admission.sql",
@@ -485,9 +494,10 @@ describe.skipIf(databaseUrl === undefined)(
             "0033_context_compaction.sql",
             "0034_model_token_calibration.sql",
             "0035_content_retention.sql",
+            "0036_bridge_receipt_retention.sql",
           ],
         );
-        expect(removed.rowCount).toBe(13);
+        expect(removed.rowCount).toBe(14);
         await client.query("COMMIT");
       } catch (error) {
         await client.query("ROLLBACK");

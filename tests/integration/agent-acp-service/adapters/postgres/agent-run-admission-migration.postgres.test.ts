@@ -233,7 +233,7 @@ async function facts(pool: Pool) {
   ]) {
     const expression =
       table === "acp_sessions"
-        ? "(to_jsonb(stored)-'deleted_at')"
+        ? "(to_jsonb(stored)-'deleted_at'-'receipt_retained_after_append_version')"
         : table === "runs"
           ? "('{\"budget_reason\":null}'::jsonb || to_jsonb(stored)) - 'organization_id' - 'agent_id' - 'execution_owner_registration_id' - 'execution_owner_member_id' - 'execution_owner_incarnation_id' - 'execution_owner_epoch'"
           : table === "context_checkpoints"
@@ -337,6 +337,8 @@ describe.skipIf(databaseUrl === undefined)(
         const applied = await journal(pool);
         await migrate(pool);
         const metadataBefore = await contentRetentionFacts(pool);
+        for (const session of metadataBefore)
+          expect(session.receipt_retained_after_append_version).toBeNull();
         expect(await scopeColumns(pool)).toEqual([
           { column_name: "agent_id", is_nullable: "NO" },
           { column_name: "organization_id", is_nullable: "NO" },
@@ -382,6 +384,7 @@ describe.skipIf(databaseUrl === undefined)(
           "0033_context_compaction.sql",
           "0034_model_token_calibration.sql",
           "0035_content_retention.sql",
+          "0036_bridge_receipt_retention.sql",
         ]);
         const index = await pool.query<{ indexdef: string }>(
           "SELECT indexdef FROM pg_indexes WHERE schemaname='public' AND indexname='runs_agent_nonterminal_unique'",

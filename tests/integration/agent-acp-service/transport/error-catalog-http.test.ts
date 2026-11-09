@@ -237,8 +237,10 @@ describe("read-only workspace error catalog projection", () => {
     expect(received.response.headers.get("cache-control")).toBe("no-store");
   });
 
-  it("keeps an unobserved intent non-retryable without exposing a cause", async () => {
-    const readIntent = vi.fn(() => Promise.resolve(null));
+  it("keeps an unobserved intent lookup-retryable without exposing a cause", async () => {
+    const readIntent = vi.fn(() =>
+      Promise.resolve({ kind: "unknown" as const }),
+    );
     const readSession = vi.fn(() =>
       Promise.reject(new Error("Unexpected session read")),
     );
@@ -254,6 +256,45 @@ describe("read-only workspace error catalog projection", () => {
     assertFailure(received, "intent_unknown");
     expect(readIntent).toHaveBeenCalledOnce();
     expect(readSession).not.toHaveBeenCalled();
+  });
+
+  it("serves an expired intent receipt as non-retryable resend-forbidden", async () => {
+    const readIntent = vi.fn(() =>
+      Promise.resolve({ kind: "expired" as const }),
+    );
+    const base = await listen({
+      bridgeObservation: {
+        readSession: vi.fn(),
+        readIntent,
+      },
+    });
+    const received = await jsonResponse(
+      await get(
+        base,
+        "/rpc/agent-acp/workspace/sessions/session-1/intents/intent-1",
+      ),
+    );
+    assertFailure(received, "intent_receipt_expired");
+    expect(received.body).toMatchObject({ retryable: false });
+    expect(readIntent).toHaveBeenCalledOnce();
+  });
+
+  it("maps an unavailable intent read to workspace_observation_unavailable", async () => {
+    const readIntent = vi.fn(() => Promise.reject(new Error(secret)));
+    const base = await listen({
+      bridgeObservation: {
+        readSession: vi.fn(),
+        readIntent,
+      },
+    });
+    const received = await jsonResponse(
+      await get(
+        base,
+        "/rpc/agent-acp/workspace/sessions/session-1/intents/intent-1",
+      ),
+    );
+    assertFailure(received, "workspace_observation_unavailable");
+    expect(readIntent).toHaveBeenCalledOnce();
   });
 
   for (const kind of ["learning-status", "learning-changes"] as const) {

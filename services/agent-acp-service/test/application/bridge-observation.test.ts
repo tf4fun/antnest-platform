@@ -18,14 +18,17 @@ describe("Bridge execution observation authorization", () => {
     const readIntent = vi.fn<BridgeObservationRepository["readIntent"]>(() => {
       order.push("receipt");
       return Promise.resolve({
-        intentId: "intent-1",
-        sessionId: "session-1",
-        runId: "run-1",
-        phase: "running",
-        appendVersion: 1,
-        outputWatermark: 2,
-        stopReason: null,
-        errorClass: null,
+        kind: "receipt",
+        receipt: {
+          intentId: "intent-1",
+          sessionId: "session-1",
+          runId: "run-1",
+          phase: "running",
+          appendVersion: 1,
+          outputWatermark: 2,
+          stopReason: null,
+          errorClass: null,
+        },
       });
     });
     const service = new BridgeObservationService({
@@ -34,10 +37,44 @@ describe("Bridge execution observation authorization", () => {
       repository: { readIntent, readSession: vi.fn() },
     });
     await expect(service.readIntent(binding(), "session-1", "intent-1")).resolves.toMatchObject({
-      runId: "run-1",
-      outputWatermark: 2,
+      kind: "receipt",
+      receipt: { runId: "run-1", outputWatermark: 2 },
     });
     expect(order).toEqual(["access", "session", "receipt"]);
+  });
+
+  it("passes unknown and expired outcomes through without weakening authorization", async () => {
+    const order: string[] = [];
+    const service = new BridgeObservationService({
+      access: {
+        assert: vi.fn(() => {
+          order.push("access");
+          return Promise.resolve();
+        }),
+      },
+      sessions: {
+        requireAuthorized: vi.fn(() => {
+          order.push("session");
+          return Promise.resolve();
+        }),
+      },
+      repository: {
+        readIntent: vi.fn<BridgeObservationRepository["readIntent"]>((_s, id) => {
+          order.push("receipt");
+          return Promise.resolve(
+            id === "intent-expired" ? { kind: "expired" } : { kind: "unknown" },
+          );
+        }),
+        readSession: vi.fn(),
+      },
+    });
+    await expect(service.readIntent(binding(), "session-1", "intent-unknown")).resolves.toEqual({
+      kind: "unknown",
+    });
+    await expect(service.readIntent(binding(), "session-1", "intent-expired")).resolves.toEqual({
+      kind: "expired",
+    });
+    expect(order).toEqual(["access", "session", "receipt", "access", "session", "receipt"]);
   });
 
   it("does not query private receipts after a revoked Agent or foreign Session", async () => {

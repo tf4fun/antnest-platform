@@ -2,7 +2,7 @@ import { DomainError } from "../domain/errors.js";
 import type { ConnectionBinding } from "../domain/types.js";
 import type { AccessService } from "./access-service.js";
 import type {
-  BridgeIntentReceipt,
+  BridgeIntentObservation,
   BridgeObservationRepository,
   BridgeSessionExecution,
 } from "../ports/bridge-observation.js";
@@ -20,7 +20,7 @@ export class BridgeObservationService {
     binding: ConnectionBinding,
     sessionId: string,
     intentId: string,
-  ): Promise<BridgeIntentReceipt | null> {
+  ): Promise<BridgeIntentObservation> {
     await this.dependencies.access.assert(binding);
     await this.dependencies.sessions.requireAuthorized(sessionId, binding);
     return this.dependencies.repository.readIntent(sessionId, intentId);
