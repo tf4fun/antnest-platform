@@ -140,27 +140,38 @@ fi
 
 port_base=$((42000 + ($$ % 8000)))
 export COMPOSE_PROJECT_NAME="antnest-stage3-e2e-$$"
-stage3_phase_directory="$repository_root/artifacts/verification/stage3-startup/$COMPOSE_PROJECT_NAME"
-mkdir -p "$stage3_phase_directory"
-chmod 700 "$stage3_phase_directory"
-stage3_record_phase() {
-  stage3_phase=$1
-  printf '{"phase":"%s","status":%s}\n' "$1" "${2:-0}" >> "$stage3_phase_directory/phases.jsonl"
-}
-stage3_record_phase storage-preflight
 node tests/support/verification/stage3-storage.mjs "$COMPOSE_PROJECT_NAME"
-stage3_record_phase network-discovery
-network_octet=$(node tests/e2e/acp-closeout/network.mjs "$((1 + ($$ % 200)))")
-# Public development secrets, per-run service credentials and the network
-# split, shared with the Node fixtures in tests/support/authenticated-e2e.mjs.
+# Public failure metadata survives cleanup and the CI private-log exclusions.
+# Never copy raw command output or credentials into this directory.
+startup_evidence_directory="$repository_root/artifacts/verification/stage3-startup/$COMPOSE_PROJECT_NAME"
+record_stage3_failure() {
+  (
+    umask 077
+    node tests/support/storage.mjs "$startup_evidence_directory" &&
+      mkdir -p "$startup_evidence_directory" &&
+      printf '{"phase":"%s","exit_code":%s}\n' "$stage3_phase" "$1" > "$startup_evidence_directory/failure.json"
+  )
+}
 credentials_root="$repository_root/artifacts/verification/authenticated-e2e/$COMPOSE_PROJECT_NAME"
-# Profile validation below can exit before the full cleanup trap exists.
-trap 'rm -rf -- "${credentials_root:?}"' EXIT
-stage3_record_phase fixture-environment
+temporary_root=
+stage3_phase=network-discovery
+# Setup can fail before the full Docker cleanup trap is installed.
+early_cleanup() {
+  status=$?
+  trap - EXIT
+  if [ "$status" -ne 0 ]; then record_stage3_failure "$status" || true; fi
+  rm -rf -- "${credentials_root:?}" || status=1
+  if [ -n "$temporary_root" ]; then rm -rf -- "$temporary_root" || status=1; fi
+  exit "$status"
+}
+trap early_cleanup EXIT
+network_octet=$(node tests/e2e/acp-closeout/network.mjs "$((1 + ($$ % 200)))")
+# Public development secrets and network split use the shared fixture.
+stage3_phase=fixture-environment
 fixture_environment=$(node tests/support/authenticated-e2e.mjs "$COMPOSE_PROJECT_NAME" "$network_octet")
 eval "$fixture_environment"
 unset fixture_environment
-stage3_record_phase profile-validation
+stage3_phase=profile-validation
 export ANTNEST_E2E_CONTROL_DYNAMIC_RANGE="10.242.${network_octet}.128/25"
 export ANTNEST_E2E_RUNTIME_DYNAMIC_RANGE="10.243.${network_octet}.128/25"
 export ANTNEST_E2E_RUN_ID=$(node -e 'process.stdout.write(crypto.randomUUID())')
@@ -438,12 +449,12 @@ elif [ "$tool_profile" = file-observations ]; then
   runtime_image="antnest/antnest-runtime:$ANTNEST_ADMISSION_TAG"
 else
   runtime_image=antnest/antnest-runtime:local
-  stage3_record_phase runtime-image-inspection
+  stage3_phase=runtime-image-inspection
   docker image inspect "$runtime_image" >/dev/null
 fi
 export ANTNEST_ADMIN_DEFAULT_RUNTIME_IMAGE_REF=$runtime_image
 
-stage3_record_phase temporary-directory
+stage3_phase=temporary-directory
 temporary_root=$(mktemp -d "${TMPDIR:-/tmp}/antnest-stage3-e2e.XXXXXX")
 
 compose() {
@@ -573,7 +584,6 @@ compose() {
 cleanup() {
   status=$?
   stage3_entry_status=$status
-  printf '{"phase":"%s","status":%s}\n' "$stage3_phase" "$status" >> "$stage3_phase_directory/exit.jsonl"
   trap - EXIT INT TERM
   if [ -n "$tool_profile" ]; then
     export ANTNEST_E2E_DEADLINE_MS=$(node -e 'process.stdout.write(String(Date.now()+120000))')
@@ -588,8 +598,13 @@ cleanup() {
     ) || true
   fi
   if [ "$status" -ne 0 ]; then
+    record_stage3_failure "$status" || true
     compose ps >&2 || true
-    node tests/support/startup-failure-summary.mjs "$COMPOSE_PROJECT_NAME" "$credentials_root/credentials" > "$stage3_phase_directory/startup-summary.jsonl" || true
+    (
+      umask 077
+      node tests/support/storage.mjs "$startup_evidence_directory" &&
+        node tests/support/startup-failure-summary.mjs "$COMPOSE_PROJECT_NAME" "$credentials_root/credentials" > "$startup_evidence_directory/startup-summary.json"
+    ) || true
     fault_service=
     if [ "${ANTNEST_E2E_SKILL_MOUNT_RACE:-false}" = true ] || [ "${ANTNEST_E2E_SKILL_INITIALIZE_RACE:-false}" = true ] || [ "${ANTNEST_E2E_SKILL_START_RESPONSE_LOSS:-false}" = true ]; then fault_service=skill-docker-proxy; fi
     compose logs --no-color --tail=200 edge-gateway admin-console agent-ui agent-acp-service \
@@ -707,13 +722,13 @@ if [ -n "$tool_profile" ]; then
   fi
   if [ "$tool_profile" = identity-http ] || [ "$tool_profile" = acp-session ] || [ "$tool_profile" = agent-access ] || [ "$tool_profile" = acp-closeout ]; then prepare_oidc; fi
   if [ "$tool_profile" = acp-session ] || [ "$tool_profile" = slash-commands ] || [ "$tool_profile" = structured-plan ] || [ "$tool_profile" = multimodal ] || [ "$tool_profile" = session-cost ] || [ "$tool_profile" = file-observations ] || [ "$tool_profile" = tool-progress ] || [ "$tool_profile" = tool-permissions ]; then
-    stage3_record_phase compose-up
+    stage3_phase=compose-up
     compose up -d --wait --no-build --pull never
   else
-    stage3_record_phase compose-up
+    stage3_phase=compose-up
     compose up -d --wait
   fi
-  stage3_record_phase client-entry
+  stage3_phase=client-entry
   ANTNEST_E2E_DISPOSABLE=true sh "tests/e2e/e2e-${tool_profile}.sh"
   exit 0
 fi
