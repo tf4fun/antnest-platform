@@ -19,7 +19,7 @@
       "$ref": "runtime-barrier-recovery.ids-v2.schema.json#/$defs/notification_data"
     },
     "managed_mcp_secret_request": {
-      "$ref": "../runtime/managed-mcp.schema.json#/$defs/template_source"
+      "$ref": "../runtime/managed-mcp.ids-v2.schema.json#/$defs/template_source"
     },
     "managed_mcp_secret_response": {
       "type": "object",
@@ -1114,7 +1114,7 @@
           "$ref": "#/$defs/runtime_resources"
         },
         "mcp_servers": {
-          "$ref": "../runtime/managed-mcp.schema.json#/$defs/servers_write"
+          "$ref": "../runtime/managed-mcp.ids-v2.schema.json#/$defs/servers_write"
         }
       }
     },
@@ -1136,7 +1136,7 @@
           "$ref": "#/$defs/runtime_resources"
         },
         "mcp_servers": {
-          "$ref": "../runtime/managed-mcp.schema.json#/$defs/servers_read"
+          "$ref": "../runtime/managed-mcp.ids-v2.schema.json#/$defs/servers_read"
         }
       }
     },

@@ -405,10 +405,10 @@ func assertRevisionRequestSchema(t *testing.T, name string, value any) {
 		"https://schemas.antnest.dev/runtime-controller/runtime-deployment.ids-v2.schema.json": "../../contracts/runtime-controller/runtime-deployment.ids-v2.schema.json",
 		"https://schemas.antnest.dev/common/ids.schema.json":                                   "../../contracts/common/ids.schema.json",
 		"https://schemas.antnest.dev/common/precondition.schema.json":                          "../../contracts/common/precondition.schema.json",
-		"https://schemas.antnest.dev/skill-registry/runtime-delivery.schema.json":              "../../contracts/skill-registry/runtime-delivery.schema.json",
-		"https://schemas.antnest.dev/runtime/managed-mcp.schema.json":                          "../../contracts/runtime/managed-mcp.schema.json",
-		"https://schemas.antnest.dev/runtime/runtime-spec.schema.json":                         "../../contracts/runtime/runtime-spec.schema.json",
-		"https://schemas.antnest.dev/runtime/instance-connection.schema.json":                  "../../contracts/runtime/instance-connection.schema.json",
+		"https://schemas.antnest.dev/skill-registry/runtime-delivery.ids-v2.schema.json":       "../../contracts/skill-registry/runtime-delivery.ids-v2.schema.json",
+		"https://schemas.antnest.dev/runtime/managed-mcp.ids-v2.schema.json":                   "../../contracts/runtime/managed-mcp.ids-v2.schema.json",
+		"https://schemas.antnest.dev/runtime/runtime-spec.ids-v2.schema.json":                  "../../contracts/runtime/runtime-spec.ids-v2.schema.json",
+		"https://schemas.antnest.dev/runtime/instance-connection.ids-v2.schema.json":           "../../contracts/runtime/instance-connection.ids-v2.schema.json",
 		"https://schemas.antnest.dev/runtime/tunnel-bootstrap.schema.json":                     "../../contracts/runtime/tunnel-bootstrap.schema.json",
 	} {
 		data, err := os.ReadFile(filepath.Join(root, rel))

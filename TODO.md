@@ -1,5 +1,7 @@
 # Antnest Platform 全局 TODO
 
+- **#16 CI 收尾（2026-11-09）**：用户授权继续修复 #592–#603 的 PR CI，保留服务依赖顺序，不自动合并或关闭。已定位旧非法 ID 断言、目录版本/consumer 同步遗漏、PG migration 边界与晚改 schema 的 N-1 违规。共享批次前置完整 ids-v2 目标图及精确 aliases；活跃目录由各 owning service 激活。目标引用与所有向量 2/2、210 文档 conventions、Gateway 定向真实 handler/engine 检查通过。Gateway 两个 ASCII pattern 提前使用 native engine；CI 原 user-1 误拒签名保留，不把第三方 engine 根因视为已证实。远程 exact-head 门禁跟进中，未运行或查询独立 system E2E。
+
 本清单保存全部开放 issue 的推进顺序、依赖、当前批次和验收记录。
 按回归基线、共享契约、入口与身份安全、执行可靠性、产品能力、非交互执行与调度推进。
 Issue 状态最后核对于 2026-10-28：141 个 issue，87 个已关闭，54 个开放；开放项包含 4 个 Epic（#82–#85）和 50 个执行项，全部已挂到对应 Epic。

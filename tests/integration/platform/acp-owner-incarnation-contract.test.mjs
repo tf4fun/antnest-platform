@@ -15,7 +15,7 @@ const schemaID =
 const schemaPath = "contracts/agent-acp/owner-incarnation.schema.json";
 const manifestPath = "contracts/agent-acp/owner-incarnation-contract.json";
 const controlSchemaPath =
-  "contracts/runtime-controller/control-api.schema.json";
+  "contracts/runtime-controller/control-api.ids-v2.schema.json";
 const controlContractPath =
   "contracts/runtime-controller/control-contract.json";
 const controlAliases = {
@@ -160,11 +160,11 @@ function controlValidators() {
   for (const path of [
     schemaPath,
     "contracts/runtime/tunnel-bootstrap.schema.json",
-    "contracts/runtime/instance-connection.schema.json",
-    "contracts/runtime/managed-mcp.schema.json",
-    "contracts/runtime/runtime-spec.schema.json",
-    "contracts/skill-registry/runtime-delivery.schema.json",
-    "contracts/runtime-controller/runtime-deployment.schema.json",
+    "contracts/runtime/instance-connection.ids-v2.schema.json",
+    "contracts/runtime/managed-mcp.ids-v2.schema.json",
+    "contracts/runtime/runtime-spec.ids-v2.schema.json",
+    "contracts/skill-registry/runtime-delivery.ids-v2.schema.json",
+    "contracts/runtime-controller/runtime-deployment.ids-v2.schema.json",
   ])
     ajv.addSchema(read(path));
   ajv.addSchema(schema);
@@ -660,7 +660,7 @@ test("RC grants and the private ACP probe allow only their owning workload calle
 test("RC revision 22 binds registration and inspection to the frozen shared wire", () => {
   const contract = read(controlContractPath);
   const manifest = read(manifestPath);
-  assert.equal(contract.revision, 22);
+  assert.equal(contract.revision, 23);
   for (const [name, operationID, responseAlias] of [
     ["register", "registerAcpIncarnation", "acp_registration"],
     ["inspect", "inspectAcpIncarnation", "acp_inspection"],
@@ -683,7 +683,7 @@ test("RC revision 22 binds registration and inspection to the frozen shared wire
     assert.deepEqual(route.responses, {
       200: {
         content_type: "application/json",
-        body: `control-api.schema.json#/$defs/${responseAlias}`,
+        body: `control-api.ids-v2.schema.json#/$defs/${responseAlias}`,
       },
     });
     assert.deepEqual([...route.errors].sort(), [...wire.errors].sort());
@@ -700,7 +700,7 @@ test("RC revision 22 binds registration and inspection to the frozen shared wire
     if (name === "register") {
       assert.equal(
         route.request_body,
-        "control-api.schema.json#/$defs/acp_register_request",
+        "control-api.ids-v2.schema.json#/$defs/acp_register_request",
       );
       assert.equal(route.request_bytes_max, 4096);
       assert.equal(route.request_bytes_max, wire.request_bytes_max);
@@ -708,7 +708,8 @@ test("RC revision 22 binds registration and inspection to the frozen shared wire
     } else {
       assert.equal(route.request_body, "none");
       assert.deepEqual(route.path_parameters, {
-        registration_id: "control-api.schema.json#/$defs/acp_registration_id",
+        registration_id:
+          "control-api.ids-v2.schema.json#/$defs/acp_registration_id",
       });
     }
   }

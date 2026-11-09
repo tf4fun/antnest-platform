@@ -9,7 +9,15 @@ import {
 
 it("publishes the frozen model inputs and rejects mixed refs or chosen authority", async () => {
   const ajv = new Ajv2020({ strict: false });
-  for (const file of ["registry-api.schema.json", "discovery-api.schema.json"])
+  ajv.addSchema(
+    JSON.parse(
+      await readFile(
+        new URL("../../../../contracts/common/ids.schema.json", import.meta.url),
+        "utf8",
+      ),
+    ) as object,
+  );
+  for (const file of ["registry-api.ids-v2.schema.json", "discovery-api.ids-v2.schema.json"])
     ajv.addSchema(
       JSON.parse(
         await readFile(
@@ -51,7 +59,7 @@ it("publishes the frozen model inputs and rejects mixed refs or chosen authority
   ] as const;
   for (const [name, implementation, allowed, denied] of entries) {
     const frozen = ajv.getSchema(
-      `https://schemas.antnest.dev/skill-registry/discovery-api.schema.json#/$defs/${name}_input`,
+      `https://schemas.antnest.dev/skill-registry/discovery-api.ids-v2.schema.json#/$defs/${name}_input`,
     )!;
     const published = ajv.compile(
       skillDiscoveryTools.find((tool) => tool.name === name)!.inputSchema!,

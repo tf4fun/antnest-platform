@@ -31,5 +31,5 @@ test("Console publishes directory pages with their producer registration", () =>
     const registered = source.includes(`HandleFunc("GET /api/admin${path}"`);
     assert.equal(name in active.routes, registered, name);
   }
-  assert.equal(active.version, active.routes.directory_members ? 61 : 60);
+  assert.equal(active.version, active.routes.directory_members ? 62 : 60);
 });
