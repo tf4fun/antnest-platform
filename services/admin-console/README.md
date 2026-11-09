@@ -11,6 +11,11 @@ through one interface without the Console becoming a second source of truth.
 The BFF is written in Go and embeds the compiled React (Vite, Tailwind, shadcn)
 application.
 
+HTTP trace plumbing (server span start, request cloning, body wrapping and
+the response status writer) uses the shared Go telemetry module in
+`libs/go/telemetry`; telemetry names come from its generated registry
+constants.
+
 List boundaries follow [shared conventions](../../contracts/CONVENTIONS.md):
 `cursor` requests and `items` with nullable-string `next_cursor` responses.
 Deprecated `after_id`/`after_version` inputs remain accepted for one release;
