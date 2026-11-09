@@ -565,7 +565,7 @@ test("the implemented history route has exact RC grants, revision 22 aliases and
     request_body: "none",
   });
   const contract = read("contracts/runtime-controller/control-contract.json");
-  assert.equal(contract.revision, 22);
+  assert.equal(contract.revision, 23);
   const matches = contract.routes.filter((route) => route.path === routePath);
   assert.equal(matches.length, 1);
   const [route] = matches;
@@ -574,12 +574,12 @@ test("the implemented history route has exact RC grants, revision 22 aliases and
   assert.deepEqual(route.required_headers, ["Antnest-Service-Authorization"]);
   assert.equal(
     route.request_body,
-    "control-api.schema.json#/$defs/acp_history_request",
+    "control-api.ids-v2.schema.json#/$defs/acp_history_request",
   );
   assert.deepEqual(route.responses, {
     200: {
       content_type: "application/json",
-      body: "control-api.schema.json#/$defs/acp_history_page",
+      body: "control-api.ids-v2.schema.json#/$defs/acp_history_page",
     },
   });
   const wire = manifest.operations.history;
@@ -599,7 +599,9 @@ test("the implemented history route has exact RC grants, revision 22 aliases and
   );
   assert.deepEqual(Object.keys(route.path_parameters ?? {}), []);
   assert.deepEqual([...route.errors].sort(), [...wire.errors].sort());
-  const schema = read("contracts/runtime-controller/control-api.schema.json");
+  const schema = read(
+    "contracts/runtime-controller/control-api.ids-v2.schema.json",
+  );
   for (const [alias, definition] of [
     ["acp_history_request", "request"],
     ["acp_history_page", "response"],

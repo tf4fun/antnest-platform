@@ -51,7 +51,7 @@ func TestReadinessExposesCachedCapacityFields(t *testing.T) {
 		t.Fatalf("capability-less service claimed known capacity: %s", response.Body.String())
 	}
 	var schema controlSchema
-	readJSONFile(t, filepath.Join(serviceRoot(t), "../../contracts/runtime-controller/control-api.schema.json"), &schema)
+	readJSONFile(t, filepath.Join(serviceRoot(t), "../../contracts/runtime-controller/control-api.ids-v2.schema.json"), &schema)
 	assertRequiredFields(t, schema, "readiness", body)
 }
 
@@ -76,7 +76,7 @@ func TestMachineContractDeclaresCapacityExhaustion(t *testing.T) {
 	root := serviceRoot(t)
 	var contract machineContract
 	readJSONFile(t, filepath.Join(root, "../../contracts/runtime-controller/control-contract.json"), &contract)
-	if contract.Revision != 22 {
+	if contract.Revision != 23 {
 		t.Fatalf("contract revision: %d", contract.Revision)
 	}
 	definition, ok := contract.Errors["runtime_capacity_exhausted"]

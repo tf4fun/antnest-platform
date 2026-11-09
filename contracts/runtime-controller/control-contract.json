@@ -1,22 +1,22 @@
 {
-  "revision": 22,
+  "revision": 23,
   "transport": "json-over-http",
   "trust_boundary": "authenticated-workload-with-route-specific-callers",
   "schemas": {
-    "control": "control-api.schema.json",
-    "configuration": "runtime-deployment.schema.json",
+    "control": "control-api.ids-v2.schema.json",
+    "configuration": "runtime-deployment.ids-v2.schema.json",
     "owner_incarnation": "../agent-acp/owner-incarnation.schema.json",
     "owner_incarnation_history": "../agent-acp/owner-incarnation-history.schema.json"
   },
   "headers": {
     "Idempotency-Key": {
       "required": true,
-      "schema": "control-api.schema.json#/$defs/request_id",
+      "schema": "control-api.ids-v2.schema.json#/$defs/request_id",
       "description": "Stable logical request identity reused for an exact retry on routes listing this header. ACP incarnation registration instead uses its member/incarnation/nonce tuple."
     },
     "Antnest-Service-Authorization": {
       "required": true,
-      "schema": "control-api.schema.json#/$defs/service_credential",
+      "schema": "control-api.ids-v2.schema.json#/$defs/service_credential",
       "description": "Exact dedicated bearer in token mode; mTLS verifies the route-specific service URI. Only incarnation registration, inspection and history admit the ACP workload; existing control routes require the Controller workload. Not required by local health."
     }
   },
@@ -28,7 +28,7 @@
       "required_headers": [
         "Antnest-Service-Authorization"
       ],
-      "request_body": "control-api.schema.json#/$defs/acp_register_request",
+      "request_body": "control-api.ids-v2.schema.json#/$defs/acp_register_request",
       "request_bytes_max": 4096,
       "response_bytes_max": 8192,
       "deadline_ms": 10000,
@@ -37,7 +37,7 @@
       "responses": {
         "200": {
           "content_type": "application/json",
-          "body": "control-api.schema.json#/$defs/acp_registration"
+          "body": "control-api.ids-v2.schema.json#/$defs/acp_registration"
         }
       },
       "errors": [
@@ -62,7 +62,7 @@
       "method": "GET",
       "path": "/internal/acp-incarnations/{registration_id}",
       "path_parameters": {
-        "registration_id": "control-api.schema.json#/$defs/acp_registration_id"
+        "registration_id": "control-api.ids-v2.schema.json#/$defs/acp_registration_id"
       },
       "required_headers": [
         "Antnest-Service-Authorization"
@@ -74,7 +74,7 @@
       "responses": {
         "200": {
           "content_type": "application/json",
-          "body": "control-api.schema.json#/$defs/acp_inspection"
+          "body": "control-api.ids-v2.schema.json#/$defs/acp_inspection"
         }
       },
       "errors": [
@@ -96,7 +96,7 @@
       "required_headers": [
         "Antnest-Service-Authorization"
       ],
-      "request_body": "control-api.schema.json#/$defs/acp_history_request",
+      "request_body": "control-api.ids-v2.schema.json#/$defs/acp_history_request",
       "request_bytes_max": 4096,
       "response_bytes_max": 32768,
       "deadline_ms": 10000,
@@ -105,7 +105,7 @@
       "responses": {
         "200": {
           "content_type": "application/json",
-          "body": "control-api.schema.json#/$defs/acp_history_page"
+          "body": "control-api.ids-v2.schema.json#/$defs/acp_history_page"
         }
       },
       "errors": [
@@ -127,12 +127,12 @@
       "method": "GET",
       "path": "/internal/runtime-images/resolve",
       "query_parameters": {
-        "reference": "control-api.schema.json#/$defs/tagged_image_reference"
+        "reference": "control-api.ids-v2.schema.json#/$defs/tagged_image_reference"
       },
       "responses": {
         "200": {
           "content_type": "application/json",
-          "body": "control-api.schema.json#/$defs/image_resolution"
+          "body": "control-api.ids-v2.schema.json#/$defs/image_resolution"
         }
       },
       "errors": [
@@ -157,11 +157,11 @@
       "responses": {
         "200": {
           "content_type": "application/json",
-          "body": "control-api.schema.json#/$defs/readiness"
+          "body": "control-api.ids-v2.schema.json#/$defs/readiness"
         },
         "503": {
           "content_type": "application/json",
-          "body": "control-api.schema.json#/$defs/readiness"
+          "body": "control-api.ids-v2.schema.json#/$defs/readiness"
         }
       },
       "errors": [],
@@ -175,7 +175,7 @@
       "responses": {
         "200": {
           "content_type": "application/json",
-          "body": "control-api.schema.json#/$defs/runtime_list"
+          "body": "control-api.ids-v2.schema.json#/$defs/runtime_list"
         }
       },
       "errors": [
@@ -196,12 +196,12 @@
       "method": "GET",
       "path": "/internal/runtimes/{agent_id}",
       "path_parameters": {
-        "agent_id": "control-api.schema.json#/$defs/agent_id"
+        "agent_id": "control-api.ids-v2.schema.json#/$defs/agent_id"
       },
       "responses": {
         "200": {
           "content_type": "application/json",
-          "body": "control-api.schema.json#/$defs/runtime_inspection"
+          "body": "control-api.ids-v2.schema.json#/$defs/runtime_inspection"
         }
       },
       "errors": [
@@ -224,17 +224,17 @@
       "method": "POST",
       "path": "/internal/runtimes/{agent_id}/skill-sets/prepare",
       "path_parameters": {
-        "agent_id": "control-api.schema.json#/$defs/agent_id"
+        "agent_id": "control-api.ids-v2.schema.json#/$defs/agent_id"
       },
       "required_headers": [
         "Antnest-Service-Authorization",
         "Idempotency-Key"
       ],
-      "request_body": "control-api.schema.json#/$defs/skill_prepare_request",
+      "request_body": "control-api.ids-v2.schema.json#/$defs/skill_prepare_request",
       "responses": {
         "202": {
           "content_type": "application/json",
-          "body": "control-api.schema.json#/$defs/skill_prepare_receipt"
+          "body": "control-api.ids-v2.schema.json#/$defs/skill_prepare_receipt"
         }
       },
       "errors": [
@@ -256,16 +256,16 @@
       "method": "GET",
       "path": "/internal/runtimes/{agent_id}/skill-sets/preparations/{request_id}",
       "path_parameters": {
-        "agent_id": "control-api.schema.json#/$defs/agent_id",
-        "request_id": "control-api.schema.json#/$defs/request_id"
+        "agent_id": "control-api.ids-v2.schema.json#/$defs/agent_id",
+        "request_id": "control-api.ids-v2.schema.json#/$defs/request_id"
       },
       "query_parameters": {
-        "organization_id": "control-api.schema.json#/$defs/organization_id"
+        "organization_id": "control-api.ids-v2.schema.json#/$defs/organization_id"
       },
       "responses": {
         "200": {
           "content_type": "application/json",
-          "body": "control-api.schema.json#/$defs/skill_prepare_receipt"
+          "body": "control-api.ids-v2.schema.json#/$defs/skill_prepare_receipt"
         }
       },
       "errors": [
@@ -287,14 +287,14 @@
       "method": "POST",
       "path": "/internal/runtimes/{agent_id}/skill-sets/preparations/{request_id}/release",
       "path_parameters": {
-        "agent_id": "control-api.schema.json#/$defs/agent_id",
-        "request_id": "control-api.schema.json#/$defs/request_id"
+        "agent_id": "control-api.ids-v2.schema.json#/$defs/agent_id",
+        "request_id": "control-api.ids-v2.schema.json#/$defs/request_id"
       },
       "required_headers": [
         "Antnest-Service-Authorization",
         "Idempotency-Key"
       ],
-      "request_body": "control-api.schema.json#/$defs/skill_release_request",
+      "request_body": "control-api.ids-v2.schema.json#/$defs/skill_release_request",
       "responses": {
         "204": {
           "body": "none"
@@ -317,21 +317,21 @@
       "method": "POST",
       "path": "/internal/runtimes/{agent_id}/initialize",
       "path_parameters": {
-        "agent_id": "control-api.schema.json#/$defs/agent_id"
+        "agent_id": "control-api.ids-v2.schema.json#/$defs/agent_id"
       },
       "required_headers": [
         "Antnest-Service-Authorization",
         "Idempotency-Key"
       ],
-      "request_body": "control-api.schema.json#/$defs/initialize_request",
+      "request_body": "control-api.ids-v2.schema.json#/$defs/initialize_request",
       "responses": {
         "200": {
           "content_type": "application/json",
-          "body": "control-api.schema.json#/$defs/operation"
+          "body": "control-api.ids-v2.schema.json#/$defs/operation"
         },
         "202": {
           "content_type": "application/json",
-          "body": "control-api.schema.json#/$defs/operation"
+          "body": "control-api.ids-v2.schema.json#/$defs/operation"
         }
       },
       "errors": [
@@ -365,21 +365,21 @@
       "method": "POST",
       "path": "/internal/runtimes/{agent_id}/update",
       "path_parameters": {
-        "agent_id": "control-api.schema.json#/$defs/agent_id"
+        "agent_id": "control-api.ids-v2.schema.json#/$defs/agent_id"
       },
       "required_headers": [
         "Antnest-Service-Authorization",
         "Idempotency-Key"
       ],
-      "request_body": "control-api.schema.json#/$defs/revision_configuration_request",
+      "request_body": "control-api.ids-v2.schema.json#/$defs/revision_configuration_request",
       "responses": {
         "200": {
           "content_type": "application/json",
-          "body": "control-api.schema.json#/$defs/operation"
+          "body": "control-api.ids-v2.schema.json#/$defs/operation"
         },
         "202": {
           "content_type": "application/json",
-          "body": "control-api.schema.json#/$defs/operation"
+          "body": "control-api.ids-v2.schema.json#/$defs/operation"
         }
       },
       "errors": [
@@ -411,21 +411,21 @@
       "method": "POST",
       "path": "/internal/runtimes/{agent_id}/disable",
       "path_parameters": {
-        "agent_id": "control-api.schema.json#/$defs/agent_id"
+        "agent_id": "control-api.ids-v2.schema.json#/$defs/agent_id"
       },
       "required_headers": [
         "Antnest-Service-Authorization",
         "Idempotency-Key"
       ],
-      "request_body": "control-api.schema.json#/$defs/revision_request",
+      "request_body": "control-api.ids-v2.schema.json#/$defs/revision_request",
       "responses": {
         "200": {
           "content_type": "application/json",
-          "body": "control-api.schema.json#/$defs/operation"
+          "body": "control-api.ids-v2.schema.json#/$defs/operation"
         },
         "202": {
           "content_type": "application/json",
-          "body": "control-api.schema.json#/$defs/operation"
+          "body": "control-api.ids-v2.schema.json#/$defs/operation"
         }
       },
       "errors": [
@@ -451,21 +451,21 @@
       "method": "POST",
       "path": "/internal/runtimes/{agent_id}/enable",
       "path_parameters": {
-        "agent_id": "control-api.schema.json#/$defs/agent_id"
+        "agent_id": "control-api.ids-v2.schema.json#/$defs/agent_id"
       },
       "required_headers": [
         "Antnest-Service-Authorization",
         "Idempotency-Key"
       ],
-      "request_body": "control-api.schema.json#/$defs/revision_configuration_request",
+      "request_body": "control-api.ids-v2.schema.json#/$defs/revision_configuration_request",
       "responses": {
         "200": {
           "content_type": "application/json",
-          "body": "control-api.schema.json#/$defs/operation"
+          "body": "control-api.ids-v2.schema.json#/$defs/operation"
         },
         "202": {
           "content_type": "application/json",
-          "body": "control-api.schema.json#/$defs/operation"
+          "body": "control-api.ids-v2.schema.json#/$defs/operation"
         }
       },
       "errors": [
@@ -499,21 +499,21 @@
       "method": "POST",
       "path": "/internal/runtimes/{agent_id}/delete",
       "path_parameters": {
-        "agent_id": "control-api.schema.json#/$defs/agent_id"
+        "agent_id": "control-api.ids-v2.schema.json#/$defs/agent_id"
       },
       "required_headers": [
         "Antnest-Service-Authorization",
         "Idempotency-Key"
       ],
-      "request_body": "control-api.schema.json#/$defs/revision_request",
+      "request_body": "control-api.ids-v2.schema.json#/$defs/revision_request",
       "responses": {
         "200": {
           "content_type": "application/json",
-          "body": "control-api.schema.json#/$defs/operation"
+          "body": "control-api.ids-v2.schema.json#/$defs/operation"
         },
         "202": {
           "content_type": "application/json",
-          "body": "control-api.schema.json#/$defs/operation"
+          "body": "control-api.ids-v2.schema.json#/$defs/operation"
         }
       },
       "errors": [
@@ -541,12 +541,12 @@
       "method": "GET",
       "path": "/internal/runtime-operations/{request_id}",
       "path_parameters": {
-        "request_id": "control-api.schema.json#/$defs/request_id"
+        "request_id": "control-api.ids-v2.schema.json#/$defs/request_id"
       },
       "responses": {
         "200": {
           "content_type": "application/json",
-          "body": "control-api.schema.json#/$defs/operation"
+          "body": "control-api.ids-v2.schema.json#/$defs/operation"
         }
       },
       "errors": [
@@ -566,13 +566,13 @@
       "method": "GET",
       "path": "/internal/runtime-observations",
       "query_parameters": {
-        "after_sequence": "control-api.schema.json#/$defs/sequence",
-        "limit": "control-api.schema.json#/$defs/page_limit"
+        "after_sequence": "control-api.ids-v2.schema.json#/$defs/sequence",
+        "limit": "control-api.ids-v2.schema.json#/$defs/page_limit"
       },
       "responses": {
         "200": {
           "content_type": "application/json",
-          "body": "control-api.schema.json#/$defs/observation_list"
+          "body": "control-api.ids-v2.schema.json#/$defs/observation_list"
         }
       },
       "errors": [
@@ -592,16 +592,16 @@
       "method": "GET",
       "path": "/internal/runtime-observations/watch",
       "query_parameters": {
-        "after_sequence": "control-api.schema.json#/$defs/sequence"
+        "after_sequence": "control-api.ids-v2.schema.json#/$defs/sequence"
       },
       "responses": {
         "200": {
           "content_type": "text/event-stream",
-          "body": "control-api.schema.json#/$defs/observation",
+          "body": "control-api.ids-v2.schema.json#/$defs/observation",
           "sse": {
             "event_name": "runtime_observation",
-            "id": "control-api.schema.json#/$defs/sequence",
-            "data": "control-api.schema.json#/$defs/observation",
+            "id": "control-api.ids-v2.schema.json#/$defs/sequence",
+            "data": "control-api.ids-v2.schema.json#/$defs/observation",
             "resume_with": "after_sequence",
             "delivery": "at-least-once",
             "initial_read_before_status": true,
@@ -626,16 +626,16 @@
       "method": "POST",
       "path": "/internal/runtimes/{agent_id}/connection",
       "path_parameters": {
-        "agent_id": "control-api.schema.json#/$defs/agent_id"
+        "agent_id": "control-api.ids-v2.schema.json#/$defs/agent_id"
       },
       "required_headers": [
         "Antnest-Service-Authorization"
       ],
-      "request_body": "control-api.schema.json#/$defs/runtime_connection_request",
+      "request_body": "control-api.ids-v2.schema.json#/$defs/runtime_connection_request",
       "responses": {
         "200": {
           "content_type": "application/json",
-          "body": "control-api.schema.json#/$defs/runtime_connection"
+          "body": "control-api.ids-v2.schema.json#/$defs/runtime_connection"
         }
       },
       "errors": [
@@ -655,223 +655,223 @@
     "acp_member_not_allowed": {
       "status": 403,
       "retryable": false,
-      "body": "control-api.schema.json#/$defs/acp_incarnation_error"
+      "body": "control-api.ids-v2.schema.json#/$defs/acp_incarnation_error"
     },
     "acp_incarnation_unverified": {
       "status": 403,
       "retryable": false,
-      "body": "control-api.schema.json#/$defs/acp_incarnation_error"
+      "body": "control-api.ids-v2.schema.json#/$defs/acp_incarnation_error"
     },
     "acp_incarnation_conflict": {
       "status": 409,
       "retryable": false,
-      "body": "control-api.schema.json#/$defs/acp_incarnation_error"
+      "body": "control-api.ids-v2.schema.json#/$defs/acp_incarnation_error"
     },
     "acp_registration_unavailable": {
       "status": 503,
       "retryable": true,
-      "body": "control-api.schema.json#/$defs/acp_incarnation_error"
+      "body": "control-api.ids-v2.schema.json#/$defs/acp_incarnation_error"
     },
     "acp_registry_unavailable": {
       "status": 503,
       "retryable": true,
-      "body": "control-api.schema.json#/$defs/acp_incarnation_error"
+      "body": "control-api.ids-v2.schema.json#/$defs/acp_incarnation_error"
     },
     "request_too_large": {
       "status": 413,
       "retryable": false,
-      "body": "control-api.schema.json#/$defs/acp_incarnation_error"
+      "body": "control-api.ids-v2.schema.json#/$defs/acp_incarnation_error"
     },
     "runtime_not_ready": {
       "status": 500,
       "retryable": false,
-      "body": "control-api.schema.json#/$defs/error",
+      "body": "control-api.ids-v2.schema.json#/$defs/error",
       "historical_only": true
     },
     "image_not_found": {
       "status": 404,
       "retryable": false,
-      "body": "control-api.schema.json#/$defs/error"
+      "body": "control-api.ids-v2.schema.json#/$defs/error"
     },
     "invalid_request": {
       "status": 400,
       "retryable": false,
-      "body": "control-api.schema.json#/$defs/error"
+      "body": "control-api.ids-v2.schema.json#/$defs/error"
     },
     "idempotency_key_required": {
       "status": 400,
       "retryable": false,
-      "body": "control-api.schema.json#/$defs/error"
+      "body": "control-api.ids-v2.schema.json#/$defs/error"
     },
     "request_id_conflict": {
       "status": 409,
       "retryable": false,
-      "body": "control-api.schema.json#/$defs/error"
+      "body": "control-api.ids-v2.schema.json#/$defs/error"
     },
     "agent_mutation_in_progress": {
       "status": 409,
       "retryable": true,
-      "body": "control-api.schema.json#/$defs/error"
+      "body": "control-api.ids-v2.schema.json#/$defs/error"
     },
     "mutation_lock_lost": {
       "status": 503,
       "retryable": true,
-      "body": "control-api.schema.json#/$defs/error"
+      "body": "control-api.ids-v2.schema.json#/$defs/error"
     },
     "runtime_not_found": {
       "status": 404,
       "retryable": false,
-      "body": "control-api.schema.json#/$defs/error"
+      "body": "control-api.ids-v2.schema.json#/$defs/error"
     },
     "preparation_not_found": {
       "status": 404,
       "retryable": false,
-      "body": "control-api.schema.json#/$defs/error"
+      "body": "control-api.ids-v2.schema.json#/$defs/error"
     },
     "skill_preparation_unavailable": {
       "status": 503,
       "retryable": true,
-      "body": "control-api.schema.json#/$defs/error"
+      "body": "control-api.ids-v2.schema.json#/$defs/error"
     },
     "skill_cleanup_in_progress": {
       "status": 503,
       "retryable": true,
-      "body": "control-api.schema.json#/$defs/error"
+      "body": "control-api.ids-v2.schema.json#/$defs/error"
     },
     "skill_preparation_closed": {
       "status": 409,
       "retryable": false,
-      "body": "control-api.schema.json#/$defs/error"
+      "body": "control-api.ids-v2.schema.json#/$defs/error"
     },
     "runtime_lifecycle_conflict": {
       "status": 409,
       "retryable": false,
-      "body": "control-api.schema.json#/$defs/error"
+      "body": "control-api.ids-v2.schema.json#/$defs/error"
     },
     "runtime_revision_conflict": {
       "status": 409,
       "retryable": false,
-      "body": "control-api.schema.json#/$defs/error"
+      "body": "control-api.ids-v2.schema.json#/$defs/error"
     },
     "prepared_skill_set_invalidated": {
       "status": 409,
       "retryable": false,
-      "body": "control-api.schema.json#/$defs/error"
+      "body": "control-api.ids-v2.schema.json#/$defs/error"
     },
     "tunnel_registration_unavailable": {
       "status": 503,
       "retryable": true,
-      "body": "control-api.schema.json#/$defs/error"
+      "body": "control-api.ids-v2.schema.json#/$defs/error"
     },
     "tunnel_key_registration_rejected": {
       "status": 409,
       "retryable": false,
-      "body": "control-api.schema.json#/$defs/error"
+      "body": "control-api.ids-v2.schema.json#/$defs/error"
     },
     "skill_preflight_unavailable": {
       "status": 503,
       "retryable": true,
-      "body": "control-api.schema.json#/$defs/error"
+      "body": "control-api.ids-v2.schema.json#/$defs/error"
     },
     "runtime_drift": {
       "status": 409,
       "retryable": false,
-      "body": "control-api.schema.json#/$defs/error"
+      "body": "control-api.ids-v2.schema.json#/$defs/error"
     },
     "storage_in_use": {
       "status": 409,
       "retryable": false,
-      "body": "control-api.schema.json#/$defs/error"
+      "body": "control-api.ids-v2.schema.json#/$defs/error"
     },
     "storage_not_found": {
       "status": 404,
       "retryable": false,
-      "body": "control-api.schema.json#/$defs/error"
+      "body": "control-api.ids-v2.schema.json#/$defs/error"
     },
     "storage_ownership_conflict": {
       "status": 409,
       "retryable": false,
-      "body": "control-api.schema.json#/$defs/error"
+      "body": "control-api.ids-v2.schema.json#/$defs/error"
     },
     "platform_unavailable": {
       "status": 503,
       "retryable": true,
-      "body": "control-api.schema.json#/$defs/error"
+      "body": "control-api.ids-v2.schema.json#/$defs/error"
     },
     "runtime_capacity_exhausted": {
       "status": 503,
       "retryable": true,
-      "body": "control-api.schema.json#/$defs/error"
+      "body": "control-api.ids-v2.schema.json#/$defs/error"
     },
     "operation_not_found": {
       "status": 404,
       "retryable": false,
-      "body": "control-api.schema.json#/$defs/error"
+      "body": "control-api.ids-v2.schema.json#/$defs/error"
     },
     "observation_cursor_expired": {
       "status": 410,
       "retryable": false,
-      "body": "control-api.schema.json#/$defs/error"
+      "body": "control-api.ids-v2.schema.json#/$defs/error"
     },
     "deadline_exceeded": {
       "status": 504,
       "retryable": true,
-      "body": "control-api.schema.json#/$defs/error"
+      "body": "control-api.ids-v2.schema.json#/$defs/error"
     },
     "route_not_found": {
       "status": 404,
       "retryable": false,
-      "body": "control-api.schema.json#/$defs/error"
+      "body": "control-api.ids-v2.schema.json#/$defs/error"
     },
     "method_not_allowed": {
       "status": 405,
       "retryable": false,
-      "body": "control-api.schema.json#/$defs/error"
+      "body": "control-api.ids-v2.schema.json#/$defs/error"
     },
     "operation_failed": {
       "status": 500,
       "retryable": false,
-      "body": "control-api.schema.json#/$defs/error"
+      "body": "control-api.ids-v2.schema.json#/$defs/error"
     },
     "internal_error": {
       "status": 500,
       "retryable": true,
-      "body": "control-api.schema.json#/$defs/error"
+      "body": "control-api.ids-v2.schema.json#/$defs/error"
     },
     "internal": {
       "status": 500,
       "retryable": false,
-      "body": "control-api.schema.json#/$defs/error"
+      "body": "control-api.ids-v2.schema.json#/$defs/error"
     },
     "service_unauthenticated": {
       "status": 401,
       "retryable": false,
-      "body": "control-api.schema.json#/$defs/error"
+      "body": "control-api.ids-v2.schema.json#/$defs/error"
     },
     "caller_not_allowed": {
       "status": 403,
       "retryable": false,
-      "body": "control-api.schema.json#/$defs/error"
+      "body": "control-api.ids-v2.schema.json#/$defs/error"
     },
     "unsupported_media_type": {
       "status": 415,
       "retryable": false,
-      "body": "control-api.schema.json#/$defs/error"
+      "body": "control-api.ids-v2.schema.json#/$defs/error"
     },
     "image_not_allowed": {
       "status": 422,
       "retryable": false,
-      "body": "control-api.schema.json#/$defs/error"
+      "body": "control-api.ids-v2.schema.json#/$defs/error"
     },
     "runtime_connection_stale": {
       "status": 409,
       "retryable": false,
-      "body": "control-api.schema.json#/$defs/error"
+      "body": "control-api.ids-v2.schema.json#/$defs/error"
     },
     "runtime_connection_unavailable": {
       "status": 503,
       "retryable": true,
-      "body": "control-api.schema.json#/$defs/error"
+      "body": "control-api.ids-v2.schema.json#/$defs/error"
     }
   },
   "operation_error_codes": {

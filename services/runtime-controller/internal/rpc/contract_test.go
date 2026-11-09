@@ -108,7 +108,7 @@ func TestMachineContractCoversRegisteredHTTPBoundary(t *testing.T) {
 	var contract machineContract
 	readJSONFile(t, filepath.Join(root, "../../contracts/runtime-controller/control-contract.json"), &contract)
 	var schema controlSchema
-	readJSONFile(t, filepath.Join(root, "../../contracts/runtime-controller/control-api.schema.json"), &schema)
+	readJSONFile(t, filepath.Join(root, "../../contracts/runtime-controller/control-api.ids-v2.schema.json"), &schema)
 
 	expectedRoutes := map[string][]string{
 		"POST /internal/acp-incarnations/register":                                        {"200"},
@@ -257,7 +257,7 @@ func TestMachineSSEContractMatchesWireFraming(t *testing.T) {
 func TestMachineSchemaMatchesGoWireTypes(t *testing.T) {
 	root := serviceRoot(t)
 	var schema controlSchema
-	readJSONFile(t, filepath.Join(root, "../../contracts/runtime-controller/control-api.schema.json"), &schema)
+	readJSONFile(t, filepath.Join(root, "../../contracts/runtime-controller/control-api.ids-v2.schema.json"), &schema)
 	now := time.Date(2026, 8, 30, 0, 0, 0, 0, time.UTC)
 	inspection := deployment.Environment{
 		AgentID: "agent-1", RuntimeRevision: testRuntimeRevision,
@@ -382,7 +382,7 @@ func pathParameters(path string) []string {
 
 func assertKnownSchemaReference(t *testing.T, schema controlSchema, reference string) {
 	t.Helper()
-	const prefix = "control-api.schema.json#/$defs/"
+	const prefix = "control-api.ids-v2.schema.json#/$defs/"
 	if strings.HasPrefix(reference, prefix) {
 		name := strings.TrimPrefix(reference, prefix)
 		if _, ok := schema.Defs[name]; !ok {
@@ -390,7 +390,7 @@ func assertKnownSchemaReference(t *testing.T, schema controlSchema, reference st
 		}
 		return
 	}
-	if reference != "runtime-deployment.schema.json" {
+	if reference != "runtime-deployment.ids-v2.schema.json" {
 		t.Fatalf("unknown schema reference %s", reference)
 	}
 }
@@ -401,14 +401,15 @@ func assertRevisionRequestSchema(t *testing.T, name string, value any) {
 	compiler := jsonschema.NewCompiler()
 	compiler.AssertFormat()
 	for id, rel := range map[string]string{
-		"https://schemas.antnest.dev/runtime-controller/control-api.schema.json":        "../../contracts/runtime-controller/control-api.schema.json",
-		"https://schemas.antnest.dev/runtime-controller/runtime-deployment.schema.json": "../../contracts/runtime-controller/runtime-deployment.schema.json",
-		"https://schemas.antnest.dev/common/precondition.schema.json":                   "../../contracts/common/precondition.schema.json",
-		"https://schemas.antnest.dev/skill-registry/runtime-delivery.schema.json":       "../../contracts/skill-registry/runtime-delivery.schema.json",
-		"https://schemas.antnest.dev/runtime/managed-mcp.schema.json":                   "../../contracts/runtime/managed-mcp.schema.json",
-		"https://schemas.antnest.dev/runtime/runtime-spec.schema.json":                  "../../contracts/runtime/runtime-spec.schema.json",
-		"https://schemas.antnest.dev/runtime/instance-connection.schema.json":           "../../contracts/runtime/instance-connection.schema.json",
-		"https://schemas.antnest.dev/runtime/tunnel-bootstrap.schema.json":              "../../contracts/runtime/tunnel-bootstrap.schema.json",
+		"https://schemas.antnest.dev/runtime-controller/control-api.ids-v2.schema.json":        "../../contracts/runtime-controller/control-api.ids-v2.schema.json",
+		"https://schemas.antnest.dev/runtime-controller/runtime-deployment.ids-v2.schema.json": "../../contracts/runtime-controller/runtime-deployment.ids-v2.schema.json",
+		"https://schemas.antnest.dev/common/ids.schema.json":                                   "../../contracts/common/ids.schema.json",
+		"https://schemas.antnest.dev/common/precondition.schema.json":                          "../../contracts/common/precondition.schema.json",
+		"https://schemas.antnest.dev/skill-registry/runtime-delivery.ids-v2.schema.json":       "../../contracts/skill-registry/runtime-delivery.ids-v2.schema.json",
+		"https://schemas.antnest.dev/runtime/managed-mcp.ids-v2.schema.json":                   "../../contracts/runtime/managed-mcp.ids-v2.schema.json",
+		"https://schemas.antnest.dev/runtime/runtime-spec.ids-v2.schema.json":                  "../../contracts/runtime/runtime-spec.ids-v2.schema.json",
+		"https://schemas.antnest.dev/runtime/instance-connection.ids-v2.schema.json":           "../../contracts/runtime/instance-connection.ids-v2.schema.json",
+		"https://schemas.antnest.dev/runtime/tunnel-bootstrap.schema.json":                     "../../contracts/runtime/tunnel-bootstrap.schema.json",
 	} {
 		data, err := os.ReadFile(filepath.Join(root, rel))
 		if err != nil {
@@ -422,7 +423,7 @@ func assertRevisionRequestSchema(t *testing.T, name string, value any) {
 			t.Fatalf("load %s: %v", rel, err)
 		}
 	}
-	shape, err := compiler.Compile("https://schemas.antnest.dev/runtime-controller/control-api.schema.json#/$defs/" + name)
+	shape, err := compiler.Compile("https://schemas.antnest.dev/runtime-controller/control-api.ids-v2.schema.json#/$defs/" + name)
 	if err != nil {
 		t.Fatal(err)
 	}

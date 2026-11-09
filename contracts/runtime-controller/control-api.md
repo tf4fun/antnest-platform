@@ -12,7 +12,10 @@ generation numbers, deployment digests, and platform resource identifiers are
 private implementation details.
 
 The complete machine-readable route, header, status, error, and message
-contract is `control-contract.json` plus `control-api.schema.json`, whose ACP
+contract is `control-contract.json` plus `control-api.ids-v2.schema.json` (the
+`ids-v2` revision binds `organization_id`/`agent_id` to the
+[shared opaque-ID grammar](../common/ids.schema.json); generation formats remain
+producer-owned), whose ACP
 aliases reference the [shared incarnation schema](../agent-acp/owner-incarnation.schema.json).
 
 All JSON decoders reject unknown fields. Lifecycle Agent and request identifiers

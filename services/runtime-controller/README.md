@@ -328,6 +328,8 @@ with secret_env descriptors, not for configurations without managed secrets.
 Controller owns encrypted values; RC owns generation-private read-only delivery
 and cleanup. See [the delivery contract](../../contracts/runtime/managed-mcp-secrets.md).
 
+Public organization/agent references follow the [shared opaque-ID grammar](../../contracts/common/ids.schema.json); `*.ids-v2.schema.json` publishes the revised shape.
+
 Error envelopes follow the [common error contract](../../contracts/common/error.schema.json)
 with the [Runtime Controller slice](../../contracts/common/slices/runtime-controller.json); the
 shared owner-incarnation schema accepts the optional metadata pair until the pending ACP

@@ -350,6 +350,11 @@ var schemaMigrations = []migration{
 		checksum: "67e6555680286c721bfea390a972f51c36c261aee87eca177b9f3fa1af5ed500",
 		sql:      acpIncarnationHistorySQL,
 	},
+	{
+		version: 16, name: "opaque_resource_references",
+		checksum: "01066df69e6e0d8a07fc2bac0068faffdaa420b42df4141507319e1740b530d2",
+		sql:      resourceIDsSQL,
+	},
 }
 
 func Migrate(ctx context.Context, database *sql.DB) error {
