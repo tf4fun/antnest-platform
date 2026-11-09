@@ -359,7 +359,7 @@ const internalGroup = {
   ...directoryGroup,
 };
 
-test("catalog version 61 declares paginated directory routes and lifecycle holds", () => {
+test("catalog version 62 declares paginated directory routes and lifecycle holds", () => {
   assert.equal(contract.version, 62);
   assert.equal(contract.base_path, "/api/admin");
   assert.equal(Object.keys(contract.routes).length, ROUTE_COUNT);
