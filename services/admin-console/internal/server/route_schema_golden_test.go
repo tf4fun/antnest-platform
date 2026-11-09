@@ -69,7 +69,7 @@ func adminSchemaCompiler(t *testing.T) *jsonschema.Compiler {
 func compileAdminDef(t *testing.T, compiler *jsonschema.Compiler, name string) *jsonschema.Schema {
 	t.Helper()
 	schema, err := compiler.Compile(
-		"https://schemas.antnest.dev/admin-console/admin-api.schema.json#/$defs/" + name,
+		"https://schemas.antnest.dev/admin-console/admin-api.ids-v2.schema.json#/$defs/" + name,
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -453,10 +453,10 @@ func TestAdminRouteResponsesConformToPublishedSchema(t *testing.T) {
 		route := raw.(map[string]any)
 		t.Run(name, func(t *testing.T) {
 			golden := cases[name]
-			if route["response_schema"] != "admin-api.schema.json#/$defs/"+name+"_response" {
+			if route["response_schema"] != "admin-api.ids-v2.schema.json#/$defs/"+name+"_response" {
 				t.Fatalf("route %s response_schema = %v", name, route["response_schema"])
 			}
-			if route["request_schema"] != "admin-api.schema.json#/$defs/"+name+"_request" {
+			if route["request_schema"] != "admin-api.ids-v2.schema.json#/$defs/"+name+"_request" {
 				t.Fatalf("route %s request_schema = %v", name, route["request_schema"])
 			}
 			var handler http.Handler

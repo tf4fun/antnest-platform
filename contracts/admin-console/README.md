@@ -468,8 +468,8 @@ top level and under `details`, and unknown or malformed payloads become
 [`web/src/lib/api-errors.ts`](../../services/admin-console/web/src/lib/api-errors.ts),
 which fills absent `category`/`retryable` from generated metadata.
 
-Version 61 publishes the closed browser schema
-[admin-api.schema.json](admin-api.schema.json): every route declares
+Version 62 binds the closed browser schema to the shared opaque-ID grammar:
+[admin-api.ids-v2.schema.json](admin-api.ids-v2.schema.json): every route declares
 `request_schema`/`response_schema` references plus `request_body`/`response_body`
 kind objects. JSON requests are JSON bodies; `kind:"none"` routes model the
 parsed `query_and_path` object, not a fictional body. Multipart uploads declare

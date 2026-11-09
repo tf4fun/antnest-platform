@@ -192,7 +192,7 @@ test("browser codec round-trips the frozen v2 projection and pending intent", ()
       ),
     "Controller-internal fields must never reach the browser ack",
   );
-  assert.equal(adminContract.version, 61);
+  assert.equal(adminContract.version, 62);
   assert.equal(
     adminContract.response_policy.agent_network_policy.spec_only_v2_status,
     "implemented",
