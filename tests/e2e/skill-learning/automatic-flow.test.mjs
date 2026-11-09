@@ -1247,8 +1247,6 @@ test(
                 `${outputDir}:/private-evidence`,
                 "-v",
                 `${root}/tests:/app/tests:ro`,
-                "-v",
-                `${root}/contracts/agent-acp/agent-execution-state.ids-v2.schema.json:/app/contracts/agent-acp/agent-execution-state.ids-v2.schema.json:ro`,
                 image,
                 "node",
                 "/app/tests/e2e/skill-learning/discovery-tools-client.mjs",

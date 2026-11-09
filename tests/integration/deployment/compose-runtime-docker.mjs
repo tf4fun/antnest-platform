@@ -501,7 +501,8 @@ try {
     report.checks++;
   });
   await phase("normal-stop", async () => {
-    await docker([...compose, "stop", "--timeout", "30"], true);
+    // Preserve per-service stop_grace_period, including Egress drain time.
+    await docker([...compose, "stop"], true);
     const stopped = JSON.parse(
       await docker(["inspect", ...rows.map((row) => row.Id)]),
     );

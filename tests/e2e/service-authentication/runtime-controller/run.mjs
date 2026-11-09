@@ -245,6 +245,20 @@ try {
     "",
   );
   checks++;
+  const waitRuntime = async (runtimeAgent = agent) => {
+    const deadline = Date.now() + 60000;
+    for (;;) {
+      const current = await request({
+        path: `/internal/runtimes/${runtimeAgent}`,
+        auth: "next",
+      });
+      if (current.health === "healthy" && current.runtime_execution_id)
+        return current;
+      if (Date.now() > deadline)
+        throw new Error("owned fixture Runtime did not become verified");
+      await delay(250, undefined, { signal: abort.signal });
+    }
+  };
   const agent = "rc-auth-" + project.slice(-8);
   writeFileSync(resolve(directory, "registration-unavailable"), "", {
     mode: 0o600,
@@ -280,6 +294,9 @@ try {
     "registration-outage",
   );
   assert.equal(recovered.state, "completed");
+  // Creation precedes process startup. Verify the double is serving before
+  // testing deletion, so SIGTERM cannot race its signal-handler installation.
+  await waitRuntime(outageAgent);
   await mutate(
     outageAgent,
     "delete",
@@ -371,20 +388,6 @@ try {
         if (Date.now() > deadline) throw error;
         await delay(500, undefined, { signal: abort.signal });
       }
-    }
-  };
-  const waitRuntime = async (runtimeAgent = agent) => {
-    const deadline = Date.now() + 60000;
-    for (;;) {
-      const current = await request({
-        path: `/internal/runtimes/${runtimeAgent}`,
-        auth: "next",
-      });
-      if (current.health === "healthy" && current.runtime_execution_id)
-        return current;
-      if (Date.now() > deadline)
-        throw new Error("owned fixture Runtime did not become verified");
-      await delay(250, undefined, { signal: abort.signal });
     }
   };
   assert.equal((await waitRuntime()).runtime_endpoint, managementIPv4);

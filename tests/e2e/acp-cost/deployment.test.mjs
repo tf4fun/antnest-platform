@@ -1,3 +1,4 @@
+import { assertContainerContractImports } from "../../support/container-contract-imports.mjs";
 import assert from "node:assert/strict";
 import test from "node:test";
 import { createHash } from "node:crypto";
@@ -271,11 +272,16 @@ test("Cost client can read its imported contracts without mounting service direc
   const { client, model } = entry("costHarnessArguments")(env, {
     evidence: "/fixture/evidence",
   });
+  assertContainerContractImports(
+    client,
+    "tests/support/private-acp-execution-state.mjs",
+  );
   const contracts = [
     "contracts/identity/identity-contract.json",
     "contracts/agent-controller/control-contract.json",
     "contracts/runtime-controller/control-contract.json",
     "contracts/agent-acp/agent-execution-state.ids-v2.schema.json",
+    "contracts/common/ids.schema.json",
   ];
   const root = new URL("../../../", import.meta.url);
   for (const relative of contracts) {
