@@ -70,7 +70,6 @@ define_tool_error_codes! {
 }
 
 impl ToolErrorCode {
-    #[cfg(test)]
     pub(crate) const fn is_model_facing(self) -> bool {
         !matches!(
             self,
@@ -82,6 +81,14 @@ impl ToolErrorCode {
                 | Self::TemporaryRunClosed
                 | Self::TemporaryScopeBusy
         )
+    }
+
+    pub(crate) const fn for_model(self) -> Self {
+        if self.is_model_facing() {
+            self
+        } else {
+            Self::RuntimeFailed
+        }
     }
 }
 
@@ -183,5 +190,22 @@ impl std::error::Error for ToolError {
         self.source
             .as_deref()
             .map(|source| source as &(dyn std::error::Error + 'static))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn for_model_maps_exactly_the_internal_codes_to_runtime_failed() {
+        for code in ToolErrorCode::ALL.iter().copied() {
+            if code.is_model_facing() {
+                assert_eq!(code.for_model(), code);
+            } else {
+                assert_eq!(code.for_model(), ToolErrorCode::RuntimeFailed);
+            }
+        }
+        assert!(ToolErrorCode::RuntimeFailed.is_model_facing());
     }
 }

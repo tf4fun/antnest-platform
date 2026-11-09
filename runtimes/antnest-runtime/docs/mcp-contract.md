@@ -498,10 +498,29 @@ Stable tool error codes:
 | `write`                   | `write_failed`                                                                                                                                                                                                             |
 | `edit`                    | `edit_read_failed`, `old_string_not_found`, `old_string_not_unique`, `result_too_large`, `edit_failed`                                                                                                                     |
 
-The exhaustive machine-readable list is `tool_errors` in
-`contracts/runtime/contract.json`. Runtime, the Executor process protocol, and
-MCP structured errors use one closed `ToolErrorCode`; unknown strings are not
-valid Executor responses.
+`tool_errors` in `contracts/runtime/contract.json` is the exhaustive
+machine-readable list of model-facing codes: the only `error_code` values that
+may appear in an MCP tool result. Runtime, the Executor process protocol, and
+MCP structured errors share one closed `ToolErrorCode` enum, which also holds
+internal Skill maintenance codes (`atomic_skill_replace_unsupported`,
+`skill_background_task_running`, `skill_managed_call_in_flight`,
+`skill_storage_full`, `skill_writers_unknown`, `temporary_run_closed`,
+`temporary_scope_busy`). Internal codes never appear in MCP tool results:
+
+- the MCP tool result builder replaces an internal code with `runtime_failed`,
+  keeps the original `effect_state`, and logs the original code as
+  `antnest.error.code`;
+- an Executor response for `bash`, `read`, `write`, `edit` or `info` that
+  carries an internal code is a protocol violation, reported as
+  `outcome_unknown` for tools that may have side effects and `runtime_failed`
+  otherwise;
+- unknown strings are not valid Executor responses.
+
+Internal codes surface only on the Skill maintenance and temporary Skill HTTP
+routes, whose mappings are defined in
+[`temporary-skills.schema.json`](../../../contracts/runtime/temporary-skills.schema.json)
+and, for commit `blocked_reason` values,
+[`learning-api.schema.json`](../../../contracts/skill-learning/learning-api.schema.json).
 
 `outcome_unknown` is returned when `bash`, `write`, or `edit` may have produced
 a side effect but Runtime did not receive a complete authoritative response.
