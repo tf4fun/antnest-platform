@@ -7,6 +7,7 @@ import {
   routeParityProblems,
 } from "../../support/contracts/route-parity.mjs";
 import { loadGolden } from "../../support/contracts/golden.mjs";
+import commonIDs from "../../../contracts/common/ids.schema.json" with { type: "json" };
 
 const runtimeDir = new URL("../../../contracts/runtime/", import.meta.url);
 const mcpSource = readFileSync(
@@ -46,7 +47,7 @@ const SCHEMA_FILES = [
   [new URL("../../../contracts/runtime/", import.meta.url), "http.schema.json"],
   [
     new URL("../../../contracts/runtime/", import.meta.url),
-    "runtime-status.schema.json",
+    "runtime-status.ids-v2.schema.json",
   ],
   [new URL("../../../contracts/common/", import.meta.url), "error.schema.json"],
 ];
@@ -58,6 +59,7 @@ const { Ajv2020 } = requireAcp("ajv/dist/2020.js");
 
 function localValidator() {
   const ajv = new Ajv2020({ formats: { "date-time": true, uri: true } });
+  ajv.addSchema(commonIDs);
   for (const [dir, name] of SCHEMA_FILES)
     ajv.addSchema(JSON.parse(readFileSync(new URL(name, dir), "utf8")));
   return ajv;
@@ -84,7 +86,7 @@ const validate = (reference, document) => {
 };
 
 const REPRESENTATIVE = {
-  "runtime-status.schema.json": () => ({
+  "runtime-status.ids-v2.schema.json": () => ({
     agent_id: "agent-1",
     generation: 2,
     execution_id: "execution-1",

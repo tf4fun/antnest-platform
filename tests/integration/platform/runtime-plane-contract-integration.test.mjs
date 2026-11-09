@@ -162,11 +162,11 @@ test("runtime-controller contract is canonical and self-consistent", () => {
     ),
   );
   const schema = readJSON(
-    "contracts/runtime-controller/control-api.schema.json",
+    "contracts/runtime-controller/control-api.ids-v2.schema.json",
   );
   assert.equal(
     schema.$id,
-    "https://schemas.antnest.dev/runtime-controller/control-api.schema.json",
+    "https://schemas.antnest.dev/runtime-controller/control-api.ids-v2.schema.json",
   );
   for (const legacy of [
     "services/runtime-controller/api/control-contract.json",

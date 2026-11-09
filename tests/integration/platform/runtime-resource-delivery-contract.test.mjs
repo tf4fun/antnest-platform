@@ -13,6 +13,7 @@ import { fileURLToPath } from "node:url";
 import test from "node:test";
 
 import { writeGoOverlay } from "../../support/go-overlay.mjs";
+import commonIDs from "../../../contracts/common/ids.schema.json" with { type: "json" };
 
 const root = new URL("../../../", import.meta.url);
 const rootPath = fileURLToPath(root);
@@ -34,11 +35,11 @@ function resourceSchema(file, defPath) {
 
 const schemaFiles = {
   rc: [
-    "contracts/runtime-controller/runtime-deployment.schema.json",
+    "contracts/runtime-controller/runtime-deployment.ids-v2.schema.json",
     ["properties", "resources"],
   ],
   ac: [
-    "contracts/agent-controller/control-api.schema.json",
+    "contracts/agent-controller/control-api.ids-v2.schema.json",
     ["$defs", "runtime_resources"],
   ],
   bff_input: [
@@ -53,6 +54,7 @@ const schemaFiles = {
 
 function compile(file, defPath) {
   const ajv = new Ajv2020({ useDefaults: false, strict: false });
+  ajv.addSchema(commonIDs);
   return ajv.compile({
     $id: "file://" + file,
     ...resourceSchema(file, defPath),

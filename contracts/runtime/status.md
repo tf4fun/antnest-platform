@@ -1,6 +1,6 @@
 # Runtime status and test features
 
-`GET /status` follows [runtime-status.schema.json](runtime-status.schema.json).
+`GET /status` follows [runtime-status.ids-v2.schema.json](runtime-status.ids-v2.schema.json).
 It requires RC-issued Runtime workload authority and permits only RC and ACP.
 Anonymous Docker health uses `GET/HEAD /status/live`, which returns only `status`
 with 200/503 and never exposes Agent, generation, execution or tool identity.

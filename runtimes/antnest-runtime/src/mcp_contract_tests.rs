@@ -122,10 +122,10 @@ struct ReadinessProbe {
 fn shared_contract_matches_runtime_http_surface() {
     let contract = shared_contract();
     assert_eq!(contract.mcp_protocol_version, "2026-07-28");
-    assert_eq!(contract.runtime_spec, "runtime-spec.schema.json");
+    assert_eq!(contract.runtime_spec, "runtime-spec.ids-v2.schema.json");
     let runtime_spec: serde_json::Value = serde_json::from_str(include_str!(concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/../../contracts/runtime/runtime-spec.schema.json"
+        "/../../contracts/runtime/runtime-spec.ids-v2.schema.json"
     )))
     .expect("decode RuntimeSpec schema");
     assert_eq!(runtime_spec["title"], "Antnest RuntimeSpec");
@@ -262,7 +262,7 @@ fn shared_contract_matches_runtime_http_surface() {
         RuntimeIdentity::new("agent-1", 2).unwrap(),
         "execution-1",
     );
-    assert_eq!(contract.status_schema, "runtime-status.schema.json");
+    assert_eq!(contract.status_schema, "runtime-status.ids-v2.schema.json");
     assert_eq!(contract.status["test_features"], json!([]));
     let mut expected_status = contract.status;
     if cfg!(feature = "skill-maintenance-e2e-gate") {
@@ -273,6 +273,10 @@ fn shared_contract_matches_runtime_http_surface() {
 }
 
 fn assert_runtime_spec_shape(schema: &serde_json::Value) {
+    assert_eq!(
+        schema["properties"]["agent_id"]["$ref"],
+        "../common/ids.schema.json#/$defs/agentId"
+    );
     let input = RuntimeSpecInput {
         authentication: Some(crate::service_auth::BootstrapDescriptor {
             _reserved: Default::default(),

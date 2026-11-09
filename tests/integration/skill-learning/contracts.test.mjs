@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { test } from "node:test";
 import { loadGolden } from "../../support/contracts/golden.mjs";
+import commonIDs from "../../../contracts/common/ids.schema.json" with { type: "json" };
 
 const requireFromAcp = createRequire(
   new URL("../../../services/agent-acp-service/package.json", import.meta.url),
@@ -11,12 +12,13 @@ const { Ajv2020 } = requireFromAcp("ajv/dist/2020.js");
 const schema = JSON.parse(
   await readFile(
     new URL(
-      "../../../contracts/skill-learning/learning-api.schema.json",
+      "../../../contracts/skill-learning/learning-api.ids-v2.schema.json",
       import.meta.url,
     ),
   ),
 );
 const ajv = new Ajv2020({ strict: true, validateFormats: false });
+ajv.addSchema(commonIDs);
 ajv.addSchema(
   JSON.parse(
     await readFile(
@@ -52,7 +54,7 @@ const maintenanceKidFixtures = JSON.parse(
 const runtimeSchema = JSON.parse(
   await readFile(
     new URL(
-      "../../../contracts/runtime/runtime-spec.schema.json",
+      "../../../contracts/runtime/runtime-spec.ids-v2.schema.json",
       import.meta.url,
     ),
   ),
@@ -60,16 +62,18 @@ const runtimeSchema = JSON.parse(
 const instanceSchema = JSON.parse(
   await readFile(
     new URL(
-      "../../../contracts/runtime/instance-connection.schema.json",
+      "../../../contracts/runtime/instance-connection.ids-v2.schema.json",
       import.meta.url,
     ),
   ),
 );
 const runtimeValidator = new Ajv2020({ strict: true, validateFormats: false });
+runtimeValidator.addSchema(commonIDs);
+
 const managedSchema = JSON.parse(
   await readFile(
     new URL(
-      "../../../contracts/runtime/managed-mcp.schema.json",
+      "../../../contracts/runtime/managed-mcp.ids-v2.schema.json",
       import.meta.url,
     ),
   ),
@@ -790,7 +794,7 @@ test("L0 links notice negotiation, Runtime bootstrap, and Agent View without a s
   const related = await Promise.all(
     [
       "agent-acp/workspace-bridge.schema.json",
-      "runtime/runtime-spec.schema.json",
+      "runtime/runtime-spec.ids-v2.schema.json",
       "agent-ui/workspace-api.schema.json",
     ].map(async (path) =>
       JSON.parse(
@@ -801,6 +805,7 @@ test("L0 links notice negotiation, Runtime bootstrap, and Agent View without a s
   const [bridge, runtime, workspace] = related;
   const compile = (document, name) => {
     const validator = new Ajv2020({ strict: true, validateFormats: false });
+    validator.addSchema(commonIDs);
     validator.addSchema(tunnelSchema);
     validator.addSchema(managedSchema);
     validator.addSchema(instanceSchema);
