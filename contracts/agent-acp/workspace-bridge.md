@@ -219,15 +219,51 @@ Another intent's success does not count as success of the original Prompt.
 The principal-scoped internal `GET` observation routes are
 `/rpc/agent-acp/workspace/sessions/{sessionId}/execution` and
 `/rpc/agent-acp/workspace/sessions/{sessionId}/intents/{intentId}`. Other
-methods return 405. They receive
+methods return 405 `method_not_allowed`. They receive
 trusted organization/principal/Agent headers from the Node caller, no identity
 body fields, and recheck current access before reading. The first returns
 `executionObservation`, the second `intentReceipt`; the latter may return
 unknown/expired rather than asserting that an absent record proves no
 execution. They are not exposed by Gateway and do not use administrative
-audit APIs. Receipt retention follows Session retention; an expired receipt
-must have a distinct `intent_receipt_expired` outcome. A lookup across a
+audit APIs. A lookup across a
 Bridge restart needs no old Bridge epoch or old history token.
+
+Lookup failures use the common five-field error envelope constrained by
+`observationError` in the [Bridge schema](workspace-bridge.schema.json): the
+envelope fields stay those of the shared error contract, future common fields
+are tolerated, and `code` is one of six registered outcomes. `access_denied`
+(403, `forbidden`, `retryable: false`) reports the access recheck failing on
+an existing Session. `session_not_found` (404, `not_found`,
+`retryable: false`) covers a missing, deleted, purged or foreign Session:
+authorization runs first and never reveals which of those applied.
+`intent_unknown` (404, `not_found`) reports no retained receipt inside a
+surviving Session that has not observed pruning; its canonical
+`retryable: true` authorizes retrying the lookup only, never resending the
+prompt, while N-1 producers may still emit `retryable: false` and consumers
+accept both during the rollout. `intent_receipt_expired` (410, `not_found`,
+`retryable: false`) reports a receipt that retention may already have pruned
+inside a surviving Session. `method_not_allowed` (405, `invalid_request`,
+`retryable: false`) rejects other HTTP methods on the routes, and
+`workspace_observation_unavailable` (503, `unavailable`, `retryable: true`)
+reports a temporarily unreadable observation store.
+
+Because intent IDs are opaque an absent record cannot prove that no admission
+happened, so lookup answers conservatively. A retained receipt always wins:
+when the durable receipt is still stored the route returns it instead of any
+error. When the receipt is absent inside a surviving Session, the answer
+depends on the Session's prune watermark: a NULL watermark means retention
+has not been observed to remove any receipt of that Session, so the ID is
+`intent_unknown`; once any receipt was pruned, every absent ID is reported as
+`intent_receipt_expired` even though the producer cannot tell whether that
+exact ID ever existed. `intent_unknown` is never proof of non-admission — the
+automatic and the explicit resend paths both keep their existing evidence
+requirements — and after `intent_receipt_expired` both automatic and explicit
+resend are forbidden because the intent may already have executed. That
+prohibition stands even if a later stale read returns `intent_unknown`; a
+durable receipt read or arriving at any point wins over either error. Receipt
+retention follows Session retention: the current #55 cleanup removes an
+entire Session, so a purged Session keeps the `session_not_found` outcome and
+this contract introduces no new TTL or active-Session cleanup policy.
 
 `session/prompt` still gives the official `PromptResponse` to the original
 request. A duplicate SDK prompt may wait for that same Run or return its
@@ -290,3 +326,12 @@ submission when the negotiated capability is missing, and rejects conditional
 configuration without `configurationCas: 1`. Rolling back ACP while Node uses
 receipts is unsafe; first drain or switch Node scopes, then roll back the
 producer without deleting stored intent records.
+
+The expired-lookup outcome rolls out consumer first: this shared contract
+lands first, the Agent UI consumer adopts `intent_receipt_expired` handling
+next, the ACP producer emits it after that, and an explicit component
+integration batch verifies the pair. `intentReceipt: 1` stays negotiated at
+version 1 throughout — consumers already tolerate every registered lookup
+code before any producer emits the new one, so no route catalog activation or
+capability bump is needed. Docker system E2E evidence remains with its
+dedicated workflow and is not part of this contract's delivery.

@@ -54,6 +54,7 @@
     "identity_dependency_unavailable",
     "intent_already_recorded",
     "intent_key_mismatch",
+    "intent_receipt_expired",
     "intent_unknown",
     "internal",
     "internal_error",

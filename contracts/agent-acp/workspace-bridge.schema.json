@@ -113,6 +113,78 @@
       },
       "required": ["sessionId", "appendVersion", "outputWatermark", "activeRunId", "recentReceipts", "configurationRevision"],
       "additionalProperties": false
+    },
+    "observationError": {
+      "allOf": [
+        { "$ref": "../common/error.schema.json" },
+        {
+          "type": "object",
+          "properties": {
+            "code": {
+              "enum": [
+                "access_denied",
+                "intent_receipt_expired",
+                "intent_unknown",
+                "method_not_allowed",
+                "session_not_found",
+                "workspace_observation_unavailable"
+              ]
+            }
+          },
+          "required": ["code"],
+          "allOf": [
+            {
+              "if": { "properties": { "code": { "const": "access_denied" } }, "required": ["code"] },
+              "then": {
+                "properties": {
+                  "category": { "const": "forbidden" },
+                  "retryable": { "const": false }
+                }
+              }
+            },
+            {
+              "if": { "properties": { "code": { "const": "intent_receipt_expired" } }, "required": ["code"] },
+              "then": {
+                "properties": {
+                  "category": { "const": "not_found" },
+                  "retryable": { "const": false }
+                }
+              }
+            },
+            {
+              "if": { "properties": { "code": { "const": "intent_unknown" } }, "required": ["code"] },
+              "then": { "properties": { "category": { "const": "not_found" } } }
+            },
+            {
+              "if": { "properties": { "code": { "const": "method_not_allowed" } }, "required": ["code"] },
+              "then": {
+                "properties": {
+                  "category": { "const": "invalid_request" },
+                  "retryable": { "const": false }
+                }
+              }
+            },
+            {
+              "if": { "properties": { "code": { "const": "session_not_found" } }, "required": ["code"] },
+              "then": {
+                "properties": {
+                  "category": { "const": "not_found" },
+                  "retryable": { "const": false }
+                }
+              }
+            },
+            {
+              "if": { "properties": { "code": { "const": "workspace_observation_unavailable" } }, "required": ["code"] },
+              "then": {
+                "properties": {
+                  "category": { "const": "unavailable" },
+                  "retryable": { "const": true }
+                }
+              }
+            }
+          ]
+        }
+      ]
     }
   }
 }
