@@ -54,7 +54,9 @@ test("key registration is private, generation-scoped and does not carry the Runt
 });
 
 test("open requires a current key while close clears peer identity", () => {
-  const schema = read("contracts/egress/attachment-state-request.schema.json");
+  const schema = read(
+    "contracts/egress/attachment-state-request.stored-v2.schema.json",
+  );
   const ajv = withCommonErrorSchema(new Ajv({ strict: true }));
   ajv.addFormat("ipv4", {
     validate: (value) => isIP(value) === 4,

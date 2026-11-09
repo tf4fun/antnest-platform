@@ -25,7 +25,7 @@ const ajv = withCommonErrorSchema(
 );
 
 const attachmentSchema = read(
-  "contracts/egress/attachment-state-request.schema.json",
+  "contracts/egress/attachment-state-request.stored-v2.schema.json",
 );
 
 test("pending attachment authorizes a first peer without granting traffic", () => {

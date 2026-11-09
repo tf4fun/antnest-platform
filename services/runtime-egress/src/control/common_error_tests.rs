@@ -147,6 +147,56 @@ async fn common_error_operation_failed_keeps_legacy_retry() {
 }
 
 #[tokio::test]
+async fn common_error_from_internal_keeps_diagnostic_out_of_the_envelope() {
+    let diagnostic =
+        FailureContext::new("stored_canary.repository", "repository_invariant_violated");
+    let (status, headers, body, extension) =
+        failure_body(ApiError::from(ControlError::Internal(diagnostic.clone())).into_response())
+            .await;
+    assert_common_error(
+        status,
+        &headers,
+        &body,
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "internal",
+            "internal",
+            "Internal service error",
+            false,
+        ),
+    );
+    assert_eq!(
+        extension.extensions().get::<FailureContext>(),
+        Some(&diagnostic)
+    );
+    assert_eq!(
+        extension.extensions().get::<ControlErrorCode>(),
+        Some(&ControlErrorCode("internal"))
+    );
+    assert!(!body.to_string().contains("stored_canary"));
+}
+
+#[tokio::test]
+async fn common_error_operation_failed_stays_transient() {
+    let diagnostic = FailureContext::new("agent_network.repository", "repository_operation_failed");
+    let (status, headers, body, _) =
+        failure_body(ApiError::from(ControlError::OperationFailed(diagnostic)).into_response())
+            .await;
+    assert_common_error(
+        status,
+        &headers,
+        &body,
+        (
+            StatusCode::SERVICE_UNAVAILABLE,
+            "operation_failed",
+            "internal",
+            "control operation did not complete",
+            true,
+        ),
+    );
+}
+
+#[tokio::test]
 async fn common_error_unauthenticated_keeps_challenge() {
     let response = ApiError::new(
         StatusCode::UNAUTHORIZED,

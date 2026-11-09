@@ -142,7 +142,7 @@ pub mod schemas {
         format!("https://schemas.antnest.dev/{}{fragment}", parts.join("/"))
     }
 
-    fn validator(reference: &str) -> jsonschema::Validator {
+    pub fn validator(reference: &str) -> jsonschema::Validator {
         let mut options = jsonschema::options();
         for (_key, document) in documents() {
             let id = document["$id"].as_str().unwrap().to_owned();

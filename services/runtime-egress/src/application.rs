@@ -210,6 +210,8 @@ pub enum ControlError {
     OperationFailed(#[source] FailureContext),
     #[error("control plane is unavailable")]
     ControlPlaneUnavailable(#[source] FailureContext),
+    #[error("internal control failure")]
+    Internal(#[source] FailureContext),
 }
 
 #[derive(Clone, Debug, Error, Eq, PartialEq)]
@@ -254,7 +256,8 @@ impl ControlError {
         match self {
             Self::CleanupFailed(context)
             | Self::OperationFailed(context)
-            | Self::ControlPlaneUnavailable(context) => Some(context.clone()),
+            | Self::ControlPlaneUnavailable(context)
+            | Self::Internal(context) => Some(context.clone()),
             _ => None,
         }
     }
@@ -293,6 +296,10 @@ impl ControlError {
             }
             error @ RepositoryError::Unavailable(_) => Self::ControlPlaneUnavailable(
                 FailureContext::new(stage, "repository_unavailable").with_repository_source(error),
+            ),
+            error @ RepositoryError::InvariantViolated(_) => Self::Internal(
+                FailureContext::new(stage, "repository_invariant_violated")
+                    .with_repository_source(error),
             ),
         }
     }
@@ -1145,7 +1152,28 @@ fn log_cleanup_failure(agent_id: &AgentId, stage: &'static str, _detail: &str) {
 
 #[cfg(test)]
 mod tests {
-    use super::{AgentId, AgentOperations};
+    use super::{AgentId, AgentOperations, ControlError};
+    use crate::repository::RepositoryError;
+
+    #[test]
+    fn stored_version_repository_invariant_maps_to_internal() {
+        let error = ControlError::repository(
+            "stored.repository",
+            RepositoryError::InvariantViolated("stored_canary_raw_detail"),
+        );
+        assert!(matches!(error, ControlError::Internal(_)), "{error}");
+        let diagnostic = error.diagnostic().expect("internal diagnostic");
+        assert_eq!(diagnostic.stage, "stored.repository");
+        assert_eq!(diagnostic.cause, "repository_invariant_violated");
+        let source = std::error::Error::source(&diagnostic).expect("repository source");
+        let mut chain = format!("{diagnostic}: {source}");
+        let mut next = std::error::Error::source(source);
+        while let Some(inner) = next {
+            chain = format!("{chain}: {inner}");
+            next = std::error::Error::source(inner);
+        }
+        assert!(!chain.contains("stored_canary_raw_detail"), "{chain}");
+    }
 
     #[tokio::test]
     async fn operation_lock_registry_prunes_inactive_agents() {

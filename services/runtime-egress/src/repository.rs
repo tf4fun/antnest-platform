@@ -78,6 +78,8 @@ pub enum RepositoryError {
     Unavailable(String),
     #[error("repository operation failed; raw detail omitted")]
     OperationFailed(String),
+    #[error("repository invariant violated; raw detail omitted")]
+    InvariantViolated(&'static str),
     #[error("database connection failed")]
     DatabaseConnection(#[source] DriverError),
     #[error("database operation failed")]

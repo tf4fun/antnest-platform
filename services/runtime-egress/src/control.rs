@@ -6,11 +6,8 @@ use async_trait::async_trait;
 use axum::{
     Router,
     body::{Body, to_bytes},
-    extract::{
-        MatchedPath, Path, State,
-        rejection::{JsonRejection, PathRejection},
-    },
-    http::{Request, StatusCode},
+    extract::{FromRequestParts, MatchedPath, Path, State, rejection::JsonRejection},
+    http::{Request, StatusCode, request::Parts},
     middleware,
     middleware::Next,
     response::{IntoResponse, Response},
@@ -25,7 +22,10 @@ use crate::{
     application::{
         ControlError, ControlService, FailureContext, KernelCleanup, RuntimeNetworkAttachment,
     },
-    domain::{AgentId, AttachmentState, NetworkState, PolicyAssignment, PolicyId, PolicyRevision},
+    domain::{
+        AgentId, AttachmentState, NetworkState, PolicyAssignment, PolicyId, PolicyRevision,
+        StoredVersion,
+    },
     policy::PolicySpec,
     repository::Repository,
     service_auth::{
@@ -572,9 +572,26 @@ fn status_response(status: ServiceStatus) -> Response {
     response
 }
 
+struct ControlPath<T>(T);
+
+impl<S, T> FromRequestParts<S> for ControlPath<T>
+where
+    S: Send + Sync,
+    T: serde::de::DeserializeOwned + Send,
+{
+    type Rejection = ApiError;
+
+    async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
+        let Path(value) = Path::<T>::from_request_parts(parts, state)
+            .await
+            .map_err(|_| ApiError::invalid_request())?;
+        Ok(Self(value))
+    }
+}
+
 async fn ensure_network(
     State(state): State<AppState>,
-    Path(agent_id): Path<String>,
+    ControlPath(agent_id): ControlPath<String>,
 ) -> Result<ControlJson<NetworkResponse>, ApiError> {
     let agent_id = parse_agent_id(agent_id)?;
     record_agent_id(&agent_id);
@@ -589,7 +606,7 @@ async fn ensure_network(
 
 async fn get_network(
     State(state): State<AppState>,
-    Path(agent_id): Path<String>,
+    ControlPath(agent_id): ControlPath<String>,
 ) -> Result<ControlJson<NetworkResponse>, ApiError> {
     let agent_id = parse_agent_id(agent_id)?;
     record_agent_id(&agent_id);
@@ -604,7 +621,7 @@ async fn get_network(
 
 async fn register_tunnel(
     State(state): State<AppState>,
-    Path(agent): Path<String>,
+    ControlPath(agent): ControlPath<String>,
     request: Result<ControlJson<Registration>, JsonRejection>,
 ) -> Result<StatusCode, ApiError> {
     let ControlJson(input) = request.map_err(|_| ApiError::invalid_request())?;
@@ -619,7 +636,7 @@ async fn register_tunnel(
 
 async fn set_attachment(
     State(state): State<AppState>,
-    Path(agent_id): Path<String>,
+    ControlPath(agent_id): ControlPath<String>,
     headers: axum::http::HeaderMap,
     request: Result<ControlJson<SetAttachmentRequest>, JsonRejection>,
 ) -> Result<ControlJson<NetworkResponse>, ApiError> {
@@ -673,7 +690,7 @@ struct SetAttachmentRequest {
 
 async fn release_network(
     State(state): State<AppState>,
-    Path(agent_id): Path<String>,
+    ControlPath(agent_id): ControlPath<String>,
     headers: axum::http::HeaderMap,
     request: Result<ControlJson<ExpectedResourceVersionRequest>, JsonRejection>,
 ) -> Result<ControlJson<NetworkResponse>, ApiError> {
@@ -743,9 +760,7 @@ fn parse_resource_version_token(token: &str) -> Result<u64, ApiError> {
     {
         return Err(ApiError::invalid_request());
     }
-    token
-        .parse::<u64>()
-        .map_err(|_| ApiError::invalid_request())
+    parse_stored_version(token)
 }
 
 fn resolve_resource_version(
@@ -767,18 +782,16 @@ fn resolve_resource_version(
         return Err(ApiError::invalid_request());
     }
     if let Some(version) = legacy {
-        validate_resource_version(version)?;
-        return Ok(version);
+        return validate_stored_version(version);
     }
     let token = canonical.or(header).ok_or_else(ApiError::invalid_request)?;
     parse_resource_version_token(&token)
 }
 
-fn validate_resource_version(resource_version: u64) -> Result<(), ApiError> {
-    if resource_version == 0 {
-        return Err(ApiError::invalid_request());
-    }
-    Ok(())
+fn validate_stored_version(value: u64) -> Result<u64, ApiError> {
+    StoredVersion::new(value)
+        .map(StoredVersion::get)
+        .ok_or_else(ApiError::invalid_request)
 }
 
 #[derive(Deserialize, Serialize)]
@@ -789,12 +802,12 @@ struct PutPolicyRequest {
 
 async fn put_policy_revision(
     State(state): State<AppState>,
-    Path((policy_id, revision)): Path<(String, String)>,
+    ControlPath((policy_id, revision)): ControlPath<(String, String)>,
     request: Result<ControlJson<PutPolicyRequest>, JsonRejection>,
 ) -> Result<ControlJson<PolicyRevisionResponse>, ApiError> {
     let ControlJson(request) = request.map_err(|_| ApiError::invalid_request())?;
     let policy_id = parse_policy_id(policy_id)?;
-    let revision = parse_positive_revision(&revision)?;
+    let revision = parse_stored_version(&revision)?;
     record_policy(&policy_id, revision);
     state
         .api
@@ -807,11 +820,10 @@ async fn put_policy_revision(
 
 async fn get_policy_revision(
     State(state): State<AppState>,
-    path: Result<Path<(String, String)>, PathRejection>,
+    ControlPath((policy_id, revision)): ControlPath<(String, String)>,
 ) -> Result<ControlJson<PolicyRevisionDetailResponse>, ApiError> {
-    let Path((policy_id, revision)) = path.map_err(|_| ApiError::invalid_request())?;
     let policy_id = parse_policy_id(policy_id)?;
-    let revision = parse_positive_revision(&revision)?;
+    let revision = parse_stored_version(&revision)?;
     record_policy(&policy_id, revision);
     state
         .api
@@ -824,7 +836,7 @@ async fn get_policy_revision(
 
 async fn get_assignment(
     State(state): State<AppState>,
-    Path(agent_id): Path<String>,
+    ControlPath(agent_id): ControlPath<String>,
 ) -> Result<ControlJson<AssignmentResponse>, ApiError> {
     let agent_id = parse_agent_id(agent_id)?;
     record_agent_id(&agent_id);
@@ -858,7 +870,7 @@ struct AssignPolicyRequest {
 
 async fn assign_policy(
     State(state): State<AppState>,
-    Path(agent_id): Path<String>,
+    ControlPath(agent_id): ControlPath<String>,
     headers: axum::http::HeaderMap,
     request: Result<ControlJson<AssignPolicyRequest>, JsonRejection>,
 ) -> Result<ControlJson<AssignmentResponse>, ApiError> {
@@ -870,11 +882,12 @@ async fn assign_policy(
     )?;
     let agent_id = parse_agent_id(agent_id)?;
     let policy_id = parse_policy_id(request.policy_id)?;
+    let revision = validate_stored_version(request.revision)?;
     record_agent_id(&agent_id);
-    record_policy(&policy_id, request.revision);
+    record_policy(&policy_id, revision);
     state
         .api
-        .assign(agent_id, policy_id, request.revision, expected)
+        .assign(agent_id, policy_id, revision, expected)
         .await
         .map(AssignmentResponse::from)
         .map(ControlJson)
@@ -1089,6 +1102,12 @@ impl From<ControlError> for ApiError {
                 "control plane is unavailable",
                 true,
             ),
+            ControlError::Internal(_) => Self::new(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                crate::api_errors_gen::INTERNAL,
+                "Internal service error",
+                false,
+            ),
         };
         api.diagnostic = diagnostic;
         api
@@ -1162,12 +1181,11 @@ fn parse_policy_id(value: String) -> Result<PolicyId, ApiError> {
     PolicyId::parse(value).map_err(|_| ApiError::invalid_request())
 }
 
-fn parse_positive_revision(value: &str) -> Result<u64, ApiError> {
-    value
+fn parse_stored_version(value: &str) -> Result<u64, ApiError> {
+    let version = value
         .parse::<u64>()
-        .ok()
-        .filter(|revision| *revision > 0)
-        .ok_or_else(ApiError::invalid_request)
+        .map_err(|_| ApiError::invalid_request())?;
+    validate_stored_version(version)
 }
 
 fn record_agent_id(agent_id: &AgentId) {
@@ -1188,7 +1206,10 @@ fn record_policy(policy_id: &PolicyId, revision: u64) {
 mod tests {
     use axum::{http::StatusCode, response::IntoResponse};
 
-    use super::{ApiError, CONTROL_ROUTES, ControlErrorCode};
+    use super::{
+        ApiError, CONTROL_ROUTES, ControlErrorCode, parse_resource_version_token,
+        parse_stored_version,
+    };
     use crate::application::{ControlError, FailureContext};
 
     #[test]
@@ -1240,6 +1261,48 @@ mod tests {
             response.extensions().get::<ControlErrorCode>(),
             Some(&ControlErrorCode(crate::api_errors_gen::OPERATION_FAILED))
         );
+    }
+
+    #[test]
+    fn stored_version_parse_stored_version_bounds() {
+        for accepted in ["1", "9223372036854775807"] {
+            assert!(parse_stored_version(accepted).is_ok(), "{accepted}");
+        }
+        for rejected in [
+            "0",
+            "9223372036854775808",
+            "18446744073709551615",
+            "-1",
+            "abc",
+        ] {
+            let error =
+                parse_stored_version(rejected).expect_err(&format!("{rejected} must be rejected"));
+            assert_eq!(error.status, StatusCode::BAD_REQUEST, "{rejected}");
+            assert_eq!(error.code, crate::api_errors_gen::INVALID_REQUEST);
+            assert!(!error.retryable, "{rejected}");
+        }
+    }
+
+    #[test]
+    fn stored_version_resource_version_token_bounds() {
+        for accepted in ["1", "9223372036854775807"] {
+            assert!(parse_resource_version_token(accepted).is_ok(), "{accepted}");
+        }
+        for rejected in [
+            "0",
+            "9223372036854775808",
+            "18446744073709551615",
+            "-1",
+            "abc",
+            "01",
+            "+1",
+        ] {
+            let error = parse_resource_version_token(rejected)
+                .expect_err(&format!("{rejected} must be rejected"));
+            assert_eq!(error.status, StatusCode::BAD_REQUEST, "{rejected}");
+            assert_eq!(error.code, crate::api_errors_gen::INVALID_REQUEST);
+            assert!(!error.retryable, "{rejected}");
+        }
     }
 }
 

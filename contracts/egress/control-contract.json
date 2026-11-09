@@ -1,5 +1,5 @@
 {
-  "revision": 10,
+  "revision": 11,
   "transport": "json-over-http",
   "trust_boundary": "verified-controller-or-runtime-controller-workload",
   "status_values": [
@@ -15,7 +15,7 @@
     "cardinality": "exactly_one",
     "canonical": "expected_version",
     "deprecated_alias": "expected_resource_version",
-    "note": "Mutations guarded by a resource version accept canonical expected_version or one strong If-Match quoted token in place of the body field; the numeric expected_resource_version remains accepted for one release as a deprecated alias and a request carrying more than one form is rejected."
+    "note": "Mutations guarded by a resource version accept canonical expected_version or one strong If-Match quoted token in place of the body field; the numeric expected_resource_version remains accepted for one release as a deprecated alias and a request carrying more than one form is rejected. Policy revisions and every resource-version form, including the quoted canonical and If-Match tokens, accept exactly the stored range 1 through 9223372036854775807."
   },
   "error_schema": "../common/error.schema.json",
   "fallback_errors": [
@@ -26,6 +26,10 @@
     {
       "code": "method_not_allowed",
       "status": 405
+    },
+    {
+      "code": "internal",
+      "status": 500
     }
   ],
   "builtin_policies": {
@@ -227,8 +231,8 @@
     {
       "method": "PUT",
       "path": "/internal/agent-network-attachments/{agent_id}",
-      "request_schema": "attachment-state-request.schema.json",
-      "request_body": "attachment-state-body.schema.json",
+      "request_schema": "attachment-state-request.stored-v2.schema.json",
+      "request_body": "attachment-state-body.stored-v2.schema.json",
       "caller": "agent-controller",
       "authentication": "workload",
       "responses": {
@@ -296,8 +300,8 @@
     {
       "method": "POST",
       "path": "/internal/agent-networks/{agent_id}/release",
-      "request_schema": "resource-version-request.schema.json",
-      "request_body": "resource-version-body.schema.json",
+      "request_schema": "resource-version-request.stored-v2.schema.json",
+      "request_body": "resource-version-body.stored-v2.schema.json",
       "caller": "agent-controller",
       "authentication": "workload",
       "responses": {
@@ -505,7 +509,7 @@
     {
       "method": "PUT",
       "path": "/internal/agent-policy-assignments/{agent_id}",
-      "request_body": "policy-assignment-request.schema.json",
+      "request_body": "policy-assignment-request.stored-v2.schema.json",
       "caller": "agent-controller",
       "authentication": "workload",
       "responses": {
@@ -574,16 +578,16 @@
   "schemas": {
     "policy": "policy.schema.json",
     "policy_revision_request": "policy-revision-request.schema.json",
-    "policy_assignment_request": "policy-assignment-request.schema.json",
+    "policy_assignment_request": "policy-assignment-request.stored-v2.schema.json",
     "responses": "control-response.ids-v2.schema.json",
     "packet": "../runtime/packet-contract.json",
-    "attachment_state_request": "attachment-state-request.schema.json",
-    "resource_version_request": "resource-version-request.schema.json",
+    "attachment_state_request": "attachment-state-request.stored-v2.schema.json",
+    "resource_version_request": "resource-version-request.stored-v2.schema.json",
     "service_token": "../platform/service-token-callers.schema.json",
     "tunnel_key_request": "tunnel-key-request.schema.json",
     "error": "../common/error.schema.json",
-    "attachment_state_body": "attachment-state-body.schema.json",
-    "resource_version_body": "resource-version-body.schema.json"
+    "attachment_state_body": "attachment-state-body.stored-v2.schema.json",
+    "resource_version_body": "resource-version-body.stored-v2.schema.json"
   },
   "error_codes": [
     "service_unauthenticated",

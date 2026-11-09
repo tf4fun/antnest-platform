@@ -195,7 +195,8 @@ function executionPeer() {
 const networkPath = "/internal/agent-networks/agent-1";
 const attachmentPath = "/internal/agent-network-attachments/agent-1";
 const runtimePath = "/internal/runtimes/agent-1";
-const attachmentSchema = "egress/attachment-state-request.schema.json";
+const attachmentSchema =
+  "egress/attachment-state-request.stored-v2.schema.json";
 const revisionSchema =
   "runtime-controller/control-api.ids-v2.schema.json#/$defs/revision_request";
 

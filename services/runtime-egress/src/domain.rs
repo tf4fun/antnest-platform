@@ -72,6 +72,24 @@ pub struct ActiveBinding {
     pub revision: PolicyRevision,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct StoredVersion(std::num::NonZeroU64);
+
+impl StoredVersion {
+    pub(crate) const MAX: u64 = i64::MAX as u64;
+
+    pub(crate) fn new(value: u64) -> Option<Self> {
+        if value > Self::MAX {
+            return None;
+        }
+        std::num::NonZeroU64::new(value).map(Self)
+    }
+
+    pub(crate) fn get(self) -> u64 {
+        self.0.get()
+    }
+}
+
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct AgentId(String);
 
@@ -245,5 +263,17 @@ mod tests {
             PolicyId::parse("policy-一"),
             Err(IdentifierError::NotVisibleAscii)
         );
+    }
+
+    #[test]
+    fn stored_version_accepts_only_the_postgres_bigint_range() {
+        assert_eq!(StoredVersion::new(0), None);
+        assert_eq!(StoredVersion::new(1).map(StoredVersion::get), Some(1));
+        assert_eq!(
+            StoredVersion::new(StoredVersion::MAX).map(StoredVersion::get),
+            Some(StoredVersion::MAX)
+        );
+        assert_eq!(StoredVersion::new(StoredVersion::MAX + 1), None);
+        assert_eq!(StoredVersion::new(u64::MAX), None);
     }
 }
