@@ -2,15 +2,16 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { test } from "node:test";
+import commonIDs from "../../../contracts/common/ids.schema.json" with { type: "json" };
 
 const require = createRequire(
   new URL("../../../services/agent-acp-service/package.json", import.meta.url),
 );
 const { Ajv2020 } = require("ajv/dist/2020.js");
 const schemaID =
-  "https://schemas.antnest.dev/agent-acp/runtime-barrier-recovery.schema.json";
+  "https://schemas.antnest.dev/agent-acp/runtime-barrier-recovery.ids-v2.schema.json";
 const schemaURL = new URL(
-  "../../../contracts/agent-acp/runtime-barrier-recovery.schema.json",
+  "../../../contracts/agent-acp/runtime-barrier-recovery.ids-v2.schema.json",
   import.meta.url,
 );
 const request = () => ({
@@ -30,9 +31,13 @@ const result = () => ({
   barrier: barrier(),
 });
 const fixtures = { request, result, barrier };
-const identityFields = {
-  request: ["organization_id", "agent_id", "expected_runtime_revision"],
-  result: ["organization_id", "agent_id", "runtime_revision"],
+const publicIdentityFields = {
+  request: ["organization_id", "agent_id"],
+  result: ["organization_id", "agent_id"],
+};
+const privateIdentityFields = {
+  request: ["expected_runtime_revision"],
+  result: ["runtime_revision"],
   barrier: ["barrier_id", "runtime_execution_id"],
 };
 
@@ -40,6 +45,7 @@ function validators() {
   const schema = JSON.parse(readFileSync(schemaURL, "utf8"));
   assert.equal(schema.$id, schemaID);
   const ajv = new Ajv2020({ strict: true, allErrors: true });
+  ajv.addSchema(commonIDs);
   ajv.addSchema(schema);
   return {
     root: ajv.getSchema(schemaID),
@@ -98,7 +104,31 @@ test("every layer requires its complete frozen field set", () => {
 
 test("barrier recovery identities retain opaque non-whitespace strings within the wire bounds", () => {
   const v = validators();
-  for (const [definition, fields] of Object.entries(identityFields)) {
+  for (const [definition, fields] of Object.entries(publicIdentityFields)) {
+    for (const field of fields) {
+      for (const identity of ["x", "Legacy.ID_9-z", "x".repeat(200)]) {
+        const value = fixtures[definition]();
+        value[field] = identity;
+        check(
+          v,
+          definition,
+          value,
+          true,
+          `${definition}.${field} shared public identity`,
+        );
+      }
+      const value = fixtures[definition]();
+      value[field] = "org:Agent/运行-1";
+      check(
+        v,
+        definition,
+        value,
+        false,
+        `${definition}.${field} rejects private-style identity`,
+      );
+    }
+  }
+  for (const [definition, fields] of Object.entries(privateIdentityFields)) {
     for (const field of fields) {
       for (const identity of ["x", "org:Agent/运行-1", "x".repeat(200)]) {
         const value = fixtures[definition]();
@@ -108,7 +138,7 @@ test("barrier recovery identities retain opaque non-whitespace strings within th
           definition,
           value,
           true,
-          `${definition}.${field} valid identity`,
+          `${definition}.${field} private identity keeps own punctuation`,
         );
       }
     }
@@ -132,7 +162,10 @@ test("identity length, type and whitespace rejection applies at every layer", ()
     ["object", {}],
     ["array", ["agent"]],
   ];
-  for (const [definition, fields] of Object.entries(identityFields)) {
+  for (const [definition, fields] of Object.entries({
+    ...publicIdentityFields,
+    ...privateIdentityFields,
+  })) {
     for (const field of fields) {
       for (const [label, identity] of invalid) {
         const value = fixtures[definition]();

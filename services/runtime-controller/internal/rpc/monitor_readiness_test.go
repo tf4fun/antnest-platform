@@ -27,7 +27,7 @@ func TestStatusReportsMonitorOutageAndRecoveryWithRequiredField(t *testing.T) {
 	}
 	handler := newTestHandler(t, service)
 	var schema controlSchema
-	readJSONFile(t, filepath.Join(serviceRoot(t), "../../contracts/runtime-controller/control-api.schema.json"), &schema)
+	readJSONFile(t, filepath.Join(serviceRoot(t), "../../contracts/runtime-controller/control-api.ids-v2.schema.json"), &schema)
 	for _, ready := range []bool{false, true, false} {
 		health.MarkMonitor(ready)
 		response := httptest.NewRecorder()

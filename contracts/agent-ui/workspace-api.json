@@ -26,8 +26,8 @@
   },
   "browser_session_consumer": {
     "browser_session_contract": "../identity/browser-sessions.md",
-    "gateway_revision": 24,
-    "identity_revision": 19,
+    "gateway_revision": 25,
+    "identity_revision": 20,
     "gateway_routes": [
       "get_session",
       "get_account",

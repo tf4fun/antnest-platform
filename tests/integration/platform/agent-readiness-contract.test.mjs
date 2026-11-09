@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { test } from "node:test";
+import commonIDs from "../../../contracts/common/ids.schema.json" with { type: "json" };
 
 const require = createRequire(
   new URL("../../../services/agent-acp-service/package.json", import.meta.url),
@@ -9,7 +10,7 @@ const require = createRequire(
 const { Ajv2020 } = require("ajv/dist/2020.js");
 const root = new URL("../../../contracts/", import.meta.url);
 const read = (file) => JSON.parse(readFileSync(new URL(file, root), "utf8"));
-const schema = read("agent-controller/control-api.schema.json");
+const schema = read("agent-controller/control-api.ids-v2.schema.json");
 const fixtures = read("agent-controller/readiness-fixtures.json");
 const proofIdentityFields = [
   "organization_id",
@@ -26,6 +27,7 @@ const event = (name) => {
 
 function validators({ useDefaults = false } = {}) {
   const ajv = new Ajv2020({ strict: false, allErrors: true, useDefaults });
+  ajv.addSchema(commonIDs);
   ajv.addFormat("uri", {
     type: "string",
     validate: (value) => URL.canParse(value),
@@ -38,10 +40,12 @@ function validators({ useDefaults = false } = {}) {
       ) && Number.isFinite(Date.parse(value)),
   });
   ajv.addSchema(
-    read("runtime/managed-mcp.schema.json"),
-    new URL("../runtime/managed-mcp.schema.json", schema.$id).href,
+    read("runtime/managed-mcp.ids-v2.schema.json"),
+    new URL("../runtime/managed-mcp.ids-v2.schema.json", schema.$id).href,
   );
-  ajv.addSchema(read("agent-controller/runtime-barrier-recovery.schema.json"));
+  ajv.addSchema(
+    read("agent-controller/runtime-barrier-recovery.ids-v2.schema.json"),
+  );
   ajv.addSchema(schema);
   return Object.fromEntries(
     ["agent", "agent_event", "event_list"].map((name) => [
@@ -288,6 +292,7 @@ function consumerReadinessValidator(file, definition, useDefaults = false) {
     useDefaults,
     validateFormats: false,
   });
+  ajv.addSchema(commonIDs);
   ajv.addSchema(read("common/error.schema.json"));
   if (definition === undefined) return ajv.compile(document);
   ajv.addSchema(document);
@@ -322,7 +327,7 @@ function readinessAgentView() {
 
 test("ACP preparing is an authorized offline execution-state reason without an active Session", () => {
   const validate = consumerReadinessValidator(
-    "agent-acp/agent-execution-state.schema.json",
+    "agent-acp/agent-execution-state.ids-v2.schema.json",
   );
   const value = preparingExecutionState(),
     original = structuredClone(value);
@@ -332,7 +337,7 @@ test("ACP preparing is an authorized offline execution-state reason without an a
 
 test("ACP preparing cannot disclose denied configuration or active Session identity", () => {
   const validate = consumerReadinessValidator(
-    "agent-acp/agent-execution-state.schema.json",
+    "agent-acp/agent-execution-state.ids-v2.schema.json",
   );
   for (const [name, patch] of [
     [
@@ -375,7 +380,7 @@ test("ACP preparing cannot disclose denied configuration or active Session ident
 
 test("ACP preparing preserves all legacy execution availability and denial shapes", () => {
   const validate = consumerReadinessValidator(
-    "agent-acp/agent-execution-state.schema.json",
+    "agent-acp/agent-execution-state.ids-v2.schema.json",
   );
   const original = preparingExecutionState();
   for (const [name, patch] of [
@@ -560,7 +565,7 @@ test("Console readiness projection rejects unknown and private fields", () => {
 
 test("Console contract 61 declares Controller current readiness without Runtime health inference", () => {
   const contract = read("admin-console/admin-contract.json");
-  assert.equal(contract.version, 61);
+  assert.equal(contract.version, 62);
   const policy = contract.response_policy.agent_readiness;
   assert(
     policy !== null && typeof policy === "object" && !Array.isArray(policy),

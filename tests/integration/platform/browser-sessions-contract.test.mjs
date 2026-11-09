@@ -17,7 +17,7 @@ const read = (path) =>
   );
 const identity = read("identity/identity-contract.json");
 const gateway = read("edge-gateway/session-contract.json");
-const browser = read("edge-gateway/session-response.schema.json");
+const browser = read("edge-gateway/session-response.ids-v2.schema.json");
 const rollout = read("platform/service-authentication-rollout.json");
 
 function compiler() {
@@ -309,10 +309,10 @@ test("session feed is separate from Controller offboarding and has bounded curso
         minimum: 1,
       },
       user_id: {
-        $ref: "#/definitions/id",
+        $ref: "https://schemas.antnest.dev/common/ids.schema.json#/$defs/userId",
       },
       organization_id: {
-        $ref: "#/definitions/id",
+        $ref: "https://schemas.antnest.dev/common/ids.schema.json#/$defs/organizationId",
       },
       reason: {
         type: "string",
@@ -550,7 +550,7 @@ test("explicit activity returns deadlines and a bounded scheduling hint without 
 test("Console browser-session consumer adopts the current Gateway contract", () => {
   const consumer = read("admin-console/admin-contract.json").response_policy
     .account_security;
-  assert.equal(gateway.version, 24);
+  assert.equal(gateway.version, 25);
   assert.equal(consumer.gateway_revision, gateway.version);
   assert.equal(consumer.identity_revision, identity.revision);
   assert.equal(
@@ -560,8 +560,8 @@ test("Console browser-session consumer adopts the current Gateway contract", () 
 });
 
 test("Gateway owns session mutations and records cookie concurrency and stream bounds", () => {
-  assert.equal(identity.revision, 19);
-  assert.equal(gateway.version, 24);
+  assert.equal(identity.revision, 20);
+  assert.equal(gateway.version, 25);
   assert.equal(
     gateway.browser_session_contract,
     "../identity/browser-sessions.md",
@@ -709,7 +709,13 @@ test("public response schemas declare no private credential fields or secret-mar
   ]);
   const visited = new Set();
   const documents = new Map([[browser.$id, browser]]);
-  for (const name of ["error", "pagination", "precondition", "idempotency"]) {
+  for (const name of [
+    "error",
+    "ids",
+    "pagination",
+    "precondition",
+    "idempotency",
+  ]) {
     const document = read(`common/${name}.schema.json`);
     documents.set(document.$id, document);
   }

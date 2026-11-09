@@ -38,7 +38,7 @@ func TestControlBoundaryGolden(t *testing.T) {
 	root := repositoryRoot(t)
 	var contract machineControlContract
 	readStrictContractJSON(t, filepath.Join(root, "contracts/agent-controller/control-contract.json"), &contract)
-	compiler := compileControlSchema(t, filepath.Join(root, "contracts/agent-controller/control-api.schema.json"))
+	compiler := compileControlSchema(t, filepath.Join(root, "contracts/agent-controller/control-api.ids-v2.schema.json"))
 	now := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
 	agent := sampleControlAgent(now)
 	operation := sampleControlOperation(now, agent.AgentID)
@@ -110,12 +110,23 @@ func TestLearningPolicyGolden(t *testing.T) {
 	compiler.AssertFormat()
 	var precondition any
 	readContractJSON(t, filepath.Join(root, "contracts/common/precondition.schema.json"), &precondition)
+	commonIDs, err := os.ReadFile("../../../../contracts/common/ids.schema.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	idsDocument, err := jsonschema.UnmarshalJSON(bytes.NewReader(commonIDs))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := compiler.AddResource("https://schemas.antnest.dev/common/ids.schema.json", idsDocument); err != nil {
+		t.Fatal(err)
+	}
 	require.NoError(t, compiler.AddResource("https://schemas.antnest.dev/common/precondition.schema.json", precondition))
-	contract, err := os.ReadFile(filepath.Join(root, "contracts/skill-learning/learning-api.schema.json"))
+	contract, err := os.ReadFile(filepath.Join(root, "contracts/skill-learning/learning-api.ids-v2.schema.json"))
 	require.NoError(t, err)
 	document, err := jsonschema.UnmarshalJSON(bytes.NewReader(contract))
 	require.NoError(t, err)
-	const identifier = "https://schemas.antnest.dev/skill-learning/learning-api.schema.json"
+	const identifier = "https://schemas.antnest.dev/skill-learning/learning-api.ids-v2.schema.json"
 	require.NoError(t, compiler.AddResource(identifier, document))
 	definition, err := compiler.Compile(identifier + "#/$defs/policy")
 	require.NoError(t, err)

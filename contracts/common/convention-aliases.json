@@ -1116,6 +1116,168 @@
     "remove_after": "next_release"
   },
   {
+    "file": "agent-ui/workspace-api.ids-v2.schema.json",
+    "pointer": "/$defs/contentPage",
+    "field": "$pagination",
+    "replacement": "nextCursor",
+    "kind": "protocol_exception",
+    "reason": "ACP and Agent UI retain their specified camelCase protocol; the server adapter translates service calls.",
+    "remove_after": "protocol"
+  },
+  {
+    "file": "agent-ui/workspace-api.ids-v2.schema.json",
+    "pointer": "/$defs/contentPage/properties/nextCursor",
+    "field": "nextCursor",
+    "replacement": "nextCursor",
+    "kind": "protocol_exception",
+    "reason": "ACP and Agent UI retain their specified camelCase protocol; the server adapter translates service calls.",
+    "remove_after": "protocol"
+  },
+  {
+    "file": "agent-ui/workspace-api.ids-v2.schema.json",
+    "pointer": "/$defs/contentPage/required/2",
+    "field": "nextCursor",
+    "replacement": "nextCursor",
+    "kind": "protocol_exception",
+    "reason": "ACP and Agent UI retain their specified camelCase protocol; the server adapter translates service calls.",
+    "remove_after": "protocol"
+  },
+  {
+    "file": "agent-ui/workspace-api.ids-v2.schema.json",
+    "pointer": "/$defs/processContentPage",
+    "field": "$pagination",
+    "replacement": "nextCursor",
+    "kind": "protocol_exception",
+    "reason": "ACP and Agent UI retain their specified camelCase protocol; the server adapter translates service calls.",
+    "remove_after": "protocol"
+  },
+  {
+    "file": "agent-ui/workspace-api.ids-v2.schema.json",
+    "pointer": "/$defs/processContentPage/properties/nextCursor",
+    "field": "nextCursor",
+    "replacement": "nextCursor",
+    "kind": "protocol_exception",
+    "reason": "ACP and Agent UI retain their specified camelCase protocol; the server adapter translates service calls.",
+    "remove_after": "protocol"
+  },
+  {
+    "file": "agent-ui/workspace-api.ids-v2.schema.json",
+    "pointer": "/$defs/processContentPage/required/3",
+    "field": "nextCursor",
+    "replacement": "nextCursor",
+    "kind": "protocol_exception",
+    "reason": "ACP and Agent UI retain their specified camelCase protocol; the server adapter translates service calls.",
+    "remove_after": "protocol"
+  },
+  {
+    "file": "agent-ui/workspace-api.ids-v2.schema.json",
+    "pointer": "/$defs/processPage",
+    "field": "$pagination",
+    "replacement": "nextCursor",
+    "kind": "protocol_exception",
+    "reason": "ACP and Agent UI retain their specified camelCase protocol; the server adapter translates service calls.",
+    "remove_after": "protocol"
+  },
+  {
+    "file": "agent-ui/workspace-api.ids-v2.schema.json",
+    "pointer": "/$defs/processPage/properties/nextCursor",
+    "field": "nextCursor",
+    "replacement": "nextCursor",
+    "kind": "protocol_exception",
+    "reason": "ACP and Agent UI retain their specified camelCase protocol; the server adapter translates service calls.",
+    "remove_after": "protocol"
+  },
+  {
+    "file": "agent-ui/workspace-api.ids-v2.schema.json",
+    "pointer": "/$defs/processPage/required/3",
+    "field": "nextCursor",
+    "replacement": "nextCursor",
+    "kind": "protocol_exception",
+    "reason": "ACP and Agent UI retain their specified camelCase protocol; the server adapter translates service calls.",
+    "remove_after": "protocol"
+  },
+  {
+    "file": "agent-ui/workspace-api.ids-v2.schema.json",
+    "pointer": "/$defs/promptRequest/properties/expectedAppendVersion",
+    "field": "expectedAppendVersion",
+    "replacement": "expectedAppendVersion",
+    "kind": "protocol_exception",
+    "reason": "ACP and Agent UI retain their specified camelCase protocol; the server adapter translates service calls.",
+    "remove_after": "protocol"
+  },
+  {
+    "file": "agent-ui/workspace-api.ids-v2.schema.json",
+    "pointer": "/$defs/promptRequest/required/1",
+    "field": "expectedAppendVersion",
+    "replacement": "expectedAppendVersion",
+    "kind": "protocol_exception",
+    "reason": "ACP and Agent UI retain their specified camelCase protocol; the server adapter translates service calls.",
+    "remove_after": "protocol"
+  },
+  {
+    "file": "agent-ui/workspace-api.ids-v2.schema.json",
+    "pointer": "/$defs/sessionPage",
+    "field": "$pagination",
+    "replacement": "nextCursor",
+    "kind": "protocol_exception",
+    "reason": "ACP and Agent UI retain their specified camelCase protocol; the server adapter translates service calls.",
+    "remove_after": "protocol"
+  },
+  {
+    "file": "agent-ui/workspace-api.ids-v2.schema.json",
+    "pointer": "/$defs/sessionPage/properties/nextCursor",
+    "field": "nextCursor",
+    "replacement": "nextCursor",
+    "kind": "protocol_exception",
+    "reason": "ACP and Agent UI retain their specified camelCase protocol; the server adapter translates service calls.",
+    "remove_after": "protocol"
+  },
+  {
+    "file": "agent-ui/workspace-api.ids-v2.schema.json",
+    "pointer": "/$defs/sessionPage/required/1",
+    "field": "nextCursor",
+    "replacement": "nextCursor",
+    "kind": "protocol_exception",
+    "reason": "ACP and Agent UI retain their specified camelCase protocol; the server adapter translates service calls.",
+    "remove_after": "protocol"
+  },
+  {
+    "file": "agent-ui/workspace-api.ids-v2.schema.json",
+    "pointer": "/$defs/turn/properties/liveProcessDelta",
+    "field": "$pagination",
+    "replacement": "processVersion",
+    "kind": "protocol_exception",
+    "reason": "Bounded process delta stream, not a continuation page.",
+    "remove_after": "protocol"
+  },
+  {
+    "file": "agent-ui/workspace-api.ids-v2.schema.json",
+    "pointer": "/$defs/turnPage",
+    "field": "$pagination",
+    "replacement": "nextCursor",
+    "kind": "protocol_exception",
+    "reason": "ACP and Agent UI retain their specified camelCase protocol; the server adapter translates service calls.",
+    "remove_after": "protocol"
+  },
+  {
+    "file": "agent-ui/workspace-api.ids-v2.schema.json",
+    "pointer": "/$defs/turnPage/properties/nextCursor",
+    "field": "nextCursor",
+    "replacement": "nextCursor",
+    "kind": "protocol_exception",
+    "reason": "ACP and Agent UI retain their specified camelCase protocol; the server adapter translates service calls.",
+    "remove_after": "protocol"
+  },
+  {
+    "file": "agent-ui/workspace-api.ids-v2.schema.json",
+    "pointer": "/$defs/turnPage/required/1",
+    "field": "nextCursor",
+    "replacement": "nextCursor",
+    "kind": "protocol_exception",
+    "reason": "ACP and Agent UI retain their specified camelCase protocol; the server adapter translates service calls.",
+    "remove_after": "protocol"
+  },
+  {
     "file": "agent-ui/workspace-api.json",
     "pointer": "/prompt_admission_backoff/preserve/1",
     "field": "expectedAppendVersion",
