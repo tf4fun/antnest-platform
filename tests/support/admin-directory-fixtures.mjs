@@ -2,9 +2,9 @@ import { createHash } from "node:crypto";
 import { validateGolden } from "./contracts/golden.mjs";
 
 const MEMBER_RESPONSE =
-  "admin-console/admin-api.schema.json#/$defs/directory_members_response";
+  "admin-console/admin-api.ids-v2.schema.json#/$defs/directory_members_response";
 const GROUP_RESPONSE =
-  "admin-console/admin-api.schema.json#/$defs/directory_groups_response";
+  "admin-console/admin-api.ids-v2.schema.json#/$defs/directory_groups_response";
 const MAX_LIMIT = 200;
 const DEFAULT_LIMIT = 50;
 const MAX_CURSOR = 4096;
