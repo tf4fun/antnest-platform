@@ -190,7 +190,7 @@ describe("Agent ACP producer goldens", () => {
     await capture(
       "skill-learning",
       "learning-status.blocked.json",
-      "skill-learning/learning-api.schema.json#/$defs/learning_status",
+      "skill-learning/learning-api.ids-v2.schema.json#/$defs/learning_status",
       (req, res) =>
         serveLearningStatus(req, res, { agentId: "agent-1", invalid: false }, reader, ready),
       request,
@@ -216,7 +216,7 @@ describe("Agent ACP producer goldens", () => {
     await capture(
       "skill-learning",
       "learning-changes.empty.json",
-      "skill-learning/learning-api.schema.json#/$defs/change_page",
+      "skill-learning/learning-api.ids-v2.schema.json#/$defs/change_page",
       (req, res) =>
         serveLearningChanges(
           req,

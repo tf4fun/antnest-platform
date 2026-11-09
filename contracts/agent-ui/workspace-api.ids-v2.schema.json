@@ -1,0 +1,1872 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.antnest.dev/agent-ui/workspace-api.ids-v2.schema.json",
+  "title": "Agent UI workspace v1 wire values",
+  "$defs": {
+    "organizationDisplay": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "\\S"
+    },
+    "verifiedWorkspacePrincipal": {
+      "description": "Gateway revision-15 display projection consumed by Agent UI bootstrap/SSR; signed CCT supplies identities/roles and labels are display facts only.",
+      "type": "object",
+      "properties": {
+        "userId": {
+          "$ref": "../common/ids.schema.json#/$defs/userId"
+        },
+        "organizationId": {
+          "$ref": "../common/ids.schema.json#/$defs/organizationId"
+        },
+        "organizationSlug": {
+          "$ref": "#/$defs/organizationDisplay"
+        },
+        "organizationName": {
+          "$ref": "#/$defs/organizationDisplay"
+        },
+        "administrator": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "userId",
+        "organizationId",
+        "organizationSlug",
+        "organizationName",
+        "administrator"
+      ],
+      "additionalProperties": false
+    },
+    "learningStatus": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "agentId",
+        "blocked"
+      ],
+      "properties": {
+        "agentId": {
+          "$ref": "../common/ids.schema.json#/$defs/agentId"
+        },
+        "blocked": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "reason"
+              ],
+              "properties": {
+                "reason": {
+                  "enum": [
+                    "writer_present",
+                    "unknown_effect",
+                    "model_unavailable",
+                    "runtime_unavailable",
+                    "review_inconclusive"
+                  ]
+                },
+                "skillName": {
+                  "type": "string",
+                  "maxLength": 64,
+                  "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$"
+                },
+                "sourceSessionId": {
+                  "$ref": "#/$defs/id"
+                },
+                "sourceRunId": {
+                  "$ref": "#/$defs/id"
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    "id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200
+    },
+    "revision": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
+    },
+    "cursor": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 4096
+    },
+    "contentBlock": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "additionalProperties": true,
+      "description": "A complete ACP ContentBlock; SDK validates its negotiated variant at the service adapter boundary."
+    },
+    "error": {
+      "type": "object",
+      "properties": {
+        "code": {
+          "type": "string",
+          "minLength": 1
+        },
+        "message": {
+          "type": "string",
+          "minLength": 1
+        },
+        "requestId": {
+          "$ref": "#/$defs/id"
+        },
+        "retryable": {
+          "type": "boolean"
+        },
+        "operationId": {
+          "$ref": "#/$defs/id"
+        },
+        "recovery": {
+          "enum": [
+            "refresh",
+            "query_operation",
+            "login",
+            "retry_read",
+            "none"
+          ]
+        },
+        "category": {
+          "enum": [
+            "invalid_request",
+            "unauthenticated",
+            "forbidden",
+            "not_found",
+            "conflict",
+            "precondition_failed",
+            "rate_limited",
+            "unavailable",
+            "internal"
+          ]
+        },
+        "request_id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9._:-]{1,128}$"
+        },
+        "details": {
+          "type": "object"
+        }
+      },
+      "required": [
+        "code",
+        "message",
+        "requestId",
+        "retryable",
+        "recovery"
+      ],
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "anyOf": [
+              {
+                "properties": {
+                  "category": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "category"
+                ]
+              },
+              {
+                "properties": {
+                  "request_id": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "request_id"
+                ]
+              },
+              {
+                "properties": {
+                  "details": {
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "details"
+                ]
+              }
+            ]
+          },
+          "then": {
+            "allOf": [
+              {
+                "$ref": "https://schemas.antnest.dev/common/error.schema.json"
+              },
+              {
+                "required": [
+                  "code",
+                  "category",
+                  "message",
+                  "retryable",
+                  "request_id"
+                ],
+                "properties": {
+                  "code": {
+                    "type": "string"
+                  },
+                  "category": {
+                    "type": "string"
+                  },
+                  "message": {
+                    "type": "string"
+                  },
+                  "retryable": {
+                    "type": "boolean"
+                  },
+                  "request_id": {
+                    "type": "string"
+                  }
+                }
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "promptQueryEntries": {
+      "description": "Explicit Prompt retry query. Preserve the ordered decoded query entries, including duplicates; ordinary submit has no entries and explicit retry has exactly one action=retry entry.",
+      "type": "array",
+      "enum": [
+        [],
+        [
+          [
+            "action",
+            "retry"
+          ]
+        ]
+      ]
+    },
+    "promptRequest": {
+      "type": "object",
+      "properties": {
+        "intentId": {
+          "$ref": "#/$defs/id"
+        },
+        "expectedAppendVersion": {
+          "$ref": "#/$defs/revision"
+        },
+        "prompt": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/contentBlock"
+          }
+        }
+      },
+      "required": [
+        "intentId",
+        "expectedAppendVersion",
+        "prompt"
+      ],
+      "additionalProperties": false
+    },
+    "promptAccepted": {
+      "type": "object",
+      "properties": {
+        "operationId": {
+          "$ref": "#/$defs/id"
+        },
+        "acceptance": {
+          "const": "bridge"
+        },
+        "phase": {
+          "const": "dispatching"
+        }
+      },
+      "required": [
+        "operationId",
+        "acceptance",
+        "phase"
+      ],
+      "additionalProperties": false
+    },
+    "bootstrap": {
+      "type": "object",
+      "properties": {
+        "principal": {
+          "$ref": "#/$defs/verifiedWorkspacePrincipal"
+        },
+        "agents": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "agentId": {
+                "$ref": "../common/ids.schema.json#/$defs/agentId"
+              },
+              "name": {
+                "type": "string",
+                "minLength": 1
+              },
+              "lifecycle": {
+                "enum": [
+                  "not_created",
+                  "created",
+                  "deleted"
+                ]
+              },
+              "activation": {
+                "enum": [
+                  "enabled",
+                  "disabled"
+                ]
+              },
+              "runtime": {
+                "enum": [
+                  "unknown",
+                  "waiting",
+                  "available",
+                  "unhealthy",
+                  "exited",
+                  "absent"
+                ]
+              }
+            },
+            "required": [
+              "agentId",
+              "name",
+              "lifecycle",
+              "runtime"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "renderedAt": {
+          "type": "string",
+          "minLength": 1
+        },
+        "bridgeEpoch": {
+          "$ref": "#/$defs/id"
+        }
+      },
+      "required": [
+        "principal",
+        "agents",
+        "renderedAt",
+        "bridgeEpoch"
+      ],
+      "additionalProperties": false
+    },
+    "sessionSummary": {
+      "type": "object",
+      "properties": {
+        "sessionId": {
+          "$ref": "#/$defs/id"
+        },
+        "title": {
+          "type": "string"
+        },
+        "updatedAt": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "activeOperationId": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/id"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "sessionId",
+        "title",
+        "updatedAt",
+        "activeOperationId"
+      ],
+      "additionalProperties": false
+    },
+    "sessionPage": {
+      "type": "object",
+      "properties": {
+        "items": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/sessionSummary"
+          }
+        },
+        "nextCursor": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/cursor"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "items",
+        "nextCursor"
+      ],
+      "additionalProperties": false
+    },
+    "createSessionResponse": {
+      "type": "object",
+      "properties": {
+        "sessionId": {
+          "$ref": "#/$defs/id"
+        }
+      },
+      "required": [
+        "sessionId"
+      ],
+      "additionalProperties": false
+    },
+    "cancelRequest": {
+      "type": "object",
+      "properties": {
+        "expectedRunId": {
+          "$ref": "#/$defs/id"
+        }
+      },
+      "required": [
+        "expectedRunId"
+      ],
+      "additionalProperties": false
+    },
+    "operation": {
+      "type": "object",
+      "properties": {
+        "operationId": {
+          "$ref": "#/$defs/id"
+        },
+        "sessionId": {
+          "$ref": "#/$defs/id"
+        },
+        "phase": {
+          "enum": [
+            "dispatching",
+            "accepted",
+            "running",
+            "awaiting_permission",
+            "cancelling",
+            "completed",
+            "failed",
+            "cancelled",
+            "uncertain"
+          ]
+        },
+        "acceptance": {
+          "enum": [
+            "bridge",
+            "acp",
+            "unknown"
+          ]
+        },
+        "runId": {
+          "$ref": "#/$defs/id"
+        },
+        "outputWatermark": {
+          "$ref": "#/$defs/revision"
+        },
+        "stopReason": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "errorClass": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 128
+        },
+        "error": {
+          "$ref": "#/$defs/error"
+        }
+      },
+      "required": [
+        "operationId",
+        "sessionId",
+        "phase",
+        "acceptance"
+      ],
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "acceptance": {
+                "const": "acp"
+              }
+            },
+            "required": [
+              "acceptance"
+            ]
+          },
+          "then": {
+            "properties": {
+              "runId": true,
+              "outputWatermark": true
+            },
+            "required": [
+              "runId",
+              "outputWatermark"
+            ]
+          }
+        }
+      ]
+    },
+    "streamEvent": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "snapshot",
+            "reset",
+            "delta",
+            "access_revoked"
+          ]
+        },
+        "agentId": {
+          "$ref": "../common/ids.schema.json#/$defs/agentId"
+        },
+        "bridgeEpoch": {
+          "$ref": "#/$defs/id"
+        },
+        "projectionId": {
+          "$ref": "#/$defs/id"
+        },
+        "fromStreamRevision": {
+          "$ref": "#/$defs/revision"
+        },
+        "toStreamRevision": {
+          "$ref": "#/$defs/revision"
+        },
+        "cursor": {
+          "$ref": "#/$defs/cursor"
+        },
+        "sessionId": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/id"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "incarnation": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/id"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "sessionViewRevision": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/revision"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "view": {
+          "$ref": "#/$defs/agentView"
+        },
+        "patch": {
+          "type": "array",
+          "maxItems": 128,
+          "items": {
+            "type": "object",
+            "properties": {
+              "op": {
+                "enum": [
+                  "add",
+                  "replace",
+                  "remove"
+                ]
+              },
+              "path": {
+                "type": "string",
+                "pattern": "^/(?:availability|unavailableReason|activeSessionId|promptCapabilities|operations|permissions|controlCommands|skillCommands|systemNotices|learningStatus|selectedView/(?:title|updatedAt|viewRevision|appendVersion|outputWatermark|historyToken|historyState|turns|olderTurnsCursor|operations|permissions|configOptions|configurationToken|usage|availableCommands))(?:/(?!__proto__(?:/|$)|constructor(?:/|$)|prototype(?:/|$))[^/]+)*$",
+                "maxLength": 2048
+              },
+              "value": {}
+            },
+            "required": [
+              "op",
+              "path"
+            ],
+            "additionalProperties": false,
+            "allOf": [
+              {
+                "if": {
+                  "properties": {
+                    "op": {
+                      "enum": [
+                        "add",
+                        "replace"
+                      ]
+                    }
+                  }
+                },
+                "then": {
+                  "required": [
+                    "value"
+                  ],
+                  "properties": {
+                    "value": true
+                  }
+                }
+              },
+              {
+                "if": {
+                  "properties": {
+                    "op": {
+                      "const": "remove"
+                    }
+                  }
+                },
+                "then": {
+                  "not": {
+                    "required": [
+                      "value"
+                    ],
+                    "properties": {
+                      "value": true
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "minItems": 1
+        },
+        "fromSessionViewRevision": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/revision"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "fromCursor": {
+          "$ref": "#/$defs/cursor"
+        }
+      },
+      "required": [
+        "type",
+        "agentId",
+        "bridgeEpoch",
+        "projectionId",
+        "fromStreamRevision",
+        "toStreamRevision",
+        "cursor"
+      ],
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "delta"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "properties": {
+              "sessionId": true,
+              "incarnation": true,
+              "sessionViewRevision": true,
+              "patch": true,
+              "fromSessionViewRevision": true,
+              "fromCursor": true
+            },
+            "required": [
+              "sessionId",
+              "incarnation",
+              "sessionViewRevision",
+              "patch",
+              "fromSessionViewRevision",
+              "fromCursor"
+            ],
+            "allOf": [
+              {
+                "if": {
+                  "properties": {
+                    "sessionId": {
+                      "type": "null"
+                    }
+                  }
+                },
+                "then": {
+                  "properties": {
+                    "incarnation": {
+                      "type": "null"
+                    },
+                    "fromSessionViewRevision": {
+                      "type": "null"
+                    },
+                    "sessionViewRevision": {
+                      "type": "null"
+                    }
+                  }
+                },
+                "else": {
+                  "properties": {
+                    "incarnation": {
+                      "$ref": "#/$defs/id"
+                    },
+                    "fromSessionViewRevision": {
+                      "$ref": "#/$defs/revision"
+                    },
+                    "sessionViewRevision": {
+                      "$ref": "#/$defs/revision"
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "enum": [
+                  "snapshot",
+                  "reset"
+                ]
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "properties": {
+              "view": true
+            },
+            "required": [
+              "view"
+            ]
+          }
+        }
+      ]
+    },
+    "systemNotice": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "changeId",
+        "sequence",
+        "agentId",
+        "kind",
+        "occurredAt",
+        "skillName",
+        "changeSummary"
+      ],
+      "properties": {
+        "changeId": {
+          "$ref": "#/$defs/id"
+        },
+        "sequence": {
+          "type": "string",
+          "pattern": "^[1-9][0-9]{0,18}$"
+        },
+        "agentId": {
+          "$ref": "../common/ids.schema.json#/$defs/agentId"
+        },
+        "kind": {
+          "enum": [
+            "skill_created",
+            "skill_updated"
+          ]
+        },
+        "occurredAt": {
+          "type": "string",
+          "minLength": 20,
+          "maxLength": 40
+        },
+        "skillName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$"
+        },
+        "changeSummary": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2048
+        },
+        "sourceSessionId": {
+          "$ref": "#/$defs/id"
+        },
+        "sourceRunId": {
+          "$ref": "#/$defs/id"
+        }
+      }
+    },
+    "agentView": {
+      "type": "object",
+      "properties": {
+        "agentId": {
+          "$ref": "../common/ids.schema.json#/$defs/agentId"
+        },
+        "bridgeEpoch": {
+          "$ref": "#/$defs/id"
+        },
+        "availability": {
+          "enum": [
+            "ready",
+            "busy",
+            "offline"
+          ]
+        },
+        "unavailableReason": {
+          "enum": [
+            "agent_unavailable",
+            "agent_preparing",
+            "runtime_barrier_required",
+            null
+          ]
+        },
+        "controlCommands": {
+          "$ref": "#/$defs/commandCatalogue"
+        },
+        "skillCommands": {
+          "$ref": "#/$defs/commandCatalogue"
+        },
+        "promptCapabilities": {
+          "type": "object",
+          "properties": {
+            "image": {
+              "type": "boolean"
+            },
+            "audio": {
+              "type": "boolean"
+            },
+            "embeddedContext": {
+              "type": "boolean"
+            }
+          },
+          "additionalProperties": false
+        },
+        "activeSessionId": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/id"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "learningStatus": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/learningStatus"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "systemNotices": {
+          "type": "array",
+          "maxItems": 20,
+          "items": {
+            "$ref": "#/$defs/systemNotice"
+          }
+        },
+        "selectedSessionId": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/id"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "selectedView": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/sessionView"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "operations": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/operation"
+          }
+        },
+        "permissions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/permission"
+          }
+        },
+        "streamCursor": {
+          "$ref": "#/$defs/cursor"
+        }
+      },
+      "required": [
+        "agentId",
+        "bridgeEpoch",
+        "availability",
+        "promptCapabilities",
+        "activeSessionId",
+        "selectedSessionId",
+        "selectedView",
+        "operations",
+        "permissions",
+        "streamCursor"
+      ],
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "selectedSessionId": {
+                "type": "null"
+              }
+            },
+            "required": [
+              "selectedSessionId"
+            ]
+          },
+          "then": {
+            "properties": {
+              "selectedView": {
+                "type": "null"
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "selectedView": {
+                "$ref": "#/$defs/sessionView"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "unavailableReason": {
+                "const": "agent_preparing"
+              }
+            },
+            "required": [
+              "unavailableReason"
+            ]
+          },
+          "then": {
+            "properties": {
+              "availability": {
+                "const": "offline"
+              },
+              "activeSessionId": {
+                "type": "null"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "sessionView": {
+      "type": "object",
+      "properties": {
+        "agentId": {
+          "$ref": "../common/ids.schema.json#/$defs/agentId"
+        },
+        "sessionId": {
+          "$ref": "#/$defs/id"
+        },
+        "title": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 512
+        },
+        "updatedAt": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 64
+        },
+        "bridgeEpoch": {
+          "$ref": "#/$defs/id"
+        },
+        "incarnation": {
+          "$ref": "#/$defs/id"
+        },
+        "viewRevision": {
+          "$ref": "#/$defs/revision"
+        },
+        "appendVersion": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/revision"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "outputWatermark": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/revision"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "historyToken": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/cursor"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "streamCursor": {
+          "$ref": "#/$defs/cursor"
+        },
+        "historyState": {
+          "enum": [
+            "cold",
+            "loading",
+            "ready",
+            "reconciling",
+            "blocked"
+          ]
+        },
+        "turns": {
+          "type": "array",
+          "maxItems": 21,
+          "items": {
+            "$ref": "#/$defs/turn"
+          }
+        },
+        "olderTurnsCursor": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/cursor"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "operations": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/operation"
+          }
+        },
+        "permissions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/permission"
+          }
+        },
+        "configOptions": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        },
+        "availableCommands": {
+          "$ref": "#/$defs/commandCatalogue"
+        },
+        "configurationToken": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/cursor"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "usage": {
+          "type": [
+            "object",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "agentId",
+        "sessionId",
+        "title",
+        "updatedAt",
+        "bridgeEpoch",
+        "incarnation",
+        "viewRevision",
+        "appendVersion",
+        "outputWatermark",
+        "historyToken",
+        "streamCursor",
+        "historyState",
+        "turns",
+        "olderTurnsCursor",
+        "operations",
+        "permissions"
+      ],
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "historyState": {
+                "const": "blocked"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "historyToken": {
+                "type": "null"
+              },
+              "configurationToken": {
+                "type": "null"
+              },
+              "olderTurnsCursor": {
+                "type": "null"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "turn": {
+      "type": "object",
+      "properties": {
+        "turnId": {
+          "$ref": "#/$defs/id"
+        },
+        "outcome": {
+          "enum": [
+            "running",
+            "completed",
+            "failed",
+            "cancelled",
+            "unknown"
+          ]
+        },
+        "prompt": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/contentBlock"
+          }
+        },
+        "finalResponse": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/contentBlock"
+          }
+        },
+        "contentCursor": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/cursor"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "contentSection": {
+          "enum": [
+            "prompt",
+            "finalResponse",
+            null
+          ]
+        },
+        "processVersion": {
+          "$ref": "#/$defs/revision"
+        },
+        "processCount": {
+          "$ref": "#/$defs/revision"
+        },
+        "liveProcessDelta": {
+          "type": "object",
+          "properties": {
+            "fromVersion": {
+              "$ref": "#/$defs/revision"
+            },
+            "items": {
+              "type": "array",
+              "maxItems": 10,
+              "items": {
+                "type": "object",
+                "properties": {
+                  "index": {
+                    "$ref": "#/$defs/revision"
+                  },
+                  "item": {
+                    "$ref": "#/$defs/processItem"
+                  }
+                },
+                "required": [
+                  "index",
+                  "item"
+                ],
+                "additionalProperties": false
+              }
+            }
+          },
+          "required": [
+            "fromVersion",
+            "items"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "turnId",
+        "outcome",
+        "prompt",
+        "finalResponse",
+        "contentCursor",
+        "contentSection",
+        "processVersion",
+        "processCount"
+      ],
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "contentCursor": {
+                "type": "null"
+              }
+            },
+            "required": [
+              "contentCursor"
+            ]
+          },
+          "then": {
+            "properties": {
+              "contentSection": {
+                "type": "null"
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "contentSection": {
+                "enum": [
+                  "prompt",
+                  "finalResponse"
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "outcome": {
+                "const": "running"
+              }
+            },
+            "required": [
+              "outcome"
+            ]
+          },
+          "else": {
+            "not": {
+              "properties": {
+                "liveProcessDelta": true
+              },
+              "required": [
+                "liveProcessDelta"
+              ]
+            }
+          }
+        }
+      ],
+      "additionalProperties": false
+    },
+    "turnPage": {
+      "type": "object",
+      "properties": {
+        "items": {
+          "type": "array",
+          "maxItems": 20,
+          "items": {
+            "$ref": "#/$defs/turn"
+          }
+        },
+        "nextCursor": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/cursor"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "newerCursor": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/cursor"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "items",
+        "nextCursor",
+        "newerCursor"
+      ],
+      "additionalProperties": false
+    },
+    "contentPage": {
+      "type": "object",
+      "properties": {
+        "section": {
+          "enum": [
+            "prompt",
+            "finalResponse"
+          ]
+        },
+        "items": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/contentBlock"
+          }
+        },
+        "fragment": {
+          "type": "object",
+          "properties": {
+            "blockIndex": {
+              "$ref": "#/$defs/revision"
+            },
+            "byteOffset": {
+              "$ref": "#/$defs/revision"
+            },
+            "totalBytes": {
+              "$ref": "#/$defs/revision"
+            },
+            "serializedBlockBase64": {
+              "type": "string",
+              "contentEncoding": "base64"
+            }
+          },
+          "required": [
+            "blockIndex",
+            "byteOffset",
+            "totalBytes",
+            "serializedBlockBase64"
+          ],
+          "additionalProperties": false
+        },
+        "nextCursor": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/cursor"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "complete": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "section",
+        "items",
+        "nextCursor",
+        "complete"
+      ],
+      "additionalProperties": false
+    },
+    "processPage": {
+      "type": "object",
+      "properties": {
+        "turnId": {
+          "$ref": "#/$defs/id"
+        },
+        "processVersion": {
+          "$ref": "#/$defs/revision"
+        },
+        "items": {
+          "type": "array",
+          "maxItems": 10,
+          "items": {
+            "$ref": "#/$defs/processItem"
+          }
+        },
+        "nextCursor": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/cursor"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "turnId",
+        "processVersion",
+        "items",
+        "nextCursor"
+      ],
+      "additionalProperties": false
+    },
+    "processContentPage": {
+      "type": "object",
+      "properties": {
+        "turnId": {
+          "$ref": "#/$defs/id"
+        },
+        "itemId": {
+          "$ref": "#/$defs/id"
+        },
+        "items": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/contentBlock"
+          }
+        },
+        "fragment": {
+          "type": "object",
+          "properties": {
+            "blockIndex": {
+              "$ref": "#/$defs/revision"
+            },
+            "byteOffset": {
+              "$ref": "#/$defs/revision"
+            },
+            "totalBytes": {
+              "$ref": "#/$defs/revision"
+            },
+            "serializedBlockBase64": {
+              "type": "string",
+              "contentEncoding": "base64"
+            }
+          },
+          "required": [
+            "blockIndex",
+            "byteOffset",
+            "totalBytes",
+            "serializedBlockBase64"
+          ],
+          "additionalProperties": false
+        },
+        "nextCursor": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/cursor"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "complete": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "turnId",
+        "itemId",
+        "items",
+        "nextCursor",
+        "complete"
+      ],
+      "additionalProperties": false
+    },
+    "processItem": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/id"
+        },
+        "kind": {
+          "enum": [
+            "thought",
+            "tool",
+            "plan",
+            "notice"
+          ]
+        },
+        "summary": {
+          "type": "string"
+        },
+        "status": {
+          "enum": [
+            "pending",
+            "running",
+            "completed",
+            "failed",
+            "unknown"
+          ]
+        },
+        "content": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/contentBlock"
+          }
+        },
+        "toolSections": {
+          "type": "object",
+          "properties": {
+            "inputIndex": {
+              "$ref": "#/$defs/revision"
+            },
+            "outputIndex": {
+              "$ref": "#/$defs/revision"
+            },
+            "detailStartIndex": {
+              "$ref": "#/$defs/revision"
+            }
+          },
+          "required": [
+            "detailStartIndex"
+          ],
+          "additionalProperties": false
+        },
+        "contentCursor": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/cursor"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "kind",
+        "summary",
+        "status",
+        "content",
+        "contentCursor"
+      ],
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "tool"
+              }
+            },
+            "required": [
+              "kind"
+            ]
+          },
+          "then": {
+            "properties": {
+              "toolSections": true
+            },
+            "required": [
+              "toolSections"
+            ]
+          },
+          "else": {
+            "not": {
+              "required": [
+                "toolSections"
+              ]
+            }
+          }
+        }
+      ],
+      "additionalProperties": false
+    },
+    "permission": {
+      "type": "object",
+      "properties": {
+        "permissionId": {
+          "$ref": "#/$defs/id"
+        },
+        "sessionId": {
+          "$ref": "#/$defs/id"
+        },
+        "generation": {
+          "$ref": "#/$defs/revision"
+        },
+        "toolCall": {
+          "type": "object",
+          "properties": {
+            "toolCallId": {
+              "$ref": "#/$defs/id"
+            },
+            "title": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string"
+            },
+            "rawInput": {}
+          },
+          "required": [
+            "toolCallId"
+          ],
+          "additionalProperties": false
+        },
+        "options": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "properties": {
+              "optionId": {
+                "$ref": "#/$defs/id"
+              },
+              "name": {
+                "type": "string",
+                "minLength": 1
+              },
+              "kind": {
+                "enum": [
+                  "allow_once",
+                  "allow_always",
+                  "reject_once",
+                  "reject_always"
+                ]
+              }
+            },
+            "required": [
+              "optionId",
+              "name",
+              "kind"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "permissionId",
+        "sessionId",
+        "generation",
+        "toolCall",
+        "options"
+      ],
+      "additionalProperties": false
+    },
+    "permissionDecisionRequest": {
+      "type": "object",
+      "properties": {
+        "generation": {
+          "$ref": "#/$defs/revision"
+        },
+        "optionId": {
+          "$ref": "#/$defs/id"
+        }
+      },
+      "required": [
+        "generation",
+        "optionId"
+      ],
+      "additionalProperties": false
+    },
+    "commandCatalogue": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^[^\\s/]+$"
+          },
+          "description": {
+            "type": "string"
+          },
+          "input": {
+            "type": "object",
+            "properties": {
+              "hint": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "hint"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "name",
+          "description"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "controlCommandRequest": {
+      "type": "object",
+      "properties": {
+        "text": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 8192
+        },
+        "sessionId": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/controlId"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "expectedConfigurationToken": {
+          "$ref": "#/$defs/cursor"
+        },
+        "expectedRunId": {
+          "$ref": "#/$defs/controlId"
+        },
+        "operationId": {
+          "$ref": "#/$defs/controlId"
+        }
+      },
+      "required": [
+        "text",
+        "sessionId"
+      ],
+      "additionalProperties": false
+    },
+    "controlId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200,
+      "pattern": "^[^/\\\\\\u0000-\\u001f\\u007f]+$"
+    },
+    "controlCommandResult": {
+      "type": "object",
+      "properties": {
+        "command": {
+          "enum": [
+            "help",
+            "status",
+            "usage",
+            "new",
+            "sessions",
+            "resume",
+            "fork",
+            "model",
+            "mode",
+            "thinking",
+            "stop"
+          ]
+        },
+        "text": {
+          "type": "string",
+          "maxLength": 65536
+        },
+        "selection": {
+          "type": "object",
+          "properties": {
+            "sessionId": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/controlId"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "sessionId"
+          ],
+          "additionalProperties": false
+        },
+        "configurationChanged": {
+          "const": true
+        }
+      },
+      "required": [
+        "command",
+        "text"
+      ],
+      "additionalProperties": false
+    },
+    "configurationRequest": {
+      "type": "object",
+      "properties": {
+        "configId": {
+          "$ref": "#/$defs/id"
+        },
+        "value": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "boolean"
+            }
+          ]
+        },
+        "expectedConfigurationToken": {
+          "$ref": "#/$defs/cursor"
+        }
+      },
+      "required": [
+        "configId",
+        "value",
+        "expectedConfigurationToken"
+      ],
+      "additionalProperties": false
+    }
+  }
+}

@@ -77,10 +77,10 @@ describe.skipIf(databaseUrl === undefined)(
 
     it("restores opaque identity from its own stored projection without aliasing similar principals", async () => {
       const input = executionConfiguration();
-      input.organization_id = `${randomUUID()}+division@example.org`;
+      input.organization_id = `${randomUUID()}.Division-Team`;
       organizations.push(input.organization_id);
-      input.agents[0]!.agent_id = "agent/department+1";
-      input.agents[0]!.principal_ids = ["owner+team@example.org"];
+      input.agents[0]!.agent_id = "Agent.Department_1";
+      input.agents[0]!.principal_ids = ["Owner.Team_1"];
       const directory = executionDirectory();
       await directory.apply(input);
       expect(await repository.load(input.organization_id)).toEqual(
@@ -96,9 +96,9 @@ describe.skipIf(databaseUrl === undefined)(
       await restarted.apply(input);
       expect(restarted.inspect(identity).agent.agent_id).toBe(identity.agentId);
       for (const principalId of [
-        "OWNER+team@example.org",
-        "owner team@example.org",
-        "owner%2Bteam@example.org",
+        "owner.Team_1",
+        "Owner.Team-1",
+        "Owner.Team.1",
       ]) {
         expect(() => restarted.inspect({ ...identity, principalId })).toThrow(
           "access",

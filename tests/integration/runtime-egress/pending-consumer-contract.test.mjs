@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { test } from "node:test";
+import commonIDs from "../../../contracts/common/ids.schema.json" with { type: "json" };
 
 const requireAcp = createRequire(
   new URL("../../../services/agent-acp-service/package.json", import.meta.url),
@@ -16,10 +17,12 @@ const read = (name) =>
 
 test("Controller exposes pending attachment without claiming traffic or readiness", () => {
   assert(read("control-contract.json").revision >= 40);
-  const schema = read("control-api.schema.json");
-  const validate = new Ajv2020({
+  const schema = read("control-api.ids-v2.schema.json");
+  const __idsAjv = new Ajv2020({
     formats: { "date-time": true, uri: true },
-  }).compile({
+  });
+  __idsAjv.addSchema(commonIDs);
+  const validate = __idsAjv.compile({
     ...schema,
     $ref: "#/$defs/agent_network_policy",
   });

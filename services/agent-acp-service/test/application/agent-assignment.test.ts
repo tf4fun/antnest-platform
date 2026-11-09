@@ -19,8 +19,20 @@ const contract = JSON.parse(
 
 describe("fixed complete-membership Agent assignment", () => {
   it.each(contract.vectors)(
-    "uses the canonical complete digest for $organization_id / $agent_id",
+    "honors resource admission and the canonical digest for $organization_id / $agent_id",
     (v) => {
+      // Frozen hashing vectors include pre-contract scopes. Their digest remains
+      // covered by the contract test; current ownership must reject them.
+      if (["组织", 'a"b'].includes(v.organization_id)) {
+        const assignment = new AgentAssignment(v.members[0]!, v.members);
+        expect(() =>
+          assignment.preferred({ organizationId: v.organization_id, agentId: v.agent_id }),
+        ).toThrow(TypeError);
+        expect(() =>
+          assignment.owns({ organizationId: v.organization_id, agentId: v.agent_id }),
+        ).toThrow(TypeError);
+        return;
+      }
       for (const member of v.members) {
         const assignment = new AgentAssignment(member, [...v.members].reverse());
         expect(

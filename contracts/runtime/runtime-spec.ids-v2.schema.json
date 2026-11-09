@@ -1,0 +1,180 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.antnest.dev/runtime/runtime-spec.ids-v2.schema.json",
+  "title": "Antnest RuntimeSpec",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "agent_id",
+    "generation",
+    "listen",
+    "network",
+    "filesystem",
+    "authentication"
+  ],
+  "properties": {
+    "skill_maintenance_verifiers": {
+      "$ref": "#/$defs/skillMaintenanceVerifiers",
+      "description": "Immutable learning verifier bootstrap. RC freezes the bounded public-key set with each accepted lifecycle operation and includes it in the deployment digest. Runtime validates the set and uses it for its private maintenance route. Empty keys disable maintenance."
+    },
+    "mcp_servers": {
+      "$ref": "managed-mcp.ids-v2.schema.json#/$defs/servers_read"
+    },
+    "agent_id": {
+      "$ref": "../common/ids.schema.json#/$defs/agentId",
+      "description": "Stable deployment-safe Agent identifier used in platform resource names."
+    },
+    "generation": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 9223372036854775807
+    },
+    "schema_version": {
+      "type": "integer",
+      "const": 1
+    },
+    "listen": {
+      "$ref": "#/$defs/socketAddress"
+    },
+    "network": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "packet_contract_revision",
+        "egress_endpoint",
+        "tunnel_ipv4",
+        "resolver_ipv4"
+      ],
+      "properties": {
+        "packet_contract_revision": {
+          "type": "integer",
+          "const": 2,
+          "description": "Exact authenticated WireGuard tunnel contract revision accepted by this Runtime image."
+        },
+        "egress_endpoint": {
+          "$ref": "#/$defs/ipv4Endpoint"
+        },
+        "tunnel_ipv4": {
+          "type": "string",
+          "format": "ipv4",
+          "description": "Stable Agent Tunnel IPv4, distinct from resolver_ipv4."
+        },
+        "resolver_ipv4": {
+          "type": "string",
+          "format": "ipv4",
+          "description": "Egress virtual resolver/gateway IPv4, distinct from tunnel_ipv4."
+        }
+      }
+    },
+    "filesystem": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "workspace",
+        "system_skills"
+      ],
+      "properties": {
+        "workspace": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^/",
+          "description": "Normalized absolute writable workspace root; must not overlap system_skills."
+        },
+        "system_skills": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^/",
+          "description": "Normalized absolute system Skill root; must not overlap workspace."
+        }
+      }
+    },
+    "authentication": {
+      "$ref": "instance-connection.ids-v2.schema.json#/$defs/bootstrap_descriptor",
+      "description": "RC-owned public bootstrap descriptors, frozen with accepted generation; caller tokens and tunnel private keys never enter RuntimeSpec."
+    }
+  },
+  "$defs": {
+    "maintenanceKid": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$",
+      "description": "Exact ASCII maintenance key identity shared by RC, Runtime and ACP. No whitespace normalization; see maintenance-kid-fixtures.json."
+    },
+    "socketAddress": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "host",
+        "port"
+      ],
+      "properties": {
+        "host": {
+          "type": "string",
+          "const": "0.0.0.0"
+        },
+        "port": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535
+        }
+      },
+      "description": "Internal Runtime HTTP listener expressed without language-specific socket parsing."
+    },
+    "skillMaintenanceVerifiers": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "keys"
+      ],
+      "properties": {
+        "keys": {
+          "type": "array",
+          "maxItems": 2,
+          "uniqueItems": true,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "kid",
+              "algorithm",
+              "public_key_base64url"
+            ],
+            "properties": {
+              "kid": {
+                "$ref": "#/$defs/maintenanceKid"
+              },
+              "algorithm": {
+                "const": "Ed25519"
+              },
+              "public_key_base64url": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9_-]{43}$"
+              }
+            }
+          }
+        }
+      }
+    },
+    "ipv4Endpoint": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "ipv4",
+        "port"
+      ],
+      "properties": {
+        "ipv4": {
+          "type": "string",
+          "format": "ipv4"
+        },
+        "port": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535
+        }
+      },
+      "description": "Controller-resolved usable unicast IPv4 address and UDP port."
+    }
+  }
+}

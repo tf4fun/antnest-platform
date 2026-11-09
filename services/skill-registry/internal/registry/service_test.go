@@ -159,7 +159,7 @@ func TestServicePublishAndResolveFixedVersion(t *testing.T) {
 
 func TestServiceRejectsBadIdentityBeforePersistence(t *testing.T) {
 	service := NewService(&memoryStore{})
-	_, err := service.Publish(context.Background(), PublishInput{RequestID: "r1", OrganizationID: testOrg, ActorID: "a",
+	_, err := service.Publish(context.Background(), PublishInput{RequestID: "r1", OrganizationID: testOrg, ActorID: "invalid actor",
 		Artifact: skillZIP(t, "---\nname: code-review\ndescription: Review code\n---\n")})
 	if Code(err) != "invalid_request" {
 		t.Fatalf("accepted bad actor: %v", err)
