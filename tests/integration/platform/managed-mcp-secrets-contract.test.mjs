@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import test from "node:test";
+import commonIDs from "../../../contracts/common/ids.schema.json" with { type: "json" };
 
 const require = createRequire(
   new URL("../../../services/agent-acp-service/package.json", import.meta.url),
@@ -10,12 +11,13 @@ const { Ajv2020 } = require("ajv/dist/2020.js");
 const schema = JSON.parse(
   readFileSync(
     new URL(
-      "../../../contracts/runtime/managed-mcp.schema.json",
+      "../../../contracts/runtime/managed-mcp.ids-v2.schema.json",
       import.meta.url,
     ),
   ),
 );
 const ajv = new Ajv2020({ strict: false });
+ajv.addSchema(commonIDs);
 ajv.addSchema(schema);
 const write = ajv.compile({ $ref: schema.$id + "#/$defs/servers_write" });
 const read = ajv.compile({ $ref: schema.$id + "#/$defs/servers_read" });

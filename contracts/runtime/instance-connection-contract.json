@@ -47,7 +47,7 @@
     "capture_payload": false
   },
   "controller_relay": {
-    "schema": "../agent-acp/execution-snapshot.schema.json",
+    "schema": "../agent-acp/execution-snapshot.ids-v2.schema.json",
     "fixtures": "../agent-acp/runtime-publication-fixtures.json",
     "executable_binding": "verified-private-connection-required",
     "closed_binding": "fence-only-no-resolve-no-credential",
