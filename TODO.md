@@ -1,5 +1,7 @@
 # Antnest Platform 全局 TODO
 
+- **#16 CI 收尾（2026-11-09）**：用户授权继续修复 #592–#603 的 PR CI，保留服务依赖顺序，不自动合并或关闭。已定位旧非法 ID 断言、目录版本/consumer 同步遗漏、PG migration 边界与晚改 schema 的 N-1 违规。共享批次前置完整 ids-v2 目标图及精确 aliases；活跃目录由各 owning service 激活。目标引用与所有向量 2/2、210 文档 conventions、Gateway 定向真实 handler/engine 检查通过。Gateway 两个 ASCII pattern 提前使用 native engine；CI 原 user-1 误拒签名保留，不把第三方 engine 根因视为已证实。远程 exact-head 门禁跟进中，未运行或查询独立 system E2E。
+
 本清单保存全部开放 issue 的推进顺序、依赖、当前批次和验收记录。
 按回归基线、共享契约、入口与身份安全、执行可靠性、产品能力、非交互执行与调度推进。
 Issue 状态最后核对于 2026-10-28：141 个 issue，87 个已关闭，54 个开放；开放项包含 4 个 Epic（#82–#85）和 50 个执行项，全部已挂到对应 Epic。
@@ -19,6 +21,8 @@ Issue 状态最后核对于 2026-10-28：141 个 issue，87 个已关闭，54 �
 - 开始下一项前读取本文件的当前批次、相关阶段和依赖，并重新核对该 issue 的正文、讨论与当前代码。
 
 ## 当前批次
+
+- **#16 共享 opaque-ID 契约基础批次（2026-11-08，issue #16／Epic #83，分支 fix/issue-16-id-contract，基于 origin/main `74892543`）**：测试先行，先落地 `tests/support/contracts/resource-ids.test.mjs`（逐值 `validateGolden` `common/ids.schema.json#/$defs/<kind>`，reject 走 `assert.rejects`，另拒绝 null/number/object/array，并断言三种 kind 共享完全相同的边界向量），随后新增 `contracts/common/ids.schema.json`（draft 2020-12，canonical `$id`，三个 `$defs`：1–200 字符、首位 `[A-Za-z0-9]`、其后 `[A-Za-z0-9_.-]`，`not` 子句防 JS `$` 接受尾换行）与 `contracts/common/id-vectors.json`（公共 accept/reject 边界＋各 kind 现役 `<kind>_<32hex>`、大写与非前缀 legacy 值，含已核对的真实 deterministic `agent_e94c17c429dc4904d167d643309872e5`）。`contracts/resource-identifiers.md` 与 `docs/stage-2-identity.md` 增补链接并区分 producer 所有的生成格式与 consumer 校验的引用语法。本批仅为共享基础：不改服务实现、不迁移消费者、不声明消费 schema 已接入。定向开发反馈已执行：先临时移出 schema 复现预期 RED（3 项 accept 用例 `unregistered golden schema`，日志 `artifacts/verification/issue-16-contract/resource-ids-red.log`），恢复后同命令 11/11 GREEN（`resource-ids-green.log`）；`check-contract-conventions` 179 documents clean；pinned prettier 对本批 5 个文件 check/write clean（`resource-identifiers.md` 既有表格随之重排）。完整准入待协调者对精确候选的远程证据核对；后续为逐服务 PR 与显式集成批次。不合并、不关闭 #16/#83，不宣称 CI 通过。
 
 - **#65 PR CI 收尾接手（2026-11-08，用户明确指派 #588 → #589 → #590 → #591）**：前置契约提前发布新现役接口导致批次无法独立准入，沿用已有 proposal 模式：#588 发布目标 schema／catalog proposal，Identity 19 与 Console 61 各在 #589／#590 连同实现、caller policy 和消费绑定激活；新增两项发布时序守卫先 RED 再 GREEN，目标 schema 22/22 与 177-document conventions clean。Console 另修新增分页代码的严格 TypeScript 错误，以及 producer golden 的 context cancel 静态检查；保留 code/status、鉴权、分页与资源清理断言。完整 CI 继续发现 readiness fixture 将 query 与 pathname 混比，以及 5 个 Console 浏览器替身原留到后续集成批次；已修正严格 query 匹配并将 schema-backed double／客户端及 11 项定向契约随 Console 自有组件前移到 #590，系统消费者断言仍在 #591。readiness 16 项、桌面／移动 catalog 与受控 recovery browser 均定向通过，原只读／清理／业务断言不变。完整前端 CI 又定位创建用户测试在首屏读未完成时点击 disabled 按钮的竞态；以受控延迟首屏读稳定复现 RED，等待按钮可用后原流程与新用例共 16 项 GREEN，不增加固定 sleep、不放宽提交／错误恢复断言。最终核对四个精确 head 的八项远程必需门禁；普通提交／merge 保留栈与 TODO 历史，不合并／关闭 #65/#83，不安排或查询 Docker E2E。
 

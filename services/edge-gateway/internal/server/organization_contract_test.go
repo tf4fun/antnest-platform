@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -76,14 +77,7 @@ func compileOrganizationSchema(t *testing.T, path, definition string) *jsonschem
 	compiler := jsonschema.NewCompiler()
 	// JSON Schema patterns use ECMAScript, including the opaque subject's
 	// Unicode escapes, which the default Go regexp engine cannot parse.
-	compiler.UseRegexpEngine(func(pattern string) (jsonschema.Regexp, error) {
-		compiled, err := regexp2.Compile(pattern, regexp2.ECMAScript)
-		if err != nil {
-			return nil, err
-		}
-		compiled.MatchTimeout = 100 * time.Millisecond
-		return contractRegexp{compiled}, nil
-	})
+	compiler.UseRegexpEngine(gatewayContractPattern)
 	pagination, err := os.ReadFile("../../../../contracts/common/pagination.schema.json")
 	if err != nil {
 		t.Fatal(err)
@@ -264,5 +258,19 @@ func TestOrganizationMalformedIdentityNeverAdmitsWorkspace(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+func gatewayContractPattern(pattern string) (jsonschema.Regexp, error) {
+	switch pattern {
+	case `^[A-Za-z0-9][A-Za-z0-9_.-]{0,199}$`, `[^A-Za-z0-9_.-]`:
+		return regexp.Compile(pattern)
+	default:
+		compiled, err := regexp2.Compile(pattern, regexp2.ECMAScript)
+		if err != nil {
+			return nil, err
+		}
+		compiled.MatchTimeout = 100 * time.Millisecond
+		return contractRegexp{compiled}, nil
 	}
 }

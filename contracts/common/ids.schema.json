@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.antnest.dev/common/ids.schema.json",
+  "title": "Shared opaque resource identifier grammar",
+  "$defs": {
+    "organizationId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,199}$",
+      "not": { "pattern": "[^A-Za-z0-9_.-]" }
+    },
+    "userId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,199}$",
+      "not": { "pattern": "[^A-Za-z0-9_.-]" }
+    },
+    "agentId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,199}$",
+      "not": { "pattern": "[^A-Za-z0-9_.-]" }
+    }
+  }
+}
