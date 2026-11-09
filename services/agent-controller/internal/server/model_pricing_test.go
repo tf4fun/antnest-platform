@@ -11,7 +11,7 @@ import (
 )
 
 func TestControlAndExecutionPricingSchemasAgree(t *testing.T) {
-	payload, err := os.ReadFile(filepath.Join(repositoryRoot(t), "contracts/agent-controller/control-api.schema.json"))
+	payload, err := os.ReadFile(filepath.Join(repositoryRoot(t), "contracts/agent-controller/control-api.ids-v2.schema.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -21,7 +21,7 @@ func TestControlAndExecutionPricingSchemasAgree(t *testing.T) {
 	if err := json.Unmarshal(payload, &control); err != nil {
 		t.Fatal(err)
 	}
-	payload, err = os.ReadFile(filepath.Join(repositoryRoot(t), "contracts/agent-acp/execution-snapshot.schema.json"))
+	payload, err = os.ReadFile(filepath.Join(repositoryRoot(t), "contracts/agent-acp/execution-snapshot.ids-v2.schema.json"))
 	if err != nil {
 		t.Fatal(err)
 	}

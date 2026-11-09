@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"unicode/utf8"
+
+	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/domain"
 )
 
 var ErrInvalidRuntimeBarrierQuery = errors.New("invalid Runtime barrier query")
@@ -35,7 +37,8 @@ type RuntimeBarrierReader interface {
 }
 
 func (query RuntimeBarrierQuery) Validate() error {
-	if !runtimeBarrierIdentity(query.OrganizationID) || !runtimeBarrierIdentity(query.AgentID) ||
+	if !domain.ValidRuntimeBarrierPolicyIdentifier(query.OrganizationID) ||
+		!domain.ValidRuntimeBarrierPolicyIdentifier(query.AgentID) ||
 		!runtimeBarrierIdentity(query.ExpectedRuntimeRevision) {
 		return ErrInvalidRuntimeBarrierQuery
 	}

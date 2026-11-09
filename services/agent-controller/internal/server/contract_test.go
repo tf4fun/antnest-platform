@@ -110,8 +110,8 @@ func TestMachineControlContractMatchesRegisteredBoundary(t *testing.T) {
 	var contract machineControlContract
 	readStrictContractJSON(t, filepath.Join(root, "contracts/agent-controller/control-contract.json"), &contract)
 	var schema machineControlSchema
-	readContractJSON(t, filepath.Join(root, "contracts/agent-controller/control-api.schema.json"), &schema)
-	if contract.Revision != 50 || contract.Trust != "verified-workload-and-caller-context" || contract.Authentication != "service-authentication.md" {
+	readContractJSON(t, filepath.Join(root, "contracts/agent-controller/control-api.ids-v2.schema.json"), &schema)
+	if contract.Revision != 51 || contract.Trust != "verified-workload-and-caller-context" || contract.Authentication != "service-authentication.md" {
 		t.Fatalf("control contract revision = %d", contract.Revision)
 	}
 	if contract.MediaTypes.Request != "application/json" ||
@@ -230,7 +230,7 @@ func TestMachineControlSchemaMatchesGoWireTypes(t *testing.T) {
 
 	root := repositoryRoot(t)
 	compiler := compileControlSchema(
-		t, filepath.Join(root, "contracts/agent-controller/control-api.schema.json"),
+		t, filepath.Join(root, "contracts/agent-controller/control-api.ids-v2.schema.json"),
 	)
 	now := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
 	model := domain.ModelSpec{
@@ -364,7 +364,7 @@ func TestMachineReadinessFixturesPreserveHistoricalWire(t *testing.T) {
 	t.Parallel()
 
 	root := repositoryRoot(t)
-	compiler := compileControlSchema(t, filepath.Join(root, "contracts/agent-controller/control-api.schema.json"))
+	compiler := compileControlSchema(t, filepath.Join(root, "contracts/agent-controller/control-api.ids-v2.schema.json"))
 	var fixtures struct {
 		LegacyAgent  json.RawMessage `json:"legacy_agent"`
 		EventVectors []struct {
@@ -403,7 +403,7 @@ func TestMachineControlContractValidatesSuccessfulHTTPBoundary(t *testing.T) {
 	var contract machineControlContract
 	readStrictContractJSON(t, filepath.Join(root, "contracts/agent-controller/control-contract.json"), &contract)
 	compiler := compileControlSchema(
-		t, filepath.Join(root, "contracts/agent-controller/control-api.schema.json"),
+		t, filepath.Join(root, "contracts/agent-controller/control-api.ids-v2.schema.json"),
 	)
 	now := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
 	agent := sampleControlAgent(now)
@@ -598,7 +598,7 @@ func TestMachineControlContractValidatesActualHTTPErrorBoundary(t *testing.T) {
 	var contract machineControlContract
 	readStrictContractJSON(t, filepath.Join(root, "contracts/agent-controller/control-contract.json"), &contract)
 	compiler := compileControlSchema(
-		t, filepath.Join(root, "contracts/agent-controller/control-api.schema.json"),
+		t, filepath.Join(root, "contracts/agent-controller/control-api.ids-v2.schema.json"),
 	)
 	tests := []struct {
 		code   string
@@ -742,7 +742,7 @@ func TestMachineControlContractValidatesActualSSEBoundary(t *testing.T) {
 	var contract machineControlContract
 	readStrictContractJSON(t, filepath.Join(root, "contracts/agent-controller/control-contract.json"), &contract)
 	compiler := compileControlSchema(
-		t, filepath.Join(root, "contracts/agent-controller/control-api.schema.json"),
+		t, filepath.Join(root, "contracts/agent-controller/control-api.ids-v2.schema.json"),
 	)
 	now := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
 	event := sampleControlEvent(now, "contract-fixture", "request-1")
@@ -795,7 +795,7 @@ func TestMachineEventTypesMatchProducerContract(t *testing.T) {
 
 	root := repositoryRoot(t)
 	var schema machineControlSchema
-	readContractJSON(t, filepath.Join(root, "contracts/agent-controller/control-api.schema.json"), &schema)
+	readContractJSON(t, filepath.Join(root, "contracts/agent-controller/control-api.ids-v2.schema.json"), &schema)
 	var eventType struct {
 		Enum []string `json:"enum"`
 	}
@@ -883,10 +883,10 @@ func assertKnownControlSchemaReference(
 	t *testing.T, schema machineControlSchema, reference string,
 ) {
 	t.Helper()
-	prefix := "control-api.schema.json#/$defs/"
-	if strings.HasPrefix(reference, "../skill-learning/learning-api.schema.json#/$defs/") {
-		prefix = "../skill-learning/learning-api.schema.json#/$defs/"
-		readContractJSON(t, filepath.Join(repositoryRoot(t), "contracts/skill-learning/learning-api.schema.json"), &schema)
+	prefix := "control-api.ids-v2.schema.json#/$defs/"
+	if strings.HasPrefix(reference, "../skill-learning/learning-api.ids-v2.schema.json#/$defs/") {
+		prefix = "../skill-learning/learning-api.ids-v2.schema.json#/$defs/"
+		readContractJSON(t, filepath.Join(repositoryRoot(t), "contracts/skill-learning/learning-api.ids-v2.schema.json"), &schema)
 	}
 	if !strings.HasPrefix(reference, prefix) {
 		t.Fatalf("unknown control schema reference %q", reference)
@@ -932,7 +932,7 @@ func assertControlWireType(
 	}
 }
 
-const controlSchemaID = "https://schemas.antnest.dev/agent-controller/control-api.schema.json"
+const controlSchemaID = "https://schemas.antnest.dev/agent-controller/control-api.ids-v2.schema.json"
 const draft202012Schema = "https://json-schema.org/draft/2020-12/schema"
 
 func assertControlSSEMetadata(t *testing.T, route controlContractRoute) {
@@ -970,28 +970,38 @@ func compileControlSchema(t *testing.T, path string) *jsonschema.Compiler {
 	compiler := jsonschema.NewCompiler()
 	compiler.AssertFormat()
 	var instanceConnectionContract any
-	readContractJSON(t, filepath.Join(repositoryRoot(t), "contracts/runtime/instance-connection.schema.json"), &instanceConnectionContract)
-	if err := compiler.AddResource("https://schemas.antnest.dev/runtime/instance-connection.schema.json", instanceConnectionContract); err != nil {
+	readContractJSON(t, filepath.Join(repositoryRoot(t), "contracts/runtime/instance-connection.ids-v2.schema.json"), &instanceConnectionContract)
+	if err := compiler.AddResource("https://schemas.antnest.dev/runtime/instance-connection.ids-v2.schema.json", instanceConnectionContract); err != nil {
 		t.Fatalf("load Runtime instance connection contract: %v", err)
 	}
 	var managedSecretContract any
-	readContractJSON(t, filepath.Join(repositoryRoot(t), "contracts/runtime/managed-mcp.schema.json"), &managedSecretContract)
-	if err := compiler.AddResource("https://schemas.antnest.dev/runtime/managed-mcp.schema.json", managedSecretContract); err != nil {
+	readContractJSON(t, filepath.Join(repositoryRoot(t), "contracts/runtime/managed-mcp.ids-v2.schema.json"), &managedSecretContract)
+	if err := compiler.AddResource("https://schemas.antnest.dev/runtime/managed-mcp.ids-v2.schema.json", managedSecretContract); err != nil {
 		t.Fatal(err)
 	}
 	var runtimeContract any
-	readContractJSON(t, filepath.Join(repositoryRoot(t), "contracts/runtime/runtime-spec.schema.json"), &runtimeContract)
-	if err := compiler.AddResource("https://schemas.antnest.dev/runtime/runtime-spec.schema.json", runtimeContract); err != nil {
+	readContractJSON(t, filepath.Join(repositoryRoot(t), "contracts/runtime/runtime-spec.ids-v2.schema.json"), &runtimeContract)
+	if err := compiler.AddResource("https://schemas.antnest.dev/runtime/runtime-spec.ids-v2.schema.json", runtimeContract); err != nil {
 		t.Fatalf("load Runtime MCP contract: %v", err)
 	}
 	var runtimeControllerContract any
-	readContractJSON(t, filepath.Join(repositoryRoot(t), "contracts/runtime-controller/control-api.schema.json"), &runtimeControllerContract)
-	if err := compiler.AddResource("https://schemas.antnest.dev/runtime-controller/control-api.schema.json", runtimeControllerContract); err != nil {
+	readContractJSON(t, filepath.Join(repositoryRoot(t), "contracts/runtime-controller/control-api.ids-v2.schema.json"), &runtimeControllerContract)
+	var runtimeDeploymentContract any
+	readContractJSON(t, filepath.Join(repositoryRoot(t), "contracts/runtime-controller/runtime-deployment.ids-v2.schema.json"), &runtimeDeploymentContract)
+	if err := compiler.AddResource("https://schemas.antnest.dev/runtime-controller/runtime-deployment.ids-v2.schema.json", runtimeDeploymentContract); err != nil {
+		t.Fatal(err)
+	}
+	var runtimeDeliveryContract any
+	readContractJSON(t, filepath.Join(repositoryRoot(t), "contracts/skill-registry/runtime-delivery.ids-v2.schema.json"), &runtimeDeliveryContract)
+	if err := compiler.AddResource("https://schemas.antnest.dev/skill-registry/runtime-delivery.ids-v2.schema.json", runtimeDeliveryContract); err != nil {
+		t.Fatal(err)
+	}
+	if err := compiler.AddResource("https://schemas.antnest.dev/runtime-controller/control-api.ids-v2.schema.json", runtimeControllerContract); err != nil {
 		t.Fatalf("load Runtime Controller contract: %v", err)
 	}
 	var recoveryPolicyContract any
-	readContractJSON(t, filepath.Join(repositoryRoot(t), "contracts/agent-controller/runtime-barrier-recovery.schema.json"), &recoveryPolicyContract)
-	if err := compiler.AddResource("https://schemas.antnest.dev/agent-controller/runtime-barrier-recovery.schema.json", recoveryPolicyContract); err != nil {
+	readContractJSON(t, filepath.Join(repositoryRoot(t), "contracts/agent-controller/runtime-barrier-recovery.ids-v2.schema.json"), &recoveryPolicyContract)
+	if err := compiler.AddResource("https://schemas.antnest.dev/agent-controller/runtime-barrier-recovery.ids-v2.schema.json", recoveryPolicyContract); err != nil {
 		t.Fatalf("load Runtime barrier recovery contract: %v", err)
 	}
 	var commonErrorContract any
@@ -1010,9 +1020,14 @@ func compileControlSchema(t *testing.T, path string) *jsonschema.Compiler {
 		t.Fatalf("load common precondition contract: %v", err)
 	}
 	var learningContract any
-	readContractJSON(t, filepath.Join(repositoryRoot(t), "contracts/skill-learning/learning-api.schema.json"), &learningContract)
-	if err := compiler.AddResource("https://schemas.antnest.dev/skill-learning/learning-api.schema.json", learningContract); err != nil {
+	readContractJSON(t, filepath.Join(repositoryRoot(t), "contracts/skill-learning/learning-api.ids-v2.schema.json"), &learningContract)
+	if err := compiler.AddResource("https://schemas.antnest.dev/skill-learning/learning-api.ids-v2.schema.json", learningContract); err != nil {
 		t.Fatalf("load Skill learning contract: %v", err)
+	}
+	var commonIDsContract any
+	readContractJSON(t, filepath.Join(repositoryRoot(t), "contracts/common/ids.schema.json"), &commonIDsContract)
+	if err := compiler.AddResource("https://schemas.antnest.dev/common/ids.schema.json", commonIDsContract); err != nil {
+		t.Fatal(err)
 	}
 	if err := compiler.AddResource(controlSchemaID, document); err != nil {
 		t.Fatalf("load control schema: %v", err)
@@ -1027,9 +1042,9 @@ func assertControlResponseSchema(
 	t *testing.T, compiler *jsonschema.Compiler, reference string, payload []byte,
 ) {
 	t.Helper()
-	prefix, schemaID := "control-api.schema.json", controlSchemaID
-	if strings.HasPrefix(reference, "../skill-learning/learning-api.schema.json#/$defs/") {
-		prefix, schemaID = "../skill-learning/learning-api.schema.json", "https://schemas.antnest.dev/skill-learning/learning-api.schema.json"
+	prefix, schemaID := "control-api.ids-v2.schema.json", controlSchemaID
+	if strings.HasPrefix(reference, "../skill-learning/learning-api.ids-v2.schema.json#/$defs/") {
+		prefix, schemaID = "../skill-learning/learning-api.ids-v2.schema.json", "https://schemas.antnest.dev/skill-learning/learning-api.ids-v2.schema.json"
 	}
 	if !strings.HasPrefix(reference, prefix+"#/$defs/") {
 		t.Fatalf("unknown control response schema %q", reference)

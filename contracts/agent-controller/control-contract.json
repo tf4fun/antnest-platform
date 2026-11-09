@@ -1,6 +1,6 @@
 {
   "contract": "antnest.agent-controller.lifecycle",
-  "revision": 50,
+  "revision": 51,
   "transport": "json-over-http",
   "trust": "verified-workload-and-caller-context",
   "authentication": "service-authentication.md",
@@ -9,7 +9,7 @@
     "response": "application/json"
   },
   "schemas": {
-    "messages": "control-api.schema.json"
+    "messages": "control-api.ids-v2.schema.json"
   },
   "conventions": {
     "pagination": "../common/pagination.schema.json",
@@ -20,13 +20,13 @@
     "method": "GET",
     "path": "/status",
     "success_status": 200,
-    "response": "control-api.schema.json#/$defs/status"
+    "response": "control-api.ids-v2.schema.json#/$defs/status"
   },
   "status_rpc": {
     "method": "GET",
     "path": "/rpc/agent-controller/status",
     "success_status": 200,
-    "response": "control-api.schema.json#/$defs/status"
+    "response": "control-api.ids-v2.schema.json#/$defs/status"
   },
   "resources": {
     "skill_learning_policy": {
@@ -35,14 +35,14 @@
         "path": "/internal/agents/{agent_id}/skill-learning-policy",
         "query": ["organization_id", "principal_id"],
         "success_status": 200,
-        "response": "../skill-learning/learning-api.schema.json#/$defs/policy"
+        "response": "../skill-learning/learning-api.ids-v2.schema.json#/$defs/policy"
       },
       "set": {
         "method": "PUT",
         "path": "/internal/agents/{agent_id}/skill-learning-policy",
         "success_status": 200,
-        "request": "../skill-learning/learning-api.schema.json#/$defs/policy_mutation_request",
-        "response": "../skill-learning/learning-api.schema.json#/$defs/policy"
+        "request": "../skill-learning/learning-api.ids-v2.schema.json#/$defs/policy_mutation_request",
+        "response": "../skill-learning/learning-api.ids-v2.schema.json#/$defs/policy"
       }
     },
     "managed_mcp_secrets": {
@@ -50,8 +50,8 @@
         "method": "POST",
         "path": "/internal/managed-mcp-secrets/resolve",
         "success_status": 200,
-        "request": "control-api.schema.json#/$defs/managed_mcp_secret_request",
-        "response": "control-api.schema.json#/$defs/managed_mcp_secret_response"
+        "request": "control-api.ids-v2.schema.json#/$defs/managed_mcp_secret_request",
+        "response": "control-api.ids-v2.schema.json#/$defs/managed_mcp_secret_response"
       }
     },
     "execution_synchronization": {
@@ -60,7 +60,7 @@
         "path": "/internal/execution-synchronization",
         "query": ["organization_id"],
         "success_status": 200,
-        "response": "control-api.schema.json#/$defs/execution_synchronization"
+        "response": "control-api.ids-v2.schema.json#/$defs/execution_synchronization"
       }
     },
     "runtime_barrier_recovery_policy": {
@@ -69,14 +69,14 @@
         "path": "/internal/runtime-barrier-recovery-policy",
         "query": ["organization_id"],
         "success_status": 200,
-        "response": "control-api.schema.json#/$defs/runtime_barrier_recovery_policy"
+        "response": "control-api.ids-v2.schema.json#/$defs/runtime_barrier_recovery_policy"
       },
       "set": {
         "method": "PUT",
         "path": "/internal/runtime-barrier-recovery-policy",
         "success_status": 200,
-        "request": "control-api.schema.json#/$defs/set_runtime_barrier_recovery_policy_request",
-        "response": "control-api.schema.json#/$defs/runtime_barrier_recovery_policy"
+        "request": "control-api.ids-v2.schema.json#/$defs/set_runtime_barrier_recovery_policy_request",
+        "response": "control-api.ids-v2.schema.json#/$defs/runtime_barrier_recovery_policy"
       }
     },
     "model_call_policy": {
@@ -85,51 +85,51 @@
         "path": "/internal/model-call-policy",
         "query": ["organization_id"],
         "success_status": 200,
-        "response": "control-api.schema.json#/$defs/model_call_policy"
+        "response": "control-api.ids-v2.schema.json#/$defs/model_call_policy"
       },
       "replace": {
         "method": "PUT",
         "path": "/internal/model-call-policy",
         "success_status": 200,
-        "request": "control-api.schema.json#/$defs/set_model_call_policy_request",
-        "response": "control-api.schema.json#/$defs/model_call_policy"
+        "request": "control-api.ids-v2.schema.json#/$defs/set_model_call_policy_request",
+        "response": "control-api.ids-v2.schema.json#/$defs/model_call_policy"
       }
     },
     "provider_connections": {
       "discover_models": {
         "method": "POST",
         "path": "/internal/provider-connections/{connection_id}/discover-models",
-        "request": "control-api.schema.json#/$defs/discover_provider_models_request",
+        "request": "control-api.ids-v2.schema.json#/$defs/discover_provider_models_request",
         "success_status": 200,
-        "response": "control-api.schema.json#/$defs/provider_discovery_result"
+        "response": "control-api.ids-v2.schema.json#/$defs/provider_discovery_result"
       },
       "availability": {
         "method": "PUT",
         "path": "/internal/provider-connections/{connection_id}/availability",
-        "request": "control-api.schema.json#/$defs/catalog_availability_request",
+        "request": "control-api.ids-v2.schema.json#/$defs/catalog_availability_request",
         "success_status": 200,
-        "response": "control-api.schema.json#/$defs/catalog_availability"
+        "response": "control-api.ids-v2.schema.json#/$defs/catalog_availability"
       },
       "create": {
         "method": "POST",
         "path": "/internal/provider-connections",
-        "request": "control-api.schema.json#/$defs/create_provider_connection_request",
+        "request": "control-api.ids-v2.schema.json#/$defs/create_provider_connection_request",
         "success_status": 201,
-        "response": "control-api.schema.json#/$defs/provider_connection"
+        "response": "control-api.ids-v2.schema.json#/$defs/provider_connection"
       },
       "rotate_credential": {
         "method": "POST",
         "path": "/internal/provider-connections/{connection_id}/credentials",
-        "request": "control-api.schema.json#/$defs/rotate_provider_credential_request",
+        "request": "control-api.ids-v2.schema.json#/$defs/rotate_provider_credential_request",
         "success_status": 201,
-        "response": "control-api.schema.json#/$defs/provider_connection"
+        "response": "control-api.ids-v2.schema.json#/$defs/provider_connection"
       },
       "get": {
         "method": "GET",
         "path": "/internal/provider-connections/{connection_id}",
         "query": ["organization_id"],
         "success_status": 200,
-        "response": "control-api.schema.json#/$defs/provider_connection"
+        "response": "control-api.ids-v2.schema.json#/$defs/provider_connection"
       },
       "list": {
         "method": "GET",
@@ -137,16 +137,16 @@
         "query": ["organization_id", "cursor", "limit"],
         "deprecated_query": ["after_id"],
         "success_status": 200,
-        "response": "control-api.schema.json#/$defs/provider_connection_list"
+        "response": "control-api.ids-v2.schema.json#/$defs/provider_connection_list"
       }
     },
     "provider_discovery": {
       "draft": {
         "method": "POST",
         "path": "/internal/provider-discovery/draft",
-        "request": "control-api.schema.json#/$defs/discover_draft_provider_models_request",
+        "request": "control-api.ids-v2.schema.json#/$defs/discover_draft_provider_models_request",
         "success_status": 200,
-        "response": "control-api.schema.json#/$defs/provider_discovery_result"
+        "response": "control-api.ids-v2.schema.json#/$defs/provider_discovery_result"
       }
     },
     "agent_network_policy": {
@@ -155,44 +155,44 @@
         "path": "/internal/agents/{agent_id}/network-policy",
         "query": ["organization_id"],
         "success_status": 200,
-        "response": "control-api.schema.json#/$defs/agent_network_policy"
+        "response": "control-api.ids-v2.schema.json#/$defs/agent_network_policy"
       },
       "set": {
         "method": "PUT",
         "path": "/internal/agents/{agent_id}/network-policy",
         "success_status": 200,
-        "request": "control-api.schema.json#/$defs/set_agent_network_policy_request",
-        "response": "control-api.schema.json#/$defs/network_policy_assignment"
+        "request": "control-api.ids-v2.schema.json#/$defs/set_agent_network_policy_request",
+        "response": "control-api.ids-v2.schema.json#/$defs/network_policy_assignment"
       }
     },
     "model_profiles": {
       "availability": {
         "method": "PUT",
         "path": "/internal/model-profiles/{model_profile_id}/availability",
-        "request": "control-api.schema.json#/$defs/catalog_availability_request",
+        "request": "control-api.ids-v2.schema.json#/$defs/catalog_availability_request",
         "success_status": 200,
-        "response": "control-api.schema.json#/$defs/catalog_availability"
+        "response": "control-api.ids-v2.schema.json#/$defs/catalog_availability"
       },
       "create": {
         "method": "POST",
         "path": "/internal/model-profiles",
-        "request": "control-api.schema.json#/$defs/create_model_profile_request",
+        "request": "control-api.ids-v2.schema.json#/$defs/create_model_profile_request",
         "success_status": 201,
-        "response": "control-api.schema.json#/$defs/model_profile"
+        "response": "control-api.ids-v2.schema.json#/$defs/model_profile"
       },
       "revise": {
         "method": "POST",
         "path": "/internal/model-profiles/{model_profile_id}/revisions",
-        "request": "control-api.schema.json#/$defs/revise_model_profile_request",
+        "request": "control-api.ids-v2.schema.json#/$defs/revise_model_profile_request",
         "success_status": 201,
-        "response": "control-api.schema.json#/$defs/model_profile"
+        "response": "control-api.ids-v2.schema.json#/$defs/model_profile"
       },
       "get": {
         "method": "GET",
         "path": "/internal/model-profiles/{model_profile_id}",
         "query": ["organization_id"],
         "success_status": 200,
-        "response": "control-api.schema.json#/$defs/model_profile"
+        "response": "control-api.ids-v2.schema.json#/$defs/model_profile"
       },
       "list": {
         "method": "GET",
@@ -200,58 +200,58 @@
         "query": ["organization_id", "cursor", "limit"],
         "deprecated_query": ["after_id"],
         "success_status": 200,
-        "response": "control-api.schema.json#/$defs/model_profile_list"
+        "response": "control-api.ids-v2.schema.json#/$defs/model_profile_list"
       },
       "usage": {
         "method": "GET",
         "path": "/internal/model-profiles/{model_profile_id}/usage",
         "query": ["organization_id"],
         "success_status": 200,
-        "response": "control-api.schema.json#/$defs/model_profile_usage"
+        "response": "control-api.ids-v2.schema.json#/$defs/model_profile_usage"
       },
       "events": {
         "method": "GET",
         "path": "/internal/model-profiles/{model_profile_id}/events",
         "query": ["organization_id", "after_revision", "limit"],
         "success_status": 200,
-        "response": "control-api.schema.json#/$defs/model_profile_event_list"
+        "response": "control-api.ids-v2.schema.json#/$defs/model_profile_event_list"
       }
     },
     "agent_templates": {
       "availability": {
         "method": "PUT",
         "path": "/internal/agent-templates/{template_id}/availability",
-        "request": "control-api.schema.json#/$defs/catalog_availability_request",
+        "request": "control-api.ids-v2.schema.json#/$defs/catalog_availability_request",
         "success_status": 200,
-        "response": "control-api.schema.json#/$defs/catalog_availability"
+        "response": "control-api.ids-v2.schema.json#/$defs/catalog_availability"
       },
       "create": {
         "method": "POST",
         "path": "/internal/agent-templates",
-        "request": "control-api.schema.json#/$defs/create_template_request",
+        "request": "control-api.ids-v2.schema.json#/$defs/create_template_request",
         "success_status": 201,
-        "response": "control-api.schema.json#/$defs/agent_template"
+        "response": "control-api.ids-v2.schema.json#/$defs/agent_template"
       },
       "revise": {
         "method": "POST",
         "path": "/internal/agent-templates/{template_id}/revisions",
-        "request": "control-api.schema.json#/$defs/revise_template_request",
+        "request": "control-api.ids-v2.schema.json#/$defs/revise_template_request",
         "success_status": 201,
-        "response": "control-api.schema.json#/$defs/agent_template"
+        "response": "control-api.ids-v2.schema.json#/$defs/agent_template"
       },
       "get": {
         "method": "GET",
         "path": "/internal/agent-templates/{template_id}",
         "query": ["organization_id"],
         "success_status": 200,
-        "response": "control-api.schema.json#/$defs/agent_template"
+        "response": "control-api.ids-v2.schema.json#/$defs/agent_template"
       },
       "get_revision": {
         "method": "GET",
         "path": "/internal/agent-templates/{template_id}/revisions/{revision}",
         "query": ["organization_id"],
         "success_status": 200,
-        "response": "control-api.schema.json#/$defs/agent_template"
+        "response": "control-api.ids-v2.schema.json#/$defs/agent_template"
       },
       "list": {
         "method": "GET",
@@ -259,23 +259,23 @@
         "query": ["organization_id", "cursor", "limit"],
         "deprecated_query": ["after_id"],
         "success_status": 200,
-        "response": "control-api.schema.json#/$defs/agent_template_list"
+        "response": "control-api.ids-v2.schema.json#/$defs/agent_template_list"
       }
     },
     "agents": {
       "create": {
         "method": "POST",
         "path": "/internal/agents",
-        "request": "control-api.schema.json#/$defs/create_agent_request",
+        "request": "control-api.ids-v2.schema.json#/$defs/create_agent_request",
         "success_status": 202,
-        "response": "control-api.schema.json#/$defs/create_agent_response"
+        "response": "control-api.ids-v2.schema.json#/$defs/create_agent_response"
       },
       "get": {
         "method": "GET",
         "path": "/internal/agents/{agent_id}",
         "query": ["organization_id"],
         "success_status": 200,
-        "response": "control-api.schema.json#/$defs/agent"
+        "response": "control-api.ids-v2.schema.json#/$defs/agent"
       },
       "list": {
         "method": "GET",
@@ -291,49 +291,49 @@
           "cursor"
         ],
         "success_status": 200,
-        "response": "control-api.schema.json#/$defs/agent_list"
+        "response": "control-api.ids-v2.schema.json#/$defs/agent_list"
       },
       "rebuild": {
         "method": "POST",
         "path": "/internal/agents/{agent_id}/rebuild",
-        "request": "control-api.schema.json#/$defs/rebuild_agent_request",
+        "request": "control-api.ids-v2.schema.json#/$defs/rebuild_agent_request",
         "success_status": 202,
-        "response": "control-api.schema.json#/$defs/operation"
+        "response": "control-api.ids-v2.schema.json#/$defs/operation"
       },
       "disable": {
         "method": "POST",
         "path": "/internal/agents/{agent_id}/disable",
-        "request": "control-api.schema.json#/$defs/lifecycle_request",
+        "request": "control-api.ids-v2.schema.json#/$defs/lifecycle_request",
         "success_status": 202,
-        "response": "control-api.schema.json#/$defs/operation"
+        "response": "control-api.ids-v2.schema.json#/$defs/operation"
       },
       "enable": {
         "method": "POST",
         "path": "/internal/agents/{agent_id}/enable",
-        "request": "control-api.schema.json#/$defs/lifecycle_request",
+        "request": "control-api.ids-v2.schema.json#/$defs/lifecycle_request",
         "success_status": 202,
-        "response": "control-api.schema.json#/$defs/operation"
+        "response": "control-api.ids-v2.schema.json#/$defs/operation"
       },
       "delete": {
         "method": "POST",
         "path": "/internal/agents/{agent_id}/delete",
-        "request": "control-api.schema.json#/$defs/lifecycle_request",
+        "request": "control-api.ids-v2.schema.json#/$defs/lifecycle_request",
         "success_status": 202,
-        "response": "control-api.schema.json#/$defs/operation"
+        "response": "control-api.ids-v2.schema.json#/$defs/operation"
       },
       "cancel_lifecycle_operation": {
         "method": "POST",
         "path": "/internal/agents/{agent_id}/lifecycle-operation/cancel",
-        "request": "control-api.schema.json#/$defs/cancel_lifecycle_operation_request",
+        "request": "control-api.ids-v2.schema.json#/$defs/cancel_lifecycle_operation_request",
         "success_status": 202,
-        "response": "control-api.schema.json#/$defs/operation"
+        "response": "control-api.ids-v2.schema.json#/$defs/operation"
       },
       "clear_lifecycle_quarantine": {
         "method": "POST",
         "path": "/internal/agents/{agent_id}/lifecycle-quarantine/clear",
-        "request": "control-api.schema.json#/$defs/clear_lifecycle_quarantine_request",
+        "request": "control-api.ids-v2.schema.json#/$defs/clear_lifecycle_quarantine_request",
         "success_status": 200,
-        "response": "control-api.schema.json#/$defs/agent"
+        "response": "control-api.ids-v2.schema.json#/$defs/agent"
       }
     },
     "operations": {
@@ -342,7 +342,7 @@
         "path": "/internal/agent-operations/{request_id}",
         "query": ["organization_id"],
         "success_status": 200,
-        "response": "control-api.schema.json#/$defs/operation"
+        "response": "control-api.ids-v2.schema.json#/$defs/operation"
       }
     },
     "skill_preparations": {
@@ -351,7 +351,7 @@
         "path": "/internal/agent-skill-preparations/{request_id}",
         "query": ["organization_id"],
         "success_status": 200,
-        "response": "control-api.schema.json#/$defs/agent_skill_preparation_status"
+        "response": "control-api.ids-v2.schema.json#/$defs/agent_skill_preparation_status"
       }
     },
     "events": {
@@ -360,7 +360,7 @@
         "path": "/internal/agent-events",
         "query": ["organization_id", "after_sequence", "limit"],
         "success_status": 200,
-        "response": "control-api.schema.json#/$defs/event_list"
+        "response": "control-api.ids-v2.schema.json#/$defs/event_list"
       },
       "watch_global": {
         "method": "GET",
@@ -371,14 +371,14 @@
         "content_type": "text/event-stream",
         "event": "agent_event",
         "event_id": "global_sequence",
-        "data": "control-api.schema.json#/$defs/agent_event"
+        "data": "control-api.ids-v2.schema.json#/$defs/agent_event"
       },
       "list": {
         "method": "GET",
         "path": "/internal/agents/{agent_id}/events",
         "query": ["organization_id", "after_sequence", "limit"],
         "success_status": 200,
-        "response": "control-api.schema.json#/$defs/event_list"
+        "response": "control-api.ids-v2.schema.json#/$defs/event_list"
       },
       "watch": {
         "method": "GET",
@@ -389,25 +389,25 @@
         "content_type": "text/event-stream",
         "event": "agent_event",
         "event_id": "global_sequence",
-        "data": "control-api.schema.json#/$defs/agent_event"
+        "data": "control-api.ids-v2.schema.json#/$defs/agent_event"
       }
     },
     "agent_authorization": {
       "set": {
         "method": "POST",
         "path": "/rpc/agent-controller/set-agent-authorization",
-        "request": "control-api.schema.json#/$defs/set_agent_authorization_request",
+        "request": "control-api.ids-v2.schema.json#/$defs/set_agent_authorization_request",
         "success_status": 200,
-        "response": "control-api.schema.json#/$defs/set_agent_authorization_response"
+        "response": "control-api.ids-v2.schema.json#/$defs/set_agent_authorization_response"
       }
     },
     "workspace_agents": {
       "list": {
         "method": "POST",
         "path": "/rpc/agent-controller/list-workspace-agents",
-        "request": "control-api.schema.json#/$defs/list_workspace_agents_request",
+        "request": "control-api.ids-v2.schema.json#/$defs/list_workspace_agents_request",
         "success_status": 200,
-        "response": "control-api.schema.json#/$defs/list_workspace_agents_response"
+        "response": "control-api.ids-v2.schema.json#/$defs/list_workspace_agents_response"
       }
     },
     "execution_credentials": {
@@ -415,8 +415,8 @@
         "method": "POST",
         "path": "/internal/execution-credentials/resolve",
         "success_status": 200,
-        "request": "control-api.schema.json#/$defs/execution_credential_request",
-        "response": "control-api.schema.json#/$defs/execution_credential_response"
+        "request": "control-api.ids-v2.schema.json#/$defs/execution_credential_request",
+        "response": "control-api.ids-v2.schema.json#/$defs/execution_credential_response"
       }
     }
   },
@@ -465,7 +465,7 @@
   },
   "errors": {
     "shape": ["code", "category", "message", "retryable", "request_id"],
-    "response": "control-api.schema.json#/$defs/error",
+    "response": "control-api.ids-v2.schema.json#/$defs/error",
     "status_by_code": {
       "resource_version_conflict": 409,
       "policy_revision_not_found": 404,

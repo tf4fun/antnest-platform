@@ -14,13 +14,14 @@ import (
 )
 
 func TestExecutionProjectionConformsToSharedACPContract(t *testing.T) {
-	body, err := os.ReadFile("../../../../contracts/agent-acp/execution-snapshot.schema.json")
+	body, err := os.ReadFile("../../../../contracts/agent-acp/execution-snapshot.ids-v2.schema.json")
 	require.NoError(t, err)
 	document, err := jsonschema.UnmarshalJSON(bytes.NewReader(body))
 	require.NoError(t, err)
 	compiler := jsonschema.NewCompiler()
 	compiler.AssertFormat()
-	identifier := "https://schemas.antnest.dev/agent-acp/execution-snapshot.schema.json"
+	registerExecutionResourceIDs(t, compiler)
+	identifier := "https://schemas.antnest.dev/agent-acp/execution-snapshot.ids-v2.schema.json"
 	require.NoError(t, compiler.AddResource(identifier, document))
 	definition, err := compiler.Compile(identifier)
 	require.NoError(t, err)
@@ -55,13 +56,14 @@ func TestExecutionProjectionConformsToSharedACPContract(t *testing.T) {
 }
 
 func TestExecutionModelPolicyDefaultsAndExplicitValuesConformToSharedACPContract(t *testing.T) {
-	body, err := os.ReadFile("../../../../contracts/agent-acp/execution-snapshot.schema.json")
+	body, err := os.ReadFile("../../../../contracts/agent-acp/execution-snapshot.ids-v2.schema.json")
 	require.NoError(t, err)
 	document, err := jsonschema.UnmarshalJSON(bytes.NewReader(body))
 	require.NoError(t, err)
 	compiler := jsonschema.NewCompiler()
 	compiler.AssertFormat()
-	identifier := "https://schemas.antnest.dev/agent-acp/execution-snapshot.schema.json"
+	registerExecutionResourceIDs(t, compiler)
+	identifier := "https://schemas.antnest.dev/agent-acp/execution-snapshot.ids-v2.schema.json"
 	require.NoError(t, compiler.AddResource(identifier, document))
 	definition, err := compiler.Compile(identifier)
 	require.NoError(t, err)
@@ -128,13 +130,14 @@ func observationContractSet(t *testing.T, models []domain.ProviderObservedModel)
 }
 
 func TestExecutionProviderObservationsConformToSharedACPContract(t *testing.T) {
-	body, err := os.ReadFile("../../../../contracts/agent-acp/execution-snapshot.schema.json")
+	body, err := os.ReadFile("../../../../contracts/agent-acp/execution-snapshot.ids-v2.schema.json")
 	require.NoError(t, err)
 	document, err := jsonschema.UnmarshalJSON(bytes.NewReader(body))
 	require.NoError(t, err)
 	compiler := jsonschema.NewCompiler()
 	compiler.AssertFormat()
-	identifier := "https://schemas.antnest.dev/agent-acp/execution-snapshot.schema.json"
+	registerExecutionResourceIDs(t, compiler)
+	identifier := "https://schemas.antnest.dev/agent-acp/execution-snapshot.ids-v2.schema.json"
 	require.NoError(t, compiler.AddResource(identifier, document))
 	definition, err := compiler.Compile(identifier)
 	require.NoError(t, err)
@@ -215,4 +218,13 @@ func TestExecutionProviderObservationsBindExactAPIIDAcrossProfiles(t *testing.T)
 	require.Nil(t, facts["model-different"].ProviderTokenLimits, "different API id never inherits facts")
 	require.Nil(t, facts["model-different"].SupportsTools)
 	require.Equal(t, "current-model", facts["model-same"].ProviderTokenLimits.Binding.Model)
+}
+
+func registerExecutionResourceIDs(t *testing.T, compiler *jsonschema.Compiler) {
+	t.Helper()
+	raw, err := os.ReadFile("../../../../contracts/common/ids.schema.json")
+	require.NoError(t, err)
+	document, err := jsonschema.UnmarshalJSON(bytes.NewReader(raw))
+	require.NoError(t, err)
+	require.NoError(t, compiler.AddResource("https://schemas.antnest.dev/common/ids.schema.json", document))
 }

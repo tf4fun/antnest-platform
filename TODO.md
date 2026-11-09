@@ -22,6 +22,8 @@ Issue 状态最后核对于 2026-10-28：141 个 issue，87 个已关闭，54 �
 
 ## 当前批次
 
+- **#16 Controller 审查完成**：新增 schema 向量测试先因新修订缺失 RED；发布后 ResourceID、execution projection/golden、真实 HTTP/SSE 与服务契约检查 GREEN，确定性生成器原值保持，Go 格式和 203-document conventions clean。Console 已交付 PR #597（`5a1a150f`）。Controller 当前候选等待远程准入，未合并；其余服务和显式集成继续。
+
 - **#16 已审查交付进度**：共享基础 PR #592（`a43b6dec`）、Skill Registry #593（`dae17d6a`）、ACP #594（`e3e7cb46`）、Runtime Controller #595（`9bf96041`）、Egress #596（`d9b05742`）已提交独立依赖栈 PR，未合并。Console 当前批次定向 RED→GREEN 完成：`TestResourceID*`／`TestSkillSource*`、真实 route response schema、catalog 审计依赖用例通过，4 份 Go 文件 gofmt clean，198-document conventions clean；日志 `artifacts/verification/issue-16-admin-console/`。完整远程准入未确认，Controller／Identity／Gateway／Agent UI／Runtime 及显式集成继续开发；不等待 CI，不运行或跟踪 Docker E2E。
 
 - **#16 Admin Console 批次（2026-11-08，依赖 Egress PR #596 `d9b05742`，分支 fix/issue-16-admin-console）**：机械收敛——`skill_sources.go` sourceAgentPattern 一行换共享语法；`browserSessionPublicID`/`runtimeRecoveryIdentifier` 本已共享语法由向量锁定。真 RED（`artifacts/verification/issue-16-admin-console/red.log`：agentId accept 7 值全拒、opaque Agent search 502 `invalid_upstream_response`）已 lead 审查，GREEN 待独立验证handoff。新 schema `admin-api.ids-v2`/`oidc-linking.ids-v2`/`skill-discovery.ids-v2`：映射 org/agent/user 属性 `#/$defs/id`→shared ref，`directory_user.id`→userId；admin-api 内部 oidc/skill-discovery ref 迁 ids-v2；skill-discovery 的 registry/discovery-api ref 迁已发布 Skill Registry ids-v2；runtime-resources 无公共字段不克隆，runtime-recovery 外ref等 integration。`admin-contract.json` version 61→62 仅3新schema refs激活；route_schema_golden loader 全contracts遍历自动注册新schema+common ids，仅断言路径/compile前缀改 ids-v2；execution_audit_contract version 期望61→62。aliases 9项精确复制新路径。README/docs/TODO更新。验证待远程CI精确候选，不提交。

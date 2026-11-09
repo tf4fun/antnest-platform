@@ -13,19 +13,19 @@
   },
   {
     "file": "agent-acp/examples/execution-snapshot.preparing.json",
-    "schema": "agent-acp/execution-snapshot.schema.json",
+    "schema": "agent-acp/execution-snapshot.ids-v2.schema.json",
     "producer": "agent-controller",
     "consumers": ["agent-acp-service"]
   },
   {
     "file": "agent-acp/examples/execution-snapshot.ready.json",
-    "schema": "agent-acp/execution-snapshot.schema.json",
+    "schema": "agent-acp/execution-snapshot.ids-v2.schema.json",
     "producer": "agent-controller",
     "consumers": ["agent-acp-service"]
   },
   {
     "file": "agent-acp/examples/execution-snapshot.v2.json",
-    "schema": "agent-acp/execution-publication-v2.schema.json#/$defs/snapshot",
+    "schema": "agent-acp/execution-publication-v2.ids-v2.schema.json#/$defs/snapshot",
     "producer": "agent-controller",
     "consumers": ["agent-acp-service"]
   },
@@ -61,61 +61,61 @@
   },
   {
     "file": "agent-controller/examples/get-agent.ready.json",
-    "schema": "agent-controller/control-api.schema.json#/$defs/agent",
+    "schema": "agent-controller/control-api.ids-v2.schema.json#/$defs/agent",
     "producer": "agent-controller",
     "consumers": ["admin-console"]
   },
   {
     "file": "agent-controller/examples/list-agents.ready.json",
-    "schema": "agent-controller/control-api.schema.json#/$defs/agent_list",
+    "schema": "agent-controller/control-api.ids-v2.schema.json#/$defs/agent_list",
     "producer": "agent-controller",
     "consumers": ["admin-console"]
   },
   {
     "file": "agent-controller/examples/list-events.ready.json",
-    "schema": "agent-controller/control-api.schema.json#/$defs/event_list",
+    "schema": "agent-controller/control-api.ids-v2.schema.json#/$defs/event_list",
     "producer": "agent-controller",
     "consumers": ["admin-console"]
   },
   {
     "file": "egress/examples/assignment.current.json",
-    "schema": "egress/control-response.schema.json#/$defs/assignment",
+    "schema": "egress/control-response.ids-v2.schema.json#/$defs/assignment",
     "producer": "runtime-egress",
     "consumers": ["agent-controller"]
   },
   {
     "file": "egress/examples/network.closed.json",
-    "schema": "egress/control-response.schema.json#/$defs/network",
+    "schema": "egress/control-response.ids-v2.schema.json#/$defs/network",
     "producer": "runtime-egress",
     "consumers": ["agent-controller"]
   },
   {
     "file": "egress/examples/network.open.json",
-    "schema": "egress/control-response.schema.json#/$defs/network",
+    "schema": "egress/control-response.ids-v2.schema.json#/$defs/network",
     "producer": "runtime-egress",
     "consumers": ["agent-controller"]
   },
   {
     "file": "egress/examples/policy-metadata.v1.json",
-    "schema": "egress/control-response.schema.json#/$defs/policy_metadata",
+    "schema": "egress/control-response.ids-v2.schema.json#/$defs/policy_metadata",
     "producer": "runtime-egress",
     "consumers": ["agent-controller"]
   },
   {
     "file": "egress/examples/policy-metadata.v2.json",
-    "schema": "egress/control-response.schema.json#/$defs/policy_metadata",
+    "schema": "egress/control-response.ids-v2.schema.json#/$defs/policy_metadata",
     "producer": "runtime-egress",
     "consumers": ["agent-controller"]
   },
   {
     "file": "egress/examples/policy.v1.json",
-    "schema": "egress/control-response.schema.json#/$defs/policy_revision",
+    "schema": "egress/control-response.ids-v2.schema.json#/$defs/policy_revision",
     "producer": "runtime-egress",
     "consumers": ["agent-controller"]
   },
   {
     "file": "egress/examples/policy.v2.json",
-    "schema": "egress/control-response.schema.json#/$defs/policy_revision",
+    "schema": "egress/control-response.ids-v2.schema.json#/$defs/policy_revision",
     "producer": "runtime-egress",
     "consumers": ["agent-controller"]
   },
@@ -145,13 +145,13 @@
   },
   {
     "file": "runtime/examples/rc-inspection.healthy.json",
-    "schema": "runtime-controller/control-api.schema.json#/$defs/runtime_inspection",
+    "schema": "runtime-controller/control-api.ids-v2.schema.json#/$defs/runtime_inspection",
     "producer": "runtime-controller",
     "consumers": ["agent-controller"]
   },
   {
     "file": "runtime/examples/rc-observations.current.json",
-    "schema": "runtime-controller/control-api.schema.json#/$defs/observation_list",
+    "schema": "runtime-controller/control-api.ids-v2.schema.json#/$defs/observation_list",
     "producer": "runtime-controller",
     "consumers": ["agent-controller"]
   },
@@ -163,7 +163,7 @@
   },
   {
     "file": "runtime/examples/runtime-spec.current.json",
-    "schema": "runtime/runtime-spec.schema.json",
+    "schema": "runtime/runtime-spec.ids-v2.schema.json",
     "producer": "runtime-controller",
     "consumers": ["antnest-runtime"]
   },
@@ -193,19 +193,19 @@
   },
   {
     "file": "skill-learning/examples/learning-changes.empty.json",
-    "schema": "skill-learning/learning-api.schema.json#/$defs/change_page",
+    "schema": "skill-learning/learning-api.ids-v2.schema.json#/$defs/change_page",
     "producer": "agent-acp-service",
     "consumers": ["agent-ui"]
   },
   {
     "file": "skill-learning/examples/learning-status.blocked.json",
-    "schema": "skill-learning/learning-api.schema.json#/$defs/learning_status",
+    "schema": "skill-learning/learning-api.ids-v2.schema.json#/$defs/learning_status",
     "producer": "agent-acp-service",
     "consumers": ["agent-ui"]
   },
   {
     "file": "skill-learning/examples/learning-policy.automatic.json",
-    "schema": "skill-learning/learning-api.schema.json#/$defs/policy",
+    "schema": "skill-learning/learning-api.ids-v2.schema.json#/$defs/policy",
     "producer": "agent-controller",
     "consumers": ["agent-acp-service"]
   }

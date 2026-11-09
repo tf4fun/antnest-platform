@@ -35,7 +35,7 @@ const invalidCounts = [
 ];
 
 const control = read("agent-controller/control-contract.json");
-const controlApi = read("agent-controller/control-api.schema.json");
+const controlApi = read("agent-controller/control-api.ids-v2.schema.json");
 const controlCallers = read("agent-controller/callers.json");
 const admin = read("admin-console/admin-contract.json");
 const adminCallers = read("admin-console/callers.json");
@@ -62,8 +62,8 @@ const modelItemRevision = ajv.compile(
   snapshotSchema.properties.models.items.properties.model_profile_revision,
 );
 
-test("control revision 50 and admin version 62 declare the live model surface", () => {
-  assert.equal(control.revision, 50);
+test("control revision 51 and admin version 62 declare the live model surface", () => {
+  assert.equal(control.revision, 51);
   assert.equal(admin.version, 62);
   const upstream = control.resources.model_profiles.usage;
   assert.equal(
@@ -73,7 +73,7 @@ test("control revision 50 and admin version 62 declare the live model surface", 
   assert.deepEqual(upstream.query, ["organization_id"]);
   assert.equal(
     upstream.response,
-    "control-api.schema.json#/$defs/model_profile_usage",
+    "control-api.ids-v2.schema.json#/$defs/model_profile_usage",
   );
   const browser = admin.routes.get_model_profile_usage;
   assert.equal(browser.path, "/model-profiles/{model_profile_id}/usage");

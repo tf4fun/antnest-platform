@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { test } from "node:test";
+import commonIDs from "../../../contracts/common/ids.schema.json" with { type: "json" };
 
 const require = createRequire(
   new URL("../../../services/agent-acp-service/package.json", import.meta.url),
@@ -11,14 +12,16 @@ const root = new URL("../../../contracts/", import.meta.url);
 const read = (file) => JSON.parse(readFileSync(new URL(file, root), "utf8"));
 
 test("Runtime publication distinguishes executable authority from closed fence-only bindings", () => {
-  const schema = read("agent-acp/execution-snapshot.schema.json");
+  const schema = read("agent-acp/execution-snapshot.ids-v2.schema.json");
   const fixtures = read("agent-acp/runtime-publication-fixtures.json");
   const ajv = new Ajv2020({ strict: true, allErrors: true });
+  ajv.addSchema(commonIDs);
   ajv.addFormat("uri", {
     type: "string",
     validate: (value) => URL.canParse(value),
   });
-  const validate = ajv.compile(schema.properties.agents.items);
+  ajv.addSchema(schema);
+  const validate = ajv.getSchema(schema.$id + "#/properties/agents/items");
   for (const vector of fixtures.vectors) {
     const agent = {
       agent_id: "agent-1",
@@ -64,9 +67,9 @@ test("Runtime publication distinguishes executable authority from closed fence-o
 });
 
 test("private publication uses the frozen instance credential rules without public authority", () => {
-  const snapshot = read("agent-acp/execution-snapshot.schema.json");
+  const snapshot = read("agent-acp/execution-snapshot.ids-v2.schema.json");
   const runtime = snapshot.properties.agents.items.properties.runtime.anyOf[0];
-  const instance = read("runtime/instance-connection.schema.json");
+  const instance = read("runtime/instance-connection.ids-v2.schema.json");
   assert.deepEqual(
     runtime.properties.connection_id,
     instance.$defs.connection_id,

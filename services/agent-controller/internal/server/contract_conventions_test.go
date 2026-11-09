@@ -250,8 +250,8 @@ func TestContractConventionsNetworkPolicyAcceptsCanonicalAndLegacy(t *testing.T)
 func TestContractConventionsCatalogListsCanonicalCursorAndLegacyAlias(t *testing.T) {
 	t.Parallel()
 
-	compiler := compileControlSchema(t, filepath.Join(repositoryRoot(t), "contracts/agent-controller/control-api.schema.json"))
-	schema, err := compiler.Compile("https://schemas.antnest.dev/agent-controller/control-api.schema.json#/$defs/agent_template_list")
+	compiler := compileControlSchema(t, filepath.Join(repositoryRoot(t), "contracts/agent-controller/control-api.ids-v2.schema.json"))
+	schema, err := compiler.Compile("https://schemas.antnest.dev/agent-controller/control-api.ids-v2.schema.json#/$defs/agent_template_list")
 	if err != nil {
 		t.Fatal(err)
 	}

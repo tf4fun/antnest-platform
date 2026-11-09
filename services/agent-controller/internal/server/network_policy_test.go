@@ -47,7 +47,7 @@ func networkHandler(t *testing.T, service NetworkPolicyService) http.Handler {
 
 func TestNetworkPolicyHandlerUsesScopedWireContract(t *testing.T) {
 	t.Parallel()
-	compiler := compileControlSchema(t, filepath.Join(repositoryRoot(t), "contracts/agent-controller/control-api.schema.json"))
+	compiler := compileControlSchema(t, filepath.Join(repositoryRoot(t), "contracts/agent-controller/control-api.ids-v2.schema.json"))
 	for _, scenario := range []struct{ method, path, body, schema string }{
 		{http.MethodGet, "/internal/agents/agent-1/network-policy?organization_id=org-1", "", "agent_network_policy"},
 		{http.MethodPut, "/internal/agents/agent-1/network-policy", networkMutationJSON, "network_policy_assignment"},
@@ -62,7 +62,7 @@ func TestNetworkPolicyHandlerUsesScopedWireContract(t *testing.T) {
 		if err := json.Unmarshal(response.Body.Bytes(), &value); err != nil {
 			t.Fatal(err)
 		}
-		schema, err := compiler.Compile("https://schemas.antnest.dev/agent-controller/control-api.schema.json#/$defs/" + scenario.schema)
+		schema, err := compiler.Compile("https://schemas.antnest.dev/agent-controller/control-api.ids-v2.schema.json#/$defs/" + scenario.schema)
 		if err != nil {
 			t.Fatal(err)
 		}
