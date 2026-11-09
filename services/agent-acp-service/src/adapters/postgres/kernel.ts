@@ -1,3 +1,4 @@
+import { SEMCONV } from "../../telemetry/semconv.gen.js";
 import type { Pool, PoolClient, PoolConfig, QueryResult, QueryResultRow } from "pg";
 import { NOOP_TELEMETRY, type TelemetryPort } from "../../ports/telemetry.js";
 import { observePostgresTransaction } from "../../telemetry/postgres.js";
@@ -152,9 +153,9 @@ export class PostgresKernel {
       return value;
     } finally {
       const attributes = { operation, result };
-      this.telemetry.count("antnest.acp.repository.requests", attributes);
+      this.telemetry.count(SEMCONV.ANTNEST_ACP_REPOSITORY_REQUESTS, attributes);
       this.telemetry.duration(
-        "antnest.acp.repository.duration",
+        SEMCONV.ANTNEST_ACP_REPOSITORY_DURATION,
         performance.now() - started,
         attributes,
       );

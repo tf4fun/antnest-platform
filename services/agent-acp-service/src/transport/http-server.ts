@@ -1,3 +1,4 @@
+import { SEMCONV } from "../telemetry/semconv.gen.js";
 import type { LearningStatusReader } from "../application/learning-status-reader.js";
 import { learningStatusRoute, serveLearningStatus } from "./learning-status.js";
 import { randomUUID } from "node:crypto";
@@ -256,7 +257,7 @@ export class AgentAcpHttpServer {
       maxPayload: options.maxWebSocketPayloadBytes,
     });
     this.webSockets.on("headers", () => {
-      activeHttpSpan()?.addEvent("antnest.http.upgrade.response.prepared");
+      activeHttpSpan()?.addEvent(SEMCONV.ANTNEST_HTTP_UPGRADE_RESPONSE_PREPARED);
     });
     this.server.on("upgrade", (request, socket, head) => {
       const boundary = startHttpBoundary(request);
@@ -713,12 +714,15 @@ export class AgentAcpHttpServer {
     if ("status" in admission) return rejectAuthenticatedUpgrade(socket, admission);
     const protocol = acpProtocol(request.url);
     if (protocol === null) {
-      this.telemetry.count("antnest.acp.connections", { result: "rejected", reason: "not_found" });
+      this.telemetry.count(SEMCONV.ANTNEST_ACP_CONNECTIONS, {
+        result: "rejected",
+        reason: "not_found",
+      });
       return rejectUpgrade(socket, 404, "Not Found");
     }
     try {
       if (!(await this.options.ready()) || this.isClosing()) {
-        this.telemetry.count("antnest.acp.connections", {
+        this.telemetry.count(SEMCONV.ANTNEST_ACP_CONNECTIONS, {
           result: "rejected",
           reason: "not_ready",
         });
@@ -731,7 +735,7 @@ export class AgentAcpHttpServer {
     }
     const identity = trustedIdentity(request.headers);
     if (identity === null) {
-      this.telemetry.count("antnest.acp.connections", {
+      this.telemetry.count(SEMCONV.ANTNEST_ACP_CONNECTIONS, {
         result: "rejected",
         reason: "unauthorized",
       });
@@ -804,13 +808,13 @@ export class AgentAcpHttpServer {
       };
       this.webSockets.handleUpgrade(request, socket, head, (webSocket) => {
         const span = activeHttpSpan();
-        span?.addEvent("antnest.http.upgrade.connection.setup.started");
-        this.telemetry.count("antnest.acp.connections", { result: "accepted", protocol });
+        span?.addEvent(SEMCONV.ANTNEST_HTTP_UPGRADE_CONNECTION_SETUP_STARTED);
+        this.telemetry.count(SEMCONV.ANTNEST_ACP_CONNECTIONS, { result: "accepted", protocol });
         this.connections.add(webSocket);
         startWebSocketLiveness(webSocket, this.options.wsPingIntervalMs);
         webSocket.once("close", () => {
           this.connections.delete(webSocket);
-          this.telemetry.count("antnest.acp.connections", { result: "closed" });
+          this.telemetry.count(SEMCONV.ANTNEST_ACP_CONNECTIONS, { result: "closed" });
         });
         webSocket.once("error", (error) => this.report(error, "websocket"));
         try {
@@ -823,7 +827,7 @@ export class AgentAcpHttpServer {
           );
           setup.resolve(connection.closed);
           this.observeConnection(connection, protocol);
-          span?.addEvent("antnest.http.upgrade.connection.setup.completed");
+          span?.addEvent(SEMCONV.ANTNEST_HTTP_UPGRADE_CONNECTION_SETUP_COMPLETED);
         } catch (error) {
           this.report(error, "acp_connect");
           webSocket.close(1011, "ACP connection setup failed");
@@ -831,7 +835,7 @@ export class AgentAcpHttpServer {
       });
       return 101;
     } catch (error) {
-      this.telemetry.count("antnest.acp.connections", {
+      this.telemetry.count(SEMCONV.ANTNEST_ACP_CONNECTIONS, {
         result: "rejected",
         reason: "connection_setup_failed",
       });

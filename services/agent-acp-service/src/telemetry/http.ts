@@ -1,4 +1,6 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
+import { SEMCONV } from "./semconv.gen.js";
+import { normalizeAttributes } from "./names.js";
 import {
   context,
   createContextKey,
@@ -67,7 +69,7 @@ export function startHttpBoundary(
           attributes: {
             "http.request.method": method,
             "http.route": route,
-            "antnest.listener": listener,
+            [SEMCONV.ANTNEST_LISTENER]: listener,
           },
         },
         parent,
@@ -83,8 +85,9 @@ export function startHttpBoundary(
         span.setAttribute("http.response.status_code", status);
         if (status >= 500) {
           span.setStatus({ code: SpanStatusCode.ERROR });
-          span.setAttribute("antnest.outcome", "error");
-        } else if (status >= 400) span.setAttribute("antnest.outcome", "rejected");
+          span.setAttributes(normalizeAttributes({ [SEMCONV.ANTNEST_OUTCOME]: "error" }));
+        } else if (status >= 400)
+          span.setAttributes(normalizeAttributes({ [SEMCONV.ANTNEST_OUTCOME]: "rejected" }));
       }
       if (error !== undefined) recordBoundaryError(span, error, "http.receive");
       span.end();
@@ -105,10 +108,12 @@ export function observeHttpRequest(
   response.once("finish", completed);
   response.once("close", () => {
     if (response.writableFinished) return;
-    boundary.span.setAttributes({
-      "antnest.outcome": "disconnected",
-      "error.type": "stream_interrupted",
-    });
+    boundary.span.setAttributes(
+      normalizeAttributes({
+        [SEMCONV.ANTNEST_OUTCOME]: "disconnected",
+        "error.type": "stream_interrupted",
+      }),
+    );
     boundary.span.setStatus({ code: SpanStatusCode.ERROR });
     boundary.finish(response.headersSent ? response.statusCode : undefined);
   });
@@ -148,11 +153,13 @@ export function tracedFetch<Input extends string | URL | Request, Init extends R
     });
     try {
       const target = new URL(input instanceof Request ? input.url : input);
-      span.setAttributes({
-        "server.address": target.hostname,
-        "server.port":
-          target.port === "" ? (target.protocol === "https:" ? 443 : 80) : Number(target.port),
-      });
+      span.setAttributes(
+        normalizeAttributes({
+          "server.address": target.hostname,
+          "server.port":
+            target.port === "" ? (target.protocol === "https:" ? 443 : 80) : Number(target.port),
+        }),
+      );
     } catch {
       // The actual fetch remains responsible for invalid target errors.
     }
@@ -169,7 +176,8 @@ export function tracedFetch<Input extends string | URL | Request, Init extends R
       if (ended) return;
       ended = true;
       signal?.removeEventListener("abort", onAbort);
-      if (outcome !== undefined) span.setAttribute("antnest.outcome", outcome);
+      if (outcome !== undefined)
+        span.setAttributes(normalizeAttributes({ [SEMCONV.ANTNEST_OUTCOME]: outcome }));
       if (error !== undefined) recordBoundaryError(span, error, "http.send_or_read");
       span.end();
     };
@@ -180,12 +188,14 @@ export function tracedFetch<Input extends string | URL | Request, Init extends R
       finish(error);
       throw error;
     }
-    span.setAttributes({
-      "http.response.status_code": response.status,
-    });
+    span.setAttributes(
+      normalizeAttributes({
+        "http.response.status_code": response.status,
+      }),
+    );
     if (response.status >= 400) {
       span.setStatus({ code: SpanStatusCode.ERROR });
-      span.setAttribute("antnest.outcome", "http_error");
+      span.setAttributes(normalizeAttributes({ [SEMCONV.ANTNEST_OUTCOME]: "http_error" }));
     }
     if (response.body === null) {
       finish();

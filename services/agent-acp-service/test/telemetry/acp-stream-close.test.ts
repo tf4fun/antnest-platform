@@ -41,15 +41,28 @@ it.each(["session-output", "learning-notice", "permission"] as const)(
     expect(recorded[0]!.events).toHaveLength(1);
     expect(recorded[0]!.events[0]).toMatchObject({
       name: "antnest.stream.termination",
-      attributes: {
-        reason: "access_denied",
-        "error.type": "DomainError",
-        source,
-        "antnest.agent.id": expected.agentId,
-        "antnest.organization.id": expected.organizationId,
-      },
     });
-    expect(Object.keys(recorded[0]!.events[0]!.attributes!)).toHaveLength(5);
+    const attributes = recorded[0]!.events[0]!.attributes!;
+    expect(Object.keys(attributes).sort()).toEqual([
+      "agent.id",
+      "antnest.agent.id",
+      "antnest.agent_id",
+      "antnest.organization.id",
+      "antnest.organization_id",
+      "error.type",
+      "reason",
+      "source",
+    ]);
+    expect(attributes).toEqual({
+      reason: "access_denied",
+      "error.type": "DomainError",
+      source,
+      "antnest.agent.id": expected.agentId,
+      "agent.id": expected.agentId,
+      "antnest.agent_id": expected.agentId,
+      "antnest.organization.id": expected.organizationId,
+      "antnest.organization_id": expected.organizationId,
+    });
     expect(JSON.stringify(recorded[0]!.events)).not.toContain("private-canary");
     expect(JSON.stringify(recorded[0]!.events)).not.toContain(expected.connectionId);
   },

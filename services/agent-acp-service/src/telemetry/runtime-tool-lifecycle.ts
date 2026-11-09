@@ -1,4 +1,6 @@
 import { context, createContextKey, SpanStatusCode, trace, type Span } from "@opentelemetry/api";
+import { SEMCONV } from "./semconv.gen.js";
+import { normalizeAttributes } from "./names.js";
 import { boundaryConfig, recordBoundaryError, safeId } from "./diagnostics.js";
 
 type Method = "tools/list" | "tools/call";
@@ -31,17 +33,21 @@ export async function withRuntimeToolLifecycle<Result>(
     return context.with(cleared, operation);
 
   const owner: Owner = { span, method, executionId, active: true, claimed: false };
-  span.setAttributes({
-    "antnest.runtime.execution.id": admittedExecution,
-    "antnest.mcp.method": method,
-    "antnest.mcp.tool_result.outcome": "not_received",
-    "antnest.mcp.connection.close.outcome": "not_started",
-  });
+  span.setAttributes(
+    normalizeAttributes({
+      [SEMCONV.ANTNEST_RUNTIME_EXECUTION_ID]: admittedExecution,
+      [SEMCONV.ANTNEST_MCP_METHOD]: method,
+      [SEMCONV.ANTNEST_MCP_TOOL_RESULT_OUTCOME]: "not_received",
+      [SEMCONV.ANTNEST_MCP_CONNECTION_CLOSE_OUTCOME]: "not_started",
+    }),
+  );
   try {
     return await context.with(cleared.setValue(ownerKey, owner), operation);
   } finally {
     owner.active = false;
-    span.setAttribute("antnest.mcp.caller_cancelled", signal.aborted);
+    span.setAttributes(
+      normalizeAttributes({ [SEMCONV.ANTNEST_MCP_CALLER_CANCELLED]: signal.aborted }),
+    );
   }
 }
 
@@ -74,17 +80,19 @@ class RuntimeToolLifecycle {
   }
 
   public ready(): void {
-    this.span?.addEvent("antnest.mcp.discovery.ready");
+    this.span?.addEvent(SEMCONV.ANTNEST_MCP_DISCOVERY_READY);
   }
 
   public dispatch(): void {
-    this.span?.addEvent("antnest.mcp.tool.dispatch.started");
+    this.span?.addEvent(SEMCONV.ANTNEST_MCP_TOOL_DISPATCH_STARTED);
   }
 
   public parsed(isError = false): void {
     const outcome = isError ? "tool_error" : "success";
-    this.span?.setAttribute("antnest.mcp.tool_result.outcome", outcome);
-    this.span?.addEvent("antnest.mcp.tool.result.parsed", { outcome });
+    this.span?.setAttributes(
+      normalizeAttributes({ [SEMCONV.ANTNEST_MCP_TOOL_RESULT_OUTCOME]: outcome }),
+    );
+    this.span?.addEvent(SEMCONV.ANTNEST_MCP_TOOL_RESULT_PARSED, { outcome });
   }
 
   public async close(
@@ -93,27 +101,31 @@ class RuntimeToolLifecycle {
     report: (error: unknown) => void,
   ): Promise<void> {
     const span = this.span;
-    span?.addEvent("antnest.mcp.connection.close.started", {
-      "antnest.mcp.caller_cancelled": signal.aborted,
+    span?.addEvent(SEMCONV.ANTNEST_MCP_CONNECTION_CLOSE_STARTED, {
+      [SEMCONV.ANTNEST_MCP_CALLER_CANCELLED]: signal.aborted,
     });
     try {
       await close();
-      span?.setAttribute("antnest.mcp.connection.close.outcome", "closed");
-      span?.addEvent("antnest.mcp.connection.close.completed", { outcome: "closed" });
+      span?.setAttributes(
+        normalizeAttributes({ [SEMCONV.ANTNEST_MCP_CONNECTION_CLOSE_OUTCOME]: "closed" }),
+      );
+      span?.addEvent(SEMCONV.ANTNEST_MCP_CONNECTION_CLOSE_COMPLETED, { outcome: "closed" });
     } catch (error) {
-      span?.setAttribute("antnest.mcp.connection.close.outcome", "failed");
+      span?.setAttributes(
+        normalizeAttributes({ [SEMCONV.ANTNEST_MCP_CONNECTION_CLOSE_OUTCOME]: "failed" }),
+      );
       if (span) {
         try {
           recordBoundaryError(span, error, "mcp.tools.close");
         } catch {
           span.setStatus({ code: SpanStatusCode.ERROR });
-          span.addEvent("antnest.error", {
-            "antnest.error.stage": "mcp.tools.close",
-            "antnest.error.type": "uninspectable_error",
+          span.addEvent(SEMCONV.ANTNEST_ERROR, {
+            [SEMCONV.ANTNEST_ERROR_STAGE]: "mcp.tools.close",
+            [SEMCONV.ANTNEST_ERROR_TYPE]: "uninspectable_error",
           });
         }
       }
-      span?.addEvent("antnest.mcp.connection.close.completed", { outcome: "failed" });
+      span?.addEvent(SEMCONV.ANTNEST_MCP_CONNECTION_CLOSE_COMPLETED, { outcome: "failed" });
       try {
         report(error);
       } catch {

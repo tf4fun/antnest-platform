@@ -1,3 +1,4 @@
+import { SEMCONV } from "../../telemetry/semconv.gen.js";
 import { randomUUID } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
 
@@ -255,7 +256,7 @@ export class AcpHttpTransport {
     this.entries.add(entry);
     this.capacityLeases.set(entry, lease);
     entry.activateOwner();
-    this.telemetry.count("antnest.acp.connections", {
+    this.telemetry.count(SEMCONV.ANTNEST_ACP_CONNECTIONS, {
       result: "accepted",
       protocol: "v1",
       transport: "http",
@@ -303,7 +304,7 @@ export class AcpHttpTransport {
         this.telemetry.log("error", "acp_http_close_failed", {}, error);
       },
     );
-    this.telemetry.count("antnest.acp.connections", {
+    this.telemetry.count(SEMCONV.ANTNEST_ACP_CONNECTIONS, {
       result: "closed",
       protocol: "v1",
       transport: "http",

@@ -1,3 +1,4 @@
+import { SEMCONV } from "./telemetry/semconv.gen.js";
 import { buildLearningWorker } from "./composition-learning.js";
 import type { createLegacyAgentRepositories } from "./adapters/postgres/agent-repositories.js";
 import type { createLegacyLearningRepositories } from "./adapters/postgres/learning-repositories.js";
@@ -105,13 +106,13 @@ export function buildAgentComponents(input: {
   const temporarySkillCleanupWorker = new TemporarySkillCleanupWorker({
     skills: temporarySkills,
     gate: learningGate,
-    report: (outcome) => telemetry.count("antnest.acp.skill_temporary_cleanup", { outcome }),
+    report: (outcome) => telemetry.count(SEMCONV.ANTNEST_ACP_SKILL_TEMPORARY_CLEANUP, { outcome }),
   });
   const rawTools = new McpToolCatalog({
     runtimeDialer: new OfficialMcpDialer({ trust: "runtime", connections: runtimeConnections }),
     revisions: sessions,
     reportConnectionCloseFailure: (source, sourceId, error) => {
-      telemetry.count("antnest.acp.mcp.close_failures", { source });
+      telemetry.count(SEMCONV.ANTNEST_ACP_MCP_CLOSE_FAILURES, { source });
       telemetry.log(
         "warn",
         "mcp_connection_close_failed",

@@ -1,3 +1,4 @@
+import { SEMCONV } from "../telemetry/semconv.gen.js";
 import { DomainError } from "../domain/errors.js";
 import type { LoadedSkillText } from "../ports/skill-discovery.js";
 import type {
@@ -25,8 +26,8 @@ export class TemporarySkills {
       "skill.temporary.install",
       {
         ...attributes(scope),
-        "antnest.skill.content_digest": loaded.contentDigest,
-        "antnest.skill.artifact_digest": loaded.artifactDigest,
+        [SEMCONV.ANTNEST_SKILL_CONTENT_DIGEST]: loaded.contentDigest,
+        [SEMCONV.ANTNEST_SKILL_ARTIFACT_DIGEST]: loaded.artifactDigest,
       },
       () => this.runtime.install(scope, loaded, input.signal),
     );
@@ -60,9 +61,9 @@ export class TemporarySkills {
 }
 function attributes(scope: TemporarySkillScope) {
   return {
-    "antnest.organization_id": scope.organizationId,
-    "antnest.agent_id": scope.agentId,
-    "antnest.run_id": scope.runId,
-    "antnest.runtime_execution_id": scope.executionId,
+    [SEMCONV.ANTNEST_ORGANIZATION_ID]: scope.organizationId,
+    [SEMCONV.ANTNEST_AGENT_ID]: scope.agentId,
+    [SEMCONV.ANTNEST_RUN_ID]: scope.runId,
+    [SEMCONV.ANTNEST_RUNTIME_EXECUTION_ID]: scope.executionId,
   };
 }

@@ -1,4 +1,6 @@
 import { context, SpanStatusCode, trace } from "@opentelemetry/api";
+import { SEMCONV } from "./semconv.gen.js";
+import { normalizeAttributes } from "./names.js";
 import { ZodError } from "zod";
 
 import type { LearningTaskProcessor } from "../application/learning-task-processor.js";
@@ -15,13 +17,13 @@ import type { TelemetryAttributes, TelemetryPort } from "../ports/telemetry.js";
 
 function identity(claim: LearningTaskClaim): TelemetryAttributes {
   return {
-    "antnest.organization.id": claim.organizationId,
-    "antnest.agent.id": claim.agentId,
-    "antnest.learning.source_run.id": claim.sourceRunId,
-    "antnest.learning.task.id": claim.taskId,
-    "antnest.learning.generation": claim.generation,
-    "antnest.learning.review_prompt_version": claim.reviewPromptVersion ?? 1,
-    "antnest.learning.debug": claim.reviewPromptVersion === 2,
+    [SEMCONV.ANTNEST_ORGANIZATION_ID]: claim.organizationId,
+    [SEMCONV.ANTNEST_AGENT_ID]: claim.agentId,
+    [SEMCONV.ANTNEST_LEARNING_SOURCE_RUN_ID]: claim.sourceRunId,
+    [SEMCONV.ANTNEST_LEARNING_TASK_ID]: claim.taskId,
+    [SEMCONV.ANTNEST_LEARNING_GENERATION]: claim.generation,
+    [SEMCONV.ANTNEST_LEARNING_REVIEW_PROMPT_VERSION]: claim.reviewPromptVersion ?? 1,
+    [SEMCONV.ANTNEST_LEARNING_DEBUG]: claim.reviewPromptVersion === 2,
   };
 }
 
@@ -29,9 +31,11 @@ function attributes(value: TelemetryAttributes): void {
   trace
     .getSpan(context.active())
     ?.setAttributes(
-      Object.fromEntries(
-        Object.entries(value).filter(
-          (entry): entry is [string, string | number | boolean] => entry[1] !== undefined,
+      normalizeAttributes(
+        Object.fromEntries(
+          Object.entries(value).filter(
+            (entry): entry is [string, string | number | boolean] => entry[1] !== undefined,
+          ),
         ),
       ),
     );
@@ -50,16 +54,18 @@ export class InstrumentedLearningTaskProcessor {
     return this.telemetry.span("skill_learning.task", identity(claim), async () => {
       const result = await this.delegate.process(claim, signal);
       attributes({
-        "antnest.learning.outcome": result.kind,
-        "antnest.learning.pause_reason": result.kind === "paused" ? result.reason : undefined,
-        "antnest.learning.change.id": result.kind === "applied" ? result.changeId : undefined,
+        [SEMCONV.ANTNEST_LEARNING_OUTCOME]: result.kind,
+        [SEMCONV.ANTNEST_LEARNING_PAUSE_REASON]:
+          result.kind === "paused" ? result.reason : undefined,
+        [SEMCONV.ANTNEST_LEARNING_CHANGE_ID]:
+          result.kind === "applied" ? result.changeId : undefined,
       });
       if (
         result.kind === "failed" ||
         (result.kind === "paused" && result.reason === "review_inconclusive")
       )
         trace.getSpan(context.active())?.setStatus({ code: SpanStatusCode.ERROR });
-      this.telemetry.count("antnest.acp.skill_learning.tasks", {
+      this.telemetry.count(SEMCONV.ANTNEST_ACP_SKILL_LEARNING_TASKS, {
         result: result.kind,
         reason: result.kind === "paused" ? result.reason : undefined,
       });
@@ -80,7 +86,7 @@ export class InstrumentedLearningApply {
   ): ReturnType<LearningApplyAttempt["apply"]> {
     return this.telemetry.span("skill_learning.apply", identity(claim), async () => {
       const result = await this.delegate.apply(claim, signal);
-      attributes({ "antnest.learning.apply.outcome": result.kind });
+      attributes({ [SEMCONV.ANTNEST_LEARNING_APPLY_OUTCOME]: result.kind });
       return result;
     });
   }
@@ -92,18 +98,18 @@ export class LearningTelemetry implements LearningReviewDiagnostics {
   public evidence(claim: LearningTaskClaim, evidence: LearningEvidence): void {
     attributes({
       ...identity(claim),
-      "antnest.learning.evidence.truncated": evidence.truncated,
-      "antnest.learning.evidence.items": evidence.items.length,
-      "antnest.learning.evidence.user_items": evidence.items.filter(
+      [SEMCONV.ANTNEST_LEARNING_EVIDENCE_TRUNCATED]: evidence.truncated,
+      [SEMCONV.ANTNEST_LEARNING_EVIDENCE_ITEMS]: evidence.items.length,
+      [SEMCONV.ANTNEST_LEARNING_EVIDENCE_USER_ITEMS]: evidence.items.filter(
         (item) => item.kind === "authenticated_user",
       ).length,
-      "antnest.learning.evidence.execution_items": evidence.items.filter(
+      [SEMCONV.ANTNEST_LEARNING_EVIDENCE_EXECUTION_ITEMS]: evidence.items.filter(
         (item) => item.kind === "observed_execution",
       ).length,
-      "antnest.learning.evidence.untrusted_items": evidence.items.filter(
+      [SEMCONV.ANTNEST_LEARNING_EVIDENCE_UNTRUSTED_ITEMS]: evidence.items.filter(
         (item) => item.kind === "untrusted_material",
       ).length,
-      "antnest.learning.evidence.content_bytes": evidence.items.reduce(
+      [SEMCONV.ANTNEST_LEARNING_EVIDENCE_CONTENT_BYTES]: evidence.items.reduce(
         (total, item) => total + Buffer.byteLength(item.text),
         0,
       ),
@@ -113,7 +119,9 @@ export class LearningTelemetry implements LearningReviewDiagnostics {
   public review(claim: LearningTaskClaim, operation: () => Promise<LearningReviewDecision | null>) {
     return this.telemetry.span("skill_learning.review", identity(claim), async () => {
       const decision = await operation();
-      attributes({ "antnest.learning.review.decision": decision?.decision ?? "inconclusive" });
+      attributes({
+        [SEMCONV.ANTNEST_LEARNING_REVIEW_DECISION]: decision?.decision ?? "inconclusive",
+      });
       return decision;
     });
   }
@@ -128,8 +136,8 @@ export class LearningTelemetry implements LearningReviewDiagnostics {
       "skill_learning.review.call",
       {
         ...identity(claim),
-        "antnest.learning.call_index": callIndex,
-        "antnest.request.id": requestId,
+        [SEMCONV.ANTNEST_LEARNING_CALL_INDEX]: callIndex,
+        [SEMCONV.ANTNEST_REQUEST_ID]: requestId,
       },
       async () => {
         const result = await operation();
@@ -149,21 +157,21 @@ export class LearningTelemetry implements LearningReviewDiagnostics {
       "skill_learning.review.validate",
       {
         ...identity(claim),
-        "antnest.learning.call_index": callIndex,
+        [SEMCONV.ANTNEST_LEARNING_CALL_INDEX]: callIndex,
         ...responseAttributes(response),
       },
       async () => {
         try {
           const decision = await Promise.resolve().then(operation);
-          attributes({ "antnest.learning.validation.result": "accepted" });
+          attributes({ [SEMCONV.ANTNEST_LEARNING_VALIDATION_RESULT]: "accepted" });
           return decision;
         } catch (error) {
           const failure = validationFailure(response, error);
           attributes({
-            "antnest.learning.validation.result": "rejected",
-            "antnest.learning.validation.reason": failure.reason,
-            "antnest.learning.validation.paths": failure.paths,
-            "antnest.learning.validation.codes": failure.codes,
+            [SEMCONV.ANTNEST_LEARNING_VALIDATION_RESULT]: "rejected",
+            [SEMCONV.ANTNEST_LEARNING_VALIDATION_REASON]: failure.reason,
+            [SEMCONV.ANTNEST_LEARNING_VALIDATION_PATHS]: failure.paths,
+            [SEMCONV.ANTNEST_LEARNING_VALIDATION_CODES]: failure.codes,
           });
           this.telemetry.log("warn", "skill_learning_review_rejected", {
             ...identity(claim),
@@ -188,11 +196,12 @@ function responseAttributes(response: ModelResult): TelemetryAttributes {
       0,
     );
   return {
-    "antnest.model.result.kind": response.kind,
-    "antnest.model.stop_reason": response.kind === "message" ? response.stopReason : "tool_calls",
-    "antnest.model.content_bytes": byteCount(response.content),
-    "antnest.model.thought_bytes": byteCount(response.thought ?? []),
-    "antnest.model.markdown_fence": response.content.some(
+    [SEMCONV.ANTNEST_MODEL_RESULT_KIND]: response.kind,
+    [SEMCONV.ANTNEST_MODEL_STOP_REASON]:
+      response.kind === "message" ? response.stopReason : "tool_calls",
+    [SEMCONV.ANTNEST_MODEL_CONTENT_BYTES]: byteCount(response.content),
+    [SEMCONV.ANTNEST_MODEL_THOUGHT_BYTES]: byteCount(response.thought ?? []),
+    [SEMCONV.ANTNEST_MODEL_MARKDOWN_FENCE]: response.content.some(
       (block) =>
         block.type === "text" && typeof block.text === "string" && /^\s*```/u.test(block.text),
     ),

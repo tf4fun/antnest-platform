@@ -1,4 +1,6 @@
 import type { ToolPermissionPort } from "../ports/tool-permissions.js";
+import { SEMCONV } from "./semconv.gen.js";
+import { normalizeAttributes } from "./names.js";
 import type { TelemetryPort } from "../ports/telemetry.js";
 import { context, trace } from "@opentelemetry/api";
 
@@ -18,17 +20,17 @@ export class InstrumentedToolPermissions implements ToolPermissionPort {
     };
     return this.telemetry.span("acp.permission.wait", attributes, async () => {
       const result = await this.delegate.request(input);
-      trace
-        .getSpan(context.active())
-        ?.setAttribute(
-          "antnest.outcome",
-          result.decision === "cancelled"
-            ? "cancelled"
-            : result.decision.startsWith("reject")
-              ? "rejected"
-              : "ok",
-        );
-      this.telemetry.count("antnest.acp.permission.decisions", {
+      trace.getSpan(context.active())?.setAttributes(
+        normalizeAttributes({
+          [SEMCONV.ANTNEST_OUTCOME]:
+            result.decision === "cancelled"
+              ? "cancelled"
+              : result.decision.startsWith("reject")
+                ? "rejected"
+                : "ok",
+        }),
+      );
+      this.telemetry.count(SEMCONV.ANTNEST_ACP_PERMISSION_DECISIONS, {
         decision: result.decision,
         reason: result.reason,
       });

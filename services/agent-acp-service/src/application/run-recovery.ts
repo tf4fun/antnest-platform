@@ -1,3 +1,4 @@
+import { SEMCONV } from "../telemetry/semconv.gen.js";
 import type { RunOutcome } from "../domain/types.js";
 import { ownershipScope, type AgentOwnershipScope } from "../domain/agent-ownership.js";
 import type {
@@ -50,7 +51,7 @@ export class RunRecovery {
   private async reconcile(request: RunRecoveryRequest, signal: AbortSignal): Promise<RunOutcome> {
     let terminal = request.kind === "terminal" ? request.terminal : undefined;
     const interruptedAt = this.dependencies.now();
-    this.dependencies.telemetry.count("antnest.acp.recovery_runs", {
+    this.dependencies.telemetry.count(SEMCONV.ANTNEST_ACP_RECOVERY_RUNS, {
       classification: "persistence",
     });
     for (let attempt = 0; ; attempt++) {
@@ -93,7 +94,7 @@ export class RunRecovery {
                   };
             terminal = { runId: request.runId, ...outcome, finishedAt: this.dependencies.now() };
             if (outcome.terminalClass === "unresolved")
-              this.dependencies.telemetry.count("antnest.acp.unresolved_runs", {
+              this.dependencies.telemetry.count(SEMCONV.ANTNEST_ACP_UNRESOLVED_RUNS, {
                 reason: "persistence_interrupted",
               });
           }
@@ -138,7 +139,7 @@ export class RunRecovery {
     );
     for (const item of work) {
       assertWorkerOwnership(signal);
-      this.dependencies.telemetry.count("antnest.acp.recovery_runs", {
+      this.dependencies.telemetry.count(SEMCONV.ANTNEST_ACP_RECOVERY_RUNS, {
         classification: item.kind,
       });
       await this.recoverOne(item, signal);
@@ -175,7 +176,7 @@ export class RunRecovery {
             errorClass: "service_restarted_during_run",
           };
     if (terminal.terminalClass === "unresolved") {
-      this.dependencies.telemetry.count("antnest.acp.unresolved_runs", {
+      this.dependencies.telemetry.count(SEMCONV.ANTNEST_ACP_UNRESOLVED_RUNS, {
         reason: "service_restart_during_tool",
       });
     }

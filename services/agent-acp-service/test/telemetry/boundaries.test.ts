@@ -237,9 +237,14 @@ describe("ACP dispatcher contract", () => {
         expect(span.parentSpanContext?.spanId).toBe(parent.spanContext().spanId);
         expect(JSON.stringify(span.events)).toContain(`profile:model-${index}`);
         expect(JSON.stringify(span.events)).toContain(`session-${index}`);
+        const requestEvent = span.events.find((event) => event.name === "antnest.request")!;
+        const captured = JSON.parse(String(requestEvent.attributes?.["antnest.payload.json"])) as {
+          _meta?: { secret?: string };
+        };
+        expect(captured._meta?.secret).toBe("[REDACTED]");
         parent.end();
       }
-      expect(serializedSpans()).toContain("nested-canary");
+      expect(serializedSpans()).not.toContain("nested-canary");
       expect(serializedSpans()).toContain("prompt-canary");
     },
   );
@@ -273,21 +278,35 @@ describe("ACP dispatcher contract", () => {
       "antnest.error.cause_types": [],
     });
     expect(span.attributes["antnest.outcome"]).toBe("rejected");
-    expect(JSON.stringify(span.events)).toContain("data-canary");
+    expect(JSON.stringify(span.events)).not.toContain("data-canary");
+    const responseEvent = span.events.find((event) => event.name === "antnest.response")!;
+    const captured = JSON.parse(String(responseEvent.attributes?.["antnest.payload.json"])) as {
+      data?: { token?: string };
+    };
+    expect(captured.data?.token).toBe("[REDACTED]");
   });
 });
 
 describe("RPC capture switch", () => {
   it("retains new nested fields and large values without custom budgets", () => {
     const span = tracer.startSpan("rpc");
-    const value = { newField: { secret: "x".repeat(24_000) }, extra: ["raw"] };
+    const value = {
+      newField: { public: "x".repeat(24_000), secret: "PRIVATE-CANARY" },
+      extra: ["raw"],
+    };
+    const original = structuredClone(value);
     rpcContent(span, "request", value);
     rpcContent(span, "response", value);
     span.end();
     const events = exporter.getFinishedSpans()[0]!.events;
     expect(events).toHaveLength(2);
+    const expected = {
+      newField: { public: "x".repeat(24_000), secret: "[REDACTED]" },
+      extra: ["raw"],
+    };
     for (const event of events)
-      expect(JSON.parse(String(event.attributes?.["antnest.payload.json"]))).toEqual(value);
+      expect(JSON.parse(String(event.attributes?.["antnest.payload.json"]))).toEqual(expected);
+    expect(value).toEqual(original);
   });
 
   it("does not serialize when capture or telemetry is disabled", () => {

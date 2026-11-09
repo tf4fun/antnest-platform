@@ -1,4 +1,6 @@
 import { context, SpanStatusCode, trace } from "@opentelemetry/api";
+import { SEMCONV } from "./semconv.gen.js";
+import { normalizeAttributes } from "./names.js";
 import { PgInstrumentation } from "@opentelemetry/instrumentation-pg";
 import type { tracing } from "@opentelemetry/sdk-node";
 import { boundaryConfig, recordBoundaryError } from "./diagnostics.js";
@@ -72,7 +74,9 @@ export function observePostgresTransaction<T>(
           recordBoundaryError(span, error, "postgresql transaction");
           throw error;
         } finally {
-          span.setAttribute("antnest.transaction.outcome", outcome);
+          span.setAttributes(
+            normalizeAttributes({ [SEMCONV.ANTNEST_TRANSACTION_OUTCOME]: outcome }),
+          );
           span.end();
         }
       },

@@ -1,3 +1,5 @@
+import { SEMCONV } from "../telemetry/semconv.gen.js";
+import { normalizeAttributes } from "../telemetry/names.js";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { DomainError } from "../domain/errors.js";
 import type { ExecutionConfigurationPort } from "../ports/execution-configuration.js";
@@ -46,16 +48,18 @@ async function executionConfiguration(
   operation: "snapshot" | "delta" | "digest",
 ): Promise<void> {
   const span = activeHttpSpan();
-  span?.setAttributes({
-    "rpc.system.name": "json-over-http",
-    "rpc.service": "agent-acp",
-    "rpc.method":
-      operation === "snapshot"
-        ? "apply_execution_snapshot"
-        : operation === "delta"
-          ? "apply_execution_delta"
-          : "get_execution_digest",
-  });
+  span?.setAttributes(
+    normalizeAttributes({
+      "rpc.system.name": "json-over-http",
+      "rpc.service": "agent-acp",
+      "rpc.method":
+        operation === "snapshot"
+          ? "apply_execution_snapshot"
+          : operation === "delta"
+            ? "apply_execution_delta"
+            : "get_execution_digest",
+    }),
+  );
   try {
     const input = await readRpcRequest(request, maxBytes);
     if (publisher === undefined)
@@ -68,10 +72,12 @@ async function executionConfiguration(
           : await publisher.getDigest?.(input);
     if (applied === undefined) throw new Error("Execution configuration publisher is unavailable");
     if (operation !== "digest" && "applied_revision" in applied)
-      span?.setAttributes({
-        "antnest.organization.id": applied.organization_id,
-        "antnest.configuration.revision": applied.applied_revision,
-      });
+      span?.setAttributes(
+        normalizeAttributes({
+          [SEMCONV.ANTNEST_ORGANIZATION_ID]: applied.organization_id,
+          [SEMCONV.ANTNEST_CONFIGURATION_REVISION]: applied.applied_revision,
+        }),
+      );
     rpcJson(response, 200, applied);
   } catch (error) {
     if (span !== undefined) recordBoundaryError(span, error, "configuration.apply");

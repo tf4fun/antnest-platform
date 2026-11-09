@@ -1,3 +1,4 @@
+import { normalizeAttributes, metricAttributes } from "./names.js";
 import {
   context,
   isSpanContextValid,
@@ -74,7 +75,7 @@ export class ServiceTelemetry implements TelemetryPort {
       counter = this.meter.createCounter(name);
       this.counters.set(name, counter);
     }
-    counter.add(value, cleanAttributes(attributes));
+    counter.add(value, metricAttributes(cleanAttributes(attributes)));
   }
 
   public duration(name: string, milliseconds: number, attributes: TelemetryAttributes): void {
@@ -84,7 +85,7 @@ export class ServiceTelemetry implements TelemetryPort {
       histogram = this.meter.createHistogram(name, { unit: "ms" });
       this.histograms.set(name, histogram);
     }
-    histogram.record(milliseconds, cleanAttributes(attributes));
+    histogram.record(milliseconds, metricAttributes(cleanAttributes(attributes)));
   }
 
   public log(
@@ -184,19 +185,7 @@ function cleanAttributes(
       (entry): entry is [string, string | number | boolean] => entry[1] !== undefined,
     ),
   );
-  const aliases: Record<string, string> = {
-    "request.id": "antnest.request.id",
-    "agent.id": "antnest.agent.id",
-    "run.id": "antnest.run.id",
-    "session.id": "antnest.session.id",
-    "admission.id": "antnest.admission.id",
-    "execution.revision": "antnest.execution.revision",
-  };
-  for (const [original, alias] of Object.entries(aliases)) {
-    const value = clean[original];
-    if (value !== undefined) clean[alias] = value;
-  }
-  return clean;
+  return normalizeAttributes(clean);
 }
 
 function signalUrl(endpoint: URL, signal: "traces" | "metrics"): URL {

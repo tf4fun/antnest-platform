@@ -1,3 +1,4 @@
+import { SEMCONV } from "./telemetry/semconv.gen.js";
 import { buildAgentComponents } from "./composition-agent.js";
 import { OwnedAgentComponents } from "./composition-owned.js";
 import { LearningStatusReader } from "./application/learning-status-reader.js";
@@ -279,7 +280,7 @@ export async function startAgentAcpService(
     components = built;
     void acquiredWorkerLock.waitForLoss().then((error) => {
       telemetry.log("error", "worker_lock_lost", {}, error);
-      telemetry.count("antnest.acp.worker_lock_losses", {});
+      telemetry.count(SEMCONV.ANTNEST_ACP_WORKER_LOCK_LOSSES, {});
       const ownershipLoss = new WorkerOwnershipLostError({ cause: error });
       reportOwnershipLoss(ownershipLoss);
       recoveryRequired(ownershipLoss);
@@ -911,11 +912,11 @@ export function buildComponents(
                 telemetry.span(
                   "skill.source.observe",
                   {
-                    "antnest.organization_id": record.projection.organization_id,
-                    "antnest.agent_id": record.projection.agent_id,
-                    "antnest.skill.name": record.projection.name,
-                    "antnest.skill.source_sequence": record.projection.sequence,
-                    "antnest.skill.content_digest": record.projection.content_digest,
+                    [SEMCONV.ANTNEST_ORGANIZATION_ID]: record.projection.organization_id,
+                    [SEMCONV.ANTNEST_AGENT_ID]: record.projection.agent_id,
+                    [SEMCONV.ANTNEST_SKILL_NAME]: record.projection.name,
+                    [SEMCONV.ANTNEST_SKILL_SOURCE_SEQUENCE]: record.projection.sequence,
+                    [SEMCONV.ANTNEST_SKILL_CONTENT_DIGEST]: record.projection.content_digest,
                   },
                   () => sourceVerifier.verify(record, binding, signal),
                 ),
@@ -940,17 +941,17 @@ export function buildComponents(
               telemetry.span(
                 "skill.projection.deliver",
                 {
-                  "antnest.organization_id": projection.organization_id,
-                  "antnest.agent_id": projection.agent_id,
-                  "antnest.skill.name": projection.name,
-                  "antnest.skill.source_sequence": projection.sequence,
-                  "antnest.skill.content_digest": projection.content_digest,
-                  "antnest.skill.active": projection.active,
+                  [SEMCONV.ANTNEST_ORGANIZATION_ID]: projection.organization_id,
+                  [SEMCONV.ANTNEST_AGENT_ID]: projection.agent_id,
+                  [SEMCONV.ANTNEST_SKILL_NAME]: projection.name,
+                  [SEMCONV.ANTNEST_SKILL_SOURCE_SEQUENCE]: projection.sequence,
+                  [SEMCONV.ANTNEST_SKILL_CONTENT_DIGEST]: projection.content_digest,
+                  [SEMCONV.ANTNEST_SKILL_ACTIVE]: projection.active,
                 },
                 () => projectionClient.send(projection, signal),
               ),
           },
-          report: (outcome) => telemetry.count("antnest.acp.skill_projections", { outcome }),
+          report: (outcome) => telemetry.count(SEMCONV.ANTNEST_ACP_SKILL_PROJECTIONS, { outcome }),
         });
   return {
     owned,

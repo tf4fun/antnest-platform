@@ -1,3 +1,5 @@
+import { SEMCONV } from "../telemetry/semconv.gen.js";
+import { normalizeAttributes } from "../telemetry/names.js";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { DomainError } from "../domain/errors.js";
 import {
@@ -26,11 +28,13 @@ export async function serveRuntimeBarrierQuery(
   if (response.destroyed) onClose();
   const span = activeHttpSpan();
   try {
-    span?.setAttributes({
-      "rpc.system.name": "json-over-http",
-      "rpc.service": "agent-acp",
-      "rpc.method": "get_runtime_barrier",
-    });
+    span?.setAttributes(
+      normalizeAttributes({
+        "rpc.system.name": "json-over-http",
+        "rpc.service": "agent-acp",
+        "rpc.method": "get_runtime_barrier",
+      }),
+    );
     disconnected.signal.throwIfAborted();
     const input = parseRuntimeBarrierQuery(await readRpcRequest(request, maxBytes));
     disconnected.signal.throwIfAborted();
@@ -68,11 +72,13 @@ export async function serveRuntimeBarrierQuery(
               runtime_execution_id: current.barrier.runtimeExecutionId,
             },
     });
-    span?.setAttributes({
-      "antnest.organization.id": input.organization_id,
-      "antnest.agent.id": input.agent_id,
-      "antnest.runtime.revision": result.runtime_revision,
-    });
+    span?.setAttributes(
+      normalizeAttributes({
+        [SEMCONV.ANTNEST_ORGANIZATION_ID]: input.organization_id,
+        [SEMCONV.ANTNEST_AGENT_ID]: input.agent_id,
+        [SEMCONV.ANTNEST_RUNTIME_REVISION]: result.runtime_revision,
+      }),
+    );
     if (span !== undefined) rpcContent(span, "response", result);
     rpcJson(response, 200, result);
   } catch (error) {

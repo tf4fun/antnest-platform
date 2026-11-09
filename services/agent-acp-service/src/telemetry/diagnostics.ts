@@ -1,3 +1,5 @@
+import { SEMCONV } from "./semconv.gen.js";
+import { normalizeAttributes } from "./names.js";
 import { SpanStatusCode, type Attributes, type Span, type SpanContext } from "@opentelemetry/api";
 
 export type BoundaryConfig = { captureRpcContent: boolean; disabled: boolean };
@@ -46,17 +48,49 @@ export function record(value: unknown): Record<string, unknown> {
 
 export function diagnosticEvent(span: Span, name: string, attributes: Attributes): void {
   if (configuration.disabled || !span.isRecording()) return;
-  span.addEvent(name, attributes);
+  span.addEvent(name, normalizeAttributes(attributes));
 }
+
+const SECRET_KEYS = new Set([
+  "password",
+  "passwordhash",
+  "authorization",
+  "proxyauthorization",
+  "cookie",
+  "setcookie",
+  "token",
+  "accesstoken",
+  "refreshtoken",
+  "idtoken",
+  "secret",
+  "clientsecret",
+  "apikey",
+  "privatekey",
+  "credential",
+  "credentials",
+  "workloadcredential",
+  "callercontext",
+  "cct",
+  "connectiondescriptor",
+  "generationkey",
+  "masterkey",
+  "encryptionkey",
+]);
 
 export function rpcContent(span: Span, direction: "request" | "response", value: unknown): void {
   if (!configuration.captureRpcContent || configuration.disabled || !span.isRecording()) return;
   try {
-    const json: unknown = JSON.stringify(value);
+    const json = JSON.stringify(value, (key: string, member: unknown) =>
+      SECRET_KEYS.has(key.toLowerCase().replace(/[-_]/g, "")) ? "[REDACTED]" : member,
+    );
     if (typeof json === "string")
-      diagnosticEvent(span, `antnest.${direction}`, { "antnest.payload.json": json });
+      diagnosticEvent(
+        span,
+        direction === "request" ? SEMCONV.ANTNEST_REQUEST : SEMCONV.ANTNEST_RESPONSE,
+        { [SEMCONV.ANTNEST_PAYLOAD_JSON]: json },
+      );
   } catch {
-    diagnosticEvent(span, "antnest.capture.error", { "error.type": "json_encoding" });
+    diagnosticEvent(span, SEMCONV.ANTNEST_CAPTURE_ERROR, { "error.type": "json_encoding" });
   }
 }
 
@@ -171,28 +205,34 @@ export function safeError(error: unknown): {
 export function recordBoundaryError(span: Span, error: unknown, phase: string): void {
   const identity = safeError(error);
   if (identity.type === "AbortError" || identity.code === "ABORT_ERR") {
-    span.setAttributes({
-      "antnest.operation.phase": phase,
-      "antnest.outcome": "cancelled",
-      "antnest.cancellation.type": identity.type,
-    });
-    diagnosticEvent(span, "antnest.cancelled", {
-      "antnest.cancellation.phase": phase,
-      "antnest.cancellation.type": identity.type,
+    span.setAttributes(
+      normalizeAttributes({
+        [SEMCONV.ANTNEST_OPERATION_PHASE]: phase,
+        [SEMCONV.ANTNEST_OUTCOME]: "cancelled",
+        [SEMCONV.ANTNEST_CANCELLATION_TYPE]: identity.type,
+      }),
+    );
+    diagnosticEvent(span, SEMCONV.ANTNEST_CANCELLED, {
+      [SEMCONV.ANTNEST_CANCELLATION_PHASE]: phase,
+      [SEMCONV.ANTNEST_CANCELLATION_TYPE]: identity.type,
     });
     return;
   }
   const rejected =
     identity.type === "DomainError" ||
     (typeof identity.code === "number" && [-32600, -32601, -32602, -32020].includes(identity.code));
-  span.setAttributes({
-    "error.type": identity.type,
-    "antnest.operation.phase": phase,
-    "antnest.outcome": rejected ? "rejected" : "error",
-    ...(identity.code === undefined ? {} : { "antnest.error.code": String(identity.code) }),
-    ...(identity.code === undefined ? {} : { "error.code": String(identity.code) }),
-    ...(typeof identity.code === "number" ? { "rpc.response.status_code": identity.code } : {}),
-  });
+  span.setAttributes(
+    normalizeAttributes({
+      "error.type": identity.type,
+      [SEMCONV.ANTNEST_OPERATION_PHASE]: phase,
+      [SEMCONV.ANTNEST_OUTCOME]: rejected ? "rejected" : "error",
+      ...(identity.code === undefined
+        ? {}
+        : { [SEMCONV.ANTNEST_ERROR_CODE]: String(identity.code) }),
+      ...(identity.code === undefined ? {} : { "error.code": String(identity.code) }),
+      ...(typeof identity.code === "number" ? { "rpc.response.status_code": identity.code } : {}),
+    }),
+  );
   if (!rejected) span.setStatus({ code: SpanStatusCode.ERROR });
   const causes: ReturnType<typeof safeError>[] = [];
   const seen = new Set<unknown>();
@@ -206,10 +246,12 @@ export function recordBoundaryError(span: Span, error: unknown, phase: string): 
     if (typeof item !== "object" || item === null) continue;
     const origin = errorOrigins.get(item);
     if (origin !== undefined) {
-      span.setAttributes({
-        "antnest.error.origin_trace_id": origin.traceId,
-        "antnest.error.origin_span_id": origin.spanId,
-      });
+      span.setAttributes(
+        normalizeAttributes({
+          [SEMCONV.ANTNEST_ERROR_ORIGIN_TRACE_ID]: origin.traceId,
+          [SEMCONV.ANTNEST_ERROR_ORIGIN_SPAN_ID]: origin.spanId,
+        }),
+      );
       return;
     }
   }
@@ -218,13 +260,13 @@ export function recordBoundaryError(span: Span, error: unknown, phase: string): 
       if (typeof item === "object" && item !== null) errorOrigins.set(item, span.spanContext());
     }
   }
-  diagnosticEvent(span, "antnest.error", {
-    "antnest.error.stage": phase,
-    "antnest.error.type": identity.type,
-    ...(identity.code === undefined ? {} : { "antnest.error.code": String(identity.code) }),
-    "antnest.error.message": identity.message,
-    "antnest.error.cause_types": causes.slice(1).map((cause) => cause.type),
-    "antnest.error.causes": JSON.stringify(causes),
-    "antnest.operation.phase": phase,
+  diagnosticEvent(span, SEMCONV.ANTNEST_ERROR, {
+    [SEMCONV.ANTNEST_ERROR_STAGE]: phase,
+    [SEMCONV.ANTNEST_ERROR_TYPE]: identity.type,
+    ...(identity.code === undefined ? {} : { [SEMCONV.ANTNEST_ERROR_CODE]: String(identity.code) }),
+    [SEMCONV.ANTNEST_ERROR_MESSAGE]: identity.message,
+    [SEMCONV.ANTNEST_ERROR_CAUSE_TYPES]: causes.slice(1).map((cause) => cause.type),
+    [SEMCONV.ANTNEST_ERROR_CAUSES]: JSON.stringify(causes),
+    [SEMCONV.ANTNEST_OPERATION_PHASE]: phase,
   });
 }
