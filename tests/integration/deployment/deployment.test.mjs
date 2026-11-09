@@ -231,3 +231,46 @@ test("Git excludes credential files while retaining the public configuration exa
     );
   assert(patterns.indexOf("!.env.example") > patterns.indexOf(".env.*"));
 });
+
+test("normal stop honors each service's Compose grace and still rejects forced exits", async () => {
+  const source = await readFile(
+    new URL("tests/integration/deployment/compose-runtime-docker.mjs", root),
+    "utf8",
+  );
+  const start = source.indexOf('await phase("normal-stop", async () => {');
+  const end = source.indexOf("\n} catch (error)", start);
+  assert(start > 0 && end > start);
+  const run = new (Object.getPrototypeOf(async function () {}).constructor)(
+    "phase",
+    "docker",
+    "compose",
+    "rows",
+    "assert",
+    "report",
+    source.slice(start, end),
+  );
+  for (const exitCode of [0, 137]) {
+    const calls = [];
+    const result = run(
+      async (_, action) => action(),
+      async (args) => {
+        calls.push(args);
+        return JSON.stringify([
+          {
+            State: { Running: false, ExitCode: exitCode },
+            Config: {
+              Labels: { "com.docker.compose.service": "runtime-egress" },
+            },
+          },
+        ]);
+      },
+      ["compose", "-f", "compose.yaml"],
+      [{ Id: "egress" }],
+      assert,
+      { checks: 0 },
+    );
+    if (exitCode === 0) await result;
+    else await assert.rejects(result, /runtime-egress normal stop/u);
+    assert.deepEqual(calls[0], ["compose", "-f", "compose.yaml", "stop"]);
+  }
+});
