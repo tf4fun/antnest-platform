@@ -5,6 +5,11 @@ local login, OIDC federation, and SCIM 2.0 provisioning into stable Antnest
 principals and opaque access credentials, so that no other service stores
 people, organizations, or credentials. It is written in Go.
 
+HTTP trace plumbing (server span start, request cloning, body wrapping, the
+response status writer and RPC payload capture) uses the shared Go telemetry
+module in `libs/go/telemetry`; telemetry names come from its generated
+registry constants.
+
 The global User is a stable subject with no profile or credential attributes.
 Organization-scoped profiles, group edges, local passwords, external OIDC
 identities, and tokens are separate records that point at that subject.

@@ -7,6 +7,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
+	semconv "github.com/tf4fun/antnest-platform/libs/go/telemetry"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
@@ -77,10 +78,10 @@ func (t *databaseTransaction) finish(outcome string, err error) {
 	t.ended.Do(func() {
 		if err != nil {
 			t.span.SetStatus(codes.Error, "transaction did not complete successfully")
-			t.span.SetAttributes(attribute.String("error.type", "transaction_error"))
+			t.span.SetAttributes(semconv.AliasAttributes(attribute.String("error.type", "transaction_error"))...)
 			outcome = "failed"
 		}
-		t.span.SetAttributes(attribute.String("antnest.transaction.outcome", outcome))
+		t.span.SetAttributes(semconv.AliasAttributes(attribute.String(semconv.AntnestTransactionOutcome, outcome))...)
 		t.span.End()
 	})
 }

@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"context"
 	"errors"
-	"io"
 	"log/slog"
 	"net"
 	"net/http"
@@ -14,18 +13,18 @@ import (
 	"sync/atomic"
 	"time"
 
+	semconv "github.com/tf4fun/antnest-platform/libs/go/telemetry"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/metric"
-	"go.opentelemetry.io/otel/propagation"
 	"go.opentelemetry.io/otel/trace"
 )
 
 var (
 	httpMeter    = otel.Meter(instrumentationName + "/http")
-	httpRequests = mustCounter(httpMeter.Int64Counter("antnest.identity.http.requests"))
-	httpDuration = mustHistogram(httpMeter.Float64Histogram("antnest.identity.http.duration", metric.WithUnit("s")))
+	httpRequests = mustCounter(httpMeter.Int64Counter(semconv.AntnestIdentityHttpRequests))
+	httpDuration = mustHistogram(httpMeter.Float64Histogram(semconv.AntnestIdentityHttpDuration, metric.WithUnit("s")))
 )
 
 func HTTPHandler(next http.Handler, logger *slog.Logger) http.Handler {
@@ -34,18 +33,24 @@ func HTTPHandler(next http.Handler, logger *slog.Logger) http.Handler {
 	}
 	captureRPC := strings.EqualFold(strings.TrimSpace(os.Getenv("ANTNEST_TELEMETRY_CAPTURE_RPC_CONTENT")), "true")
 	return http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
-		ctx := propagation.TraceContext{}.Extract(request.Context(), propagation.HeaderCarrier(request.Header))
-		ctx, span := otel.Tracer(instrumentationName+"/http").Start(ctx, "HTTP "+request.Method, trace.WithSpanKind(trace.SpanKindServer))
+		ctx, span := semconv.StartServer(request, instrumentationName+"/http", nil)
 		started := time.Now()
 		instrumented := request.WithContext(ctx)
-		body := &countedBody{ReadCloser: request.Body}
-		if request.Body != nil {
-			instrumented.Body = body
+		body := &countedBody{}
+		if instrumented.Body != nil {
+			instrumented.Body = semconv.WrapBody(instrumented.Body, semconv.BodyCallbacks{
+				Read: func(n int, _ error) { body.bytes.Add(int64(n)) },
+			})
 		}
-		observed := &statusWriter{ResponseWriter: response, span: span, captureRPC: captureRPC}
+		observed := &statusWriter{span: span, captureRPC: captureRPC}
+		observed.ServerWriter = semconv.NewServerWriter(response, ctx, func(err error) {
+			if observed.err == nil {
+				observed.err = err
+			}
+		})
 
 		if deadline, ok := ctx.Deadline(); ok {
-			span.SetAttributes(attribute.Int64("antnest.request.timeout_ms", max(0, time.Until(deadline).Milliseconds())))
+			span.SetAttributes(semconv.AliasAttributes(attribute.Int64(semconv.AntnestRequestTimeoutMs, max(0, time.Until(deadline).Milliseconds())))...)
 		}
 		defer func() {
 			failure := recover()
@@ -55,11 +60,11 @@ func HTTPHandler(next http.Handler, logger *slog.Logger) http.Handler {
 			if observed.err == nil && ctx.Err() != nil {
 				observed.err = ctx.Err()
 			}
-			if observed.status == 0 && failure == nil {
-				observed.status = http.StatusOK
+			if failure != nil && !observed.WroteHeader {
+				observed.Status = 0
 			}
 
-			span.SetAttributes(attribute.Int64("http.request.body.size", body.bytes.Load()))
+			span.SetAttributes(semconv.AliasAttributes(attribute.Int64("http.request.body.size", body.bytes.Load()))...)
 
 			finishHTTPRequest(ctx, span, logger, instrumented, observed, started)
 			if failure != nil {
@@ -74,37 +79,37 @@ func finishHTTPRequest(ctx context.Context, span trace.Span, logger *slog.Logger
 	defer span.End()
 	route := routePattern(request)
 	result := "success"
-	if observed.status >= 400 {
+	if observed.Status >= 400 {
 		result = "rejected"
 	}
-	if observed.status >= 500 || (observed.err != nil && observed.status < 400) {
+	if observed.Status >= 500 || (observed.err != nil && observed.Status < 400) {
 		result = "error"
 	}
 	if errors.Is(observed.err, context.Canceled) {
 		result = "cancelled"
 	}
-	attributes := []attribute.KeyValue{attribute.String("http.request.method", request.Method), attribute.String("http.route", route), attribute.String("antnest.result", result)}
-	if observed.status != 0 {
-		attributes = append(attributes, attribute.Int("http.response.status_code", observed.status))
+	attributes := []attribute.KeyValue{attribute.String("http.request.method", request.Method), attribute.String("http.route", route), attribute.String(semconv.AntnestOutcome, result)}
+	if observed.Status != 0 {
+		attributes = append(attributes, attribute.Int("http.response.status_code", observed.Status))
 	}
 	span.SetName("HTTP " + request.Method + " " + route)
-	span.SetAttributes(attributes...)
-	span.SetAttributes(attribute.String("antnest.outcome", result), attribute.Int64("http.response.body.size", observed.bytes))
+	span.SetAttributes(semconv.AliasAttributes(attributes...)...)
+	span.SetAttributes(semconv.AliasAttributes(attribute.String(semconv.AntnestOutcome, result), attribute.Int64("http.response.body.size", observed.Written))...)
 
 	if observed.err != nil {
-		rejected := observed.status >= 400 && observed.status < 500 && !errors.Is(observed.err, context.Canceled) && observed.writeErr == nil
+		rejected := observed.Status >= 400 && observed.Status < 500 && !errors.Is(observed.err, context.Canceled) && observed.WriteErr == nil
 		recordError(span, "protocol", observed.err, !rejected)
 		if rejected {
-			span.SetAttributes(attribute.String("antnest.outcome", "rejected"))
+			span.SetAttributes(semconv.AliasAttributes(attribute.String(semconv.AntnestOutcome, "rejected"))...)
 		}
-	} else if observed.status >= 500 {
-		span.SetStatus(codes.Error, strconv.Itoa(observed.status))
-		span.SetAttributes(attribute.String("error.type", strconv.Itoa(observed.status)))
+	} else if observed.Status >= 500 {
+		span.SetStatus(codes.Error, strconv.Itoa(observed.Status))
+		span.SetAttributes(semconv.AliasAttributes(attribute.String("error.type", strconv.Itoa(observed.Status)))...)
 	}
-	httpRequests.Add(ctx, 1, metric.WithAttributes(attributes...))
-	httpDuration.Record(ctx, time.Since(started).Seconds(), metric.WithAttributes(attributes...))
+	httpRequests.Add(ctx, 1, metric.WithAttributes(semconv.MetricAttributes(attributes...)...))
+	httpDuration.Record(ctx, time.Since(started).Seconds(), metric.WithAttributes(semconv.MetricAttributes(attributes...)...))
 	if route != "/status" || result != "success" {
-		fields := []any{"method", request.Method, "route", route, "status_code", observed.status, "result", result, "duration_ms", time.Since(started).Milliseconds(), "trace_id", span.SpanContext().TraceID().String(), "span_id", span.SpanContext().SpanID().String()}
+		fields := []any{"method", request.Method, "route", route, "status_code", observed.Status, "result", result, "duration_ms", time.Since(started).Milliseconds(), "trace_id", span.SpanContext().TraceID().String(), "span_id", span.SpanContext().SpanID().String()}
 		if observed.err != nil {
 			code, message := ErrorSummary(observed.err)
 			fields = append(fields, "error_type", code, "error_message", message, "cause_types", causeTypes(observed.err))
@@ -128,81 +133,24 @@ func routePattern(request *http.Request) string {
 }
 
 type countedBody struct {
-	io.ReadCloser
 	bytes atomic.Int64
 }
 
-func (b *countedBody) Read(p []byte) (int, error) {
-	n, err := b.ReadCloser.Read(p)
-	b.bytes.Add(int64(n))
-	return n, err
-}
-
 type statusWriter struct {
-	http.ResponseWriter
+	*semconv.ServerWriter
 	span       trace.Span
-	status     int
-	bytes      int64
 	err        error
-	writeErr   error
 	rpc        bool
 	captureRPC bool
 }
 
-func (w *statusWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter }
-func (w *statusWriter) WriteHeader(status int) {
-	if w.status != 0 {
-		return
-	}
-	if status >= 100 && status < 200 && status != 101 {
-		w.ResponseWriter.WriteHeader(status)
-		return
-	}
-	w.status = status
-
-	w.ResponseWriter.WriteHeader(status)
-}
-func (w *statusWriter) Write(p []byte) (int, error) {
-	if w.status == 0 {
-		w.WriteHeader(http.StatusOK)
-	}
-	n, err := w.ResponseWriter.Write(p)
-	w.bytes += int64(n)
-	if err != nil {
-		w.writeErr = err
-		if w.err == nil {
-			w.err = err
-		}
-	}
-	return n, err
-}
-func (w *statusWriter) Flush() { _ = w.FlushError() }
-func (w *statusWriter) FlushError() error {
-	if w.status == 0 {
-		w.WriteHeader(http.StatusOK)
-	}
-	err := http.NewResponseController(w.ResponseWriter).Flush()
-	if err != nil {
-		w.writeErr = err
-		if w.err == nil {
-			w.err = err
-		}
-	}
-	return err
-}
 func (w *statusWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
-	connection, buffer, err := http.NewResponseController(w.ResponseWriter).Hijack()
+	connection, buffer, err := w.ServerWriter.Hijack()
 	if err == nil {
-		w.status = http.StatusSwitchingProtocols
-
+		w.Status = http.StatusSwitchingProtocols
+		w.WroteHeader = true
 	}
 	return connection, buffer, err
-}
-func (w *statusWriter) Push(target string, options *http.PushOptions) error {
-	if pusher, ok := w.ResponseWriter.(http.Pusher); ok {
-		return pusher.Push(target, options)
-	}
-	return http.ErrNotSupported
 }
 
 func mustCounter(instrument metric.Int64Counter, err error) metric.Int64Counter {
