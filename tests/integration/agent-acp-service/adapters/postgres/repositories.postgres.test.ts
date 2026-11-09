@@ -194,18 +194,20 @@ describe.skipIf(databaseUrl === undefined)(
         createdAt: new Date(),
         bridgeIntent: { intentId: "intent-observe", expectedAppendVersion: 0 },
       });
-      await expect(
-        bridgeObservations.readIntent(sessionId, "intent-observe"),
-      ).resolves.toMatchObject({
-        kind: "receipt",
-        receipt: expect.objectContaining({
-          intentId: "intent-observe",
-          sessionId,
-          runId,
-          phase: "persisting",
-          appendVersion: 1,
-          outputWatermark: 0,
-        }),
+      const intent = await bridgeObservations.readIntent(
+        sessionId,
+        "intent-observe",
+      );
+      expect(intent.kind).toBe("receipt");
+      if (intent.kind !== "receipt")
+        throw new Error("Expected a retained intent receipt");
+      expect(intent.receipt).toMatchObject({
+        intentId: "intent-observe",
+        sessionId,
+        runId,
+        phase: "persisting",
+        appendVersion: 1,
+        outputWatermark: 0,
       });
       await expect(
         bridgeObservations.readSession(sessionId),

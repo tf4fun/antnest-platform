@@ -263,7 +263,7 @@ async function facts(pool: Pool): Promise<Record<string, string[]>> {
   ]) {
     const expression =
       table === "acp_sessions"
-        ? "(to_jsonb(stored)-'deleted_at')"
+        ? "(to_jsonb(stored)-'deleted_at'-'receipt_retained_after_append_version')"
         : table === "runs"
           ? "('{\"budget_reason\":null}'::jsonb || to_jsonb(stored)) - $1::text[]"
           : table === "context_checkpoints"
@@ -403,6 +403,8 @@ describe.skipIf(databaseUrl === undefined)(
         expect(applied).toHaveLength(25);
         await migrate(pool);
         const metadataBefore = await contentRetentionFacts(pool);
+        for (const session of metadataBefore)
+          expect(session.receipt_retained_after_append_version).toBeNull();
         const migratedColumns = await columns(pool);
         expect(migratedColumns).toEqual(
           [...ownerColumns]
