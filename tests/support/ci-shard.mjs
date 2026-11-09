@@ -456,6 +456,23 @@ async function main() {
           if (process.env.ANTNEST_CI_DIAGNOSTICS !== "1")
             process.stdout.write(chunk);
         },
+      }).then(result => {
+        if (result.code !== 0) {
+          const patterns = {
+            host_port_in_use: /address already in use|port is already allocated|failed to bind host port/iu,
+            network_discovery_failed: /Could not select unused Docker test networks/iu,
+            missing_network: /network .* not found|No such network/iu,
+            container_unhealthy: /container .* unhealthy|dependency failed to start/iu,
+            storage_preflight_failed: /storage|EACCES|ENOSPC|EEXIST/iu,
+            command_deadline: /timed out|deadline exceeded|ETIMEDOUT/iu,
+            docker_unavailable: /Cannot connect to the Docker daemon/iu,
+          };
+          writeFileSync(join(logs, `${id}.failure-summary.json`), JSON.stringify({
+            version: 1, code: result.code,
+            categories: Object.entries(patterns).filter(([, pattern]) => pattern.test(result.output)).map(([name]) => name),
+          }) + "\n", {mode: 0o600});
+        }
+        return result;
       }),
     record: (id, evidence) =>
       writeFileSync(
