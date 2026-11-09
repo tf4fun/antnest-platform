@@ -503,7 +503,8 @@ machine-readable list of model-facing codes: the only `error_code` values that
 may appear in an MCP tool result. Runtime, the Executor process protocol, and
 MCP structured errors share one closed `ToolErrorCode` enum, which also holds
 internal Skill maintenance codes (`atomic_skill_replace_unsupported`,
-`skill_background_task_running`, `skill_managed_call_in_flight`,
+`skill_background_task_running`, `skill_content_changed_during_activation`,
+`skill_generation_cancelled`, `skill_managed_call_in_flight`,
 `skill_storage_full`, `skill_writers_unknown`, `temporary_run_closed`,
 `temporary_scope_busy`). Internal codes never appear in MCP tool results:
 
