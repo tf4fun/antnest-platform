@@ -1,10 +1,59 @@
 import assert from "node:assert/strict";
 import { existsSync, readFileSync, readdirSync } from "node:fs";
+import { posix } from "node:path";
 import test from "node:test";
 
 const read = (path) =>
   readFileSync(new URL(`../../../${path}`, import.meta.url), "utf8");
 const readJSON = (path) => JSON.parse(read(path));
+
+function builderCopies(dockerfile) {
+  // Both builders copy repository-relative inputs under /src before cd'ing
+  // into the crate. Inputs added after cargo test cannot supply that test.
+  return [
+    ...dockerfile
+      .split(/\bcargo test\b/)[0]
+      .matchAll(/^COPY (\S+) \.\/(\S+)\s*$/gm),
+  ];
+}
+
+function builderContains(path, copies) {
+  return copies.some(
+    ([, source, destination]) =>
+      (path === source || path.startsWith(`${source}/`)) &&
+      `${destination}${path.slice(source.length)}` === path,
+  );
+}
+
+function builderFixtureProblems(crate, dockerfile) {
+  const fixtures = new Set();
+  for (const name of readdirSync(
+    new URL(`../../../${crate}/src/`, import.meta.url),
+    { recursive: true },
+  )) {
+    if (!name.endsWith(".rs")) continue;
+    const source = `${crate}/src/${name}`;
+    const text = read(source);
+    for (const match of text.matchAll(
+      /concat!\(\s*env!\("CARGO_MANIFEST_DIR"\),\s*"([^"]+\.json)"/g,
+    ))
+      fixtures.add(posix.normalize(`${crate}/${match[1]}`));
+    for (const match of text.matchAll(
+      /include_(?:str|bytes)!\(\s*"([^"]+\.json)"/g,
+    ))
+      fixtures.add(posix.join(posix.dirname(source), match[1]));
+  }
+  assert(fixtures.size > 0, `${crate}: no literal JSON inputs discovered`);
+  const copies = builderCopies(dockerfile);
+  return [...fixtures]
+    .filter((path) => {
+      // Validate against real source inputs, not a second hand-written list.
+      readJSON(path);
+      return !builderContains(path, copies);
+    })
+    .map((path) => `builder is missing ${path}`)
+    .sort();
+}
 
 function builderSchemaProblems(
   crate,
@@ -15,13 +64,7 @@ function builderSchemaProblems(
   assert(inventory, `${loader}: schema directory inventory missing`);
   const areas = [...inventory[1].matchAll(/"([a-z-]+)"/g)].map((m) => m[1]);
   assert(areas.length > 0);
-  // Only copies before the actual cargo test command can supply its inputs.
-  const beforeTests = dockerfile.split(/\bcargo test\b/)[0];
-  const copies = [
-    ...beforeTests.matchAll(
-      /^COPY (contracts(?:\/\S+)?) \.\/(contracts(?:\/\S+)?)\s*$/gm,
-    ),
-  ];
+  const copies = builderCopies(dockerfile);
   const documents = new Map();
   const problems = [];
   for (const area of areas) {
@@ -32,12 +75,8 @@ function builderSchemaProblems(
       const path = `contracts/${area}/${name}`;
       const document = readJSON(path);
       documents.set(document.$id, document);
-      const copied = copies.some(
-        ([, source, destination]) =>
-          (path === source || path.startsWith(`${source}/`)) &&
-          `${destination}${path.slice(source.length)}` === path,
-      );
-      if (!copied) problems.push(`builder is missing ${path}`);
+      if (!builderContains(path, copies))
+        problems.push(`builder is missing ${path}`);
     }
   }
   const walk = (value, id) => {
@@ -87,6 +126,37 @@ for (const [crate, loader] of [
     );
   });
 }
+
+test("Runtime Docker builder supplies JSON fixtures read by the real Rust sources", () => {
+  const crate = "runtimes/antnest-runtime";
+  const fixture =
+    "tests/integration/skill-learning/maintenance-ticket-captures.json";
+  const dockerfile = read(`${crate}/Dockerfile`);
+  assert.deepEqual(builderFixtureProblems(crate, dockerfile), []);
+  const copy = `COPY ${fixture} ./${fixture}`;
+  const removed = dockerfile.replace(`${copy}\n`, "");
+  for (const candidate of [
+    removed,
+    `${removed}\n${copy}\n`,
+    dockerfile.replace(copy, `COPY ${fixture} ./tests/elsewhere.json`),
+  ])
+    assert(
+      builderFixtureProblems(crate, candidate).includes(
+        `builder is missing ${fixture}`,
+      ),
+      "missing, late, or misplaced fixture copies must reject",
+    );
+});
+
+test("Runtime workflow follows the cross-language ticket capture on push and pull_request", () => {
+  const workflow = read(".github/workflows/runtime.yml");
+  assert.equal(
+    workflow.match(
+      /- tests\/integration\/skill-learning\/maintenance-ticket-captures\.json/g,
+    )?.length,
+    2,
+  );
+});
 
 function testRepoRecipe() {
   const lines = read("Makefile").split("\n");

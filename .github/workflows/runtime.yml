@@ -10,6 +10,7 @@ on:
       - runtimes/antnest-runtime/**
       - tests/integration/antnest-runtime/**
       - tests/integration/skill-registry/package-rules-v1.json
+      - tests/integration/skill-learning/maintenance-ticket-captures.json
       - contracts/runtime/**
       - contracts/platform/**
       - contracts/common/**
@@ -28,6 +29,7 @@ on:
       - runtimes/antnest-runtime/**
       - tests/integration/antnest-runtime/**
       - tests/integration/skill-registry/package-rules-v1.json
+      - tests/integration/skill-learning/maintenance-ticket-captures.json
       - contracts/runtime/**
       - contracts/platform/**
       - contracts/common/**
