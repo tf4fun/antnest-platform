@@ -21,10 +21,14 @@ for (const [profile, file, flag] of [
       new URL("../e2e-stage3a.sh", import.meta.url),
       "utf8",
     );
-    const start = source.indexOf("cleanup() {");
+    const start = source.indexOf("\ncleanup() {");
     const end = source.indexOf("\ntrap cleanup EXIT", start);
     assert(start > 0 && end > start, "parent cleanup boundary missing");
     const cleanup = source.slice(start, end);
+    const recordFailure = source.match(
+      /^record_stage3_failure\(\) \{[\s\S]+?\n\}/m,
+    )?.[0];
+    assert(recordFailure);
     const directory = await mkdtemp(join(tmpdir(), "managed-cleanup-test-"));
     t.after(() => rm(directory, { recursive: true, force: true }));
     await writeFile(
@@ -37,6 +41,8 @@ for (const [profile, file, flag] of [
         env: {
           ...process.env,
           FIXTURE_ROOT: directory,
+          startup_evidence_directory: join(directory, "startup"),
+          stage3_phase: "client-entry",
           FIXTURE_RESULT: result,
         },
       });
@@ -59,6 +65,7 @@ ${flag}=true
 compose() { [ "$1" != down ] || [ "$FIXTURE_RESULT" != down-failed ]; }
 docker() { if [ "$FIXTURE_RESULT" = leftover ] && [ "$1 $2" = 'network ls' ]; then printf 'leftover-network'; fi; return 0; }
 rm() { :; }
+${recordFailure}
 ${cleanup}
 true
 cleanup
