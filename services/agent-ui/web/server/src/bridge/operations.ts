@@ -2,7 +2,12 @@ import { workspaceError } from "../protocol/api-error.ts";
 import { createHash, randomUUID } from "node:crypto";
 import { setImmediate as nextTurn } from "node:timers/promises";
 import type { ContentBlock } from "@agentclientprotocol/sdk/unstable";
-import { AcpPromptError, acpPromptRequestBytes, type IntentReceipt } from "../adapters/acp-http.ts";
+import {
+  AcpPromptError,
+  acpPromptRequestBytes,
+  type IntentObservation,
+  type IntentReceipt,
+} from "../adapters/acp-http.ts";
 import type { OperationError } from "../protocol/agent-view-delta.ts";
 
 export type PromptIntent = {
@@ -44,7 +49,7 @@ type Dependencies = {
     sessionId: string,
     intentId: string,
     signal?: AbortSignal,
-  ): Promise<{ kind: "receipt"; receipt: IntentReceipt } | { kind: "unknown" }>;
+  ): Promise<IntentObservation>;
   cancel(sessionId: string, expectedRunId: string): Promise<void>;
   retainWork(): () => void;
   changed?(sessionId: string): void;
@@ -137,6 +142,8 @@ export class OperationCoordinator {
   }
 
   private setOperation(entry: LocalOperation, operation: Operation): void {
+    if (entry.operation.error?.code === "intent_receipt_expired" &&
+      operation.acceptance !== "acp") return;
     entry.uncertainSince = operation.phase === "uncertain"
       ? entry.uncertainSince ?? this.now() : null;
     entry.operation = operation;
@@ -144,6 +151,39 @@ export class OperationCoordinator {
       entry.automaticAllowed = false;
       entry.abort.abort(new Error("A durable receipt already exists"));
     }
+  }
+
+  private expiredOperation(sessionId: string, intentId: string): Operation {
+    return {
+      operationId: intentId,
+      sessionId,
+      phase: "uncertain",
+      acceptance: "unknown",
+      error: workspaceError(
+        "intent_receipt_expired",
+        "Intent receipt expired; the original prompt may have executed",
+        "query_operation",
+        randomUUID(),
+        false,
+        intentId,
+      ),
+    };
+  }
+
+  private markExpired(
+    entry: LocalOperation | undefined,
+    sessionId: string,
+    intentId: string,
+  ): Operation {
+    if (entry === undefined) return this.expiredOperation(sessionId, intentId);
+    if (entry.operation.acceptance === "acp") return { ...entry.operation };
+    if (entry.operation.error?.code !== "intent_receipt_expired") {
+      entry.automaticAllowed = false;
+      entry.exhausted = true;
+      this.setOperation(entry, this.expiredOperation(sessionId, intentId));
+      this.dependencies.changed?.(sessionId);
+    }
+    return { ...entry.operation };
   }
 
   public async prepare(input: PromptIntent, signal?: AbortSignal): Promise<PreparedPrompt> {
@@ -312,6 +352,10 @@ export class OperationCoordinator {
         }
         this.dependencies.changed?.(input.sessionId);
       }
+      return accepted;
+    }
+    if (result.kind === "expired") {
+      this.markExpired(entry, input.sessionId, input.intentId);
       return accepted;
     }
     signal.throwIfAborted();
@@ -496,6 +540,10 @@ export class OperationCoordinator {
         this.dependencies.changed?.(input.sessionId);
         return false;
       }
+      if (result.kind === "expired") {
+        this.markExpired(entry, input.sessionId, input.intentId);
+        return false;
+      }
       return !stopped();
     } catch {
       // Query failure or cancellation stops this chain. Always await the actual
@@ -636,6 +684,10 @@ export class OperationCoordinator {
         local.retired = true;
       }
       return operation;
+    }
+    if (result.kind === "expired") {
+      if (local?.operation.acceptance === "acp") return { ...local.operation };
+      return this.markExpired(local, sessionId, intentId);
     }
     // Absence is weaker evidence than an already observed durable receipt.
     if (local?.inFlight === true || local?.operation.acceptance === "acp")

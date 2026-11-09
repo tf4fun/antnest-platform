@@ -3,6 +3,7 @@ import test from "node:test";
 import type { ContentBlock } from "@agentclientprotocol/sdk/unstable";
 import { BridgeOperationTracker, type BridgeOperation } from "./bridge-operations.ts";
 import { WorkspaceApiError, type PromptAccepted, type PromptAdmission } from "./workspace-api-client.ts";
+import { validOperation } from "../../server/src/protocol/agent-view-delta.ts";
 
 const sessionId = "session-original";
 const intentId = "intent-original";
@@ -597,5 +598,95 @@ test("clearing inputs during original admission cannot resurrect them after its 
     assert.equal(f.refreshes, 0);
     assert.equal(f.prompts.length, 1);
     assert.equal(original.joined, true);
+  } finally { await f.cleanup(); }
+});
+
+function expiredOperation(session = sessionId, intent = intentId) {
+  return {
+    operationId: intent,
+    sessionId: session,
+    phase: "uncertain",
+    acceptance: "unknown",
+    error: {
+      code: "intent_receipt_expired",
+      category: "not_found",
+      message: "Intent receipt expired; the original prompt may have executed",
+      retryable: false,
+      requestId: "request-expired",
+      request_id: "request-expired",
+      recovery: "query_operation",
+      operationId: intent,
+      details: { recovery: "query_operation", operationId: intent },
+    },
+  };
+}
+
+test("an expired observation forbids refresh and POST, drops the retained Prompt and survives stale reads", async () => {
+  let lookup: "expired" | "unknown" = "expired";
+  const f = fixture({ read: () =>
+    lookup === "expired" ? expiredOperation() : unknownOperation() });
+  try {
+    assert(validOperation(expiredOperation()),
+      "the expired operation must remain the existing wire DTO");
+    await f.seed();
+    assert.equal(f.tracker.hasRetry(sessionId, intentId), true);
+    const result = await f.retry();
+    assert.deepEqual(operationWire(result), expiredOperation());
+    assert.deepEqual(operationWire(f.tracker.get(sessionId, intentId)), expiredOperation());
+    assert.equal(f.reads.length, 1);
+    assert.equal(f.refreshes, 0, "expired must not refresh history");
+    assert.equal(f.prompts.length, 1, "expired must not POST the retained Prompt");
+    assert.equal(f.tracker.hasRetry(sessionId, intentId), false);
+    assert.equal(f.tracker.snapshot[0]?.retryAvailable, undefined);
+    assert.equal(f.tracker.get(sessionId, intentId)?.error?.message,
+      "Intent receipt expired; the original prompt may have executed");
+    lookup = "unknown";
+    await f.retry();
+    assert.equal(f.reads.length, 2, "an explicit action still queries");
+    assert.equal(f.refreshes, 0, "a later stale unknown cannot unlatch expiry");
+    assert.equal(f.prompts.length, 1);
+    assert.deepEqual(operationWire(f.tracker.get(sessionId, intentId)), expiredOperation());
+    f.tracker.observe([unknownOperation()]);
+    assert.deepEqual(operationWire(f.tracker.get(sessionId, intentId)), expiredOperation());
+    f.tracker.observe([{ operationId: intentId, sessionId,
+      phase: "dispatching", acceptance: "bridge" }]);
+    assert.deepEqual(operationWire(f.tracker.get(sessionId, intentId)), expiredOperation(),
+      "a late Bridge ACK cannot restore the resend path");
+    assert.equal(f.tracker.hasRetry(sessionId, intentId), false);
+    const durable = receipt("running");
+    f.tracker.observe([durable]);
+    assert.deepEqual(operationWire(f.tracker.get(sessionId, intentId)), durable,
+      "a durable receipt replaces the expired marker");
+  } finally { await f.cleanup(); }
+});
+
+test("an expired observation releases the retained input like a terminal receipt", async () => {
+  const f = fixture();
+  const ids = Array.from({ length: 4 }, (_, index) => `intent-release-${index}`);
+  try {
+    for (const id of ids) await f.seed(admission(id));
+    assert.deepEqual(ids.map(id => f.tracker.hasRetry(sessionId, id)), [true, true, true, true]);
+    f.tracker.observe([expiredOperation(sessionId, ids[0]!)]);
+    assert.equal(f.tracker.hasRetry(sessionId, ids[0]!), false);
+    await f.seed(admission("intent-after-expired"));
+    assert.equal(f.tracker.hasRetry(sessionId, "intent-after-expired"), true,
+      "expiry must release the retained original for a new input");
+    assert.deepEqual(ids.slice(1).map(id => f.tracker.hasRetry(sessionId, id)), [true, true, true]);
+    assert.equal(f.prompts.length, 5);
+    assert.equal(f.reads.length, 0);
+  } finally { await f.cleanup(); }
+});
+
+test("a reload without original input queries an expired operation and stays query-only", async () => {
+  const f = fixture({ read: () => expiredOperation() });
+  try {
+    f.tracker.observe([unknownOperation()]);
+    assert.equal(f.tracker.hasRetry(sessionId, intentId), false);
+    await f.retry();
+    assert.equal(f.reads.length, 1);
+    assert.equal(f.refreshes, 0);
+    assert.equal(f.prompts.length, 0);
+    assert.deepEqual(operationWire(f.tracker.get(sessionId, intentId)), expiredOperation());
+    assert.equal(f.tracker.hasRetry(sessionId, intentId), false);
   } finally { await f.cleanup(); }
 });

@@ -158,7 +158,20 @@ const agentStateSchema = z.union([
   }),
 ]);
 
+const intentReceiptExpiredSchema = z.object({
+  code: z.literal("intent_receipt_expired"),
+  category: z.literal("not_found"),
+  message: z.string().min(1),
+  retryable: z.literal(false),
+  request_id: z.string().min(1).max(128).regex(/^[A-Za-z0-9._:-]+$(?![\s\S])/u),
+  details: z.record(z.string(), z.unknown()).optional(),
+});
+
 export type IntentReceipt = z.infer<typeof receiptSchema>;
+export type IntentObservation =
+  | { kind: "receipt"; receipt: IntentReceipt }
+  | { kind: "unknown" }
+  | { kind: "expired" };
 export type ExecutionObservation = z.infer<typeof observationSchema>;
 export type AgentExecutionState = {
   availability: "ready" | "busy" | "offline";
@@ -496,9 +509,7 @@ export class AcpHttpBridge {
     sessionId: string,
     intentId: string,
     signal?: AbortSignal,
-  ): Promise<
-    { kind: "receipt"; receipt: IntentReceipt } | { kind: "unknown" }
-  > {
+  ): Promise<IntentObservation> {
     const response = await this.internalGet(
       `/rpc/agent-acp/workspace/sessions/${encodeURIComponent(sessionId)}/intents/${encodeURIComponent(intentId)}`,
       signal,
@@ -739,7 +750,15 @@ export async function parseLearningChanges(
 
 export async function parseIntentObservation(
   response: Response,
-): Promise<{ kind: "receipt"; receipt: IntentReceipt } | { kind: "unknown" }> {
+): Promise<IntentObservation> {
+  if (response.status === 410) {
+    const expired = intentReceiptExpiredSchema.safeParse(
+      await response.json().catch(() => null),
+    );
+    if (!expired.success)
+      throw new BridgeCapabilityError("ACP intent observation is invalid");
+    return { kind: "expired" };
+  }
   if (response.status === 404) {
     const body: unknown = await response.json().catch(() => null);
     if (

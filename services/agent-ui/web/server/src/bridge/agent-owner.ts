@@ -17,6 +17,7 @@ import {
   type AcpBridgeCallbacks,
   type ExecutionObservation,
   type AgentExecutionState,
+  type IntentObservation,
   type IntentReceipt,
   type LearningChangePage,
 } from "../adapters/acp-http.ts";
@@ -64,7 +65,7 @@ export type AcpBridgePort = {
     sessionId: string,
     intentId: string,
     signal?: AbortSignal,
-  ): Promise<{ kind: "receipt"; receipt: IntentReceipt } | { kind: "unknown" }>;
+  ): Promise<IntentObservation>;
   prompt(input: Parameters<AcpHttpBridge["prompt"]>[0]): Promise<unknown>;
   cancel(sessionId: string, expectedRunId: string): Promise<void>;
   setConfiguration?(

@@ -3,7 +3,12 @@ import { ERROR_CODES, ERROR_METADATA } from "../src/errors.gen.ts";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import { RequestError } from "@agentclientprotocol/sdk/unstable";
-import { AcpPromptError, type IntentReceipt } from "../src/adapters/acp-http.ts";
+import {
+  AcpPromptError,
+  type IntentObservation,
+  type IntentReceipt,
+} from "../src/adapters/acp-http.ts";
+import { validOperation } from "../src/protocol/agent-view-delta.ts";
 import {
   OperationCoordinator,
   OperationConflictError,
@@ -670,7 +675,7 @@ for (const phase of ["running", "completed"] as const)
 
 type RetryInput = Parameters<OperationCoordinator["submit"]>[0];
 type RetryPrepared = Awaited<ReturnType<OperationCoordinator["prepare"]>>;
-type RetryObservation = { kind: "unknown" } | { kind: "receipt"; receipt: IntentReceipt };
+type RetryObservation = IntentObservation;
 type RetryReader = (sessionId: string, intentId: string, signal?: AbortSignal) => Promise<RetryObservation>;
 
 function retryOriginal(): RetryInput {
@@ -1088,5 +1093,118 @@ test("retryPrepared capacity fencing preserves an actual in-flight call even aft
     await retryBounded(settled);
     assert.equal(f.calls.filter((call) => call.input.intentId === f.input.intentId).length, 1);
     assert.equal(f.queries.length, 0);
+  } finally { await f.close(); }
+});
+
+test("an expired intent lookup forbids every resend and survives stale unknown reads", async () => {
+  let expiredLookup = true;
+  const f = retryFixture(async () =>
+    expiredLookup ? { kind: "expired" as const } : { kind: "unknown" as const });
+  try {
+    await settleRetryOriginal(f);
+    assert.deepEqual(
+      await retryBounded(f.retry(await f.operations.prepare(f.input))),
+      retryAck,
+    );
+    await retryTurn();
+    assert.equal(f.queries.length, 1);
+    assert.equal(f.calls.length, 1, "an expired lookup must never dispatch another Prompt");
+    const projected = f.operations.snapshot(f.input.sessionId, [])[0]!;
+    assert.equal(projected.phase, "uncertain");
+    assert.equal(projected.acceptance, "unknown");
+    assert.equal(projected.error?.code, "intent_receipt_expired");
+    assert.equal(projected.error?.category, "not_found");
+    assert.equal(projected.error?.retryable, false);
+    assert.equal(projected.error?.recovery, "query_operation");
+    assert.equal(projected.error?.operationId, f.input.intentId);
+    assert.equal(projected.runId, undefined);
+    assert(validOperation(projected), "the expired projection must remain the existing operation DTO");
+    expiredLookup = false;
+    assert.deepEqual(
+      await retryBounded(f.retry(await f.operations.prepare(f.input))),
+      retryAck,
+    );
+    await retryTurn();
+    assert.equal(f.queries.length, 2, "an explicit action still queries");
+    assert.equal(f.calls.length, 1, "a later unknown read cannot unlatch expiry");
+    assert.equal(
+      f.operations.snapshot(f.input.sessionId, [])[0]!.error?.code,
+      "intent_receipt_expired",
+    );
+    const read = await f.operations.read(f.input.sessionId, f.input.intentId);
+    assert.equal(read.error?.code, "intent_receipt_expired");
+    assert.deepEqual(read, f.operations.snapshot(f.input.sessionId, [])[0]!);
+    assert.equal(f.calls.length, 1);
+    f.operations.submit(structuredClone(f.input));
+    await retryTurn();
+    assert.equal(f.calls.length, 1, "repeat submit must join the expired original without resend");
+  } finally { await f.close(); }
+});
+
+test("an expired read with no local entry is query-only and never retained", async () => {
+  const f = retryFixture(async () => ({ kind: "expired" as const }));
+  try {
+    assert.deepEqual(
+      await retryBounded(f.retry(await f.operations.prepare(f.input))),
+      retryAck,
+    );
+    await retryTurn();
+    assert.equal(f.queries.length, 1);
+    assert.equal(f.calls.length, 0, "query-only expiry must not dispatch or synthesize an original");
+    assert.deepEqual(f.operations.snapshot(f.input.sessionId, []), []);
+    const read = await f.operations.read(f.input.sessionId, f.input.intentId);
+    assert.equal(read.phase, "uncertain");
+    assert.equal(read.acceptance, "unknown");
+    assert.equal(read.error?.code, "intent_receipt_expired");
+    assert(validOperation(read));
+    assert.deepEqual(f.operations.snapshot(f.input.sessionId, []), []);
+  } finally { await f.close(); }
+});
+
+test("a durable receipt wins over an already observed expired state", async () => {
+  const f = retryFixture(async () => ({ kind: "expired" as const }));
+  try {
+    await settleRetryOriginal(f);
+    const read = await f.operations.read(f.input.sessionId, f.input.intentId);
+    assert.equal(read.error?.code, "intent_receipt_expired");
+    const receipt = recoveredPromptReceipt("running");
+    f.operations.observeReceipts(f.input.sessionId, [receipt]);
+    assert.deepEqual(
+      f.operations.snapshot(f.input.sessionId, []),
+      [operationFromReceipt(receipt)],
+    );
+    const latest = await f.operations.read(f.input.sessionId, f.input.intentId);
+    assert.equal(latest.acceptance, "acp");
+    assert.equal(Object.hasOwn(latest, "error"), false);
+    assert.equal(f.calls.length, 1);
+  } finally { await f.close(); }
+});
+
+test("expiry while the original call is held keeps its resources until join and a late failure cannot erase it", async () => {
+  let resourcesReleased = 0;
+  const f = retryFixture(async () => ({ kind: "expired" as const }));
+  try {
+    const prepared = await f.operations.prepare(structuredClone(f.input));
+    f.operations.submitPrepared(prepared, () => () => { resourcesReleased++; });
+    await retryTurn();
+    assert.equal(f.calls.length, 1);
+    const read = await f.operations.read(f.input.sessionId, f.input.intentId);
+    assert.equal(read.error?.code, "intent_receipt_expired");
+    assert.equal(f.calls[0]!.finished, false,
+      "expiry must not abort or join the original call early");
+    assert.equal(resourcesReleased, 0,
+      "expiry must not release the original reservation early");
+    assert(f.active() > 0);
+    f.calls[0]!.reject(promptFailure());
+    await retryBounded(f.operations.settled(f.input.sessionId, f.input.intentId));
+    assert.equal(resourcesReleased, 1);
+    assert.equal(f.active(), 0);
+    const settled = f.operations.snapshot(f.input.sessionId, [])[0]!;
+    assert.equal(
+      settled.error?.code,
+      "intent_receipt_expired",
+      "a late classified Prompt failure must not erase expiry",
+    );
+    assert(validOperation(settled));
   } finally { await f.close(); }
 });
