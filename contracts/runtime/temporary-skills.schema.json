@@ -225,6 +225,9 @@
           ]
         }
       ]
+    },
+    "maintenance_ticket": {
+      "$ref": "https://schemas.antnest.dev/runtime/maintenance-ticket.schema.json#/$defs/ticket"
     }
   }
 }

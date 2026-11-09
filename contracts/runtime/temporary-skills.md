@@ -18,8 +18,13 @@ published in [contract.json](contract.json) `routes`.
 
 These endpoints reuse the existing Ed25519 maintenance ticket envelope, verifier
 bootstrap and key rotation rules in the [learning contract](../skill-learning/learning-api.md).
-The signed action is **temporary_install** or **temporary_release**, so a learning
-ticket cannot authorize temporary use and vice versa. For these actions only,
+The signed payload is the shared
+[maintenance ticket schema](maintenance-ticket.schema.json) `ticket`, aliased
+as `maintenance_ticket` in the [wire schema](temporary-skills.schema.json);
+its action is one of **install**, **digest**, **temporary_install** or
+**temporary_release**. This endpoint serves the temporary actions only, so a
+learning ticket cannot authorize temporary use and vice versa. For these
+actions only,
 `job_id` is the exact foreground Run ID, not a learning task, and `generation=1`.
 The ticket binds Agent, organization, current process execution ID, action,
 request ID, exact body hash and existing bounded expiry/skew. Body fields must

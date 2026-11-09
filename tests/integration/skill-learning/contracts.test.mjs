@@ -885,3 +885,238 @@ test("L0 links notice negotiation, Runtime bootstrap, and Agent View without a s
   );
   assert(workspace.$defs.agentView.properties.systemNotices);
 });
+
+const MAINTENANCE_TICKET_ID =
+  "https://schemas.antnest.dev/runtime/maintenance-ticket.schema.json";
+const MAINTENANCE_ACTIONS = [
+  "install",
+  "digest",
+  "temporary_install",
+  "temporary_release",
+];
+const RETIRED_ACTIONS = [
+  "prepare",
+  "check",
+  "commit",
+  "observe",
+  "cancel",
+  "release",
+];
+const maintenanceTicketBase = {
+  organization_id: org,
+  agent_id: agent,
+  execution_id: "execution-1",
+  job_id: "job-1",
+  generation: 1,
+  action: "install",
+  request_id: "install-1",
+  body_sha256: digest,
+  issued_at: 1790610000,
+  expires_at: 1790610060,
+};
+const loadContract = async (relative) =>
+  JSON.parse(
+    await readFile(new URL(`../../../contracts/${relative}`, import.meta.url)),
+  );
+const maintenanceTicketValidator = async () => {
+  const validator = new Ajv2020({ strict: true, validateFormats: false });
+  validator.addSchema(commonIDs);
+  return validator.compile(
+    await loadContract("runtime/maintenance-ticket.schema.json"),
+  );
+};
+
+test("canonical maintenance ticket action set is exactly the four issue-18 actions", async (t) => {
+  const validate = await maintenanceTicketValidator();
+  await t.test(
+    "admits every action at generation 1 and install or digest at 2",
+    () => {
+      for (const action of MAINTENANCE_ACTIONS)
+        assert(
+          validate({ ...maintenanceTicketBase, action }),
+          `${action} generation 1`,
+        );
+      for (const action of ["install", "digest"])
+        assert(
+          validate({ ...maintenanceTicketBase, action, generation: 2 }),
+          `${action} generation 2`,
+        );
+    },
+  );
+  await t.test("temporary actions pin generation 1", () => {
+    for (const action of ["temporary_install", "temporary_release"])
+      for (const generation of [0, 2])
+        assert.equal(
+          validate({ ...maintenanceTicketBase, action, generation }),
+          false,
+          `${action} generation ${generation}`,
+        );
+  });
+  await t.test("rejects unknown and retired actions", () => {
+    for (const action of ["unknown", ...RETIRED_ACTIONS])
+      assert.equal(
+        validate({ ...maintenanceTicketBase, action }),
+        false,
+        action,
+      );
+  });
+});
+
+test("canonical maintenance ticket closes the ten-field payload", async (t) => {
+  const validate = await maintenanceTicketValidator();
+  await t.test("requires all ten fields and rejects extras", () => {
+    for (const field of Object.keys(maintenanceTicketBase))
+      assert.equal(
+        validate({ ...maintenanceTicketBase, [field]: undefined }),
+        false,
+        field,
+      );
+    assert.equal(
+      validate({ ...maintenanceTicketBase, caller_role: "admin" }),
+      false,
+    );
+  });
+  await t.test(
+    "organization and agent identifiers keep the shared grammar",
+    () => {
+      for (const field of ["organization_id", "agent_id"])
+        for (const bad of [`${org}\n`, "org/bad", "org_é"])
+          assert.equal(
+            validate({ ...maintenanceTicketBase, [field]: bad }),
+            false,
+            `${field} ${JSON.stringify(bad)}`,
+          );
+    },
+  );
+  await t.test(
+    "execution, job, and request stay printable without separators",
+    () => {
+      for (const field of ["execution_id", "job_id", "request_id"])
+        for (const bad of ["bad\u0001id", "bad\nid", "bad/id", "bad\\id"])
+          assert.equal(
+            validate({ ...maintenanceTicketBase, [field]: bad }),
+            false,
+            `${field} ${JSON.stringify(bad)}`,
+          );
+      for (const field of ["execution_id", "job_id"]) {
+        assert(
+          validate({ ...maintenanceTicketBase, [field]: "e".repeat(200) }),
+        );
+        assert.equal(
+          validate({ ...maintenanceTicketBase, [field]: "e".repeat(201) }),
+          false,
+          `${field} over 200`,
+        );
+      }
+      assert(
+        validate({ ...maintenanceTicketBase, request_id: "r".repeat(128) }),
+      );
+      assert.equal(
+        validate({ ...maintenanceTicketBase, request_id: "r".repeat(129) }),
+        false,
+      );
+    },
+  );
+  await t.test("digest and integer bounds are enforced", () => {
+    for (const bad of ["d".repeat(64), "sha256:xyz"])
+      assert.equal(
+        validate({ ...maintenanceTicketBase, body_sha256: bad }),
+        false,
+        `body_sha256 ${JSON.stringify(bad)}`,
+      );
+    for (const bad of [0, 1.5, 2 ** 53])
+      assert.equal(
+        validate({ ...maintenanceTicketBase, generation: bad }),
+        false,
+        `generation ${bad}`,
+      );
+    for (const bad of [-1, 1.5, 2 ** 53])
+      assert.equal(
+        validate({ ...maintenanceTicketBase, issued_at: bad }),
+        false,
+        `issued_at ${bad}`,
+      );
+    for (const bad of [0, 1.5, 2 ** 53])
+      assert.equal(
+        validate({ ...maintenanceTicketBase, expires_at: bad }),
+        false,
+        `expires_at ${bad}`,
+      );
+  });
+});
+
+test("learning and temporary consumers alias the canonical maintenance ticket", async (t) => {
+  for (const relative of [
+    "skill-learning/learning-api.schema.json",
+    "skill-learning/learning-api.ids-v2.schema.json",
+    "runtime/temporary-skills.schema.json",
+  ])
+    await t.test(relative, async () => {
+      const document = await loadContract(relative);
+      assert.equal(
+        document.$defs.maintenance_ticket?.$ref,
+        `${MAINTENANCE_TICKET_ID}#/$defs/ticket`,
+      );
+      const validator = new Ajv2020({ strict: true, validateFormats: false });
+      validator.addSchema(commonIDs);
+      for (const dependency of [
+        "common/precondition.schema.json",
+        "common/error.schema.json",
+        "runtime/maintenance-ticket.schema.json",
+      ])
+        validator.addSchema(await loadContract(dependency));
+      validator.addSchema(document);
+      const alias = validator.getSchema(
+        `${document.$id}#/$defs/maintenance_ticket`,
+      );
+      assert(alias, `${relative} maintenance_ticket alias`);
+      for (const action of MAINTENANCE_ACTIONS)
+        assert(
+          alias({ ...maintenanceTicketBase, action }),
+          `${relative} ${action}`,
+        );
+      assert.equal(
+        alias({ ...maintenanceTicketBase, action: "release" }),
+        false,
+      );
+      assert.equal(
+        Object.hasOwn(document.$defs, "ticket"),
+        !relative.includes("temporary-skills"),
+        `${relative} legacy ticket scope`,
+      );
+    });
+});
+
+test("maintenance ticket fixtures pin the four-action boundary", async () => {
+  const fixtures = await loadContract(
+    "runtime/maintenance-ticket-fixtures.json",
+  );
+  assert.deepEqual(fixtures.valid, [
+    { action: "install", generation: 1 },
+    { action: "install", generation: 2 },
+    { action: "digest", generation: 1 },
+    { action: "digest", generation: 2 },
+    { action: "temporary_install", generation: 1 },
+    { action: "temporary_release", generation: 1 },
+  ]);
+  assert.deepEqual(fixtures.invalid, [
+    { action: "unknown", generation: 1 },
+    ...RETIRED_ACTIONS.map((action) => ({ action, generation: 1 })),
+    { action: "install", generation: 0 },
+    { action: "digest", generation: 0 },
+    { action: "temporary_install", generation: 2 },
+    { action: "temporary_release", generation: 2 },
+  ]);
+  const validate = await maintenanceTicketValidator();
+  for (const vector of fixtures.valid)
+    assert(
+      validate({ ...maintenanceTicketBase, ...vector }),
+      JSON.stringify(vector),
+    );
+  for (const vector of fixtures.invalid)
+    assert.equal(
+      validate({ ...maintenanceTicketBase, ...vector }),
+      false,
+      JSON.stringify(vector),
+    );
+});
