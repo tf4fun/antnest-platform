@@ -57,7 +57,15 @@ RuntimeSpec. The private HTTP route rejects missing or invalid credentials
 before a request can reach the actor, and checks the ticket signature, action,
 body digest, Agent, execution and time. The private executor subcommands also
 reject direct invocation by UID 1000, so an Agent Bash call cannot bypass the
-HTTP ticket check.
+HTTP ticket check. The signed payload is the canonical
+[maintenance ticket schema](../../../contracts/runtime/maintenance-ticket.schema.json)
+with [shared vectors](../../../contracts/runtime/maintenance-ticket-fixtures.json):
+the action set is exactly `install`, `digest`, `temporary_install` and
+`temporary_release`, and a ticket signed for one action cannot serve another
+route, so learning and temporary tickets never authorize each other. The
+temporary actions additionally pin `generation` to 1 with `job_id` equal to
+the foreground Run ID; the learning `maintenance_receipt` keeps its existing
+`install`/`digest` actions.
 
 The separate [temporary Skill contract](../../../contracts/runtime/temporary-skills.md)
 defines signed install and release endpoints, ordinary read and foreground Bash
