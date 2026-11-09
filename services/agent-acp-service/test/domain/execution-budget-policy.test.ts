@@ -40,9 +40,11 @@ describe("execution budget publication", () => {
   );
   if (typeof schema !== "object" || schema === null || Array.isArray(schema))
     throw new Error("Execution snapshot schema must be an object");
-  const commonIDs = JSON.parse(
+  const commonIDs: unknown = JSON.parse(
     readFileSync(new URL("../../../../contracts/common/ids.schema.json", import.meta.url), "utf8"),
   );
+  if (typeof commonIDs !== "object" || commonIDs === null || Array.isArray(commonIDs))
+    throw new Error("Common ID schema must be an object");
   const validatorAjv = new Ajv2020({ strict: true, validateFormats: false });
   validatorAjv.addSchema(commonIDs);
   const validator = validatorAjv.compile(schema);
