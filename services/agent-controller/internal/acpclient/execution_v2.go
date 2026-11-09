@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 
+	semconv "github.com/tf4fun/antnest-platform/libs/go/telemetry"
 	"go.opentelemetry.io/otel/attribute"
 
 	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/ports"
@@ -47,7 +48,7 @@ func (client *Client) GetExecutionDigest(ctx context.Context, organizationID str
 	ctx, cancel := context.WithTimeout(ctx, client.timeout)
 	defer cancel()
 	ctx, call := telemetry.StartHTTPCall(ctx, "get_execution_digest", []attribute.KeyValue{
-		attribute.String("antnest.organization.id", organizationID),
+		attribute.String(semconv.AntnestOrganizationId, organizationID),
 	})
 	defer func() { call.Finish(resultErr) }()
 	var wire executionDigestWire
@@ -58,7 +59,7 @@ func (client *Client) GetExecutionDigest(ctx context.Context, organizationID str
 	if result.OrganizationID != organizationID || result.Validate() != nil {
 		return ports.ExecutionDigest{}, failure("invalid_response", true, nil)
 	}
-	call.SetAttributes(attribute.Int64("antnest.configuration.revision", result.Revision))
+	call.SetAttributes(semconv.AliasAttributes(attribute.Int64(semconv.AntnestConfigurationRevision, result.Revision))...)
 	return result, nil
 }
 
@@ -69,7 +70,7 @@ func (client *Client) ApplyExecutionDelta(ctx context.Context, delta ports.Execu
 	ctx, cancel := context.WithTimeout(ctx, client.timeout)
 	defer cancel()
 	ctx, call := telemetry.StartHTTPCall(ctx, "apply_execution_delta", []attribute.KeyValue{
-		attribute.String("antnest.organization.id", delta.OrganizationID), attribute.Int64("antnest.configuration.revision", delta.Revision),
+		attribute.String(semconv.AntnestOrganizationId, delta.OrganizationID), attribute.Int64(semconv.AntnestConfigurationRevision, delta.Revision),
 	})
 	defer func() { call.Finish(resultErr) }()
 	if err := client.exchange(ctx, "apply-execution-delta", delta, &result); err != nil {
@@ -78,6 +79,6 @@ func (client *Client) ApplyExecutionDelta(ctx context.Context, delta ports.Execu
 	if result.OrganizationID != delta.OrganizationID || !appliedRevision(result.AppliedRevision, delta.Revision) {
 		return ports.ExecutionAcknowledgement{}, failure("invalid_response", true, nil)
 	}
-	call.SetAttributes(attribute.Int64("antnest.configuration.applied_revision", result.AppliedRevision))
+	call.SetAttributes(semconv.AliasAttributes(attribute.Int64(semconv.AntnestConfigurationAppliedRevision, result.AppliedRevision))...)
 	return result, nil
 }

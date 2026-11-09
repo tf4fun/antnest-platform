@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/url"
 
+	semconv "github.com/tf4fun/antnest-platform/libs/go/telemetry"
 	"go.opentelemetry.io/otel/attribute"
 
 	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/telemetry"
@@ -14,7 +15,7 @@ import (
 // Only operation-bearing errors are reconciled; conflicts must never adopt a
 // different command's journal. The original request deadline bounds this read.
 func (client *Client) readOperationJournal(ctx context.Context, requestID, agentID string, original error) (body []byte, resultErr error) {
-	ctx, span := telemetry.StartHTTPCall(ctx, "operation", []attribute.KeyValue{attribute.String("antnest.agent.id", agentID), attribute.String("antnest.operation.request_id", requestID)})
+	ctx, span := telemetry.StartHTTPCall(ctx, "operation", []attribute.KeyValue{attribute.String(semconv.AntnestAgentId, agentID), attribute.String(semconv.AntnestRequestId, requestID)})
 	defer func() { span.Finish(resultErr) }()
 	endpoint := *client.baseURL
 	endpoint.Path = "/internal/runtime-operations/" + url.PathEscape(requestID)
@@ -26,7 +27,7 @@ func (client *Client) readOperationJournal(ctx context.Context, requestID, agent
 	if err != nil {
 		return nil, dependencyFailure("control_plane_unavailable", true, err)
 	}
-	span.SetAttributes(attribute.Int("http.response.status_code", response.StatusCode))
+	span.SetAttributes(semconv.AliasAttributes(attribute.Int("http.response.status_code", response.StatusCode))...)
 	body, err = io.ReadAll(io.LimitReader(response.Body, maximumResponseBytes+1))
 	closeErr := response.Body.Close()
 	if err != nil || closeErr != nil || len(body) > maximumResponseBytes {

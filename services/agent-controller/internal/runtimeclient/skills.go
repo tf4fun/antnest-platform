@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"regexp"
 
+	semconv "github.com/tf4fun/antnest-platform/libs/go/telemetry"
 	"go.opentelemetry.io/otel/attribute"
 
 	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/domain"
@@ -69,7 +70,7 @@ func (client *Client) ReleaseSkillPreparation(ctx context.Context, releaseID, or
 func (client *Client) skillRequest(ctx context.Context, method, path, query, requestID string, payload any, wantStatus int, action, agentID string) (body []byte, resultErr error) {
 	ctx, cancel := context.WithTimeout(ctx, client.timeout)
 	defer cancel()
-	ctx, span := telemetry.StartHTTPCall(ctx, action, []attribute.KeyValue{attribute.String("antnest.agent.id", agentID)})
+	ctx, span := telemetry.StartHTTPCall(ctx, action, []attribute.KeyValue{attribute.String(semconv.AntnestAgentId, agentID)})
 	defer func() { span.Finish(resultErr) }()
 	var input io.Reader
 	if payload != nil {
@@ -96,7 +97,7 @@ func (client *Client) skillRequest(ctx context.Context, method, path, query, req
 	if err != nil {
 		return nil, dependencyFailure("control_plane_unavailable", true, err)
 	}
-	span.SetAttributes(attribute.Int("http.response.status_code", response.StatusCode))
+	span.SetAttributes(semconv.AliasAttributes(attribute.Int("http.response.status_code", response.StatusCode))...)
 	responseBody, readErr := io.ReadAll(io.LimitReader(response.Body, maximumResponseBytes+1))
 	closeErr := response.Body.Close()
 	if readErr != nil || closeErr != nil || len(responseBody) > maximumResponseBytes {

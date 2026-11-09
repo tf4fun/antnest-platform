@@ -16,6 +16,7 @@ import (
 
 	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/responsejson"
 
+	semconv "github.com/tf4fun/antnest-platform/libs/go/telemetry"
 	"go.opentelemetry.io/otel/attribute"
 
 	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/ports"
@@ -171,7 +172,7 @@ func decodePolicyAssignment(payload []byte, agentID string) (ports.NetworkPolicy
 func (client *Client) policyRequest(ctx context.Context, method, path, operation, agentID string, payload []byte, consume func([]byte) error) (resultErr error) {
 	ctx, cancel := context.WithTimeout(ctx, client.timeout)
 	defer cancel()
-	ctx, span := telemetry.StartHTTPCall(ctx, operation, []attribute.KeyValue{attribute.String("antnest.agent.id", agentID)})
+	ctx, span := telemetry.StartHTTPCall(ctx, operation, []attribute.KeyValue{attribute.String(semconv.AntnestAgentId, agentID)})
 	defer func() { span.Finish(resultErr) }()
 	endpoint := *client.baseURL
 	endpoint.RawPath = path
@@ -194,7 +195,7 @@ func (client *Client) policyRequest(ctx context.Context, method, path, operation
 	if err != nil {
 		return dependencyFailure("control_plane_unavailable", true, err)
 	}
-	span.SetAttributes(attribute.Int("http.response.status_code", response.StatusCode))
+	span.SetAttributes(semconv.AliasAttributes(attribute.Int("http.response.status_code", response.StatusCode))...)
 	body, readErr := io.ReadAll(io.LimitReader(response.Body, maximumResponseBytes+1))
 	closeErr := response.Body.Close()
 	if readErr != nil && (ctx.Err() != nil || errors.Is(readErr, context.DeadlineExceeded) || errors.Is(readErr, context.Canceled)) {

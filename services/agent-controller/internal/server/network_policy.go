@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net/http"
 
+	semconv "github.com/tf4fun/antnest-platform/libs/go/telemetry"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
@@ -58,7 +59,7 @@ func writeNetworkPolicyError(ctx context.Context, response http.ResponseWriter, 
 	status, payload := publicNetworkPolicyError(err)
 	telemetry.RecordBoundaryError(ctx, err, "network_policy", payload.Code, payload.Message, status >= 500)
 	trace.SpanFromContext(ctx).SetStatus(codes.Error, payload.Code)
-	trace.SpanFromContext(ctx).SetAttributes(attribute.String("error.type", payload.Code))
+	trace.SpanFromContext(ctx).SetAttributes(semconv.AliasAttributes(attribute.String("error.type", payload.Code))...)
 	writeJSON(response, status, payload)
 }
 
@@ -101,13 +102,13 @@ func observeNetworkPolicyResult(ctx context.Context, input application.SetAgentN
 		errorCode = payload.Code
 	}
 	span := trace.SpanFromContext(ctx)
-	span.SetAttributes(attribute.String("antnest.result", result))
+	span.SetAttributes(semconv.AliasAttributes(attribute.String(semconv.AntnestOutcome, result))...)
 	if errors.Is(err, application.ErrInvalidInput) {
 		return
 	}
-	span.SetAttributes(attribute.String("antnest.request.id", input.RequestID), attribute.String("antnest.organization.id", input.OrganizationID),
-		attribute.String("antnest.agent.id", input.AgentID), attribute.String("antnest.actor.id", input.ActorPrincipalID),
-		attribute.String("antnest.policy.id", input.PolicyID))
+	span.SetAttributes(semconv.AliasAttributes(attribute.String(semconv.AntnestRequestId, input.RequestID), attribute.String(semconv.AntnestOrganizationId, input.OrganizationID),
+		attribute.String(semconv.AntnestAgentId, input.AgentID), attribute.String(semconv.AntnestActorId, input.ActorPrincipalID),
+		attribute.String(semconv.AntnestPolicyId, input.PolicyID))...)
 	slog.InfoContext(ctx, "Agent network policy command completed", "request_id", input.RequestID, "organization_id", input.OrganizationID,
 		"agent_id", input.AgentID, "actor_principal_id", input.ActorPrincipalID, "policy_id", input.PolicyID, "policy_revision", input.Revision,
 		"expected_resource_version", input.ExpectedResourceVersion, "result", result, "error_class", errorCode)

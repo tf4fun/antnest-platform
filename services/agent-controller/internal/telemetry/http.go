@@ -14,6 +14,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	semconv "github.com/tf4fun/antnest-platform/libs/go/telemetry"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
@@ -24,9 +25,9 @@ import (
 
 var (
 	httpMeter    = otel.Meter(instrumentationName + "/http")
-	httpRequests = mustCounter(httpMeter.Int64Counter("antnest.agent_controller.http.requests"))
+	httpRequests = mustCounter(httpMeter.Int64Counter(semconv.AntnestAgentControllerHttpRequests))
 	httpDuration = mustHistogram(httpMeter.Float64Histogram(
-		"antnest.agent_controller.http.duration", metric.WithUnit("s"),
+		semconv.AntnestAgentControllerHttpDuration, metric.WithUnit("s"),
 	))
 )
 
@@ -41,24 +42,29 @@ func HTTPHandler(next http.Handler, logger *slog.Logger) http.Handler {
 			observeReadinessFailure(next, response, request, logger)
 			return
 		}
-		ctx, span := otel.Tracer(instrumentationName+"/http").Start(
-			ctx, "HTTP "+request.Method, trace.WithSpanKind(trace.SpanKindServer),
-		)
+		ctx, span := semconv.StartServer(request.WithContext(ctx), instrumentationName+"/http", nil)
 		started := time.Now()
-		observed := &statusWriter{ResponseWriter: response, status: http.StatusOK, ctx: ctx, captureRPC: captureRPC}
+		observed := &statusWriter{captureRPC: captureRPC}
+		observed.ServerWriter = semconv.NewServerWriter(response, ctx, func(err error) {
+			if ctx != nil {
+				RecordBoundaryError(ctx, err, "write_response", "", "", true)
+			}
+		})
 		instrumented := request.WithContext(ctx)
 		var requestBytes atomic.Int64
 		if instrumented.Body != nil {
-			instrumented.Body = &requestCounter{ReadCloser: instrumented.Body, observed: &requestBytes}
+			instrumented.Body = semconv.WrapBody(instrumented.Body, semconv.BodyCallbacks{
+				Read: func(n int, _ error) { requestBytes.Add(int64(n)) },
+			})
 		}
 
 		if deadline, ok := ctx.Deadline(); ok {
-			span.SetAttributes(attribute.Int64("antnest.request.timeout_ms", max(0, time.Until(deadline).Milliseconds())))
+			span.SetAttributes(semconv.AliasAttributes(attribute.Int64(semconv.AntnestRequestTimeoutMs, max(0, time.Until(deadline).Milliseconds())))...)
 		}
 		defer func() {
 			panicValue := recover()
-			status := observed.status
-			if panicValue != nil && !observed.wroteHeader {
+			status := observed.Status
+			if panicValue != nil && !observed.WroteHeader {
 				status = http.StatusInternalServerError
 			}
 			if panicValue != nil {
@@ -68,10 +74,10 @@ func HTTPHandler(next http.Handler, logger *slog.Logger) http.Handler {
 				RecordBoundaryError(ctx, ctx.Err(), "request", "", "", true)
 			}
 
-			span.SetAttributes(attribute.Int64("http.request.body.size", requestBytes.Load()), attribute.Int64("http.response.body.size", observed.written))
+			span.SetAttributes(semconv.AliasAttributes(attribute.Int64("http.request.body.size", requestBytes.Load()), attribute.Int64("http.response.body.size", observed.Written))...)
 			finishHTTPRequest(
 				ctx, span, logger, request.Method, routePattern(instrumented), status,
-				panicValue != nil || observed.writeErr != nil || ctx.Err() != nil || observed.outcome == "error", started,
+				panicValue != nil || observed.WriteErr != nil || ctx.Err() != nil || observed.outcome == "error", started,
 			)
 			if panicValue != nil {
 				panic(panicValue)
@@ -88,17 +94,18 @@ func observeReadinessFailure(
 	logger *slog.Logger,
 ) {
 	started := time.Now()
-	observed := &statusWriter{ResponseWriter: response, status: http.StatusOK}
+	observed := &statusWriter{}
+	observed.ServerWriter = semconv.NewServerWriter(response, nil, nil)
 	var panicValue any
 	func() {
 		defer func() { panicValue = recover() }()
 		next.ServeHTTP(observed, request)
 	}()
-	if observed.status < http.StatusBadRequest && panicValue == nil {
+	if observed.Status < http.StatusBadRequest && panicValue == nil {
 		return
 	}
-	status := observed.status
-	if panicValue != nil && !observed.wroteHeader {
+	status := observed.Status
+	if panicValue != nil && !observed.WroteHeader {
 		status = http.StatusInternalServerError
 	}
 	ctx := otel.GetTextMapPropagator().Extract(
@@ -134,18 +141,18 @@ func finishHTTPRequest(
 		attribute.String("http.request.method", method),
 		attribute.String("http.route", route),
 		attribute.Int("http.response.status_code", status),
-		attribute.String("antnest.result", result),
+		attribute.String(semconv.AntnestOutcome, result),
 	}
 	span.SetName("HTTP " + method + " " + route)
-	span.SetAttributes(attributes...)
+	span.SetAttributes(semconv.AliasAttributes(attributes...)...)
 	if status >= http.StatusInternalServerError {
 		span.SetStatus(codes.Error, strconv.Itoa(status))
 	} else if executionFailed {
 		span.SetStatus(codes.Error, "request_failed")
 	}
 	span.End()
-	httpRequests.Add(ctx, 1, metric.WithAttributes(attributes...))
-	httpDuration.Record(ctx, time.Since(started).Seconds(), metric.WithAttributes(attributes...))
+	httpRequests.Add(ctx, 1, metric.WithAttributes(semconv.MetricAttributes(attributes...)...))
+	httpDuration.Record(ctx, time.Since(started).Seconds(), metric.WithAttributes(semconv.MetricAttributes(attributes...)...))
 	if !isStatusRoute(route) || result == "error" {
 		logger.InfoContext(ctx, "Agent Controller HTTP request completed",
 			"method", method, "route", route, "status_code", status, "result", result,
@@ -165,26 +172,19 @@ func routePattern(request *http.Request) string {
 }
 
 type statusWriter struct {
-	http.ResponseWriter
-	status      int
-	wroteHeader bool
-	ctx         context.Context
-	captureRPC  bool
-	rpc         bool
-	written     int64
-	writeErr    error
-	outcome     string
+	*semconv.ServerWriter
+	captureRPC bool
+	rpc        bool
+	outcome    string
 }
 
-func (writer *statusWriter) Unwrap() http.ResponseWriter { return writer.ResponseWriter }
-
-func (writer *statusWriter) HTTPStatus() int { return writer.status }
+func (writer *statusWriter) HTTPStatus() int { return writer.Status }
 
 func (writer *statusWriter) TraceContext() context.Context {
-	if writer.ctx == nil {
+	if writer.Ctx == nil {
 		return context.Background()
 	}
-	return writer.ctx
+	return writer.Ctx
 }
 
 func RecordHTTPOutcome(response http.ResponseWriter, outcome string) {
@@ -194,54 +194,13 @@ func RecordHTTPOutcome(response http.ResponseWriter, outcome string) {
 }
 
 func (writer *statusWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
-	return http.NewResponseController(writer.ResponseWriter).Hijack()
-}
-
-func (writer *statusWriter) WriteHeader(status int) {
-	if writer.wroteHeader {
-		return
-	}
-	if status >= 100 && status < 200 && status != http.StatusSwitchingProtocols {
-		writer.ResponseWriter.WriteHeader(status)
-		return
-	}
-	writer.wroteHeader = true
-	writer.status = status
-	writer.ResponseWriter.WriteHeader(status)
-}
-
-func (writer *statusWriter) Write(payload []byte) (int, error) {
-	if !writer.wroteHeader {
-		writer.WriteHeader(http.StatusOK)
-	}
-	n, err := writer.ResponseWriter.Write(payload)
-	writer.written += int64(n)
-	if err != nil && writer.writeErr == nil {
-		writer.writeErr = err
-		if writer.ctx != nil {
-			RecordBoundaryError(writer.ctx, err, "write_response", "", "", true)
-		}
-	}
-	return n, err
-}
-
-func (writer *statusWriter) FlushError() error {
-	if !writer.wroteHeader {
-		writer.WriteHeader(http.StatusOK)
-	}
-	return http.NewResponseController(writer.ResponseWriter).Flush()
-}
-
-func (writer *statusWriter) Flush() {
-	if err := writer.FlushError(); err != nil {
-		writer.writeErr = err
-	}
+	return writer.ServerWriter.Hijack()
 }
 
 // ReaderFrom must traverse Write so streaming byte counts and failures remain
 // visible without aggregating the stream.
 func (writer *statusWriter) ReadFrom(reader io.Reader) (int64, error) {
-	return io.Copy(struct{ io.Writer }{writer}, reader)
+	return writer.ServerWriter.ReadFrom(reader)
 }
 
 func isStatusRoute(path string) bool {

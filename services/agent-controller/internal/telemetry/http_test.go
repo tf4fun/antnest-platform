@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	semconv "github.com/tf4fun/antnest-platform/libs/go/telemetry"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/propagation"
@@ -119,21 +120,21 @@ func TestStatusWriterRecordsFirstCommittedStatus(t *testing.T) {
 	t.Parallel()
 
 	recorder := httptest.NewRecorder()
-	writer := &statusWriter{ResponseWriter: recorder, status: http.StatusOK}
+	writer := &statusWriter{ServerWriter: semconv.NewServerWriter(recorder, nil, nil)}
 	writer.WriteHeader(http.StatusServiceUnavailable)
 	writer.WriteHeader(http.StatusOK)
-	if writer.status != http.StatusServiceUnavailable || recorder.Code != http.StatusServiceUnavailable {
-		t.Fatalf("status writer = %d recorder=%d", writer.status, recorder.Code)
+	if writer.Status != http.StatusServiceUnavailable || recorder.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status writer = %d recorder=%d", writer.Status, recorder.Code)
 	}
 
 	recorder = httptest.NewRecorder()
-	writer = &statusWriter{ResponseWriter: recorder, status: http.StatusOK}
+	writer = &statusWriter{ServerWriter: semconv.NewServerWriter(recorder, nil, nil)}
 	if _, err := writer.Write([]byte("ready")); err != nil {
 		t.Fatalf("write response: %v", err)
 	}
 	writer.WriteHeader(http.StatusServiceUnavailable)
-	if writer.status != http.StatusOK || recorder.Code != http.StatusOK {
-		t.Fatalf("implicit status writer = %d recorder=%d", writer.status, recorder.Code)
+	if writer.Status != http.StatusOK || recorder.Code != http.StatusOK {
+		t.Fatalf("implicit status writer = %d recorder=%d", writer.Status, recorder.Code)
 	}
 }
 

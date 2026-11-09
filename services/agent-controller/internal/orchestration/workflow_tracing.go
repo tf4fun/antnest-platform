@@ -5,6 +5,7 @@ import (
 	"strings"
 	"sync"
 
+	semconv "github.com/tf4fun/antnest-platform/libs/go/telemetry"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 )
@@ -54,7 +55,7 @@ func (span *workflowSpan) End(options ...trace.SpanEndOption) {
 
 func (span *workflowSpan) finish(reason string, options ...trace.SpanEndOption) {
 	span.once.Do(func() {
-		span.SetAttributes(attribute.String("antnest.temporal.workflow.span_end", reason))
+		span.SetAttributes(semconv.AliasAttributes(attribute.String(semconv.AntnestTemporalWorkflowSpanEnd, reason))...)
 		span.Span.End(options...)
 		// Keep in-flight End discoverable so shutdown waits for its processor
 		// before the provider is allowed to shut down.

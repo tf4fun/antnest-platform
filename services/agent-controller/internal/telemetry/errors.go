@@ -8,6 +8,7 @@ import (
 	"io"
 	"net"
 
+	semconv "github.com/tf4fun/antnest-platform/libs/go/telemetry"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
@@ -87,10 +88,10 @@ func RecordBoundaryError(ctx context.Context, err error, phase, code, message st
 		outcome = "canceled"
 	}
 	attrs := []attribute.KeyValue{
-		attribute.String("error.type", kind), attribute.String("antnest.error.code", code),
-		attribute.String("antnest.error.stage", phase), attribute.String("antnest.error.type", kind), attribute.String("antnest.outcome", outcome),
+		attribute.String("error.type", kind), attribute.String(semconv.AntnestErrorCode, code),
+		attribute.String(semconv.AntnestErrorStage, phase), attribute.String(semconv.AntnestErrorType, kind), attribute.String(semconv.AntnestOutcome, outcome),
 	}
-	span.SetAttributes(attrs...)
+	span.SetAttributes(semconv.AliasAttributes(attrs...)...)
 	causes := make([]string, 0, 4)
 	causeTypes := make([]string, 0, 4)
 	pending := []error{err}
@@ -115,9 +116,9 @@ func RecordBoundaryError(ctx context.Context, err error, phase, code, message st
 	if encodeErr != nil {
 		encodedCauses = nil
 	}
-	span.AddEvent("antnest.error", trace.WithAttributes(append(attrs,
-		attribute.String("antnest.error.message", safeMessage),
-		attribute.StringSlice("antnest.error.cause_types", causeTypes),
-		attribute.String("antnest.error.causes", string(encodedCauses)),
-	)...))
+	span.AddEvent(semconv.AntnestError, trace.WithAttributes(semconv.AliasAttributes(append(attrs,
+		attribute.String(semconv.AntnestErrorMessage, safeMessage),
+		attribute.StringSlice(semconv.AntnestErrorCauseTypes, causeTypes),
+		attribute.String(semconv.AntnestErrorCauses, string(encodedCauses)),
+	)...)...))
 }

@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	semconv "github.com/tf4fun/antnest-platform/libs/go/telemetry"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
@@ -33,19 +34,19 @@ var (
 	serverMeter         = otel.Meter("github.com/tf4fun/antnest-platform/agent-controller/server")
 	lifecycleOperations = mustLifecycleCounter(
 		serverMeter.Int64Counter(
-			"antnest.agent_controller.lifecycle.operations",
+			semconv.AntnestAgentControllerLifecycleOperations,
 			metric.WithDescription("Agent lifecycle request outcomes"),
 		),
 	)
 	eventWatchConnections = mustEventWatchConnections(
 		serverMeter.Int64UpDownCounter(
-			"antnest.agent_controller.event_watch.connections",
+			semconv.AntnestAgentControllerEventWatchConnections,
 			metric.WithDescription("Current Agent event watch connections"),
 		),
 	)
 	eventWatchDisconnects = mustLifecycleCounter(
 		serverMeter.Int64Counter(
-			"antnest.agent_controller.event_watch.disconnects",
+			semconv.AntnestAgentControllerEventWatchDisconnects,
 			metric.WithDescription("Agent event watch termination outcomes"),
 		),
 	)
@@ -886,15 +887,15 @@ func (h *handler) streamAgentEvents(
 	watch watchAgentEvents,
 ) {
 	ctx := request.Context()
-	watchAttributes := []attribute.KeyValue{attribute.String("antnest.event_watch.scope", scope)}
-	eventWatchConnections.Add(ctx, 1, metric.WithAttributes(watchAttributes...))
+	watchAttributes := []attribute.KeyValue{attribute.String(semconv.AntnestEventWatchScope, scope)}
+	eventWatchConnections.Add(ctx, 1, metric.WithAttributes(semconv.MetricAttributes(watchAttributes...)...))
 	result := "completed"
 	defer func() {
-		eventWatchConnections.Add(ctx, -1, metric.WithAttributes(watchAttributes...))
+		eventWatchConnections.Add(ctx, -1, metric.WithAttributes(semconv.MetricAttributes(watchAttributes...)...))
 		disconnectAttributes := append(
-			watchAttributes, attribute.String("antnest.result", result),
+			watchAttributes, attribute.String(semconv.AntnestOutcome, result),
 		)
-		eventWatchDisconnects.Add(ctx, 1, metric.WithAttributes(disconnectAttributes...))
+		eventWatchDisconnects.Add(ctx, 1, metric.WithAttributes(semconv.MetricAttributes(disconnectAttributes...)...))
 	}()
 	controller := http.NewResponseController(response)
 	if err := controller.SetWriteDeadline(time.Time{}); err != nil && !errors.Is(err, http.ErrNotSupported) {
@@ -1478,21 +1479,21 @@ func observeLifecycleResult(ctx context.Context, operation application.Operation
 	}
 	span := trace.SpanFromContext(ctx)
 	metricAttributes := []attribute.KeyValue{
-		attribute.String("antnest.lifecycle.kind", string(operation.Kind)),
-		attribute.String("antnest.lifecycle.phase", string(operation.Phase)),
-		attribute.String("antnest.lifecycle.state", string(operation.State)),
+		attribute.String(semconv.AntnestLifecycleKind, string(operation.Kind)),
+		attribute.String(semconv.AntnestLifecyclePhase, string(operation.Phase)),
+		attribute.String(semconv.AntnestLifecycleState, string(operation.State)),
 	}
 	if operation.State == domain.OperationFailed {
 		metricAttributes = append(
 			metricAttributes,
-			attribute.String("antnest.lifecycle.error_class", lifecycleMetricErrorClass(operation.ErrorCode)),
+			attribute.String(semconv.AntnestErrorClassification, lifecycleMetricErrorClass(operation.ErrorCode)),
 		)
 	}
-	span.SetAttributes(append(
-		[]attribute.KeyValue{attribute.String("antnest.agent.id", operation.AgentID), attribute.String("antnest.operation.id", operation.RequestID), attribute.String("antnest.operation.phase", string(operation.Phase)), attribute.String("antnest.outcome", string(operation.State))},
+	span.SetAttributes(semconv.AliasAttributes(append(
+		[]attribute.KeyValue{attribute.String(semconv.AntnestAgentId, operation.AgentID), attribute.String(semconv.AntnestOperationId, operation.RequestID), attribute.String(semconv.AntnestOperationPhase, string(operation.Phase)), attribute.String(semconv.AntnestOutcome, string(operation.State))},
 		metricAttributes...,
-	)...)
-	lifecycleOperations.Add(ctx, 1, metric.WithAttributes(metricAttributes...))
+	)...)...)
+	lifecycleOperations.Add(ctx, 1, metric.WithAttributes(semconv.MetricAttributes(metricAttributes...)...))
 	if operation.State != domain.OperationFailed {
 		return
 	}
