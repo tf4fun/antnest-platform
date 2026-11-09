@@ -310,3 +310,72 @@ async fn request_observation_is_lazy_and_never_caches_raw_bytes() {
     assert_eq!(capture.snapshot().observed, 1024 * 1024);
     assert_eq!(drops.load(Ordering::SeqCst), 1);
 }
+
+#[tokio::test]
+async fn rpc_capture_redacts_nested_secrets_without_changing_wire() {
+    let exporter = InMemorySpanExporter::default();
+    let provider = SdkTracerProvider::builder()
+        .with_simple_exporter(exporter.clone())
+        .build();
+    crate::test_tracing::stabilize_callsite_registry();
+    let subscriber = tracing_subscriber::Registry::default()
+        .with(tracing_opentelemetry::layer().with_tracer(provider.tracer("rpc-redaction")));
+    let payload = serde_json::json!({
+        "public": "x".repeat(24 * 1024),
+        "nested": {"password": "PRIVATE-CANARY", "access_token": "PRIVATE-CANARY"},
+        "rows": [{"client_secret": "PRIVATE-CANARY"}],
+    });
+    let original = payload.clone();
+    let body = async {
+        let span = tracing::info_span!("rpc");
+        let _entered = span.enter();
+        rpc_scope(true, async {
+            rpc_content("antnest.request", &payload);
+            let response = ControlJson(payload.clone()).into_response();
+            response.into_body().collect().await.unwrap().to_bytes()
+        })
+        .await
+    }
+    .with_subscriber(subscriber)
+    .await;
+    assert_eq!(
+        serde_json::from_slice::<serde_json::Value>(&body).unwrap(),
+        original
+    );
+    assert!(String::from_utf8_lossy(&body).contains("PRIVATE-CANARY"));
+    let spans = exporter.get_finished_spans().unwrap();
+    assert_eq!(spans.len(), 1);
+    let mut seen = std::collections::HashSet::new();
+    for event in &spans[0].events.events {
+        seen.insert(event.name.to_string());
+        let encoded = event
+            .attributes
+            .iter()
+            .find(|attribute| attribute.key.as_str() == "antnest.payload.json")
+            .expect("payload attribute");
+        let captured: serde_json::Value =
+            serde_json::from_str(&encoded.value.as_str()).expect("captured JSON");
+        assert_eq!(captured["public"], serde_json::json!("x".repeat(24 * 1024)));
+        assert_eq!(
+            captured["nested"]["password"],
+            serde_json::json!("[REDACTED]")
+        );
+        assert_eq!(
+            captured["nested"]["access_token"],
+            serde_json::json!("[REDACTED]")
+        );
+        assert_eq!(
+            captured["rows"][0]["client_secret"],
+            serde_json::json!("[REDACTED]")
+        );
+        assert!(!encoded.value.as_str().contains("PRIVATE-CANARY"));
+    }
+    assert_eq!(
+        seen,
+        ["antnest.request", "antnest.response"]
+            .into_iter()
+            .map(String::from)
+            .collect::<std::collections::HashSet<_>>()
+    );
+    assert_eq!(payload, original);
+}

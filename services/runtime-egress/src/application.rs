@@ -1,3 +1,5 @@
+use crate::semconv;
+
 use std::{
     collections::HashMap,
     net::{Ipv4Addr, SocketAddrV4},
@@ -1143,7 +1145,7 @@ const fn route_gate(state: AttachmentState) -> RouteGate {
 fn log_cleanup_failure(agent_id: &AgentId, stage: &'static str, _detail: &str) {
     tracing::warn!(
         lifecycle.event = "agent_cleanup_failed",
-        "antnest.agent.id" = agent_id.as_str(),
+        { semconv::ANTNEST_AGENT_ID } = agent_id.as_str(),
         failure.stage = stage,
         failure.cause = "kernel_command_failed",
         "Agent kernel cleanup failed"

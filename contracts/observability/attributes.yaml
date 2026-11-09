@@ -2934,6 +2934,16 @@
       "deprecated_alias_of": "antnest.request.timeout_ms"
     },
     {
+      "name": "antnest.transaction.completion",
+      "kind": "span_attribute",
+      "type": "string",
+      "cardinality": "low",
+      "pii": "none",
+      "owner": [
+        "runtime-egress"
+      ]
+    },
+    {
       "name": "antnest.transaction.outcome",
       "kind": "span_attribute",
       "type": "string",
@@ -2943,7 +2953,8 @@
         "agent-acp-service",
         "agent-controller",
         "identity-service",
-        "runtime-controller"
+        "runtime-controller",
+        "runtime-egress"
       ]
     },
     {

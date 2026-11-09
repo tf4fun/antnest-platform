@@ -1,3 +1,6 @@
+use crate::semconv;
+use crate::telemetry::TelemetrySpanExt as _;
+
 use std::{future::Future, sync::Arc};
 
 use opentelemetry::{
@@ -250,7 +253,7 @@ impl Drop for Transaction<'_> {
             self.observation.context(),
         );
         if let Some(span) = &observation.span {
-            span.set_attribute("antnest.transaction.completion", "unconfirmed");
+            span.set_contract_attribute(semconv::ANTNEST_TRANSACTION_COMPLETION, "unconfirmed");
         }
         // The driver only queues rollback on Drop. Do not wait, spawn, or claim success.
         drop(inner);
@@ -325,9 +328,7 @@ impl DatabaseObservation {
             otel.kind = "internal",
             db.system.name = "postgresql",
         );
-        for attribute in attributes {
-            span.set_attribute(attribute.key.clone(), attribute.value.clone());
-        }
+        span.set_contract_attributes(attributes.iter().cloned());
         Self {
             span: Some(span),
             transaction: true,
@@ -343,8 +344,8 @@ impl DatabaseObservation {
 
     fn finish_transaction(&mut self, outcome: &'static str, error: Option<&Error>) {
         if let Some(span) = &self.span {
-            span.set_attribute(
-                "antnest.transaction.outcome",
+            span.set_contract_attribute(
+                semconv::ANTNEST_TRANSACTION_OUTCOME,
                 if error.is_some() { "failed" } else { outcome },
             );
         }
@@ -373,11 +374,9 @@ impl DatabaseObservation {
         if span.set_parent(parent).is_err() {
             tracing::debug!("database trace parent was not attached");
         }
-        for attribute in attributes {
-            span.set_attribute(attribute.key.clone(), attribute.value.clone());
-        }
+        span.set_contract_attributes(attributes.iter().cloned());
         if let Some(query) = query {
-            span.set_attribute("db.query.text", query.to_owned());
+            span.set_contract_attribute("db.query.text", query.to_owned());
         }
         Self {
             span: Some(span),
@@ -419,7 +418,7 @@ impl DatabaseObservation {
             return;
         };
         let Some(error) = error else {
-            span.set_attribute("antnest.outcome", "success");
+            span.set_contract_attribute(semconv::ANTNEST_OUTCOME, "success");
             return;
         };
         record_driver_error(&span, error);
@@ -430,10 +429,10 @@ impl Drop for DatabaseObservation {
     fn drop(&mut self) {
         if let Some(span) = self.span.take() {
             if self.transaction {
-                span.set_attribute("antnest.transaction.outcome", "unconfirmed");
+                span.set_contract_attribute(semconv::ANTNEST_TRANSACTION_OUTCOME, "unconfirmed");
             }
-            span.set_attribute(
-                "antnest.outcome",
+            span.set_contract_attribute(
+                semconv::ANTNEST_OUTCOME,
                 if std::thread::panicking() {
                     "error"
                 } else {
@@ -441,7 +440,7 @@ impl Drop for DatabaseObservation {
                 },
             );
             if std::thread::panicking() {
-                span.set_attribute("error.type", "database_boundary_panic");
+                span.set_contract_attribute("error.type", "database_boundary_panic");
                 span.set_status(Status::error("database_boundary_panic"));
             }
         }
@@ -455,11 +454,11 @@ fn record_driver_error(span: &tracing::Span, error: &Error) {
     let sqlstate = error.code().map(|code| code.code());
     let kind = sqlstate.unwrap_or("tokio_postgres::Error");
     let message = database.map_or_else(|| error.to_string(), |db| db.message().to_owned());
-    span.set_attribute("antnest.outcome", "error");
-    span.set_attribute("error.type", kind.to_owned());
+    span.set_contract_attribute(semconv::ANTNEST_OUTCOME, "error");
+    span.set_contract_attribute("error.type", kind.to_owned());
     span.set_status(Status::error(message.clone()));
     if let Some(sqlstate) = sqlstate {
-        span.set_attribute("db.response.status_code", sqlstate.to_owned());
+        span.set_contract_attribute("db.response.status_code", sqlstate.to_owned());
     }
     let mut attributes = vec![
         KeyValue::new("exception.type", kind.to_owned()),
@@ -492,7 +491,7 @@ fn record_driver_error(span: &tracing::Span, error: &Error) {
             )),
         ));
     }
-    span.add_event("exception", attributes);
+    span.add_contract_event("exception", attributes);
     let context = span.context();
     let active = context.span();
     tracing::warn!(target: "antnest_runtime_egress::repository::completion",

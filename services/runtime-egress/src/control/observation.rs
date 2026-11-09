@@ -1,3 +1,6 @@
+use crate::semconv;
+use crate::telemetry::TelemetrySpanExt as _;
+
 use std::{
     future::Future,
     pin::Pin,
@@ -37,10 +40,13 @@ fn rpc_content(direction: &'static str, value: &impl Serialize) {
     if span.is_disabled() {
         return;
     }
-    match serde_json::to_string(value) {
-        Ok(json) => span.add_event(direction, vec![KeyValue::new("antnest.payload.json", json)]),
-        Err(_) => span.add_event(
-            "antnest.capture.error",
+    match crate::telemetry_contract::capture_rpc_json(value) {
+        Ok(json) => span.add_contract_event(
+            direction,
+            vec![KeyValue::new(semconv::ANTNEST_PAYLOAD_JSON, json)],
+        ),
+        Err(_) => span.add_contract_event(
+            semconv::ANTNEST_CAPTURE_ERROR,
             vec![KeyValue::new("error.type", "json_encoding")],
         ),
     }
@@ -64,14 +70,14 @@ where
     type Rejection = JsonRejection;
     async fn from_request(request: Request, state: &S) -> Result<Self, Self::Rejection> {
         let Json(value) = Json::<T>::from_request(request, state).await?;
-        rpc_content("antnest.request", &value);
+        rpc_content(semconv::ANTNEST_REQUEST, &value);
         Ok(Self(value))
     }
 }
 
 impl<T: Serialize> IntoResponse for ControlJson<T> {
     fn into_response(self) -> Response {
-        rpc_content("antnest.response", &self.0);
+        rpc_content(semconv::ANTNEST_RESPONSE, &self.0);
         Json(self.0).into_response()
     }
 }
@@ -188,7 +194,7 @@ impl Completion {
         self.failure = response.extensions().get::<SafeFailure>().cloned();
 
         if let Some(span) = &self.span {
-            span.set_attribute(
+            span.set_contract_attribute(
                 "http.response.status_code",
                 i64::from(response.status().as_u16()),
             );
@@ -246,16 +252,16 @@ impl Completion {
         } else {
             self.error_code
         };
-        span.set_attribute("antnest.outcome", outcome);
-        span.set_attribute("antnest.operation.phase", "control_http");
-        span.set_attribute("antnest.response.termination", termination);
-        span.set_attribute("error.type", code);
-        span.set_attribute("http.request.body.size", observed_count(request.observed));
+        span.set_contract_attribute(semconv::ANTNEST_OUTCOME, outcome);
+        span.set_contract_attribute(semconv::ANTNEST_OPERATION_PHASE, "control_http");
+        span.set_contract_attribute(semconv::ANTNEST_RESPONSE_TERMINATION, termination);
+        span.set_contract_attribute("error.type", code);
+        span.set_contract_attribute("http.request.body.size", observed_count(request.observed));
         if status.is_some() {
-            span.set_attribute("http.response.body.size", observed_count(self.observed));
+            span.set_contract_attribute("http.response.body.size", observed_count(self.observed));
         }
         let elapsed = self.started.elapsed();
-        span.set_attribute(
+        span.set_contract_attribute(
             "http.server.request.duration_ms",
             elapsed.as_secs_f64() * 1000.0,
         );
@@ -272,38 +278,38 @@ impl Completion {
             },
         );
         if !code.is_empty() || failed {
-            span.set_attribute("antnest.error.code", code);
-            span.set_attribute("antnest.error.type", code);
-            span.set_attribute("antnest.error.stage", stage);
-            span.set_attribute("antnest.error.origin", stage);
-            span.set_attribute("failure.stage", stage);
-            span.set_attribute("failure.cause", cause);
-            span.add_event(
-                "antnest.error",
+            span.set_contract_attribute(semconv::ANTNEST_ERROR_CODE, code);
+            span.set_contract_attribute(semconv::ANTNEST_ERROR_TYPE, code);
+            span.set_contract_attribute(semconv::ANTNEST_ERROR_STAGE, stage);
+            span.set_contract_attribute(semconv::ANTNEST_ERROR_ORIGIN, stage);
+            span.set_contract_attribute("failure.stage", stage);
+            span.set_contract_attribute("failure.cause", cause);
+            span.add_contract_event(
+                semconv::ANTNEST_ERROR,
                 vec![
                     KeyValue::new("error.type", code),
-                    KeyValue::new("antnest.error.code", code),
-                    KeyValue::new("antnest.error.type", code),
-                    KeyValue::new("antnest.error.stage", stage),
-                    KeyValue::new("antnest.operation.phase", stage),
+                    KeyValue::new(semconv::ANTNEST_ERROR_CODE, code),
+                    KeyValue::new(semconv::ANTNEST_ERROR_TYPE, code),
+                    KeyValue::new(semconv::ANTNEST_ERROR_STAGE, stage),
+                    KeyValue::new(semconv::ANTNEST_OPERATION_PHASE, stage),
                     KeyValue::new(
-                        "antnest.error.cause_types",
+                        semconv::ANTNEST_ERROR_CAUSE_TYPES,
                         Value::Array(Array::String(vec![cause.into()])),
                     ),
                     KeyValue::new(
-                        "antnest.error.causes",
+                        semconv::ANTNEST_ERROR_CAUSES,
                         serde_json::json!([{"type": cause, "message": safe_cause_message(cause)}])
                             .to_string(),
                     ),
-                    KeyValue::new("antnest.error.message", message),
+                    KeyValue::new(semconv::ANTNEST_ERROR_MESSAGE, message),
                 ],
             );
         }
-        span.add_event(
-            "antnest.complete",
+        span.add_contract_event(
+            semconv::ANTNEST_COMPLETE,
             vec![
-                KeyValue::new("antnest.outcome", outcome),
-                KeyValue::new("antnest.response.termination", termination),
+                KeyValue::new(semconv::ANTNEST_OUTCOME, outcome),
+                KeyValue::new(semconv::ANTNEST_RESPONSE_TERMINATION, termination),
             ],
         );
         if let Some(status) = status {

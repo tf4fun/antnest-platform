@@ -22,7 +22,10 @@ pub mod policy;
 pub mod privilege;
 pub mod repository;
 pub mod service_auth;
+#[rustfmt::skip]
+pub mod semconv;
 pub mod telemetry;
+pub(crate) mod telemetry_contract;
 pub mod transport;
 pub mod tunnel;
 

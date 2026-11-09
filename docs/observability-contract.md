@@ -803,7 +803,8 @@ attempt to sanitize `Error()` output.
 | antnest.target.service | span_attribute | string |  | low | none | agent-controller, skill-registry |  |  |
 | antnest.temporal.workflow.span_end | span_attribute | string |  | low | none | agent-controller |  |  |
 | antnest.timeout_ms | span_attribute | int | ms | unbounded | none | runtime-controller |  | antnest.request.timeout_ms |
-| antnest.transaction.outcome | span_attribute | string |  | low | none | agent-acp-service, agent-controller, identity-service, runtime-controller |  |  |
+| antnest.transaction.completion | span_attribute | string |  | low | none | runtime-egress |  |  |
+| antnest.transaction.outcome | span_attribute | string |  | low | none | agent-acp-service, agent-controller, identity-service, runtime-controller, runtime-egress |  |  |
 | antnest.ui.acp.close.delete_attempts | span_attribute | int |  | unbounded | none | agent-ui |  |  |
 | antnest.ui.acp.close.delete_completed | span_attribute | boolean |  | low | none | agent-ui |  |  |
 | antnest.ui.acp.close.delete_responses | span_attribute | int |  | unbounded | none | agent-ui |  |  |

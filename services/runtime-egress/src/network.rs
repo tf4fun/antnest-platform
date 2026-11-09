@@ -1,3 +1,5 @@
+use crate::semconv;
+
 use std::{
     collections::HashMap,
     io,
@@ -206,7 +208,7 @@ fn classify_output_result(
 fn record_peer_failure(agent_id: AgentId) {
     tracing::warn!(
         lifecycle.event = "runtime_peer_output_unavailable",
-        antnest.agent.id = %agent_id,
+        { semconv::ANTNEST_AGENT_ID } = %agent_id,
         error.type = "runtime_peer_output_failed",
         "Runtime Egress peer output failed"
     );

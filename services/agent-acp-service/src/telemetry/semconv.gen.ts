@@ -256,6 +256,7 @@ export const SEMCONV = {
   ANTNEST_TARGET_SERVICE: "antnest.target.service",
   ANTNEST_TEMPORAL_WORKFLOW_SPAN_END: "antnest.temporal.workflow.span_end",
   ANTNEST_TIMEOUT_MS_LEGACY: "antnest.timeout_ms",
+  ANTNEST_TRANSACTION_COMPLETION: "antnest.transaction.completion",
   ANTNEST_TRANSACTION_OUTCOME: "antnest.transaction.outcome",
   ANTNEST_UI_ACP_CLOSE_DELETE_ATTEMPTS: "antnest.ui.acp.close.delete_attempts",
   ANTNEST_UI_ACP_CLOSE_DELETE_COMPLETED: "antnest.ui.acp.close.delete_completed",

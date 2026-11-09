@@ -260,6 +260,14 @@ test("renderRust emits pub const canonical and legacy constants", () => {
   assert.match(output, /\bANTNEST_OUTCOME\b/);
   assert.match(output, /\bANTNEST_EXAMPLE_REQUESTS\b/);
   assert.match(output, /\bANTNEST_ERROR\b/);
+  assert.match(output, /pub const DEPRECATED_ALIASES: &\[\(&str, &str\)\]/);
+  assert.match(output, /\(ANTNEST_AGENT_ID_LEGACY, ANTNEST_AGENT_ID\)/);
+  assert.match(output, /pub const RESTRICTED_METRIC_ATTRIBUTES: &\[&str\]/);
+  const restricted = output.split("pub const RESTRICTED_METRIC_ATTRIBUTES")[1];
+  assert.ok(restricted?.includes("ANTNEST_AGENT_ID,"));
+  assert.ok(restricted?.includes("ANTNEST_AGENT_ID_LEGACY,"));
+  assert.ok(restricted?.includes("ANTNEST_PAYLOAD_JSON,"));
+  assert.ok(!restricted?.includes("ANTNEST_OUTCOME,"));
 });
 
 test("renderMarkdown records attribute metadata and alias targets", () => {
@@ -394,6 +402,10 @@ test("source lint permits generated files, comments and test sources", () => {
       "services/agent-acp-service/src/telemetry.test.ts",
     ],
     [
+      'assert_eq!(name, "antnest.agent.id");',
+      "services/runtime-egress/src/control/observation_tests.rs",
+    ],
+    [
       'assert.ok(source.includes("antnest.agent.id"))',
       "tests/support/telemetry-registry.test.mjs",
     ],
@@ -457,6 +469,15 @@ test("the published registry validates and shared Go output is regenerated", () 
     ),
   );
   assert.deepEqual(validateRegistry(registry), []);
+  const completion = registry.attributes.find(
+    (entry) => entry.name === "antnest.transaction.completion",
+  );
+  assert.ok(completion);
+  assert.equal(completion.kind, "span_attribute");
+  assert.equal(completion.cardinality, "low");
+  assert.equal(completion.pii, "none");
+  assert.equal(completion.deprecated_alias_of, undefined);
+  assert.ok(completion.owner.includes("runtime-egress"));
   const generated = readFileSync(
     new URL("../../libs/go/telemetry/semconv_gen.go", import.meta.url),
     "utf8",

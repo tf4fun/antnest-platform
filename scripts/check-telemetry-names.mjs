@@ -296,6 +296,7 @@ const generatedPath = (path) =>
 const testPath = (path) =>
   basename(path).includes(".test.") ||
   basename(path).endsWith("_test.go") ||
+  basename(path).endsWith("_tests.rs") ||
   path.split(/[\\/]/).some((segment) => TEST_SEGMENTS.has(segment));
 
 export function checkTelemetrySource(source, path, registry) {
