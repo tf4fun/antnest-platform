@@ -10,6 +10,7 @@ FROM golang:1.27.1-bookworm AS go-build
 
 WORKDIR /src/services/admin-console
 COPY modules/service-authentication /src/modules/service-authentication
+COPY libs/go/telemetry /src/libs/go/telemetry
 COPY services/admin-console/go.mod services/admin-console/go.sum ./
 RUN --mount=type=cache,target=/go/pkg/mod go mod download
 COPY services/admin-console ./

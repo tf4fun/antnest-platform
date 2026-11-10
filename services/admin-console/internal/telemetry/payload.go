@@ -8,10 +8,10 @@ type bodyObservation struct {
 	observed int64
 }
 
-func (c *bodyObservation) add(data []byte) {
+func (c *bodyObservation) add(n int) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	c.observed += int64(len(data))
+	c.observed += int64(n)
 }
 
 func (c *bodyObservation) size() int64 { c.mu.Lock(); defer c.mu.Unlock(); return c.observed }

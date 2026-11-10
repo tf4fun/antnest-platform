@@ -23,6 +23,7 @@ require (
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/grpc-ecosystem/grpc-gateway/v2 v2.31.0 // indirect
 	github.com/santhosh-tekuri/jsonschema/v6 v6.0.3 // indirect
+	github.com/tf4fun/antnest-platform/libs/go/telemetry v0.0.0
 	go.opentelemetry.io/auto/sdk v1.2.1 // indirect
 	go.opentelemetry.io/otel/exporters/otlp/otlptrace v1.47.0 // indirect
 	go.opentelemetry.io/otel/log v1.47.0 // indirect
@@ -39,3 +40,5 @@ require (
 )
 
 replace github.com/tf4fun/antnest-platform/modules/service-authentication => ../../modules/service-authentication
+
+replace github.com/tf4fun/antnest-platform/libs/go/telemetry => ../../libs/go/telemetry
