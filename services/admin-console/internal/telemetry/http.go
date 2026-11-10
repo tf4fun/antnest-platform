@@ -100,5 +100,3 @@ func normalizedRoute(pattern string) string {
 	}
 	return pattern
 }
-
-type statusWriter = semconv.ServerWriter
