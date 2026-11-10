@@ -1,5 +1,7 @@
 # Antnest Platform 全局 TODO
 
+- **#69 PR CI 接手（2026-11-10，用户授权修复、合并并关闭）**：接续并覆盖历史停止／不轮询／不合并交接；按 #617 共享基础 → #618–#627 服务批次 → #628 显式集成推进。基础批次的 observability ownership 已声明十个消费者，workflow 路径尚未同步，现补齐十个服务 push／PR 的精确契约路径，保留 PR image guard。后续按服务修复 unused helper、脱敏与 alias oracle，以及源指纹同步；以最终精确 head 的远程 Repository／Integration 和选中服务组件作为准入。不运行或查询独立 system E2E。
+
 - **#69 Runtime Egress 本地反馈**：RPC canary、Rust 元数据、原有 `antnest.transaction.completion` 契约缺项、独立 Rust 单测文件误报均先 RED 后修复。9 项 typed helper、5 项 HTTP／RPC、9 项原度量、6 项数据库包装器定向回归通过；lib Clippy `-D warnings`、Rustfmt、根 17 项 registry 测试及生成／命名／格式检查通过。保留 completion 与 outcome 的区别，补齐 registry owner，并机械再生所有已迁移语言消费者；原指标期望模块与 HEAD 逐字一致。完整服务及 PostgreSQL component 交远程准入，未等待。
 
 - **#69 显式集成待办**：根 CI 接线全量生成／生产命名检查；共享 Go 模块的服务影响选择补测；Rust 命名检查只应跳过 test 项而非遇到第一个 `cfg(test)` 后截断整份生产文件。完成最后一个 Runtime 服务后处理，不运行或安排 Docker E2E。

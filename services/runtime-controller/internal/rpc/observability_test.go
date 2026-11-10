@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -43,13 +44,14 @@ func testRPCContentSwitchAndProtocolOutcome(t *testing.T) {
 	}{
 		{"enabled", "true", body, true}, {"disabled", "false", body, false},
 		{"partial", "true", body[:len(body)-1], false},
-		{"large", "true", strings.Replace(body, "NESTED_CANARY", strings.Repeat("CANARY", 4000), 1), true},
+		{"large", "true", strings.Replace(body, "ARG_CANARY", "ARG_CANARY"+strings.Repeat("PUBLIC", 4000), 1), true},
 		{"unknown", "true", `{"unknown":"CANARY"}`, false},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			recorder.Reset()
 			t.Setenv("ANTNEST_TELEMETRY_CAPTURE_RPC_CONTENT", test.flag)
-			handler := telemetry.HTTPHandler(newTestHandler(t, &fakeService{operation: operation}))
+			service := &fakeService{operation: operation}
+			handler := telemetry.HTTPHandler(newTestHandler(t, service))
 			request := httptest.NewRequest(http.MethodPost, "/internal/runtimes/agent-1/initialize", strings.NewReader(test.body))
 			request.Header.Set("Idempotency-Key", "operation-42")
 			request.Header.Set("Cookie", "COOKIE_CANARY")
@@ -75,17 +77,24 @@ func testRPCContentSwitchAndProtocolOutcome(t *testing.T) {
 				if err := json.Unmarshal([]byte(test.body), &want); err != nil {
 					t.Fatal(err)
 				}
-				expected, err := json.Marshal(want)
-				if err != nil {
+				if service.initializeCalls != 1 || !reflect.DeepEqual(service.configuration, want.Configuration.domain()) {
+					t.Fatal("diagnostic capture changed business configuration")
+				}
+				want.Configuration.MCPServers[0].Env["TOKEN"] = "[REDACTED]"
+				var captured initializeRequest
+				if err := json.Unmarshal(recorded.Params, &captured); err != nil {
 					t.Fatal(err)
 				}
-				if string(recorded.Params) != string(expected) {
-					t.Fatal("RPC parameters changed during capture")
+				if !reflect.DeepEqual(captured, want) {
+					t.Fatal("RPC diagnostic parameters differ beyond secret redaction")
+				}
+				if strings.Contains(payload, "NESTED_CANARY") {
+					t.Fatal("MCP secret leaked into diagnostics")
 				}
 				if !strings.Contains(payload, "COMMAND_CANARY") || !strings.Contains(payload, "ARG_CANARY") {
 					t.Fatal("MCP contents projected")
 				}
-				if test.name == "large" && !strings.Contains(payload, strings.Repeat("CANARY", 4000)) {
+				if test.name == "large" && !strings.Contains(payload, strings.Repeat("PUBLIC", 4000)) {
 					t.Fatal("RPC body limited")
 				}
 				if !strings.Contains(fmt.Sprint(server.Events()), "ERROR_DETAIL_CANARY") {

@@ -5,6 +5,7 @@ on:
     branches: [main]
     tags: ["v*"]
     paths:
+      - contracts/observability/**
       - services/identity-service/**
       - modules/service-authentication/**
       - modules/secret-encryption/**
@@ -26,6 +27,7 @@ on:
       - .github/workflows/_image.yml
   pull_request:
     paths:
+      - contracts/observability/**
       - services/identity-service/**
       - modules/service-authentication/**
       - modules/secret-encryption/**
