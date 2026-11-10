@@ -12,10 +12,12 @@ const provider = new node.NodeTracerProvider({
 });
 beforeAll(() => provider.register());
 beforeEach(() => {
+  vi.stubEnv("ANTNEST_TELEMETRY_LEGACY_ATTRIBUTES", "true");
   exporter.reset();
   configureBoundaries({ captureRpcContent: false, disabled: false });
 });
 afterEach(() => {
+  vi.unstubAllEnvs();
   vi.restoreAllMocks();
   configureBoundaries({ captureRpcContent: false, disabled: false });
 });
@@ -84,6 +86,8 @@ describe("Runtime information read and close provenance", () => {
     expect(span.spanContext().spanId).toBe(activeRead);
     expect(span.attributes).toEqual({
       "antnest.runtime.execution.id": "runtime-execution-1",
+      "antnest.runtime.execution_id": "runtime-execution-1",
+      "antnest.runtime_execution_id": "runtime-execution-1",
       "antnest.mcp.resource_read.outcome": "success",
       "antnest.mcp.connection.close.outcome": "closed",
       "antnest.mcp.caller_cancelled": false,

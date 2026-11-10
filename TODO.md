@@ -1,5 +1,7 @@
 # Antnest Platform 全局 TODO
 
+- **#69 PR CI 接手（2026-11-10，用户授权修复、合并并关闭）**：接续并覆盖历史停止／不轮询／不合并交接；按 #617 共享基础 → #618–#627 服务批次 → #628 显式集成推进。基础批次的 observability ownership 已声明十个消费者，workflow 路径尚未同步，现补齐十个服务 push／PR 的精确契约路径，保留 PR image guard。后续按服务修复 unused helper、脱敏与 alias oracle，以及源指纹同步；以最终精确 head 的远程 Repository／Integration 和选中服务组件作为准入。不运行或查询独立 system E2E。
+
 - **#69 Agent UI 本地反馈**：新别名契约 RED→GREEN；原 SSE 精确事件白名单同步保留 2 个兼容属性，6 项相关回归重验通过，另 27 项受影响遥测／输入／清理定向用例通过。服务端 TypeScript、生成一致性、命名 lint 与 diff 检查通过；完整远程准入未等待。
 
 - **#69 ACP 本地反馈**：72 项遥测定向用例通过；类型／lint 修正后再验 33 项相关用例通过，TypeScript 与受改文件 ESLint 通过，registry 生成一致性和本服务命名 lint 通过。协议错误 identity、公共 24k 字段、capture 禁用不序列化和访问拒绝事件的精确 alias 白名单均保留断言。完整 unit／contract／PostgreSQL component 与 Integration 由远程 CI 准入，未等待，不计为已通过。
