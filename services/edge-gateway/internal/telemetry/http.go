@@ -56,6 +56,9 @@ func HTTPHandler(next http.Handler, logger *slog.Logger) http.Handler {
 			if requestError == nil {
 				requestError = observed.WriteErr
 			}
+			if requestError == nil {
+				requestError = requestBody.readError()
+			}
 			if failure != nil {
 				span.AddEvent(semconv.AntnestError, trace.WithAttributes(semconv.AliasAttributes(attribute.String(semconv.AntnestErrorStage, "handler"), attribute.String("error.type", "handler_aborted"), attribute.String(semconv.AntnestErrorPanicType, fmt.Sprintf("%T", failure)))...))
 			}

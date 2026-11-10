@@ -1,5 +1,7 @@
 # Antnest Platform 全局 TODO
 
+- **#69 PR CI 接手（2026-11-10，用户授权修复、合并并关闭）**：接续并覆盖历史停止／不轮询／不合并交接；按 #617 共享基础 → #618–#627 服务批次 → #628 显式集成推进。基础批次的 observability ownership 已声明十个消费者，workflow 路径尚未同步，现补齐十个服务 push／PR 的精确契约路径，保留 PR image guard。后续按服务修复 unused helper、脱敏与 alias oracle，以及源指纹同步；以最终精确 head 的远程 Repository／Integration 和选中服务组件作为准入。不运行或查询独立 system E2E。
+
 - **#69 显式集成候选已审查（2026-11-10，分支 `fix/issue-69-observability-integration`，基于 Runtime PR #627 `b9363414`）**：根 Repository 接入全量生成一致性／生产命名检查；共享 Go 变更保留六个消费者的 unit／component 选择；Rust lint 按 test item 屏蔽，保留后续生产代码与行号。同步诊断读取器、Identity 脱敏校验、RPC read/tool 精确属性预期、UI／Gateway／注销事件比较及 canonical 查询过滤器；只折叠 registry 发布的别名，保留未知属性拒绝和原始证据。共享 generator 增加 `tests/e2e/observability/aliases.gen.json`，不依赖客户端未挂载的根 contracts；缺挂载复现及新行为均先 RED 后 GREEN。消费者组 495/495、最终工具／契约组 204/204（组间有重叠，不累计），生成／命名／ownership／受改 MJS 格式和 probe 语法检查通过；仅快速源码／fixture 检查，不执行 Docker E2E 或实际 probe。临时日志在 `artifacts/verification/issue-69-integration/`，不入 Git。完整服务 unit／contract／component 与 Repository／Integration 准入交精确候选远程 CI，不等待、不轮询；交付 PR 后停止，由用户通知结果，不合并或关闭 #69/#83。
 
 - **#69 Antnest Runtime 本地反馈**：实际 RPC canary 基线 RED→GREEN；补测并注册原有 operation outcome／protocol outcome／phase 三项独立契约，未合并到通用 outcome。5 项诊断／capture、9 项共享 helper、13 项原遥测配置／度量、3 项 HTTP 流生命周期定向用例通过；生产 bin Clippy `-D warnings`、Rustfmt、根 17 项 registry 测试、生成／命名／diff 检查通过。四份冻结测试尾部逐字保留；真实 wire DTO、协议结果与错误 identity 未改。仅是本地反馈，完整 Linux unit／contract／component 与 Repository／Integration 准入交远程 CI，未等待；下一个批次是显式集成。

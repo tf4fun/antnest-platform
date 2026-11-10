@@ -295,18 +295,18 @@
   },
   "guarded_sources": {
     "services/agent-acp-service/src/transport/acp/http-transport.ts": {
-      "sha256": "7489051fb0035e5fc6535ffb99da2f1591c44a46b6dd80a8bc07d3c14f0fc1b5",
+      "sha256": "598ee6af38e8aff8fbf2c493afc85f99aaa3d4e9928b5e7a03d4165e13d4eaa3",
       "routes": ["POST /v1/acp", "GET /v1/acp", "DELETE /v1/acp"]
     },
     "services/agent-acp-service/src/transport/agent-execution-state.ts": {
-      "sha256": "16ac6c040f82980f0ff1cace8a591b8765c85cd0a32811a85aed33b5bfd26744",
+      "sha256": "4befe04b1d74559089ea7e879097ce44d665fa3b5f78aeee2bebd43f8684a18f",
       "routes": [
         "POST /rpc/agent-acp/get-agent-execution-state",
         "POST /rpc/agent-acp/watch-agent-execution-state"
       ]
     },
     "services/agent-acp-service/src/transport/agent-settlement.ts": {
-      "sha256": "1884542c1d624bcf715123327ede8bd3cf9fe11cf4d31d5a35550edcd0f7f272",
+      "sha256": "d4a17390e7f10dd6be22f1239522cf2cd651e53463003843cac7acc88136c83d",
       "routes": ["POST /rpc/agent-acp/settle-agent"]
     },
     "services/agent-acp-service/src/transport/bridge-observation.ts": {
@@ -317,7 +317,7 @@
       ]
     },
     "services/agent-acp-service/src/transport/execution-audit.ts": {
-      "sha256": "b9e28c6b25a35b94480174662fc76412b89784b0e5ff66d0c6f49712ef6e0672",
+      "sha256": "fb7a72ff13c340d190e082df57d55cad0f30fda3ed19e6fcd92fb766b6ebdb14",
       "routes": [
         "POST /rpc/agent-acp/list-execution-audits",
         "POST /rpc/agent-acp/get-execution-audit",
@@ -325,7 +325,7 @@
       ]
     },
     "services/agent-acp-service/src/transport/execution-configuration.ts": {
-      "sha256": "473a72a6858f955f359798ef4e65fe6603c4f826c9790ce13d2741d06ed1fd5f",
+      "sha256": "2a56aeb7e4c5b9f86a38fc9560224ecd40ae5ee3d8009ed7c7bbefa4d5da17c0",
       "routes": [
         "POST /rpc/agent-acp/apply-execution-delta",
         "POST /rpc/agent-acp/apply-execution-snapshot",
@@ -333,7 +333,7 @@
       ]
     },
     "services/agent-acp-service/src/transport/http-server.ts": {
-      "sha256": "6bab07e09200258a0b44ef926c16f0777882d7128cffd451e1e7e1c31ff62682",
+      "sha256": "3650560c2b8b46a08bc5bba9c3f3f6de2cdf9435c9f555747987029677abd448",
       "routes": ["GET /status", "UPGRADE /v1/acp", "UPGRADE /v2/acp"]
     },
     "services/agent-acp-service/src/transport/learning-changes.ts": {
@@ -395,7 +395,7 @@
       "routes": []
     },
     "services/agent-acp-service/src/transport/runtime-barrier-query.ts": {
-      "sha256": "f94742a2b3e5d56e75402e437e79cc28702f81dca346b254a65b2a949cc64e43",
+      "sha256": "e18c3109d7d032686c047ac8c305c8ebe7083d63794ec7ba435d3894f1dc0535",
       "routes": ["POST /rpc/agent-acp/get-runtime-barrier"]
     },
     "services/agent-acp-service/src/transport/owner-probe-server.ts": {
