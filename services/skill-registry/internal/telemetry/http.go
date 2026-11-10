@@ -61,5 +61,3 @@ func markError(span trace.Span, err error, fallback string) {
 	span.SetAttributes(attribute.String("error.type", kind))
 	span.SetStatus(codes.Error, kind)
 }
-
-type statusWriter = semconv.ServerWriter

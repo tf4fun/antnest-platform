@@ -5,6 +5,7 @@ on:
     branches: [main]
     tags: ["v*"]
     paths:
+      - contracts/observability/**
       - modules/runtime-tunnel/**
       - tests/support/runtime-tunnel/**
       - runtimes/antnest-runtime/**
@@ -24,6 +25,7 @@ on:
       - .github/workflows/_image.yml
   pull_request:
     paths:
+      - contracts/observability/**
       - modules/runtime-tunnel/**
       - tests/support/runtime-tunnel/**
       - runtimes/antnest-runtime/**
