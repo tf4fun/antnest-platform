@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
+  renderAliases,
   renderGo,
   renderMarkdown,
   renderRust,
@@ -19,6 +20,7 @@ const RENDERERS = {
   go: renderGo,
   typescript: renderTypeScript,
   rust: renderRust,
+  aliases: renderAliases,
 };
 
 const SERVICE_OUTPUTS = {
@@ -26,6 +28,10 @@ const SERVICE_OUTPUTS = {
     {
       language: "go",
       path: "libs/go/telemetry/semconv_gen.go",
+    },
+    {
+      language: "aliases",
+      path: "tests/e2e/observability/aliases.gen.json",
     },
   ],
   "agent-acp-service": [
@@ -67,19 +73,7 @@ function renderDocument(document, registry) {
 }
 
 function checkShared(registry) {
-  const problems = [];
-  const output = SERVICE_OUTPUTS.shared[0];
-  const path = join(root, output.path);
-  if (!existsSync(path)) {
-    problems.push(
-      `${output.path} is missing; run scripts/generate-telemetry.mjs --service shared`,
-    );
-  } else if (
-    readFileSync(path, "utf8") !== RENDERERS[output.language](registry)
-  )
-    problems.push(
-      `${output.path} is stale; run scripts/generate-telemetry.mjs --service shared`,
-    );
+  const problems = checkServices(registry, ["shared"], true);
   const documentPath = join(root, DOCUMENT_PATH);
   if (!existsSync(documentPath)) {
     problems.push(`${DOCUMENT_PATH} is missing`);
@@ -126,7 +120,7 @@ function writeOutput(output, registry) {
 }
 
 function generateShared(registry) {
-  writeOutput(SERVICE_OUTPUTS.shared[0], registry);
+  for (const output of SERVICE_OUTPUTS.shared) writeOutput(output, registry);
   const documentPath = join(root, DOCUMENT_PATH);
   writeFileSync(
     documentPath,

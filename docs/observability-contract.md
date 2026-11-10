@@ -33,7 +33,7 @@ reliable event delivery or databases.
 | Boundary                                                   | Captured                                                                                                           |
 | ---------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
 | HTTP/static assets/proxies                                 | Method, route, status, target, latency, error and parent-child relationship; no header values or bodies            |
-| Single request/response RPC                                | Basic record; when the switch is on, the existing parameter and result objects, without field filtering            |
+| Single request/response RPC                                | Basic record; when enabled, existing parameter/result objects with recursive secret-key redaction; wire objects stay unchanged |
 | Message streams (SSE/WebSocket/model output/notifications) | Basic connection, operation result, cancellation and error; content is never captured, accumulated or concatenated |
 | Database/Executor                                          | Existing operation boundary, correlation IDs, result and error; no additional reads for capture                    |
 | Egress forwarding data plane                               | No per-packet or per-flow OTLP; aggregate metrics and control RPCs are retained                                    |
@@ -64,10 +64,18 @@ ANTNEST_TELEMETRY_CAPTURE_RPC_CONTENT=false
 
 - RPC content is not captured by default. A controlled development instance may
   set it to `true` explicitly.
-- When on, the entire existing RPC parameter and return value is serialized into
-  `antnest.request` / `antnest.response` events.
+- When on, existing RPC parameters and return values are serialized into
+  `antnest.request` / `antnest.response` events, with recognized secret values
+  replaced by `"[REDACTED]"` in the telemetry copy only.
 - Events use `antnest.payload.json`, the protocol method and the direction. There
-  is no DTO field allowlist, nested redaction rule or safe projection.
+  is no DTO field allowlist or business-specific projection. Shared recursive
+  redaction applies to objects and arrays without mutating wire values.
+- Secret-key matching is case-insensitive and ignores underscores and hyphens:
+  `password`, `password_hash`, `authorization`, `proxy_authorization`, `cookie`,
+  `set_cookie`, `token`, `access_token`, `refresh_token`, `id_token`, `secret`,
+  `client_secret`, `api_key`, `private_key`, `credential`, `credentials`,
+  `workload_credential`, `caller_context`, `cct`, `connection_descriptor`,
+  `generation_key`, `master_key` and `encryption_key`.
 - Unknown new fields are not dropped by default, and there is no fixed 16 KiB
   limit, cumulative event byte budget or per-interface budget.
 - When off, content is not serialized. Capture failures do not change business
@@ -78,20 +86,21 @@ ANTNEST_TELEMETRY_CAPTURE_RPC_CONTENT=false
 - The switch controls content only. Trace export, sampling, queues and SDK
   resource limits use standard OTel configuration.
 
-"Complete" means fields are not trimmed by a business allowlist. It does not
+"Complete" means public fields are not trimmed by a business allowlist; recognized
+secret values are deliberately not replayable from telemetry. It does not
 promise to bypass the standard capacity limits of the SDK, transport or
 receiver. JSON truncated by the SDK must not be treated as a complete record for
 business replay. Configuration support in each language SDK follows the actual
 SDK version; there is no custom remote configuration center or application-level
 rate limiting framework.
 
-Raw development content can contain passwords, tokens, Provider credentials and
-business data. Jaeger must run on a controlled network; captured content must
-not be copied into ordinary logs or committed to Git. Filtering, redaction,
-sampling, storage capacity, retention and query permissions are governed
-centrally on the collector and storage side using standard components.
-Central processing does not mean that secrets never left the service, and it
-cannot restore data that was never captured or was truncated at the source.
+Services redact the recognized secret-key families before export. Free-form
+public text can still contain sensitive business data or unrecognized credential
+shapes; this is not arbitrary text sanitization. Jaeger must run on a controlled
+network, and captured content must not be copied into ordinary logs or committed
+to Git. Additional filtering, sampling, capacity, retention and query permissions
+remain collector/storage responsibilities. No downstream processing can restore
+redacted data or content truncated by standard SDK limits.
 
 ## 3. Basic Trace Structure
 
@@ -528,8 +537,26 @@ attributes also carry the deprecated alias spellings; it defaults to true for
 one release so consumers reading the old names keep working, the next release
 changes the default to false, and physical removal of the aliases is a
 separately scheduled change. Migration of the diverged service telemetry
-packages onto the shared `libs/go/telemetry` constants is still pending and is
-not claimed complete here.
+packages is delivered in the six service-owned Go batches: common primitives
+delegate to `libs/go/telemetry` while service-specific boundaries remain owned by
+their adapters. ACP, Agent UI, Runtime Egress and Runtime consume generated
+TypeScript/Rust names and boundary normalization helpers. These source batches
+do not establish remote admission, a merged version set or release capability.
+
+Diagnostic readers use the published alias registry to read canonical-only
+captures and historical aliases without rewriting raw evidence. Canonical values
+win when both spellings exist. Collector search filters use canonical keys.
+The shared Identity capture inspector requires redacted Resolve credentials;
+an original login session is never an exception to the secret-free contract.
+
+The shared generator also writes `tests/e2e/observability/aliases.gen.json`.
+Readers import this metadata with their mounted test sources rather than
+requiring an additional root-contract mount in client images. Strict stream
+event inspectors fold published aliases on copied attribute maps; unknown fields
+remain visible to exact comparisons. Runtime read/tool probe expectations retain
+the default dual-emission identifiers and are checked against the published
+registry by fast contract tests. Business DTOs, authenticated dependency payloads,
+browser APIs and pagination shapes do not change in this telemetry migration.
 
 No business result, authorization decision or check is gated on Trace
 collection or span availability; the auxiliary-diagnostics policy in the
@@ -538,7 +565,7 @@ this document.
 
 Captured RPC payloads keep the same JSON public content in every mode: even
 when a service enables content capture for debugging, the listed secret
-fields (credentials, tokens, keys and the other registry-documented names)
+fields (the credential, token and key families listed in Section 2)
 are redacted recursively before emission. Safety of arbitrary message and
 cause strings remains service-owned; the shared module intentionally does not
 attempt to sanitize `Error()` output.

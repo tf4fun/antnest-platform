@@ -1,10 +1,12 @@
 # Antnest Platform 全局 TODO
 
+- **#69 显式集成候选已审查（2026-11-10，分支 `fix/issue-69-observability-integration`，基于 Runtime PR #627 `b9363414`）**：根 Repository 接入全量生成一致性／生产命名检查；共享 Go 变更保留六个消费者的 unit／component 选择；Rust lint 按 test item 屏蔽，保留后续生产代码与行号。同步诊断读取器、Identity 脱敏校验、RPC read/tool 精确属性预期、UI／Gateway／注销事件比较及 canonical 查询过滤器；只折叠 registry 发布的别名，保留未知属性拒绝和原始证据。共享 generator 增加 `tests/e2e/observability/aliases.gen.json`，不依赖客户端未挂载的根 contracts；缺挂载复现及新行为均先 RED 后 GREEN。消费者组 495/495、最终工具／契约组 204/204（组间有重叠，不累计），生成／命名／ownership／受改 MJS 格式和 probe 语法检查通过；仅快速源码／fixture 检查，不执行 Docker E2E 或实际 probe。临时日志在 `artifacts/verification/issue-69-integration/`，不入 Git。完整服务 unit／contract／component 与 Repository／Integration 准入交精确候选远程 CI，不等待、不轮询；交付 PR 后停止，由用户通知结果，不合并或关闭 #69/#83。
+
 - **#69 Antnest Runtime 本地反馈**：实际 RPC canary 基线 RED→GREEN；补测并注册原有 operation outcome／protocol outcome／phase 三项独立契约，未合并到通用 outcome。5 项诊断／capture、9 项共享 helper、13 项原遥测配置／度量、3 项 HTTP 流生命周期定向用例通过；生产 bin Clippy `-D warnings`、Rustfmt、根 17 项 registry 测试、生成／命名／diff 检查通过。四份冻结测试尾部逐字保留；真实 wire DTO、协议结果与错误 identity 未改。仅是本地反馈，完整 Linux unit／contract／component 与 Repository／Integration 准入交远程 CI，未等待；下一个批次是显式集成。
 
 - **#69 Runtime Egress 本地反馈**：RPC canary、Rust 元数据、原有 `antnest.transaction.completion` 契约缺项、独立 Rust 单测文件误报均先 RED 后修复。9 项 typed helper、5 项 HTTP／RPC、9 项原度量、6 项数据库包装器定向回归通过；lib Clippy `-D warnings`、Rustfmt、根 17 项 registry 测试及生成／命名／格式检查通过。保留 completion 与 outcome 的区别，补齐 registry owner，并机械再生所有已迁移语言消费者；原指标期望模块与 HEAD 逐字一致。完整服务及 PostgreSQL component 交远程准入，未等待。
 
-- **#69 显式集成待办**：根 CI 接线全量生成／生产命名检查；共享 Go 模块的服务影响选择补测；Rust 命名检查只应跳过 test 项而非遇到第一个 `cfg(test)` 后截断整份生产文件。完成最后一个 Runtime 服务后处理，不运行或安排 Docker E2E。
+- **#69 交付索引**：共享基础 PR #617；六个 Go 服务 PR #618–#623；ACP #624；Agent UI #625；Runtime Egress #626；Antnest Runtime #627；最后为当前显式集成分支。以上为独立 PR 交付记录，不代表已合并、远程准入通过或业务链路／发布能力已验收。
 
 - **#69 Agent UI 本地反馈**：新别名契约 RED→GREEN；原 SSE 精确事件白名单同步保留 2 个兼容属性，6 项相关回归重验通过，另 27 项受影响遥测／输入／清理定向用例通过。服务端 TypeScript、生成一致性、命名 lint 与 diff 检查通过；完整远程准入未等待。
 

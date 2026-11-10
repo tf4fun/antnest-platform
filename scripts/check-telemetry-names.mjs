@@ -18,7 +18,105 @@ const GENERATED_PATHS = new Set([
   "runtimes/antnest-runtime/src/semconv.rs",
 ]);
 const TEST_SEGMENTS = new Set(["test", "tests"]);
-const RUST_TEST_MARKER = "#[cfg(test)]";
+const RUST_ITEM_KEYWORDS =
+  /^(?:(?:pub|async|unsafe|const)\s*(?:\([^)]*\)\s*)?\s+)*(mod|fn|impl|struct|enum|use|type|static|const|trait)\b/;
+
+function matchBrace(code, open) {
+  let depth = 0;
+  for (let index = open; index < code.length; index++) {
+    if (code[index] === "{") depth++;
+    else if (code[index] === "}") {
+      depth--;
+      if (depth === 0) return index;
+    }
+  }
+  return -1;
+}
+
+function bracketEnd(code, open) {
+  let depth = 0;
+  for (let index = open; index < code.length; index++) {
+    if (code[index] === "[") depth++;
+    else if (code[index] === "]") {
+      depth--;
+      if (depth === 0) return index;
+    }
+  }
+  return -1;
+}
+
+function testOnlyCfg(expression) {
+  const trimmed = expression.trim();
+  if (trimmed === "test") return true;
+  const all = trimmed.match(/^all\s*\(/);
+  if (!all) return false;
+  const paren = trimmed.indexOf("(", all.index);
+  const close = matchParen(trimmed, paren);
+  if (close !== trimmed.length - 1) return false;
+  return splitArguments(trimmed, paren + 1, close).some(([start, end]) =>
+    testOnlyCfg(trimmed.slice(start, end)),
+  );
+}
+
+function withoutRustTestItems(source) {
+  const { code } = lexSource(source, LEXERS.rust);
+  const working = source.split("");
+  const mask = (from, to) => {
+    for (let index = from; index < to; index++)
+      if (working[index] !== "\n") working[index] = " ";
+  };
+  const attributes = /#\[\s*cfg\s*\(/g;
+  for (let match; (match = attributes.exec(code)) !== null;) {
+    const open = code.indexOf("(", match.index);
+    const close = matchParen(code, open);
+    if (close === -1) continue;
+    let cursor = close + 1;
+    while (cursor < code.length && /\s/.test(code[cursor])) cursor++;
+    if (code[cursor] !== "]") continue;
+    if (!testOnlyCfg(code.slice(open + 1, close))) continue;
+    cursor++;
+    let valid = true;
+    for (;;) {
+      while (cursor < code.length && /\s/.test(code[cursor])) cursor++;
+      if (code[cursor] === "#" && code[cursor + 1] === "[") {
+        const end = bracketEnd(code, cursor + 1);
+        if (end === -1) {
+          valid = false;
+          break;
+        }
+        cursor = end + 1;
+        continue;
+      }
+      break;
+    }
+    if (!valid) continue;
+    const item = code.slice(cursor).match(RUST_ITEM_KEYWORDS);
+    if (!item) continue;
+    let body = -1;
+    let declaration = -1;
+    for (let scan = cursor + item[0].length; scan < code.length; scan++) {
+      if (code[scan] === "{") {
+        body = scan;
+        break;
+      }
+      if (code[scan] === ";") {
+        declaration = scan;
+        break;
+      }
+    }
+    const end =
+      declaration !== -1
+        ? declaration
+        : body === -1
+          ? -1
+          : matchBrace(code, body);
+    if (end === -1) continue;
+    mask(match.index, end + 1);
+    attributes.lastIndex = end + 1;
+  }
+  return working.join("");
+}
+
 const SERVICE_SOURCES = {
   "admin-console": "services/admin-console",
   "agent-acp-service": "services/agent-acp-service",
@@ -305,10 +403,7 @@ export function checkTelemetrySource(source, path, registry) {
   if (testPath(path)) return problems;
   const language = LANGUAGE(path);
   let working = source;
-  if (language === "rust") {
-    const marker = working.indexOf(RUST_TEST_MARKER);
-    if (marker !== -1) working = working.slice(0, marker);
-  }
+  if (language === "rust") working = withoutRustTestItems(working);
   const { code, strings } = lexSource(working, LEXERS[language]);
   const lineAt = lineLocator(working);
   const exempt = new Set(Object.keys(registry.namespace_literals ?? {}));

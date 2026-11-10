@@ -54,11 +54,20 @@ function inspect(trace, sessions = [session]) {
     sessions,
   });
 }
-test("enabled Identity RPC capture retains only the exact original session in its Resolve request", () => {
+test("enabled Identity RPC capture never exposes a raw session in its Resolve request", () => {
   const trace = fixture(),
     before = JSON.stringify(trace);
-  inspect(trace);
+  assert.throws(() => inspect(trace));
   assert.equal(JSON.stringify(trace), before);
+});
+test("enabled Identity RPC capture accepts a redacted Resolve payload and leaves evidence unchanged", () => {
+  const trace = fixture(),
+    before = JSON.stringify(trace);
+  trace.spans[0].logs[0].fields.find(
+    (field) => field.key === "antnest.payload.json",
+  ).value = JSON.stringify({ access_token: "[REDACTED]", profile: "console" });
+  inspect(trace);
+  assert.equal(JSON.stringify(trace), before.replaceAll(session, "[REDACTED]"));
 });
 for (const [name, mutate] of [
   [
@@ -155,7 +164,7 @@ for (const [name, mutate] of [
     );
     assert.throws(() => inspect(f));
   });
-test("an original session must be recorded by the actual login before capture is allowed", () => {
+test("an unrecorded session never grants a raw-capture exception", () => {
   assert.equal(typeof implementation.assertStage2TraceCredentials, "function");
   assert.throws(() => inspect(fixture(), []));
 });

@@ -1,6 +1,14 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
+import { readFileSync } from "node:fs";
+import DEPRECATED_ALIASES from "./aliases.gen.json" with { type: "json" };
 import test from "node:test";
-import { assertCaptureDisabled, owningServer, tag } from "./trace-tree.mjs";
+import {
+  assertCaptureDisabled,
+  canonicalAttributes,
+  owningServer,
+  tag,
+} from "./trace-tree.mjs";
 import { databaseRequest, fields } from "./trace-fixtures.mjs";
 
 const expected = {
@@ -465,4 +473,139 @@ test("secret-free closeout fixtures explicitly reject capture=true content", () 
     },
   ];
   assert.throws(() => assertCaptureDisabled(trace), /capture=false/u);
+});
+test("registry identifiers resolve canonical and legacy spellings", () => {
+  const aliases = [
+    ["antnest.agent_id", "antnest.agent.id"],
+    ["antnest.organization_id", "antnest.organization.id"],
+    ["antnest.run_id", "antnest.run.id"],
+    ["antnest.runtime_execution_id", "antnest.runtime.execution.id"],
+    ["antnest.runtime.execution_id", "antnest.runtime.execution.id"],
+  ];
+  const registry = JSON.parse(
+    readFileSync(
+      new URL(
+        "../../../contracts/observability/attributes.yaml",
+        import.meta.url,
+      ),
+      "utf8",
+    ),
+  );
+  for (const [legacy, canonical] of aliases) {
+    const entry = registry.attributes.find(
+      (candidate) => candidate.name === legacy,
+    );
+    assert.equal(entry?.kind, "span_attribute");
+    assert.equal(entry?.deprecated_alias_of, canonical);
+  }
+  for (const [legacy, canonical] of aliases) {
+    const canonicalOnly = { tags: fields({ [canonical]: "value" }) };
+    const legacyOnly = { tags: fields({ [legacy]: "legacy" }) };
+    const beforeC = JSON.stringify(canonicalOnly);
+    const beforeL = JSON.stringify(legacyOnly);
+    assert.equal(tag(canonicalOnly, legacy), "value");
+    assert.equal(tag(legacyOnly, canonical), "legacy");
+    assert.equal(JSON.stringify(canonicalOnly), beforeC);
+    assert.equal(JSON.stringify(legacyOnly), beforeL);
+    for (const ordered of [
+      { [legacy]: "old", [canonical]: "new" },
+      { [canonical]: "new", [legacy]: "old" },
+    ]) {
+      const span = { tags: fields(ordered) };
+      assert.equal(tag(span, canonical), "new");
+      assert.equal(tag(span, legacy), "new");
+    }
+    assert.equal(tag({ tags: [] }, canonical), undefined);
+    assert.equal(tag({ tags: [] }, legacy), undefined);
+  }
+});
+test("registry identifiers preserve unmapped external values", () => {
+  const span = {
+    tags: fields({ "external.flag": false, "external.count": 0 }),
+  };
+  assert.equal(tag(span, "external.flag"), false);
+  assert.equal(tag(span, "external.count"), 0);
+});
+test("registry identifiers canonicalAttributes folds only published aliases", () => {
+  const input = {
+    "antnest.agent_id": "legacy-agent",
+    "antnest.agent.id": "canonical-agent",
+    "antnest.organization_id": "legacy-org",
+    "antnest.run_id": "legacy-run",
+    "antnest.runtime_execution_id": "legacy-exec",
+    "antnest.runtime.execution_id": "legacy-exec-2",
+    "external.flag": false,
+    "external.count": 0,
+    "other.value": "kept",
+  };
+  const before = JSON.stringify(input);
+  const normalized = canonicalAttributes(input);
+  assert.equal(JSON.stringify(input), before);
+  assert.notEqual(normalized, input);
+  assert.equal(normalized["antnest.agent.id"], "canonical-agent");
+  assert.equal(normalized["antnest.organization.id"], "legacy-org");
+  assert.equal(normalized["antnest.run.id"], "legacy-run");
+  assert.equal(normalized["antnest.runtime.execution.id"], "legacy-exec");
+  assert.equal(normalized["external.flag"], false);
+  assert.equal(normalized["external.count"], 0);
+  assert.equal(normalized["other.value"], "kept");
+});
+test("registry identifiers canonicalAttributes leaves canonical-only inputs unchanged", () => {
+  const input = { "antnest.agent.id": "agent", "antnest.outcome": "ok" };
+  const normalized = canonicalAttributes(input);
+  assert.notEqual(normalized, input);
+  assert.deepEqual(normalized, input);
+  const folded = canonicalAttributes({
+    "antnest.runtime_execution_id": "exec",
+    "antnest.runtime.execution_id": "exec",
+  });
+  assert.deepEqual(folded, { "antnest.runtime.execution.id": "exec" });
+});
+test("registry identifiers metadata covers every published span alias", () => {
+  const registry = JSON.parse(
+    readFileSync(
+      new URL(
+        "../../../contracts/observability/attributes.yaml",
+        import.meta.url,
+      ),
+      "utf8",
+    ),
+  );
+  const expected = Object.fromEntries(
+    registry.attributes
+      .filter(
+        (entry) =>
+          entry.kind === "span_attribute" &&
+          typeof entry.deprecated_alias_of === "string",
+      )
+      .map((entry) => [entry.name, entry.deprecated_alias_of]),
+  );
+  assert.deepEqual(DEPRECATED_ALIASES, expected);
+});
+test("registry identifiers load without mounted contracts in the client image", () => {
+  const probe = `
+    import fs from "node:fs";
+    import { syncBuiltinESMExports } from "node:module";
+    import assert from "node:assert/strict";
+    const original = fs.readFileSync;
+    fs.readFileSync = (path, options) => {
+      if (String(path).includes("/contracts/")) throw new Error("unmounted contract");
+      return original(path, options);
+    };
+    syncBuiltinESMExports();
+    const { tag } = await import(process.argv[1]);
+    assert.equal(tag({ tags: [{ key: "antnest.agent.id", value: "a" }] }, "antnest.agent_id"), "a");
+  `;
+  const result = spawnSync(
+    process.execPath,
+    [
+      "--input-type=module",
+      "-e",
+      probe,
+      new URL("./trace-tree.mjs", import.meta.url).href,
+    ],
+    { encoding: "utf8", timeout: 10000 },
+  );
+  assert.ifError(result.error);
+  assert.equal(result.status, 0, result.stderr);
 });

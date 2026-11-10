@@ -3,9 +3,9 @@ import { tag } from "../observability/trace-tree.mjs";
 import { assertSecretFree } from "../identity-closeout/evidence.mjs";
 import { assertNoCredentials } from "./stage2-boundary-evidence.mjs";
 
-// Identity's enabled-capture contract includes user credentials in RPC input,
-// but always excludes issued CCTs. Admit only the original login credential at
-// that exact request field. The stored trace stays byte-for-byte unchanged.
+// Identity's enabled-capture contract recursively redacts registered secrets
+// in RPC payloads, replacing credential values with the published marker. The
+// stored trace stays byte-for-byte unchanged.
 export function assertStage2TraceCredentials(trace, { secrets, sessions }) {
   assert(Array.isArray(secrets) && Array.isArray(sessions));
   const view = structuredClone(trace);
@@ -43,8 +43,8 @@ export function assertStage2TraceCredentials(trace, { secrets, sessions }) {
       if (!capture) continue;
       const value = JSON.parse(capture.value);
       // The captured Resolve DTO is compact JSON with ASCII credential/profile
-      // fields. Reject any lossy parse (including duplicate keys) before making
-      // the one field exception, so earlier secret values cannot disappear.
+      // fields. Reject any lossy parse (including duplicate keys) before the
+      // redaction-marker check, so earlier secret values cannot disappear.
       assert(
         JSON.stringify(value) === capture.value,
         "lossy Identity Resolve capture",
@@ -55,9 +55,10 @@ export function assertStage2TraceCredentials(trace, { secrets, sessions }) {
         !Object.hasOwn(value, "access_token")
       )
         continue;
-      assert(
-        sessions.includes(value.access_token),
-        "Resolve capture is not an original Stage2 login",
+      assert.equal(
+        value.access_token,
+        "[REDACTED]",
+        "Resolve credentials must be redacted",
       );
       assert(["console", "workspace", "session"].includes(value.profile));
       assert(
@@ -65,10 +66,8 @@ export function assertStage2TraceCredentials(trace, { secrets, sessions }) {
           ["access_token", "profile", "agent_id"].includes(key),
         ),
       );
-      value.access_token = "[original Stage2 login credential]";
-      capture.value = JSON.stringify(value);
     }
   }
   assertNoCredentials(view);
-  assertSecretFree(JSON.stringify(view), secrets);
+  assertSecretFree(JSON.stringify(view), [...secrets, ...sessions]);
 }

@@ -70,6 +70,11 @@ jobs:
       - name: Shared dependency versions
         run: node scripts/check-shared-versions.mjs
 
+      - name: Observability contract
+        run: |
+          node scripts/generate-telemetry.mjs --check
+          node scripts/check-telemetry-names.mjs
+
       - name: Shared Go telemetry
         run: go test -race -count=1 ./libs/go/telemetry/...
 

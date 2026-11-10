@@ -140,7 +140,7 @@ export async function temporaryAcpFlow({
             new URLSearchParams({
               service: "agent-acp-service",
               operation: "skill.temporary.install",
-              tags: JSON.stringify({ "antnest.agent_id": targetId }),
+              tags: JSON.stringify({ "antnest.agent.id": targetId }),
               lookback: "30m",
               limit: "20",
             }),
@@ -185,7 +185,7 @@ export async function temporaryAcpFlow({
             new URLSearchParams({
               service: "agent-acp-service",
               operation: "skill.temporary.release",
-              tags: JSON.stringify({ "antnest.agent_id": targetId }),
+              tags: JSON.stringify({ "antnest.agent.id": targetId }),
               lookback: "30m",
               limit: "30",
             }),

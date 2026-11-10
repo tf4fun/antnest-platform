@@ -11,7 +11,11 @@ import {
 import { sseDiagnostics } from "../edge-gateway/resolve-cache-outage-stream.mjs";
 import { inspectGatewayResolution } from "../../support/gateway-resolution.mjs";
 import { resolveTraceDiagnostics } from "../../support/gateway-resolution-evidence.mjs";
-import { tag, traceTopology } from "../observability/trace-tree.mjs";
+import {
+  canonicalAttributes,
+  tag,
+  traceTopology,
+} from "../observability/trace-tree.mjs";
 import { hasError } from "../acp-plan/requests.mjs";
 import { assertSessionSuccess as successful } from "./session-diagnostics.mjs";
 import { inspectMembershipAccessDenial } from "./agent-access-denial.mjs";
@@ -374,7 +378,7 @@ export function inspectBrowserAccessCause(
       marker.fields.map(({ key, value }) => [key, value]),
     );
     assert.equal(Object.keys(fields).length, marker.fields.length);
-    assert.deepEqual(fields, {
+    assert.deepEqual(canonicalAttributes(fields), {
       event: "antnest.stream.termination",
       reason: "access_denied",
       source: "agent-execution-state",

@@ -31,7 +31,13 @@ const everySuite = [
   ".nvmrc",
   ".dockerignore",
 ];
-const go = ["go.work", "go.work.sum", "modules/**", ".golangci.yml"];
+const go = [
+  "go.work",
+  "go.work.sum",
+  "modules/**",
+  "libs/go/**",
+  ".golangci.yml",
+];
 const rust = ["rust-toolchain.toml", "modules/runtime-tunnel/**"];
 const compose = [
   "compose*.yaml",
@@ -1118,7 +1124,7 @@ const testFile =
 const codeFile =
   /\.(?:mjs|cjs|js|ts|mts|cts|jsx|tsx|sh|bash|py|go|rs|json|ya?ml|toml|sql|proto|mod|sum|env|cfg|conf|ini|xml)$/iu;
 const sourceTree =
-  /^(?:contracts|deploy|modules|runtimes|scripts|services|tests)\//u;
+  /^(?:contracts|deploy|libs|modules|runtimes|scripts|services|tests)\//u;
 const suiteGlobs = (suite) =>
   // tests/support/** would make every helper change global again.
   suite.paths.filter((glob) => glob !== "tests/support/**");
