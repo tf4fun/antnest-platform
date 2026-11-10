@@ -1,9 +1,42 @@
 import assert from "node:assert/strict";
+import DEPRECATED_ALIASES from "./aliases.gen.json" with { type: "json" };
+
+const TO_CANONICAL = new Map(Object.entries(DEPRECATED_ALIASES));
+const FROM_CANONICAL = new Map();
+for (const [alias, canonical] of TO_CANONICAL) {
+  const list = FROM_CANONICAL.get(canonical) ?? [];
+  list.push(alias);
+  FROM_CANONICAL.set(canonical, list);
+}
+
+export function canonicalAttributes(attributes) {
+  const folded = new Map(
+    Object.entries(attributes).filter(([key]) => !TO_CANONICAL.has(key)),
+  );
+  for (const [key, value] of Object.entries(attributes)) {
+    const canonical = TO_CANONICAL.get(key);
+    if (canonical !== undefined && !folded.has(canonical))
+      folded.set(canonical, value);
+  }
+  return Object.fromEntries(folded);
+}
 
 export function tag(span, key) {
-  const value = span?.tags?.find((field) => field.key === key)?.value;
-  if (key !== "http.response.status_code" && key !== "http.status_code")
-    return value;
+  const lookup = (name) =>
+    span?.tags?.find((field) => field.key === name)?.value;
+  const value = lookup(key);
+  if (key !== "http.response.status_code" && key !== "http.status_code") {
+    const canonical = TO_CANONICAL.get(key) ?? key;
+    const canonicalValue = lookup(canonical);
+    if (canonicalValue !== undefined) return canonicalValue;
+    if (value !== undefined) return value;
+    for (const legacy of FROM_CANONICAL.get(canonical) ?? []) {
+      if (legacy === key) continue;
+      const fallback = lookup(legacy);
+      if (fallback !== undefined) return fallback;
+    }
+    return undefined;
+  }
   // Jaeger's v1 query translator can expose the current OTLP status under
   // the legacy key. Read either representation without changing raw evidence.
   const alias = span?.tags?.find(

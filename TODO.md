@@ -2,13 +2,21 @@
 
 - **#69 Console 上传转发优化（2026-11-10，用户要求优化误报成因）**：独立 Console 前置批次基于 main d4e05333，保留 #617–#628 的服务所有权顺序。multipart artifact 使用标准 io.Copy 从 bytes.Reader 完整转发，沿用 mime/multipart 编码、metadata、boundary、文件名、8 MiB admission、受信 actor 与稳定请求 ID。扩展原真实 handler 测试校验包含 NUL／非 UTF-8／CRLF／HTML 元字符的二进制原样到达上游，重构前后均通过；不声称新增行为 RED。完整 PR 准入交远程；另在原共享基础＋此改动的源码上执行完整 Go CodeQL，独立诊断只保留本地 SARIF，不上传或修改安全告警、不排除规则。诊断证明目标消歧前不认定旧 #58 已解决，不合并／关闭 issue；独立 system E2E 不在本批执行。
 
+- **#69 显式集成第二轮回修（2026-11-10）**：原集成候选的 Repository 门禁定位到 alias 归一后的两类消费方逻辑：共享 execution ID 不能再充当新 SDK connection receipt 的 discriminator，现仅以连接自有字段／事件识别，任一实际 receipt 标志仍要求完整回执；三种 canonical／legacy ID 单独出现不伪造回执，foreign execution、部分字段、孤立事件与原始证据不变均有回归。Rebuild 诊断按发布 registry 折叠已知 alias 后精确比较，保留 canonical precedence、未知诊断字段／重复键／错误状态／业务与物理替换断言；退役 result 与 outcome 的矛盾双期望，新增 canonical-only／dual 只读回归。两个新增行为先 RED 后 GREEN，七个受影响快速 fixture 文件共 713 项通过，格式及 diff clean；未执行 Docker／实际 system 场景。ACP 真实 stream 精确事件另补三个已发布兼容字段并传播全部后续 PR，远程完整服务检查已通过；本地曾缺少结束的 GET span，保留原 oracle 且不将本地失败算通过。
+
+  #617 精确 head 的 Repository／Integration 通过，但 CodeQL #58 仍开放、结果仍失败。只读 Go SARIF analysis 2131718414 证明 Console skills.go:226 的 multipart 内存 writer 被误分派至共享 ResponseWriter；完整依据见 PR #617 和独立只读诊断 run 42739111432。误报标记最初被 API 的 280 字符限制退回，自动审批审查随后以“用户尚未明确授权安全告警状态变更”拒绝重试，未 dismiss 任何告警；诊断分支已恢复 security-events:read 并移除 PATCH。完成其余精确候选准入后，再就这一条告警取得明确批准；不绕过该阻塞合并，不提前关闭 #69。
+
+- **#69 CI 首轮回修（2026-11-10）**：十个服务 workflow 补 observability 精确路径；Skill Registry／Console 删除已无消费方的 writer alias。Gateway unused readError 是请求正文读取失败记录的迁移遗漏，新真实 handler 回归先 RED 再恢复原路径，遥测全包 GREEN。Identity 真实 login dispatcher 改为诊断 password/access_token 显式 REDACTED，公共参数／成功响应 credential wire 断言保留；Controller metric oracle 精确允许 canonical outcome＋legacy result，检查等值及五个有界维度；原新增双 provider 参数化因全局 OTel instrument 绑定被撤回，最终完整 client 包通过，不计该失败尝试为通过。RC 按 typed DTO 比较除 TOKEN 脱敏外的全部字段，并直接验证业务 configuration 不变；24k public 参数仍不截断，secret 不泄漏。ACP lifecycle 精确加入两个发布兼容 ID，审查 ACP／Egress／Runtime 路由源码仅遥测改动后更新逐项 SHA-256，不改变 routes／caller／body admission。定向服务检查与 346 route caller policies 通过，完整最终 head 以远程门禁为准。共享基础 CodeQL reflected-XSS 告警仍在核对数据流，尚不计通过。
+
 - **#69 PR CI 接手（2026-11-10，用户授权修复、合并并关闭）**：接续并覆盖历史停止／不轮询／不合并交接；按 #617 共享基础 → #618–#627 服务批次 → #628 显式集成推进。基础批次的 observability ownership 已声明十个消费者，workflow 路径尚未同步，现补齐十个服务 push／PR 的精确契约路径，保留 PR image guard。后续按服务修复 unused helper、脱敏与 alias oracle，以及源指纹同步；以最终精确 head 的远程 Repository／Integration 和选中服务组件作为准入。不运行或查询独立 system E2E。
+
+- **#69 显式集成候选已审查（2026-11-10，分支 `fix/issue-69-observability-integration`，基于 Runtime PR #627 `b9363414`）**：根 Repository 接入全量生成一致性／生产命名检查；共享 Go 变更保留六个消费者的 unit／component 选择；Rust lint 按 test item 屏蔽，保留后续生产代码与行号。同步诊断读取器、Identity 脱敏校验、RPC read/tool 精确属性预期、UI／Gateway／注销事件比较及 canonical 查询过滤器；只折叠 registry 发布的别名，保留未知属性拒绝和原始证据。共享 generator 增加 `tests/e2e/observability/aliases.gen.json`，不依赖客户端未挂载的根 contracts；缺挂载复现及新行为均先 RED 后 GREEN。消费者组 495/495、最终工具／契约组 204/204（组间有重叠，不累计），生成／命名／ownership／受改 MJS 格式和 probe 语法检查通过；仅快速源码／fixture 检查，不执行 Docker E2E 或实际 probe。临时日志在 `artifacts/verification/issue-69-integration/`，不入 Git。完整服务 unit／contract／component 与 Repository／Integration 准入交精确候选远程 CI，不等待、不轮询；交付 PR 后停止，由用户通知结果，不合并或关闭 #69/#83。
 
 - **#69 Antnest Runtime 本地反馈**：实际 RPC canary 基线 RED→GREEN；补测并注册原有 operation outcome／protocol outcome／phase 三项独立契约，未合并到通用 outcome。5 项诊断／capture、9 项共享 helper、13 项原遥测配置／度量、3 项 HTTP 流生命周期定向用例通过；生产 bin Clippy `-D warnings`、Rustfmt、根 17 项 registry 测试、生成／命名／diff 检查通过。四份冻结测试尾部逐字保留；真实 wire DTO、协议结果与错误 identity 未改。仅是本地反馈，完整 Linux unit／contract／component 与 Repository／Integration 准入交远程 CI，未等待；下一个批次是显式集成。
 
 - **#69 Runtime Egress 本地反馈**：RPC canary、Rust 元数据、原有 `antnest.transaction.completion` 契约缺项、独立 Rust 单测文件误报均先 RED 后修复。9 项 typed helper、5 项 HTTP／RPC、9 项原度量、6 项数据库包装器定向回归通过；lib Clippy `-D warnings`、Rustfmt、根 17 项 registry 测试及生成／命名／格式检查通过。保留 completion 与 outcome 的区别，补齐 registry owner，并机械再生所有已迁移语言消费者；原指标期望模块与 HEAD 逐字一致。完整服务及 PostgreSQL component 交远程准入，未等待。
 
-- **#69 显式集成待办**：根 CI 接线全量生成／生产命名检查；共享 Go 模块的服务影响选择补测；Rust 命名检查只应跳过 test 项而非遇到第一个 `cfg(test)` 后截断整份生产文件。完成最后一个 Runtime 服务后处理，不运行或安排 Docker E2E。
+- **#69 交付索引**：共享基础 PR #617；六个 Go 服务 PR #618–#623；ACP #624；Agent UI #625；Runtime Egress #626；Antnest Runtime #627；最后为当前显式集成分支。以上为独立 PR 交付记录，不代表已合并、远程准入通过或业务链路／发布能力已验收。
 
 - **#69 Agent UI 本地反馈**：新别名契约 RED→GREEN；原 SSE 精确事件白名单同步保留 2 个兼容属性，6 项相关回归重验通过，另 27 项受影响遥测／输入／清理定向用例通过。服务端 TypeScript、生成一致性、命名 lint 与 diff 检查通过；完整远程准入未等待。
 

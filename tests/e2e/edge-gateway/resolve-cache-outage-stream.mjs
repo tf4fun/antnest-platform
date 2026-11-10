@@ -6,6 +6,7 @@ import {
 import { assertGatewayResolutionAttributes } from "../../support/gateway-resolution.mjs";
 import { inspectWatchResolutions } from "../workspace-closeout/watch-resolution.mjs";
 import {
+  canonicalAttributes,
   tag,
   traceTopology,
   databaseChildrenTopology,
@@ -65,7 +66,7 @@ function diagnostics(span, expected, event) {
     log.timestamp >= span.startTime && log.timestamp <= end(span),
     "stream event outside owning span",
   );
-  assert.deepEqual(values(log.fields ?? []), {
+  assert.deepEqual(canonicalAttributes(values(log.fields ?? [])), {
     event: "antnest.error",
     ...event,
   });
@@ -1181,7 +1182,7 @@ export function inspectOutageStreams(
         b.ui.logs ?? [],
         "one direct UI termination witness required",
       );
-      assert.deepEqual(values(marker.fields ?? []), {
+      assert.deepEqual(canonicalAttributes(values(marker.fields ?? [])), {
         event: "antnest.stream.termination",
         reason: "access_denied",
         source: "agent-execution-state",

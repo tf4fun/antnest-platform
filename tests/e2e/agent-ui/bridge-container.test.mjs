@@ -5,6 +5,7 @@ import {
   readTurnContent as readContent,
 } from "../../support/agent-ui/bridge-protocol.mjs";
 import { verifyExternalIdentitiesBrowser } from "../../support/agent-ui/external-identities-browser.mjs";
+import { canonicalAttributes } from "../observability/trace-tree.mjs";
 import { createServer, request as httpRequest } from "node:http";
 import { createRequire } from "node:module";
 import { randomUUID } from "node:crypto";
@@ -2522,13 +2523,16 @@ test(
           (event) => event.name === "antnest.stream.termination",
         );
         assert.equal(terminations.length, 1);
-        assert.deepEqual(attributes(terminations[0].attributes), {
-          reason: "access_denied",
-          source: "agent-execution-state",
-          "antnest.organization.id": "org-1",
-          "antnest.principal.id": "user-9876",
-          "antnest.agent.id": "agent-1",
-        });
+        assert.deepEqual(
+          canonicalAttributes(attributes(terminations[0].attributes)),
+          {
+            reason: "access_denied",
+            source: "agent-execution-state",
+            "antnest.organization.id": "org-1",
+            "antnest.principal.id": "user-9876",
+            "antnest.agent.id": "agent-1",
+          },
+        );
         assert(
           BigInt(terminations[0].timeUnixNano) >=
             BigInt(revocationSpan.startTimeUnixNano),

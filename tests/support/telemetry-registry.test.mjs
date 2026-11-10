@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 import { checkTelemetrySource } from "../../scripts/check-telemetry-names.mjs";
 import {
+  renderAliases,
   renderGo,
   renderMarkdown,
   renderRust,
@@ -511,4 +512,92 @@ test("lint flags registered legacy metric literals but not other antnest_ names"
     validRegistry(),
   );
   assert.deepEqual(allowed, []);
+});
+
+test("Rust test modules do not truncate later production lines", () => {
+  const source = [
+    "#[cfg(test)]",
+    "mod support;",
+    'fn prod() { let key = "antnest.agent.id"; }',
+  ].join("\n");
+  const flagged = lint(source, "services/runtime-egress/src/telemetry.rs");
+  assertProblems(flagged);
+  assert.ok(flagged.some((problem) => problem.includes(":3")));
+});
+
+test("Rust test markers inside comments or strings cannot suppress production", () => {
+  for (const source of [
+    '// #[cfg(test)]\nfn prod() { let key = "antnest.agent.id"; }',
+    'const MARKER: &str = "#[cfg(test)]";\nfn prod() { let key = "antnest.agent.id"; }',
+  ]) {
+    assertProblems(lint(source, "services/runtime-egress/src/telemetry.rs"));
+  }
+});
+
+test("Rust inline test module is ignored but later production still flags", () => {
+  const source = [
+    "#[cfg(test)]",
+    "mod helper {",
+    '    const OLD: &str = "antnest.agent.id"; const TAIL: &str = r#"};{"#;',
+    "}",
+    "",
+    'fn prod() { let key = "antnest.agent.id"; }',
+  ].join("\n");
+  const flagged = lint(source, "services/runtime-egress/src/telemetry.rs");
+  assert.deepEqual(flagged.length, 1);
+  assert.ok(flagged.some((problem) => problem.includes(":6")));
+});
+
+test("Rust test helper followed by restricted metric label still flags", () => {
+  const source = [
+    "#[cfg(test)]",
+    'fn helper() { let _ = "antnest.agent.id"; }',
+    "",
+    "counter.add(1, &[KeyValue::new(semconv::ANTNEST_AGENT_ID, agent_id)]);",
+  ].join("\n");
+  const flagged = lint(source, "services/runtime-egress/src/metrics.rs");
+  assertProblems(flagged);
+});
+
+test("Rust cfg(any(test, feature)) remains production", () => {
+  const source = [
+    '#[cfg(any(test, feature = "demo"))]',
+    'fn probe() { let _ = "antnest.agent.id"; }',
+  ].join("\n");
+  assertProblems(lint(source, "services/runtime-egress/src/telemetry.rs"));
+});
+
+test("Rust cfg(all(test, ...)) helper is ignored and later production stays clean", () => {
+  const source = [
+    '#[cfg(all(test, target_os = "linux"))]',
+    'fn helper() { let _ = "antnest.agent.id"; }',
+    "",
+    "counter.add(1, &[KeyValue::new(semconv::ANTNEST_OUTCOME, outcome)]);",
+  ].join("\n");
+  assert.deepEqual(lint(source, "services/runtime-egress/src/metrics.rs"), []);
+});
+
+test("Rust cfg(test) struct field does not swallow later production", () => {
+  const source = [
+    "struct Config {",
+    "    name: String,",
+    "    #[cfg(test)]",
+    "    debug: bool,",
+    "}",
+    "",
+    'fn prod() { let key = "antnest.agent.id"; }',
+  ].join("\n");
+  const flagged = lint(source, "services/runtime-egress/src/telemetry.rs");
+  assertProblems(flagged);
+  assert.ok(flagged.some((problem) => problem.includes(":7")));
+});
+
+test("Rust aliases render published deprecated span aliases deterministically", () => {
+  const rendered = renderAliases(validRegistry());
+  assert.deepEqual(JSON.parse(rendered), {
+    "antnest.agent_id": "antnest.agent.id",
+  });
+  const registry = validRegistry();
+  registry.attributes.reverse();
+  assert.equal(renderAliases(registry), rendered);
 });

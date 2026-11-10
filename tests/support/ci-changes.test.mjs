@@ -36,6 +36,39 @@ import {
   suites,
   workflowPlan,
 } from "./ci-changes.mjs";
+import { selectComponents } from "./ci-impact.mjs";
+
+test("shared Go telemetry changes retain unit and component admission", () => {
+  const expected = [
+    "agent-controller-postgres",
+    "deployment-contracts",
+    "identity-postgres",
+    "runtime-controller-postgres",
+  ];
+  for (const file of [
+    "libs/go/telemetry/span.go",
+    "libs/go/telemetry/go.mod",
+    "libs/go/telemetry/semconv_gen.go",
+  ]) {
+    assert.deepEqual(
+      selectSuites([file], { scope: "component" })
+        .map((suite) => suite.id)
+        .sort(),
+      expected,
+      file,
+    );
+    const components = selectComponents([file]);
+    for (const consumer of [
+      "admin-console",
+      "agent-controller",
+      "edge-gateway",
+      "identity-service",
+      "runtime-controller",
+      "skill-registry",
+    ])
+      assert.ok(components.includes(consumer), `${file}: ${consumer}`);
+  }
+});
 
 test("the workflow plan preserves every shard and build exactly once", () => {
   const resolved = Object.keys(images).map((name) => ({

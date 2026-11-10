@@ -62,6 +62,71 @@ const sequence = [
   "antnest.mcp.connection.close.completed",
 ];
 
+export function runtimeExecutionAttributes(executionId) {
+  return {
+    "antnest.runtime.execution.id": executionId,
+    "antnest.runtime.execution_id": executionId,
+    "antnest.runtime_execution_id": executionId,
+  };
+}
+
+export function expectedOwnerAttributes({
+  method,
+  mode,
+  executionId,
+  deadlineAt,
+}) {
+  const common = {
+    "organization.id": "organization-1",
+    ...runtimeExecutionAttributes(executionId),
+    "antnest.mcp.method": `tools/${method}`,
+    "antnest.mcp.tool_result.outcome":
+      mode === "success"
+        ? "success"
+        : mode === "tool-error"
+          ? "tool_error"
+          : "not_received",
+    "antnest.mcp.connection.close.outcome": "closed",
+    "antnest.mcp.caller_cancelled": mode === "caller-abort",
+    "antnest.outcome":
+      mode === "success"
+        ? "ok"
+        : mode === "tool-error"
+          ? "tool_error"
+          : "error",
+    "antnest.execution.revision": "execution-1",
+  };
+  const business =
+    method === "list"
+      ? { "execution.revision": "execution-1" }
+      : {
+          "run.id": "run-1",
+          "antnest.run.id": "run-1",
+          "antnest.run_id": "run-1",
+          "antnest.organization.id": "organization-1",
+          "antnest.organization_id": "organization-1",
+          "tool.name": "bash",
+          "mcp.source_id": "runtime",
+          "antnest.provider.connection_id": "provider-1",
+          "antnest.configuration.revision": 1,
+          "antnest.agent.revision": "spec-1",
+          "antnest.runtime.revision": "runtime-1",
+          "antnest.runtime.execution_id": executionId,
+          "antnest.deadline": deadlineAt,
+        };
+  const failureType = method === "list" ? "Error" : "McpToolCallError";
+  const diagnostic =
+    mode === "success"
+      ? {}
+      : mode === "tool-error"
+        ? { "error.type": "mcp_tool_error" }
+        : {
+            "error.type": failureType,
+            "antnest.operation.phase": `mcp.tools.${method}`,
+          };
+  return { ...common, ...business, ...diagnostic };
+}
+
 export function verify(receipts, bodies, expectedInstance) {
   const timeObservations = [];
   const groups = bodies.flatMap((body) => body.resourceSpans ?? []);
@@ -149,53 +214,8 @@ export function verify(receipts, bodies, expectedInstance) {
     assert.equal(owners.length, 1);
     const owner = owners[0],
       attributes = attrs(owner.attributes);
-    const common = {
-      "organization.id": "organization-1",
-      "antnest.runtime.execution.id": executionId,
-      "antnest.mcp.method": `tools/${method}`,
-      "antnest.mcp.tool_result.outcome":
-        mode === "success"
-          ? "success"
-          : mode === "tool-error"
-            ? "tool_error"
-            : "not_received",
-      "antnest.mcp.connection.close.outcome": "closed",
-      "antnest.mcp.caller_cancelled": mode === "caller-abort",
-      "antnest.outcome":
-        mode === "success"
-          ? "ok"
-          : mode === "tool-error"
-            ? "tool_error"
-            : "error",
-      "antnest.execution.revision": "execution-1",
-    };
-    const business =
-      method === "list"
-        ? { "execution.revision": "execution-1" }
-        : {
-            "run.id": "run-1",
-            "antnest.run.id": "run-1",
-            "tool.name": "bash",
-            "mcp.source_id": "runtime",
-            "antnest.organization.id": "organization-1",
-            "antnest.provider.connection_id": "provider-1",
-            "antnest.configuration.revision": 1,
-            "antnest.agent.revision": "spec-1",
-            "antnest.runtime.revision": "runtime-1",
-            "antnest.runtime.execution_id": executionId,
-            "antnest.deadline": receipt.deadlineAt,
-          };
     const failureType = method === "list" ? "Error" : "McpToolCallError";
-    const diagnostic =
-      mode === "success"
-        ? {}
-        : mode === "tool-error"
-          ? { "error.type": "mcp_tool_error" }
-          : {
-              "error.type": failureType,
-              "antnest.operation.phase": `mcp.tools.${method}`,
-            };
-    assert.deepEqual(attributes, { ...common, ...business, ...diagnostic });
+    assert.deepEqual(attributes, expectedOwnerAttributes(receipt));
     assert.equal(owner.name, `mcp.tools.${method}`);
     assert.equal(Number(owner.kind), 1);
     assert(!owner.parentSpanId || /^0+$/u.test(owner.parentSpanId));

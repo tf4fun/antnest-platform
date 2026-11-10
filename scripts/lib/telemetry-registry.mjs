@@ -350,6 +350,18 @@ export function renderRust(registry) {
   return lines.join("\n");
 }
 
+export function renderAliases(registry) {
+  const pairs = registry.attributes
+    .filter(
+      (entry) =>
+        entry.kind === "span_attribute" &&
+        typeof entry.deprecated_alias_of === "string",
+    )
+    .map((entry) => [entry.name, entry.deprecated_alias_of])
+    .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+  return JSON.stringify(Object.fromEntries(pairs), null, 2) + "\n";
+}
+
 export function renderMarkdown(registry) {
   const entries = selectEntries(registry);
   const kindOf = (entry) =>

@@ -90,7 +90,7 @@ export function contractMarkers(file, map = ownership()) {
 // new URL(relative, import.meta.url), and repository paths written into
 // JS, shell or Makefile commands.
 const repositoryPath =
-  /(?<![\w./-])((?:contracts|deploy|modules|runtimes|scripts|services|tests)\/[\w./@%+-]*[\w@%+-])/gu;
+  /(?<![\w./-])((?:contracts|deploy|libs|modules|runtimes|scripts|services|tests)\/[\w./@%+-]*[\w@%+-])/gu;
 
 export function extractReferences(text, fromPath) {
   const found = new Set();
@@ -101,7 +101,7 @@ export function extractReferences(text, fromPath) {
     if (path.startsWith("./") || path.startsWith("../"))
       path = posix.normalize(posix.join(fromDir, path));
     else if (
-      !/^(?:contracts|deploy|modules|runtimes|scripts|services|tests)\//u.test(
+      !/^(?:contracts|deploy|libs|modules|runtimes|scripts|services|tests)\//u.test(
         path,
       )
     )

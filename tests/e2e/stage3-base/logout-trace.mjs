@@ -16,6 +16,7 @@ import { verifyIdentityEvidence } from "../identity-closeout/trace.mjs";
 import { inspectGatewayResolution } from "../../support/gateway-resolution.mjs";
 import { resolveTraceDiagnostics } from "../../support/gateway-resolution-evidence.mjs";
 import {
+  canonicalAttributes,
   tag,
   traceTopology,
   databaseChildrenTopology,
@@ -189,7 +190,7 @@ export function inspectStage3StreamDenial(
     assert.equal(tag(span, key), undefined);
   assert.equal(span.events?.length ?? 0, 0);
   const event = one(span.logs ?? [], "one exact Agent denial termination");
-  assert.deepEqual(fields(event.fields), {
+  assert.deepEqual(canonicalAttributes(fields(event.fields)), {
     event: "antnest.stream.termination",
     reason: "access_denied",
     "error.type": "DomainError",

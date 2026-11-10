@@ -310,10 +310,11 @@ export function inspectRuntimeCancellationDiagnostics(trace, expected) {
     "run.unknown_effect_source": "runtime_mcp",
   });
   events(run, []);
+  // Execution identity is shared with historical spans after alias normalization;
+  // only connection-owned fields/events identify a connection receipt.
   const hasConnectionReceipt =
     [
       "antnest.mcp.method",
-      "antnest.runtime.execution.id",
       "antnest.mcp.tool_result.outcome",
       "antnest.mcp.connection.close.outcome",
       "antnest.mcp.caller_cancelled",

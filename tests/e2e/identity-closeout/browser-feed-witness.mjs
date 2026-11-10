@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { canonicalAttributes } from "../observability/trace-tree.mjs";
 
 const one = (rows, label) => {
   assert.equal(rows.length, 1, label);
@@ -37,7 +38,7 @@ export function inspectBrowserFeedWitness(
       Number.isSafeInteger(fields["antnest.revocation.sequence"]) &&
         fields["antnest.revocation.sequence"] > 0,
     );
-    assert.deepEqual(fields, {
+    assert.deepEqual(canonicalAttributes(fields), {
       event: "antnest.stream.termination",
       source: "identity-session-feed",
       reason: "session_revoked",

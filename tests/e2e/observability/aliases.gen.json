@@ -1,0 +1,12 @@
+{
+  "antnest.agent_id": "antnest.agent.id",
+  "antnest.error.class": "antnest.error.classification",
+  "antnest.lifecycle.error_class": "antnest.error.classification",
+  "antnest.operation.request_id": "antnest.request.id",
+  "antnest.organization_id": "antnest.organization.id",
+  "antnest.result": "antnest.outcome",
+  "antnest.run_id": "antnest.run.id",
+  "antnest.runtime.execution_id": "antnest.runtime.execution.id",
+  "antnest.runtime_execution_id": "antnest.runtime.execution.id",
+  "antnest.timeout_ms": "antnest.request.timeout_ms"
+}

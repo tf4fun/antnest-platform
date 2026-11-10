@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import { createServer } from "node:http";
 import { hostname } from "node:os";
 import { startTelemetry } from "./dist/telemetry/telemetry.js";
+import { runtimeExecutionAttributes } from "./runtime-tools-evidence.mjs";
 import { OfficialMcpDialer } from "./dist/adapters/mcp/official-client.js";
 import { McpToolCatalog } from "./dist/adapters/mcp/tool-catalog.js";
 
@@ -396,8 +397,9 @@ function verify(receipts, evidence = raw) {
     );
     assert.equal((read.links ?? []).length, 0);
     const attrs = attributes(read.attributes);
+    const identity = runtimeExecutionAttributes(receipt.executionId);
     attributeKeys(read.attributes, [
-      "antnest.runtime.execution.id",
+      ...Object.keys(identity),
       "antnest.mcp.resource_read.outcome",
       "antnest.mcp.connection.close.outcome",
       "antnest.mcp.caller_cancelled",
@@ -405,6 +407,8 @@ function verify(receipts, evidence = raw) {
         ? []
         : ["error.type", "antnest.outcome", "antnest.operation.phase"]),
     ]);
+    for (const [key, value] of Object.entries(identity))
+      assert.equal(attrs[key], value);
     assert.equal(attrs["antnest.mcp.connection.close.outcome"], "closed");
     assert.equal(
       attrs["antnest.mcp.caller_cancelled"],

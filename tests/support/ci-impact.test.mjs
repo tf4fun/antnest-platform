@@ -20,6 +20,40 @@ import {
 
 const root = fileURLToPath(new URL("../../", import.meta.url));
 
+test("shared observability changes select every declared service", () => {
+  assert.deepEqual(
+    selectComponents(["contracts/observability/attributes.yaml"]),
+    [
+      "admin-console",
+      "agent-acp-service",
+      "agent-controller",
+      "agent-ui",
+      "antnest-runtime",
+      "edge-gateway",
+      "identity-service",
+      "runtime-controller",
+      "runtime-egress",
+      "skill-registry",
+    ],
+  );
+});
+
+test("shared library references participate in dependency impact", () => {
+  assert.deepEqual(
+    [
+      ...extractReferences(
+        'import schema from "../../libs/go/telemetry/schema.json";',
+        "tests/support/example.mjs",
+      ),
+    ],
+    ["libs/go/telemetry/schema.json"],
+  );
+  assert.deepEqual(
+    [...extractReferences("go test libs/go/telemetry/span.go", "Makefile")],
+    ["libs/go/telemetry/span.go"],
+  );
+});
+
 function fixtureRoot(t, { map, contracts = {}, services = [] }) {
   const directory = mkdtempSync(join(tmpdir(), "antnest-ci-impact-"));
   t.after(() => rmSync(directory, { recursive: true, force: true }));
