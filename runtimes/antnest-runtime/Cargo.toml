@@ -55,7 +55,7 @@ opentelemetry_sdk = { version = "0.33.0", features = ["metrics", "testing", "tra
 reqwest = { version = "0.13.5", default-features = false, features = ["json"] }
 rmcp = { version = "3.4.1", features = ["client", "transport-streamable-http-client-reqwest"] }
 tempfile = "3.27.0"
-jsonschema = { version = "=0.33.0", default-features = false }
+jsonschema = { version = "=0.60.2", default-features = false }
 
 [profile.release]
 codegen-units = 1
