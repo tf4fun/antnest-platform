@@ -1,5 +1,7 @@
 # Antnest Platform 全局 TODO
 
+- **#69 Console 上传转发优化（2026-11-10，用户要求优化误报成因）**：独立 Console 前置批次基于 main d4e05333，保留 #617–#628 的服务所有权顺序。multipart artifact 使用标准 io.Copy 从 bytes.Reader 完整转发，沿用 mime/multipart 编码、metadata、boundary、文件名、8 MiB admission、受信 actor 与稳定请求 ID。扩展原真实 handler 测试校验包含 NUL／非 UTF-8／CRLF／HTML 元字符的二进制原样到达上游，重构前后均通过；不声称新增行为 RED。完整 PR 准入交远程；另在原共享基础＋此改动的源码上执行完整 Go CodeQL，独立诊断只保留本地 SARIF，不上传或修改安全告警、不排除规则。诊断证明目标消歧前不认定旧 #58 已解决，不合并／关闭 issue；独立 system E2E 不在本批执行。
+
 - **#69 PR CI 接手（2026-11-10，用户授权修复、合并并关闭）**：接续并覆盖历史停止／不轮询／不合并交接；按 #617 共享基础 → #618–#627 服务批次 → #628 显式集成推进。基础批次的 observability ownership 已声明十个消费者，workflow 路径尚未同步，现补齐十个服务 push／PR 的精确契约路径，保留 PR image guard。后续按服务修复 unused helper、脱敏与 alias oracle，以及源指纹同步；以最终精确 head 的远程 Repository／Integration 和选中服务组件作为准入。不运行或查询独立 system E2E。
 
 - **#69 Runtime Egress 本地反馈**：RPC canary、Rust 元数据、原有 `antnest.transaction.completion` 契约缺项、独立 Rust 单测文件误报均先 RED 后修复。9 项 typed helper、5 项 HTTP／RPC、9 项原度量、6 项数据库包装器定向回归通过；lib Clippy `-D warnings`、Rustfmt、根 17 项 registry 测试及生成／命名／格式检查通过。保留 completion 与 outcome 的区别，补齐 registry owner，并机械再生所有已迁移语言消费者；原指标期望模块与 HEAD 逐字一致。完整服务及 PostgreSQL component 交远程准入，未等待。
