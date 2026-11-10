@@ -1,3 +1,6 @@
+use crate::semconv;
+use crate::telemetry::TelemetrySpanExt as _;
+
 use std::{error::Error as _, net::Ipv4Addr, sync::Arc, time::Duration};
 
 use crate::tunnel::Registration;
@@ -485,9 +488,9 @@ async fn trace_request(
         "error.type" = tracing::field::Empty,
         "failure.stage" = tracing::field::Empty,
         "failure.cause" = tracing::field::Empty,
-        "antnest.agent.id" = tracing::field::Empty,
-        "antnest.policy.id" = tracing::field::Empty,
-        "antnest.policy.revision" = tracing::field::Empty,
+        { semconv::ANTNEST_AGENT_ID } = tracing::field::Empty,
+        { semconv::ANTNEST_POLICY_ID } = tracing::field::Empty,
+        { semconv::ANTNEST_POLICY_REVISION } = tracing::field::Empty,
         trace_id = tracing::field::Empty,
         span_id = tracing::field::Empty,
     );
@@ -495,17 +498,21 @@ async fn trace_request(
         tracing::debug!("incoming trace context was not attached");
     }
     crate::telemetry::record_span_identity(&span);
-    span.set_attribute("network.protocol.name", "http");
+    span.set_contract_attribute("network.protocol.name", "http");
     match request.version() {
-        axum::http::Version::HTTP_10 => span.set_attribute("network.protocol.version", "1.0"),
-        axum::http::Version::HTTP_11 => span.set_attribute("network.protocol.version", "1.1"),
-        axum::http::Version::HTTP_2 => span.set_attribute("network.protocol.version", "2"),
-        axum::http::Version::HTTP_3 => span.set_attribute("network.protocol.version", "3"),
+        axum::http::Version::HTTP_10 => {
+            span.set_contract_attribute("network.protocol.version", "1.0")
+        }
+        axum::http::Version::HTTP_11 => {
+            span.set_contract_attribute("network.protocol.version", "1.1")
+        }
+        axum::http::Version::HTTP_2 => span.set_contract_attribute("network.protocol.version", "2"),
+        axum::http::Version::HTTP_3 => span.set_contract_attribute("network.protocol.version", "3"),
         _ => {}
     }
     if let Some(operation) = control_operation(&method, &route) {
-        span.set_attribute("rpc.service", "runtime-egress.control");
-        span.set_attribute("rpc.method", operation);
+        span.set_contract_attribute("rpc.service", "runtime-egress.control");
+        span.set_contract_attribute("rpc.method", operation);
     }
     let enabled = state.capture_rpc_content
         && route != TUNNEL_KEY_ROUTE
@@ -1190,16 +1197,20 @@ fn parse_stored_version(value: &str) -> Result<u64, ApiError> {
 
 fn record_agent_id(agent_id: &AgentId) {
     if safe_identifier(agent_id.as_str()) {
-        tracing::Span::current().record("antnest.agent.id", agent_id.as_str());
+        tracing::Span::current().record(semconv::ANTNEST_AGENT_ID, agent_id.as_str());
+        tracing::Span::current()
+            .set_contract_attribute(semconv::ANTNEST_AGENT_ID, agent_id.as_str().to_owned());
     }
 }
 
 fn record_policy(policy_id: &PolicyId, revision: u64) {
     let span = tracing::Span::current();
     if safe_identifier(policy_id.as_str()) {
-        span.record("antnest.policy.id", policy_id.as_str());
+        span.record(semconv::ANTNEST_POLICY_ID, policy_id.as_str());
+        span.set_contract_attribute(semconv::ANTNEST_POLICY_ID, policy_id.as_str().to_owned());
     }
-    span.record("antnest.policy.revision", revision.to_string());
+    span.record(semconv::ANTNEST_POLICY_REVISION, revision.to_string());
+    span.set_contract_attribute(semconv::ANTNEST_POLICY_REVISION, revision.to_string());
 }
 
 #[cfg(test)]

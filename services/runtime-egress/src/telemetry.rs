@@ -1,3 +1,5 @@
+use crate::semconv;
+
 use std::{
     env,
     sync::{
@@ -242,44 +244,90 @@ impl Telemetry {
     }
 }
 
+pub(crate) trait TelemetrySpanExt {
+    fn set_contract_attribute(
+        &self,
+        key: impl Into<opentelemetry::Key>,
+        value: impl Into<opentelemetry::Value>,
+    );
+    fn set_contract_attributes(
+        &self,
+        attributes: impl IntoIterator<Item = opentelemetry::KeyValue>,
+    );
+    fn add_contract_event(&self, name: &'static str, attributes: Vec<opentelemetry::KeyValue>);
+}
+
+impl TelemetrySpanExt for tracing::Span {
+    fn set_contract_attribute(
+        &self,
+        key: impl Into<opentelemetry::Key>,
+        value: impl Into<opentelemetry::Value>,
+    ) {
+        self.set_contract_attributes([opentelemetry::KeyValue::new(key, value)]);
+    }
+
+    fn set_contract_attributes(
+        &self,
+        attributes: impl IntoIterator<Item = opentelemetry::KeyValue>,
+    ) {
+        for attribute in
+            crate::telemetry_contract::alias_attributes(attributes.into_iter().collect())
+        {
+            tracing_opentelemetry::OpenTelemetrySpanExt::set_attribute(
+                self,
+                attribute.key,
+                attribute.value,
+            );
+        }
+    }
+
+    fn add_contract_event(&self, name: &'static str, attributes: Vec<opentelemetry::KeyValue>) {
+        tracing_opentelemetry::OpenTelemetrySpanExt::add_event(
+            self,
+            name,
+            crate::telemetry_contract::alias_attributes(attributes),
+        );
+    }
+}
+
 impl EgressMetrics {
     fn new(meter: Meter) -> Self {
         Self {
             control_requests: meter
-                .u64_counter("antnest.egress.control.requests")
+                .u64_counter(semconv::ANTNEST_EGRESS_CONTROL_REQUESTS)
                 .with_description("Completed Runtime Egress control requests")
                 .build(),
             control_duration_ms: meter
-                .f64_histogram("antnest.egress.control.duration")
+                .f64_histogram(semconv::ANTNEST_EGRESS_CONTROL_DURATION)
                 .with_description("Runtime Egress control request latency")
                 .with_unit("ms")
                 .build(),
             service_ready: meter
-                .u64_gauge("antnest.egress.health.ready")
+                .u64_gauge(semconv::ANTNEST_EGRESS_HEALTH_READY)
                 .with_description("Whether Runtime Egress is globally ready")
                 .build(),
             data_plane_ready: meter
-                .u64_gauge("antnest.egress.health.data_plane.ready")
+                .u64_gauge(semconv::ANTNEST_EGRESS_HEALTH_DATA_PLANE_READY)
                 .with_description("Whether the Runtime Egress data plane is ready")
                 .build(),
             control_plane_ready: meter
-                .u64_gauge("antnest.egress.health.control_plane.ready")
+                .u64_gauge(semconv::ANTNEST_EGRESS_HEALTH_CONTROL_PLANE_READY)
                 .with_description("Whether shared control infrastructure is ready")
                 .build(),
             fenced_agents: meter
-                .u64_gauge("antnest.egress.health.fenced_agents")
+                .u64_gauge(semconv::ANTNEST_EGRESS_HEALTH_FENCED_AGENTS)
                 .with_description("Number of Agent packet paths currently fenced")
                 .build(),
             health_transitions: meter
-                .u64_counter("antnest.egress.health.transitions")
+                .u64_counter(semconv::ANTNEST_EGRESS_HEALTH_TRANSITIONS)
                 .with_description("Runtime Egress shared health state transitions")
                 .build(),
             quarantine_removed: meter
-                .u64_counter("antnest.egress.quarantine.removed")
+                .u64_counter(semconv::ANTNEST_EGRESS_QUARANTINE_REMOVED)
                 .with_description("Expired Agent network allocations removed")
                 .build(),
             quarantine_cleanup_failures: meter
-                .u64_counter("antnest.egress.quarantine.cleanup_failures")
+                .u64_counter(semconv::ANTNEST_EGRESS_QUARANTINE_CLEANUP_FAILURES)
                 .with_description("Agent-local kernel cleanup failures during quarantine sweeps")
                 .build(),
             data_plane: DataPlaneInstruments::new(&meter),
@@ -306,6 +354,7 @@ impl EgressMetrics {
         if !error_type.is_empty() {
             attributes.push(KeyValue::new("error.type", error_type));
         }
+        let attributes = crate::telemetry_contract::metric_attributes(attributes);
         self.control_requests.add(1, &attributes);
         self.control_duration_ms
             .record(duration.as_secs_f64() * 1000.0, &attributes);
@@ -436,43 +485,49 @@ impl DataPlaneInstruments {
             meter.u64_gauge(name).build()
         }
         Self {
-            authentication_drops: gauge(meter, "antnest.egress.tunnel.authentication_drops"),
-            replay_drops: gauge(meter, "antnest.egress.tunnel.replay_drops"),
-            unknown_context_drops: gauge(meter, "antnest.egress.tunnel.unknown_context_drops"),
-            uplink_packets: gauge(meter, "antnest.egress.uplink.packets"),
-            uplink_bytes: gauge(meter, "antnest.egress.uplink.bytes"),
-            downlink_packets: gauge(meter, "antnest.egress.downlink.packets"),
-            downlink_bytes: gauge(meter, "antnest.egress.downlink.bytes"),
-            policy_allows: gauge(meter, "antnest.egress.policy.allows"),
-            policy_denials: gauge(meter, "antnest.egress.policy.denials"),
-            malformed_packets: gauge(meter, "antnest.egress.packet.malformed"),
-            unsupported_packets: gauge(meter, "antnest.egress.packet.unsupported"),
-            unknown_agents: gauge(meter, "antnest.egress.agent.unknown"),
-            fenced_packets: gauge(meter, "antnest.egress.agent.fenced_packets"),
-            active_flows: gauge(meter, "antnest.egress.flow.active"),
-            flow_expirations: gauge(meter, "antnest.egress.flow.expirations"),
-            flow_collisions: gauge(meter, "antnest.egress.flow.collisions"),
-            flow_capacity_rejections: gauge(meter, "antnest.egress.flow.capacity_rejections"),
-            reverse_flow_misses: gauge(meter, "antnest.egress.flow.reverse_misses"),
-            peer_output_failures: gauge(meter, "antnest.egress.peer_output.failures"),
+            authentication_drops: gauge(meter, semconv::ANTNEST_EGRESS_TUNNEL_AUTHENTICATION_DROPS),
+            replay_drops: gauge(meter, semconv::ANTNEST_EGRESS_TUNNEL_REPLAY_DROPS),
+            unknown_context_drops: gauge(
+                meter,
+                semconv::ANTNEST_EGRESS_TUNNEL_UNKNOWN_CONTEXT_DROPS,
+            ),
+            uplink_packets: gauge(meter, semconv::ANTNEST_EGRESS_UPLINK_PACKETS),
+            uplink_bytes: gauge(meter, semconv::ANTNEST_EGRESS_UPLINK_BYTES),
+            downlink_packets: gauge(meter, semconv::ANTNEST_EGRESS_DOWNLINK_PACKETS),
+            downlink_bytes: gauge(meter, semconv::ANTNEST_EGRESS_DOWNLINK_BYTES),
+            policy_allows: gauge(meter, semconv::ANTNEST_EGRESS_POLICY_ALLOWS),
+            policy_denials: gauge(meter, semconv::ANTNEST_EGRESS_POLICY_DENIALS),
+            malformed_packets: gauge(meter, semconv::ANTNEST_EGRESS_PACKET_MALFORMED),
+            unsupported_packets: gauge(meter, semconv::ANTNEST_EGRESS_PACKET_UNSUPPORTED),
+            unknown_agents: gauge(meter, semconv::ANTNEST_EGRESS_AGENT_UNKNOWN),
+            fenced_packets: gauge(meter, semconv::ANTNEST_EGRESS_AGENT_FENCED_PACKETS),
+            active_flows: gauge(meter, semconv::ANTNEST_EGRESS_FLOW_ACTIVE),
+            flow_expirations: gauge(meter, semconv::ANTNEST_EGRESS_FLOW_EXPIRATIONS),
+            flow_collisions: gauge(meter, semconv::ANTNEST_EGRESS_FLOW_COLLISIONS),
+            flow_capacity_rejections: gauge(
+                meter,
+                semconv::ANTNEST_EGRESS_FLOW_CAPACITY_REJECTIONS,
+            ),
+            reverse_flow_misses: gauge(meter, semconv::ANTNEST_EGRESS_FLOW_REVERSE_MISSES),
+            peer_output_failures: gauge(meter, semconv::ANTNEST_EGRESS_PEER_OUTPUT_FAILURES),
             peer_mismatches: meter
-                .u64_counter("antnest.egress.peer_mismatch.drops")
+                .u64_counter(semconv::ANTNEST_EGRESS_PEER_MISMATCH_DROPS)
                 .with_description(
                     "Packets dropped because the outer IPv4 differs from the bound Runtime peer",
                 )
                 .build(),
             unattributed_udp_receive_errors: gauge(
                 meter,
-                "antnest.egress.udp.receive_errors.unattributed",
+                semconv::ANTNEST_EGRESS_UDP_RECEIVE_ERRORS_UNATTRIBUTED,
             ),
-            dns_accepted: gauge(meter, "antnest.egress.dns.connections.accepted"),
-            dns_rejected: gauge(meter, "antnest.egress.dns.connections.rejected"),
-            dns_completed: gauge(meter, "antnest.egress.dns.connections.completed"),
-            dns_proxy_failures: gauge(meter, "antnest.egress.dns.proxy.failures"),
-            dns_client_bytes: gauge(meter, "antnest.egress.dns.client_to_upstream.bytes"),
-            dns_upstream_bytes: gauge(meter, "antnest.egress.dns.upstream_to_client.bytes"),
+            dns_accepted: gauge(meter, semconv::ANTNEST_EGRESS_DNS_CONNECTIONS_ACCEPTED),
+            dns_rejected: gauge(meter, semconv::ANTNEST_EGRESS_DNS_CONNECTIONS_REJECTED),
+            dns_completed: gauge(meter, semconv::ANTNEST_EGRESS_DNS_CONNECTIONS_COMPLETED),
+            dns_proxy_failures: gauge(meter, semconv::ANTNEST_EGRESS_DNS_PROXY_FAILURES),
+            dns_client_bytes: gauge(meter, semconv::ANTNEST_EGRESS_DNS_CLIENT_TO_UPSTREAM_BYTES),
+            dns_upstream_bytes: gauge(meter, semconv::ANTNEST_EGRESS_DNS_UPSTREAM_TO_CLIENT_BYTES),
             dns_filtered_answers: meter
-                .u64_counter("antnest.egress.dns.answers.filtered")
+                .u64_counter(semconv::ANTNEST_EGRESS_DNS_ANSWERS_FILTERED)
                 .with_description("DNS answer records removed by the external-only resolver policy")
                 .build(),
         }

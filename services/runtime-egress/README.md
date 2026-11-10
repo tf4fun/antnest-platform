@@ -5,6 +5,13 @@ Agent one stable Tunnel IPv4 address, stores and applies that Agent's network
 policy, and forwards validated Runtime packets between UDP and a Linux TUN
 device. It is written in Rust.
 
+Telemetry names come from the observability registry via generated
+`src/semconv.rs` constants; OTel span/event attributes pass through
+`src/telemetry_contract.rs` (`alias_attributes` dual-emits registered legacy
+aliases unless `ANTNEST_TELEMETRY_LEGACY_ATTRIBUTES=false`, `metric_attributes`
+strips unbounded dimensions at metric boundaries, and `capture_rpc_json`
+recursively redacts secret keys while leaving the wire payload unchanged).
+
 Egress has a narrow, stable domain but owns packet parsing, bounded flow state,
 Linux network integration, and long-lived concurrent I/O. Rust makes those
 resource lifetimes explicit without a garbage-collection pause or a second

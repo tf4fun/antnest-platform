@@ -323,12 +323,28 @@ export function renderTypeScript(registry) {
 
 export function renderRust(registry) {
   const entries = selectEntries(registry);
+  const byName = new Map(entries.map((entry) => [entry.name, entry]));
   const lines = [
     "#![allow(dead_code)]",
     "",
     ...entries.map(
       (entry) => `pub const ${entrySymbol(entry)}: &str = "${entry.name}";`,
     ),
+    "",
+    "pub const DEPRECATED_ALIASES: &[(&str, &str)] = &[",
+    ...entries
+      .filter((entry) => typeof entry.deprecated_alias_of === "string")
+      .map(
+        (entry) =>
+          `    (${entrySymbol(entry)}, ${entrySymbol(byName.get(entry.deprecated_alias_of))}),`,
+      ),
+    "];",
+    "",
+    "pub const RESTRICTED_METRIC_ATTRIBUTES: &[&str] = &[",
+    ...entries
+      .filter(restrictedMetricAttribute)
+      .map((entry) => `    ${entrySymbol(entry)},`),
+    "];",
     "",
   ];
   return lines.join("\n");
