@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	semconv "github.com/tf4fun/antnest-platform/libs/go/telemetry"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
@@ -352,8 +353,8 @@ func (h *Handler) watchObservations(response http.ResponseWriter, request *http.
 	started := time.Now()
 	defer func() {
 		metricCtx := context.WithoutCancel(ctx)
-		attributes := []attribute.KeyValue{attribute.String("antnest.watch.termination", termination)}
-		watchTerminations.Add(metricCtx, 1, metric.WithAttributes(attributes...))
+		attributes := []attribute.KeyValue{attribute.String(semconv.AntnestWatchTermination, termination)}
+		watchTerminations.Add(metricCtx, 1, metric.WithAttributes(semconv.MetricAttributes(attributes...)...))
 		if streamStarted {
 			watchActive.Add(metricCtx, -1)
 			slog.InfoContext(metricCtx, "Runtime observation Watch closed",
@@ -600,11 +601,11 @@ func beginLifecycle(
 ) lifecycleCall {
 	ctx, span := rpcTracer.Start(request.Context(), "runtime.lifecycle."+string(kind))
 	agentID := request.PathValue("agent_id")
-	span.SetAttributes(
-		attribute.String("antnest.agent.id", telemetry.SafeValue(agentID)),
-		attribute.String("antnest.operation.id", telemetry.SafeValue(requestID)),
-		attribute.String("antnest.operation.kind", string(kind)),
-	)
+	span.SetAttributes(semconv.AliasAttributes(
+		attribute.String(semconv.AntnestAgentId, telemetry.SafeValue(agentID)),
+		attribute.String(semconv.AntnestOperationId, telemetry.SafeValue(requestID)),
+		attribute.String(semconv.AntnestOperationKind, string(kind)),
+	)...)
 	return lifecycleCall{
 		context: ctx, span: span, started: time.Now(), kind: kind,
 		requestID: requestID, agentID: agentID,
@@ -625,7 +626,7 @@ func finishLifecycle(
 			// The shared RPC error writer records the detailed cause on SERVER.
 			call.span.SetStatus(codes.Error, errorClass)
 		} else {
-			call.span.SetAttributes(attribute.String("antnest.outcome", "rejected"))
+			call.span.SetAttributes(semconv.AliasAttributes(attribute.String(semconv.AntnestOutcome, "rejected"))...)
 		}
 	} else if operation.State == deployment.OperationFailed || operation.State == deployment.OperationUnknown {
 		call.span.SetStatus(codes.Error, errorClass)
@@ -637,31 +638,31 @@ func finishLifecycle(
 		errorClass = "none"
 	}
 	spanAttributes := []attribute.KeyValue{
-		attribute.String("antnest.operation.kind", string(call.kind)),
-		attribute.String("antnest.result", result),
-		attribute.String("antnest.error.class", errorClass),
+		attribute.String(semconv.AntnestOperationKind, string(call.kind)),
+		attribute.String(semconv.AntnestOutcome, result),
+		attribute.String(semconv.AntnestErrorClassification, errorClass),
 	}
 	if operation.RequestID != "" {
-		spanAttributes = append(spanAttributes, attribute.String("antnest.operation.id", telemetry.SafeValue(operation.RequestID)))
+		spanAttributes = append(spanAttributes, attribute.String(semconv.AntnestOperationId, telemetry.SafeValue(operation.RequestID)))
 	}
 	if operation.AgentID != "" {
-		spanAttributes = append(spanAttributes, attribute.String("antnest.agent.id", telemetry.SafeValue(operation.AgentID)))
+		spanAttributes = append(spanAttributes, attribute.String(semconv.AntnestAgentId, telemetry.SafeValue(operation.AgentID)))
 	}
 	if operation.RuntimeRevision != "" {
 		spanAttributes = append(spanAttributes,
-			attribute.String("antnest.runtime.target_revision", telemetry.SafeValue(string(operation.RuntimeRevision))),
-			attribute.String("antnest.runtime.revision", telemetry.SafeValue(string(operation.RuntimeRevision))))
+			attribute.String(semconv.AntnestRuntimeTargetRevision, telemetry.SafeValue(string(operation.RuntimeRevision))),
+			attribute.String(semconv.AntnestRuntimeRevision, telemetry.SafeValue(string(operation.RuntimeRevision))))
 	}
-	call.span.SetAttributes(spanAttributes...)
+	call.span.SetAttributes(semconv.AliasAttributes(spanAttributes...)...)
 	call.span.End()
 	metricAttributes := []attribute.KeyValue{
-		attribute.String("antnest.operation.kind", string(call.kind)),
-		attribute.String("antnest.result", result),
-		attribute.String("antnest.error.class", errorClass),
+		attribute.String(semconv.AntnestOperationKind, string(call.kind)),
+		attribute.String(semconv.AntnestOutcome, result),
+		attribute.String(semconv.AntnestErrorClassification, errorClass),
 	}
 	metricCtx := context.WithoutCancel(call.context)
-	lifecycleCalls.Add(metricCtx, 1, metric.WithAttributes(metricAttributes...))
-	lifecycleDuration.Record(metricCtx, time.Since(call.started).Seconds(), metric.WithAttributes(metricAttributes...))
+	lifecycleCalls.Add(metricCtx, 1, metric.WithAttributes(semconv.MetricAttributes(metricAttributes...)...))
+	lifecycleDuration.Record(metricCtx, time.Since(call.started).Seconds(), metric.WithAttributes(semconv.MetricAttributes(metricAttributes...)...))
 }
 
 func valueOr(value, fallback string) string {

@@ -1,6 +1,7 @@
 FROM golang:1.27.1-bookworm AS build
 WORKDIR /src/services/runtime-controller
 COPY modules/service-authentication /src/modules/service-authentication
+COPY libs/go/telemetry /src/libs/go/telemetry
 COPY services/runtime-controller/go.mod services/runtime-controller/go.sum ./
 RUN --mount=type=cache,target=/go/pkg/mod go mod download
 COPY services/runtime-controller ./

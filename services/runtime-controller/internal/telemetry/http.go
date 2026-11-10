@@ -1,22 +1,18 @@
 package telemetry
 
 import (
-	"bufio"
 	"context"
 	"fmt"
-	"io"
-	"net"
 	"net/http"
 	"os"
 	"strconv"
 	"strings"
 	"time"
 
+	semconv "github.com/tf4fun/antnest-platform/libs/go/telemetry"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
-	"go.opentelemetry.io/otel/propagation"
-	"go.opentelemetry.io/otel/trace"
 )
 
 var (
@@ -29,58 +25,60 @@ var (
 func HTTPHandler(next http.Handler) http.Handler {
 	captureRPC := strings.EqualFold(strings.TrimSpace(os.Getenv("ANTNEST_TELEMETRY_CAPTURE_RPC_CONTENT")), "true")
 	return http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
-		ctx := propagation.TraceContext{}.Extract(request.Context(), propagation.HeaderCarrier(request.Header))
-		ctx, span := httpTracer.Start(ctx, request.Method, trace.WithSpanKind(trace.SpanKindServer))
+		ctx, span := semconv.StartServerWithTracer(request, httpTracer, nil)
 		started := time.Now()
 		state := &httpObservation{span: span, captureRPC: captureRPC}
 		ctx = context.WithValue(ctx, observationKey{}, state)
-		observed := &statusWriter{ResponseWriter: response, observation: state, ctx: ctx}
+		observed := &statusWriter{observation: state}
+		observed.ServerWriter = semconv.NewServerWriter(response, ctx, nil)
 		instrumented := request.WithContext(ctx)
-		if request.Body != nil {
-			instrumented.Body = &requestCounter{ReadCloser: request.Body, observation: state}
+		if instrumented.Body != nil {
+			instrumented.Body = semconv.WrapBody(instrumented.Body, semconv.BodyCallbacks{
+				Read: func(n int, _ error) { state.requestBytes += int64(n) },
+			})
 		}
 
 		setDeadline(span, ctx)
 		defer func() {
 			panicValue := recover()
+			if panicValue != nil && !observed.WroteHeader {
+				observed.Status = 0
+			}
 			route := normalizedRoute(instrumented.Pattern)
 			span.SetName("HTTP " + request.Method + " " + route)
 
 			attributes := []attribute.KeyValue{attribute.String("http.request.method", request.Method), attribute.String("http.route", route)}
-			if observed.status != 0 {
-				attributes = append(attributes, attribute.Int("http.response.status_code", observed.status))
+			if observed.Status != 0 {
+				attributes = append(attributes, attribute.Int("http.response.status_code", observed.Status))
 			}
-			span.SetAttributes(attributes...)
+			span.SetAttributes(semconv.AliasAttributes(attributes...)...)
 
-			span.SetAttributes(attribute.Int64("http.request.body.size", state.requestBytes), attribute.Int64("http.response.body.size", observed.bytes))
+			span.SetAttributes(semconv.AliasAttributes(attribute.Int64("http.request.body.size", state.requestBytes), attribute.Int64("http.response.body.size", observed.Written))...)
 
 			switch {
 			case panicValue != nil:
 				RecordFailure(ctx, span, fmt.Errorf("panic value of type %T", panicValue), "handler", "panic", "HTTP handler panicked")
-			case observed.err != nil:
-				RecordFailure(ctx, span, observed.err, "response_write", "response_write_failed", "HTTP response delivery failed")
+			case observed.WriteErr != nil:
+				RecordFailure(ctx, span, observed.WriteErr, "response_write", "response_write_failed", "HTTP response delivery failed")
 			case ctx.Err() != nil:
 				RecordFailure(ctx, span, ctx.Err(), "handler", "request_canceled", "HTTP request ended by cancellation")
-			case observed.status >= 500 && !state.failed:
-				RecordFailure(ctx, span, nil, "handler", strconv.Itoa(observed.status), "HTTP server returned an error")
+			case observed.Status >= 500 && !state.failed:
+				RecordFailure(ctx, span, nil, "handler", strconv.Itoa(observed.Status), "HTTP server returned an error")
 			case !state.failed && state.outcome == "":
 				outcome := "completed"
-				if observed.status >= 400 {
+				if observed.Status >= 400 {
 					outcome = "rejected"
 				}
-				span.SetAttributes(attribute.String("antnest.outcome", outcome))
+				span.SetAttributes(semconv.AliasAttributes(attribute.String(semconv.AntnestOutcome, outcome))...)
 			}
 			span.End()
-			httpRequests.Add(ctx, 1, metric.WithAttributes(attributes...))
-			httpDuration.Record(ctx, time.Since(started).Seconds(), metric.WithAttributes(attributes...))
+			httpRequests.Add(ctx, 1, metric.WithAttributes(semconv.MetricAttributes(attributes...)...))
+			httpDuration.Record(ctx, time.Since(started).Seconds(), metric.WithAttributes(semconv.MetricAttributes(attributes...)...))
 			if panicValue != nil {
 				panic(panicValue)
 			}
 		}()
 		next.ServeHTTP(observed, instrumented)
-		if observed.status == 0 {
-			observed.status = http.StatusOK
-		}
 	})
 }
 
@@ -94,64 +92,9 @@ func normalizedRoute(pattern string) string {
 	return pattern
 }
 
-type requestCounter struct {
-	io.ReadCloser
-	observation *httpObservation
-}
-
-func (r *requestCounter) Read(p []byte) (int, error) {
-	n, err := r.ReadCloser.Read(p)
-	r.observation.requestBytes += int64(n)
-	return n, err
-}
-
 type statusWriter struct {
-	http.ResponseWriter
+	*semconv.ServerWriter
 	observation *httpObservation
-	ctx         context.Context
-	status      int
-	bytes       int64
-	err         error
-}
-
-func (w *statusWriter) Unwrap() http.ResponseWriter {
-	return w.ResponseWriter
-}
-
-func (w *statusWriter) WriteHeader(status int) {
-	if w.status != 0 {
-		return
-	}
-	if status >= 200 || status == http.StatusSwitchingProtocols {
-		w.status = status
-	}
-	w.ResponseWriter.WriteHeader(status)
-}
-
-func (w *statusWriter) Write(p []byte) (int, error) {
-	if w.status == 0 {
-		w.WriteHeader(http.StatusOK)
-	}
-	n, err := w.ResponseWriter.Write(p)
-	w.bytes += int64(n)
-	if err != nil {
-		w.err = err
-	}
-	return n, err
-}
-func (w *statusWriter) FlushError() error {
-	if w.status == 0 {
-		w.WriteHeader(http.StatusOK)
-	}
-	err := http.NewResponseController(w.ResponseWriter).Flush()
-	if err != nil {
-		w.err = err
-	}
-	return err
-}
-func (w *statusWriter) Flush() { _ = w.FlushError() }
-func (w *statusWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
-	return http.NewResponseController(w.ResponseWriter).Hijack()
 }
 
 func mustCounter(instrument metric.Int64Counter, err error) metric.Int64Counter {

@@ -18,6 +18,15 @@ func StartServer(
 	propagator propagation.TextMapPropagator,
 	options ...trace.SpanStartOption,
 ) (context.Context, trace.Span) {
+	return StartServerWithTracer(request, otel.Tracer(instrumentation), propagator, options...)
+}
+
+func StartServerWithTracer(
+	request *http.Request,
+	tracer trace.Tracer,
+	propagator propagation.TextMapPropagator,
+	options ...trace.SpanStartOption,
+) (context.Context, trace.Span) {
 	if propagator == nil {
 		propagator = propagation.TraceContext{}
 	}
@@ -29,7 +38,7 @@ func StartServer(
 		[]trace.SpanStartOption{trace.WithSpanKind(trace.SpanKindServer)},
 		options...,
 	)
-	return otel.Tracer(instrumentation).Start(ctx, "HTTP "+request.Method, options...)
+	return tracer.Start(ctx, "HTTP "+request.Method, options...)
 }
 
 func CloneRequest(

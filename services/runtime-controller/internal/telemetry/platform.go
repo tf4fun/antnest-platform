@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"time"
 
+	semconv "github.com/tf4fun/antnest-platform/libs/go/telemetry"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
@@ -54,10 +55,10 @@ func (p *ObservedPlatform) DeploymentDigest(value deployment.Deployment) (string
 func (p *ObservedPlatform) ResolveImage(ctx context.Context, reference string) (platform.ImageResolution, error) {
 	started := time.Now()
 	ctx, span := platformTracer.Start(ctx, "runtime.platform.resolve_image")
-	span.SetAttributes(attribute.String("antnest.runtime.image.reference", SafeValue(reference)))
+	span.SetAttributes(semconv.AliasAttributes(attribute.String(semconv.AntnestRuntimeImageReference, SafeValue(reference)))...)
 	image, err := p.next.ResolveImage(ctx, reference)
 	if err == nil {
-		span.SetAttributes(attribute.String("antnest.runtime.image.id", SafeValue(image.ImageRef)))
+		span.SetAttributes(semconv.AliasAttributes(attribute.String(semconv.AntnestRuntimeImageId, SafeValue(image.ImageRef)))...)
 	}
 	p.finish(ctx, span, started, "resolve_image", effectResult(err), err)
 	return image, err
@@ -68,11 +69,11 @@ func (p *ObservedPlatform) Create(
 ) deployment.EffectOutcome {
 	key := deployment.Key{AgentID: value.RuntimeSpec.AgentID, Generation: value.RuntimeSpec.Generation}
 	return p.mutate(ctx, "create", key, func(operationCtx context.Context) deployment.EffectOutcome {
-		trace.SpanFromContext(operationCtx).SetAttributes(
-			attribute.String("antnest.runtime.image.reference", SafeValue(value.ImageReference)),
-			attribute.String("antnest.runtime.image.id", SafeValue(value.ImageRef)),
-			attribute.String("antnest.runtime.spec_digest", SafeValue(digest)),
-		)
+		trace.SpanFromContext(operationCtx).SetAttributes(semconv.AliasAttributes(
+			attribute.String(semconv.AntnestRuntimeImageReference, SafeValue(value.ImageReference)),
+			attribute.String(semconv.AntnestRuntimeImageId, SafeValue(value.ImageRef)),
+			attribute.String(semconv.AntnestRuntimeSpecDigest, SafeValue(digest)),
+		)...)
 		return p.next.Create(operationCtx, value, digest)
 	})
 }
@@ -84,13 +85,13 @@ func (p *ObservedPlatform) Inspect(
 	ctx, span := platformTracer.Start(ctx, "runtime.platform.inspect")
 	setRuntimeAttributes(span, key)
 	inspection, err := p.next.Inspect(ctx, key)
-	span.SetAttributes(
-		attribute.String("antnest.runtime.platform_resource_id", SafeValue(inspection.PlatformResourceID)),
-		attribute.String("antnest.runtime.execution_id", SafeValue(inspection.RuntimeExecutionID)),
-		attribute.String("antnest.runtime.health", SafeValue(string(inspection.Health))),
-		attribute.String("antnest.runtime.platform_phase", SafeValue(string(inspection.PlatformPhase))),
-		attribute.String("antnest.runtime.spec_digest", SafeValue(inspection.SpecDigest)),
-	)
+	span.SetAttributes(semconv.AliasAttributes(
+		attribute.String(semconv.AntnestRuntimePlatformResourceId, SafeValue(inspection.PlatformResourceID)),
+		attribute.String(semconv.AntnestRuntimeExecutionId, SafeValue(inspection.RuntimeExecutionID)),
+		attribute.String(semconv.AntnestRuntimeHealth, SafeValue(string(inspection.Health))),
+		attribute.String(semconv.AntnestRuntimePlatformPhase, SafeValue(string(inspection.PlatformPhase))),
+		attribute.String(semconv.AntnestRuntimeSpecDigest, SafeValue(inspection.SpecDigest)),
+	)...)
 	p.finish(ctx, span, started, "inspect", effectResult(err), err)
 	return inspection, err
 }
@@ -172,14 +173,14 @@ func (p *ObservedPlatform) finishSession(
 		)
 	}
 	attributes := []attribute.KeyValue{
-		attribute.String("antnest.platform", p.platform),
-		attribute.String("antnest.platform.operation", operation),
-		attribute.String("antnest.result", result),
+		attribute.String(semconv.AntnestPlatform, p.platform),
+		attribute.String(semconv.AntnestPlatformOperation, operation),
+		attribute.String(semconv.AntnestOutcome, result),
 	}
 	metricCtx := context.WithoutCancel(ctx)
-	platformCalls.Add(metricCtx, 1, metric.WithAttributes(attributes...))
+	platformCalls.Add(metricCtx, 1, metric.WithAttributes(semconv.MetricAttributes(attributes...)...))
 	platformDuration.Record(
-		metricCtx, time.Since(started).Seconds(), metric.WithAttributes(attributes...),
+		metricCtx, time.Since(started).Seconds(), metric.WithAttributes(semconv.MetricAttributes(attributes...)...),
 	)
 }
 
@@ -206,7 +207,7 @@ func (p *ObservedPlatform) mutate(
 	ctx, span := platformTracer.Start(ctx, "runtime.platform."+operation)
 	setRuntimeAttributes(span, key)
 	outcome := execute(ctx)
-	span.SetAttributes(attribute.String("antnest.error.code", SafeValue(outcome.Code)))
+	span.SetAttributes(semconv.AliasAttributes(attribute.String(semconv.AntnestErrorCode, SafeValue(outcome.Code)))...)
 	result := string(outcome.State)
 	if result == "" {
 		result = "invalid"
@@ -235,19 +236,19 @@ func (p *ObservedPlatform) finish(
 	err error,
 ) {
 	attributes := []attribute.KeyValue{
-		attribute.String("antnest.platform", p.platform),
-		attribute.String("antnest.platform.operation", operation),
-		attribute.String("antnest.result", result),
+		attribute.String(semconv.AntnestPlatform, p.platform),
+		attribute.String(semconv.AntnestPlatformOperation, operation),
+		attribute.String(semconv.AntnestOutcome, result),
 	}
-	span.SetAttributes(attributes...)
-	span.SetAttributes(attribute.String("antnest.operation.phase", operation), attribute.String("antnest.outcome", result))
+	span.SetAttributes(semconv.AliasAttributes(attributes...)...)
+	span.SetAttributes(semconv.AliasAttributes(attribute.String(semconv.AntnestOperationPhase, operation), attribute.String(semconv.AntnestOutcome, result))...)
 	if err != nil {
 		RecordFailure(ctx, span, err, operation, "platform_operation_failed", "Runtime deployment platform operation failed")
 	}
 	span.End()
-	platformCalls.Add(ctx, 1, metric.WithAttributes(attributes...))
+	platformCalls.Add(ctx, 1, metric.WithAttributes(semconv.MetricAttributes(attributes...)...))
 	platformDuration.Record(
-		ctx, time.Since(started).Seconds(), metric.WithAttributes(attributes...),
+		ctx, time.Since(started).Seconds(), metric.WithAttributes(semconv.MetricAttributes(attributes...)...),
 	)
 }
 
@@ -259,10 +260,10 @@ func effectResult(err error) string {
 }
 
 func setRuntimeAttributes(span trace.Span, key deployment.Key) {
-	span.SetAttributes(
-		attribute.String("antnest.agent.id", SafeValue(key.AgentID)),
-		attribute.Int64("antnest.runtime.generation", int64(key.Generation)),
-	)
+	span.SetAttributes(semconv.AliasAttributes(
+		attribute.String(semconv.AntnestAgentId, SafeValue(key.AgentID)),
+		attribute.Int64(semconv.AntnestRuntimeGeneration, int64(key.Generation)),
+	)...)
 }
 
 var _ platform.Port = (*ObservedPlatform)(nil)

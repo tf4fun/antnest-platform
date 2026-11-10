@@ -711,6 +711,33 @@ func TestStartServerExtractsRemoteParent(t *testing.T) {
 	}
 }
 
+func TestStartServerWithTracerUsesProvidedTracer(t *testing.T) {
+	recorder := tracetest.NewSpanRecorder()
+	provider := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(recorder))
+	t.Cleanup(func() { _ = provider.Shutdown(context.Background()) })
+	tracer := provider.Tracer("custom-scope")
+	_, parent := tracer.Start(context.Background(), "parent")
+	defer parent.End()
+	parentContext := parent.SpanContext()
+	request := httptest.NewRequest(http.MethodPost, "/x", nil)
+	request.Header.Set("traceparent", "00-"+parentContext.TraceID().String()+"-"+parentContext.SpanID().String()+"-01")
+	ctx, span := StartServerWithTracer(request, tracer, nil)
+	span.End()
+	if span.SpanContext().SpanID() != trace.SpanContextFromContext(ctx).SpanID() {
+		t.Fatal("returned context lost the started span")
+	}
+	ended := recorder.Ended()
+	if len(ended) != 1 || ended[0].Name() != "HTTP POST" {
+		t.Fatalf("ended=%d name wrong", len(ended))
+	}
+	if ended[0].Parent().TraceID() != parentContext.TraceID() || ended[0].Parent().SpanID() != parentContext.SpanID() || !ended[0].Parent().IsRemote() || ended[0].SpanKind() != trace.SpanKindServer {
+		t.Fatal("parent or server kind not honored")
+	}
+	if ended[0].InstrumentationScope().Name != "custom-scope" {
+		t.Fatalf("scope=%q", ended[0].InstrumentationScope().Name)
+	}
+}
+
 func TestStartServerDefaultsToTraceContext(t *testing.T) {
 	recorder := installRecorder(t)
 	request := httptest.NewRequest(http.MethodGet, "http://example.com/x", nil)

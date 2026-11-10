@@ -9,6 +9,7 @@ import (
 	"net/netip"
 	"strings"
 
+	semconv "github.com/tf4fun/antnest-platform/libs/go/telemetry"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
@@ -76,8 +77,8 @@ func (d *Driver) refreshCapacityWithInventory(ctx context.Context, managed []Con
 	network, err := detailer.InspectNetworkDetails(ctx, d.config.ManagementNetwork)
 	if err != nil {
 		slog.WarnContext(ctx, "Runtime management capacity refresh failed",
-			"antnest.controller.scope", d.config.ControllerScope,
-			"antnest.management.network", d.config.ManagementNetwork,
+			semconv.AntnestControllerScope, d.config.ControllerScope,
+			semconv.AntnestManagementNetwork, d.config.ManagementNetwork,
 			"error_class", "management_network_unavailable")
 		d.markCapacityUnknown()
 		return
@@ -85,17 +86,15 @@ func (d *Driver) refreshCapacityWithInventory(ctx context.Context, managed []Con
 	snapshot, err := managementCapacity(network, managed)
 	if err != nil {
 		slog.WarnContext(ctx, "Runtime management IPAM details are ambiguous",
-			"antnest.controller.scope", d.config.ControllerScope,
-			"antnest.management.network", d.config.ManagementNetwork,
+			semconv.AntnestControllerScope, d.config.ControllerScope,
+			semconv.AntnestManagementNetwork, d.config.ManagementNetwork,
 			"error_class", "management_ipam_ambiguous")
 		d.markCapacityUnknown()
 		return
 	}
 	d.capacity.Store(snapshot)
-	attributes := metric.WithAttributes(
-		attribute.String("antnest.controller.scope", d.config.ControllerScope),
-		attribute.String("antnest.management.network", d.config.ManagementNetwork),
-	)
+	labels := semconv.MetricAttributes(attribute.String(semconv.AntnestControllerScope, d.config.ControllerScope), attribute.String(semconv.AntnestManagementNetwork, d.config.ManagementNetwork))
+	attributes := metric.WithAttributes(labels...)
 	managementCapacityGauge.Record(ctx, int64(min(snapshot.RuntimeCapacity, math.MaxInt64)), attributes)
 	managementCountGauge.Record(ctx, int64(min(snapshot.RuntimeCount, math.MaxInt64)), attributes)
 }

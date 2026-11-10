@@ -21,6 +21,8 @@ on:
       - contracts/runtime/**
       - contracts/skill-learning/**
       - contracts/skill-registry/**
+      - contracts/observability/**
+      - libs/go/telemetry/**
       - go.work
       - go.work.sum
       - .golangci.yml
@@ -46,6 +48,8 @@ on:
       - contracts/skill-learning/**
       - contracts/skill-registry/**
       - contracts/runtime-controller/**
+      - contracts/observability/**
+      - libs/go/telemetry/**
       - go.work
       - go.work.sum
       - .golangci.yml

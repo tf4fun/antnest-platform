@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"time"
 
+	semconv "github.com/tf4fun/antnest-platform/libs/go/telemetry"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
@@ -84,7 +85,7 @@ func (r *Runner) Reconcile(ctx context.Context, epoch repository.ObservationEpoc
 	ctx, cancel := context.WithTimeout(ctx, r.reconcileTimeout)
 	defer cancel()
 	ctx, span := monitorTracer.Start(ctx, "runtime.platform.reconcile")
-	span.SetAttributes(attribute.Bool("antnest.observation.after_gap", afterGap))
+	span.SetAttributes(semconv.AliasAttributes(attribute.Bool(semconv.AntnestObservationAfterGap, afterGap))...)
 	defer func() {
 		result := "completed"
 		if resultErr != nil {
@@ -93,9 +94,9 @@ func (r *Runner) Reconcile(ctx context.Context, epoch repository.ObservationEpoc
 			span.RecordError(diagnostics.Error(resultErr))
 			span.SetStatus(codes.Error, "platform reconciliation failed")
 		}
-		span.SetAttributes(attribute.String("antnest.result", result))
+		span.SetAttributes(semconv.AliasAttributes(attribute.String(semconv.AntnestOutcome, result))...)
 		span.End()
-		reconciliations.Add(ctx, 1, metric.WithAttributes(attribute.String("antnest.result", result)))
+		reconciliations.Add(ctx, 1, metric.WithAttributes(semconv.MetricAttributes(attribute.String(semconv.AntnestOutcome, result))...))
 	}()
 	r.health.MarkMonitor(false)
 	if afterGap {
@@ -372,10 +373,10 @@ func (r *Runner) record(
 	ctx context.Context, epoch repository.ObservationEpoch, value deployment.Observation,
 ) (resultErr error) {
 	ctx, span := monitorTracer.Start(ctx, "runtime.platform.observation.process", trace.WithSpanKind(trace.SpanKindConsumer))
-	span.SetAttributes(
-		attribute.String("antnest.agent.id", value.AgentID),
-		attribute.Int64("antnest.runtime.generation", int64(value.Generation)),
-	)
+	span.SetAttributes(semconv.AliasAttributes(
+		attribute.String(semconv.AntnestAgentId, value.AgentID),
+		attribute.Int64(semconv.AntnestRuntimeGeneration, int64(value.Generation)),
+	)...)
 	defer func() {
 		if resultErr != nil {
 			span.RecordError(diagnostics.Error(resultErr))
@@ -402,7 +403,7 @@ func (r *Runner) record(
 			value = current
 		}
 	}
-	span.SetAttributes(observationTraceAttributes(value)...)
+	span.SetAttributes(semconv.AliasAttributes(observationTraceAttributes(value)...)...)
 	if _, err := r.sink.RecordPlatformObservation(ctx, epoch, value); err != nil {
 		return fmt.Errorf("record Runtime platform observation: %w", err)
 	}
@@ -411,11 +412,11 @@ func (r *Runner) record(
 
 func observationTraceAttributes(value deployment.Observation) []attribute.KeyValue {
 	return []attribute.KeyValue{
-		attribute.String("antnest.observation.kind", string(value.Kind)),
-		attribute.String("antnest.observation.source", value.Source),
-		attribute.String("antnest.runtime.spec_digest", value.SpecDigest),
-		attribute.String("antnest.runtime.platform_resource_id", value.PlatformResourceID),
-		attribute.String("antnest.runtime.execution_id", value.RuntimeExecutionID),
+		attribute.String(semconv.AntnestObservationKind, string(value.Kind)),
+		attribute.String(semconv.AntnestObservationSource, value.Source),
+		attribute.String(semconv.AntnestRuntimeSpecDigest, value.SpecDigest),
+		attribute.String(semconv.AntnestRuntimePlatformResourceId, value.PlatformResourceID),
+		attribute.String(semconv.AntnestRuntimeExecutionId, value.RuntimeExecutionID),
 	}
 }
 
