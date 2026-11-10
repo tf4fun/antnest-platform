@@ -1,0 +1,23 @@
+name: Diagnose issue 69 CodeQL flow
+on:
+  push:
+    branches: [diagnose/issue-69-codeql]
+permissions:
+  contents: read
+  security-events: read
+jobs:
+  inspect:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Read CodeQL alert and source flow
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          gh api "repos/$REPO/code-scanning/alerts?ref=refs/pull/617/merge&state=open" --jq '.[] | {number,rule:.rule.id,most_recent_instance}'
+          gh api "repos/$REPO/code-scanning/analyses?ref=refs/pull/617/merge&per_page=20" > "$RUNNER_TEMP/analyses.json"
+          jq '[.[] | {id,category,commit_sha,created_at}]' "$RUNNER_TEMP/analyses.json"
+          analysis_id=$(jq -r '[.[] | select(.category | contains("go"))][0].id // empty' "$RUNNER_TEMP/analyses.json")
+          test -n "$analysis_id"
+          gh api -H 'Accept: application/sarif+json' "repos/$REPO/code-scanning/analyses/$analysis_id" | jq '.runs[].results[] | select(.ruleId == "go/reflected-xss") | {ruleId,message,locations,codeFlows}'
