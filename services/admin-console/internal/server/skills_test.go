@@ -117,12 +117,13 @@ func TestSkillRegistryTerminalCursorsBecomeBrowserNull(t *testing.T) {
 
 func TestSkillPublishUsesTrustedActorAndStableRequestID(t *testing.T) {
 	stub := &skillStub{status: 201, body: `{"skill_id":"skill_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","version":1,"name":"review","description":"Review","artifact_digest":"sha256:a","content_digest":"sha256:b","artifact_size":100,"unpacked_size":200,"package_rules_version":1,"private":"secret"}`}
+	artifact := []byte{'P', 'K', 3, 4, 0, 0xff, '\r', '\n', '<', '&', '>'}
 	h := skillHandler(t, stub)
 	makeBody := func() (*bytes.Buffer, string) {
 		var body bytes.Buffer
 		writer := multipart.NewWriter(&body)
 		part, _ := writer.CreateFormFile("artifact", "review.zip")
-		_, _ = part.Write([]byte("zip bytes"))
+		_, _ = part.Write(artifact)
 		_ = writer.Close()
 		return &body, writer.FormDataContentType()
 	}
@@ -153,6 +154,15 @@ func TestSkillPublishUsesTrustedActorAndStableRequestID(t *testing.T) {
 		}
 		if metadata["organization_id"] != "org-1" || metadata["actor_id"] != "user-admin" || len(metadata) != 3 {
 			t.Fatalf("metadata=%v", metadata)
+		}
+		file, header, err := request.FormFile("artifact")
+		if err != nil {
+			t.Fatal(err)
+		}
+		forwarded, readErr := io.ReadAll(file)
+		closeErr := file.Close()
+		if readErr != nil || closeErr != nil || !bytes.Equal(forwarded, artifact) || header.Filename != "skill.zip" {
+			t.Fatalf("artifact bytes or filename changed: bytes=%x filename=%q read=%v close=%v", forwarded, header.Filename, readErr, closeErr)
 		}
 		ids = append(ids, metadata["request_id"].(string))
 	}

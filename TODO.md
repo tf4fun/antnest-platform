@@ -1,5 +1,7 @@
 # Antnest Platform 全局 TODO
 
+- **#69 Console 上传转发优化（2026-11-10，用户要求优化误报成因）**：独立 Console 前置批次基于 main d4e05333，保留 #617–#628 的服务所有权顺序。multipart artifact 使用标准 io.Copy 从 bytes.Reader 完整转发，沿用 mime/multipart 编码、metadata、boundary、文件名、8 MiB admission、受信 actor 与稳定请求 ID。扩展原真实 handler 测试校验包含 NUL／非 UTF-8／CRLF／HTML 元字符的二进制原样到达上游，重构前后均通过；不声称新增行为 RED。完整 PR 准入交远程；另在原共享基础＋此改动的源码上执行完整 Go CodeQL，独立诊断只保留本地 SARIF，不上传或修改安全告警、不排除规则。诊断证明目标消歧前不认定旧 #58 已解决，不合并／关闭 issue；独立 system E2E 不在本批执行。
+
 - **#15 PR #616 CI 收尾（2026-11-09，用户授权接手）**：原候选 `2cda6bd5` 的 Repository、Egress 两套 Rust 与 PostgreSQL 等检查通过，Integration 被 Controller unit 和 PostgreSQL／Temporal component 中相同的 `TestRouteSchemaEgressRequests/closed`、`release` 拦截。真实 Go client 消费新 active stored-v2 schema 的合法请求样例仍用 `math.MaxUint64`（`18446744073709551615`），已先定向复现两个失败，再同步为 `math.MaxInt64`（`9223372036854775807`），保留实际发送字段、路径和共享 producer schema 验证。盘点其余 uint64 上界：生产溢出保护以及 Node 的越界负例／历史 N-1 正例均有意保留。
 
   完整 `internal/egressclient` 定向包通过；初次完整包在沙箱被 httptest loopback listener 权限阻止，同一命令在沙箱外重跑成功，不把权限失败归因于源码。现有 runtime-plane schema 文件 19/19 通过，涵盖 1／MAX／MAX-1 正例、MAX+1／MaxUint64／非法 token 负例，以及旧 N-1 定义仍接受历史值。gofmt 与 diff clean。仅补 Go 消费方测试输入同步与本交接，不改 Controller 实现、不放宽生产范围或 schema；最终新 head 的完整远程 Repository／Integration、Controller 与 Egress 服务／组件准入待确认。不自动合并或关闭 #15/#83，不运行／查询独立 system E2E；最小日志暂存 `artifacts/verification/issue-15-ci/`。
