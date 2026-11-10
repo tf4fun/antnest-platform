@@ -27,16 +27,20 @@ jobs:
           docker pull ghcr.io/tf4fun/antnest-agent-acp-service@sha256:101f306f99195514dc55ce97593845b08fb81af547202261e30f51af489729d4
           docker tag ghcr.io/tf4fun/antnest-agent-acp-service@sha256:101f306f99195514dc55ce97593845b08fb81af547202261e30f51af489729d4 antnest/agent-acp-service:local
           docker pull postgres:17.11-bookworm
-          docker pull node:24-bookworm-slim
+          docker pull node:24.21.0-bookworm-slim
       - name: Reproduce without publishing private output
         run: |
           set +e
           make e2e-acp-authentication > "$RUNNER_TEMP/acp.private.txt" 2>&1
           status=$?
+          if [ "$status" = 0 ]; then
+            ANTNEST_ACP_TEST_IMAGE=antnest/agent-acp-service:local node tests/e2e/agent-acp-service/runtime-information-docker.mjs >> "$RUNNER_TEMP/acp.private.txt" 2>&1
+            status=$?
+          fi
           node --input-type=module -e '
             import {readFileSync} from "node:fs";
             const value = readFileSync(process.env.RUNNER_TEMP + "/acp.private.txt", "utf8");
-            const locations = [...new Set(value.match(/tests\/[A-Za-z0-9_./-]+:\d+:\d+/g) ?? [])];
+            const locations = [...new Set(value.match(/(?:tests\/|\/app\/)[A-Za-z0-9_./-]+:\d+:\d+/g) ?? [])];
             const codes = [...new Set(value.match(/\b(?:ERR_[A-Z_]+|ECONNREFUSED|ETIMEDOUT|ENOENT)\b/g) ?? [])];
             console.log(JSON.stringify({locations,codes}));
           '
