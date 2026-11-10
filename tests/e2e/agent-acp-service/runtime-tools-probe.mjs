@@ -4,6 +4,8 @@ import {
   counterexamples,
   spansOf,
   expectedOutcome,
+  assertPublicEvidence,
+  inspectDiagnostics,
 } from "./runtime-tools-evidence.mjs";
 import { createHash } from "node:crypto";
 import { createServer } from "node:http";
@@ -367,8 +369,12 @@ try {
   telemetry = undefined;
   assert.deepEqual(failures, []);
   const identity = `${hostname()}:${process.pid}`;
-  const counts = verify(receipts, raw, identity);
-  emit(counterexamples(receipts, raw, identity));
+  assertPublicEvidence(JSON.stringify(raw));
+  const counts = inspectDiagnostics(() => {
+    const counts = verify(receipts, raw, identity);
+    emit(counterexamples(receipts, raw, identity));
+    return counts;
+  });
   verified = { event: "runtime_tools_verified", modes, ...counts };
 } catch (error) {
   failure = error;

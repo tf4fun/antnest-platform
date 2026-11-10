@@ -2,6 +2,12 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 import * as evidence from "./runtime-tools-evidence.mjs";
+import { tsImport } from "../../../services/agent-acp-service/node_modules/tsx/dist/esm/api/index.mjs";
+
+const { normalizeAttributes } = await tsImport(
+  "../../../services/agent-acp-service/src/telemetry/names.ts",
+  import.meta.url,
+);
 
 const registry = JSON.parse(
   readFileSync(
@@ -28,8 +34,14 @@ for (const [method, modes] of [
       });
       const before = JSON.stringify(receipt);
       const expected = evidence.expectedOwnerAttributes(receipt);
+      assert.deepEqual(
+        expected,
+        normalizeAttributes(expected),
+        "probe oracle must include every actual producer alias",
+      );
       const identities = {
         "antnest.runtime.execution.id": receipt.executionId,
+        "antnest.outcome": expected["antnest.outcome"],
         ...(method === "call"
           ? {
               "antnest.run.id": "run-1",
@@ -109,4 +121,73 @@ test("runtimeExecutionAttributes mirrors every published runtime execution alias
     evidence.runtimeExecutionAttributes("execution-test"),
     expected,
   );
+});
+
+test("outcomeAttributes mirrors every published outcome alias", () => {
+  assert.equal(typeof evidence.outcomeAttributes, "function");
+  const names = registry.attributes
+    .filter(
+      (entry) =>
+        entry.name === "antnest.outcome" ||
+        entry.deprecated_alias_of === "antnest.outcome",
+    )
+    .map((entry) => entry.name);
+  for (const outcome of [
+    "ok",
+    "error",
+    "cancelled",
+    "http_error",
+    "rejected",
+    "tool_error",
+  ])
+    assert.deepEqual(
+      evidence.outcomeAttributes(outcome),
+      Object.fromEntries(names.map((name) => [name, outcome])),
+    );
+});
+
+test("span inspection findings remain available without stopping subsequent checks", () => {
+  const finding = new Error("missing diagnostic span");
+  const findings = [];
+  assert.deepEqual(
+    evidence.inspectDiagnostics(
+      () => ({ spans: 3 }),
+      findings.push.bind(findings),
+    ),
+    {
+      diagnostics: "passed",
+      spans: 3,
+    },
+  );
+  assert.deepEqual(
+    evidence.inspectDiagnostics(() => {
+      throw finding;
+    }, findings.push.bind(findings)),
+    {
+      diagnostics: "warning",
+    },
+  );
+  assert.deepEqual(findings, [finding]);
+  // Business and resource checks stay outside the diagnostic catch boundary.
+  assert.throws(() => {
+    evidence.inspectDiagnostics(
+      () => {
+        throw finding;
+      },
+      () => {},
+    );
+    throw new Error("business or cleanup failed");
+  }, /business or cleanup failed/);
+});
+
+test("private diagnostic content is independently blocking before span inspection", () => {
+  let inspected = false;
+  assert.throws(() => {
+    evidence.assertPublicEvidence("PRIVATE-SECRET-CANARY");
+    evidence.inspectDiagnostics(() => {
+      inspected = true;
+    });
+  }, /private content/);
+  assert.equal(inspected, false);
+  evidence.assertPublicEvidence("public diagnostics");
 });

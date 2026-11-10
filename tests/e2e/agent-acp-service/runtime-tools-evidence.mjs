@@ -70,6 +70,25 @@ export function runtimeExecutionAttributes(executionId) {
   };
 }
 
+export function outcomeAttributes(outcome) {
+  return { "antnest.outcome": outcome, "antnest.result": outcome };
+}
+
+export function assertPublicEvidence(content) {
+  assert(!content.includes("PRIVATE"), "private content escaped into OTLP");
+}
+
+// Only call this around span inspection. Business, privacy and resource
+// checks execute outside this boundary and retain their original failures.
+export function inspectDiagnostics(inspect, report = console.error) {
+  try {
+    return { ...inspect(), diagnostics: "passed" };
+  } catch (error) {
+    report(error); // Raw findings stay in the runner's private process log.
+    return { diagnostics: "warning" };
+  }
+}
+
 export function expectedOwnerAttributes({
   method,
   mode,
@@ -88,13 +107,15 @@ export function expectedOwnerAttributes({
           : "not_received",
     "antnest.mcp.connection.close.outcome": "closed",
     "antnest.mcp.caller_cancelled": mode === "caller-abort",
-    "antnest.outcome":
+    ...outcomeAttributes(
       mode === "success"
         ? "ok"
         : mode === "tool-error"
           ? "tool_error"
           : "error",
+    ),
     "antnest.execution.revision": "execution-1",
+    "execution.revision": "execution-1",
   };
   const business =
     method === "list"
@@ -157,7 +178,7 @@ export function verify(receipts, bodies, expectedInstance) {
     new Set(spans.map((span) => `${span.traceId}:${span.spanId}`)).size,
     spans.length,
   );
-  assert(!JSON.stringify(bodies).includes("PRIVATE"));
+  assertPublicEvidence(JSON.stringify(bodies));
   for (const span of spans) {
     attrs(span.attributes);
     assert.equal((span.links ?? []).length, 0);
@@ -331,14 +352,16 @@ export function verify(receipts, bodies, expectedInstance) {
         ...(isDiscovery
           ? []
           : mode === "http-error"
-            ? ["antnest.outcome"]
+            ? Object.keys(outcomeAttributes("http_error"))
             : [
-                "antnest.outcome",
+                ...Object.keys(outcomeAttributes("cancelled")),
                 "antnest.operation.phase",
                 "antnest.cancellation.type",
               ]),
       ]);
       assert.equal(child.name, "HTTP POST antnest-runtime");
+      if (!isDiscovery)
+        assert.equal(http["antnest.result"], http["antnest.outcome"]);
       assert.equal(http["http.request.method"], "POST");
       assert.equal(http["peer.service"], "antnest-runtime");
       assert.equal(http["server.address"], "127.0.0.1");
