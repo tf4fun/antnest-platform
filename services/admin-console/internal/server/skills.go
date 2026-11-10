@@ -223,7 +223,7 @@ func (h *handler) publishSkillTo(w http.ResponseWriter, r *http.Request, actor p
 		part, err = writer.CreateFormFile("artifact", "skill.zip")
 	}
 	if err == nil {
-		_, err = part.Write(archive)
+		_, err = io.Copy(part, bytes.NewReader(archive))
 	}
 	if err == nil {
 		err = writer.Close()
