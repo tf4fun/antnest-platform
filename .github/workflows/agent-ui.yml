@@ -5,6 +5,7 @@ on:
     branches: [main]
     tags: ["v*"]
     paths:
+      - contracts/observability/**
       - services/agent-ui/**
       - tests/integration/agent-ui/**
       - services/agent-acp-service/package.json
@@ -28,6 +29,7 @@ on:
       - .github/workflows/_image.yml
   pull_request:
     paths:
+      - contracts/observability/**
       - services/agent-ui/**
       - tests/integration/agent-ui/**
       - services/agent-acp-service/package.json
