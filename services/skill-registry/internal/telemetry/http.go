@@ -7,19 +7,17 @@ import (
 	"strconv"
 	"strings"
 
-	"go.opentelemetry.io/otel"
+	semconv "github.com/tf4fun/antnest-platform/libs/go/telemetry"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
-	"go.opentelemetry.io/otel/propagation"
 	"go.opentelemetry.io/otel/trace"
 )
 
 func HTTPHandler(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		ctx := propagation.TraceContext{}.Extract(r.Context(), propagation.HeaderCarrier(r.Header))
-		ctx, span := otel.Tracer(instrumentationName+"/http").Start(ctx, "HTTP "+r.Method, trace.WithSpanKind(trace.SpanKindServer))
+		ctx, span := semconv.StartServer(r, instrumentationName+"/http", nil)
 		request := r.WithContext(ctx)
-		observed := &statusWriter{ResponseWriter: w, status: http.StatusOK}
+		observed := semconv.NewServerWriter(w, ctx, nil)
 		defer func() {
 			panicValue := recover()
 			route := strings.TrimSpace(request.Pattern)
@@ -29,16 +27,16 @@ func HTTPHandler(next http.Handler) http.Handler {
 			if route == "" {
 				route = "unmatched"
 			}
-			status := observed.status
+			status := observed.Status
 			if panicValue != nil {
-				if !observed.wroteHeader {
+				if !observed.WroteHeader {
 					status = http.StatusInternalServerError
 				}
 				span.SetStatus(codes.Error, "handler_panic")
 			} else if ctx.Err() != nil {
 				markError(span, ctx.Err(), "request_error")
-			} else if observed.writeErr != nil {
-				markError(span, observed.writeErr, "write_error")
+			} else if observed.WriteErr != nil {
+				markError(span, observed.WriteErr, "write_error")
 			} else if status >= http.StatusInternalServerError {
 				span.SetStatus(codes.Error, strconv.Itoa(status))
 			}
@@ -62,34 +60,4 @@ func markError(span trace.Span, err error, fallback string) {
 	}
 	span.SetAttributes(attribute.String("error.type", kind))
 	span.SetStatus(codes.Error, kind)
-}
-
-type statusWriter struct {
-	http.ResponseWriter
-	status      int
-	wroteHeader bool
-	writeErr    error
-}
-
-func (w *statusWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter }
-
-func (w *statusWriter) WriteHeader(status int) {
-	if w.wroteHeader {
-		return
-	}
-	if status >= 200 {
-		w.status, w.wroteHeader = status, true
-	}
-	w.ResponseWriter.WriteHeader(status)
-}
-
-func (w *statusWriter) Write(body []byte) (int, error) {
-	if !w.wroteHeader {
-		w.WriteHeader(http.StatusOK)
-	}
-	n, err := w.ResponseWriter.Write(body)
-	if err != nil {
-		w.writeErr = err
-	}
-	return n, err
 }

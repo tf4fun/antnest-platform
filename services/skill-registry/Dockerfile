@@ -2,6 +2,7 @@ FROM golang:1.27.1-bookworm AS build
 
 WORKDIR /workspace
 COPY modules/service-authentication ./modules/service-authentication
+COPY libs/go/telemetry ./libs/go/telemetry
 COPY services/skill-registry/go.mod services/skill-registry/go.sum ./services/skill-registry/
 RUN cd services/skill-registry && go mod download
 

@@ -8,10 +8,10 @@ import (
 	"strconv"
 	"sync"
 
+	semconv "github.com/tf4fun/antnest-platform/libs/go/telemetry"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
-	"go.opentelemetry.io/otel/propagation"
 	"go.opentelemetry.io/otel/trace"
 )
 
@@ -67,10 +67,8 @@ func (e *exchange) watchCancellation(ctx context.Context) {
 func (t *transport) RoundTrip(original *http.Request) (*http.Response, error) {
 	ctx, span := otel.Tracer(instrumentationName+"/http").Start(original.Context(), "HTTP "+original.Method+" "+t.service, trace.WithSpanKind(trace.SpanKindClient))
 	e := &exchange{span: span}
-	request := original.Clone(ctx)
-	request.Header.Del("Baggage")
-	span.SetAttributes(attribute.String("http.request.method", request.Method), attribute.String("server.address", request.URL.Hostname()), attribute.String("antnest.target.service", t.service))
-	propagation.TraceContext{}.Inject(ctx, propagation.HeaderCarrier(request.Header))
+	request := semconv.CloneRequest(original, ctx, nil)
+	span.SetAttributes(attribute.String("http.request.method", request.Method), attribute.String("server.address", request.URL.Hostname()), attribute.String(semconv.AntnestTargetService, t.service))
 	response, err := t.base.RoundTrip(request)
 	if err != nil {
 		markError(span, err, "transport_error")
@@ -90,7 +88,29 @@ func (t *transport) RoundTrip(original *http.Request) (*http.Response, error) {
 	if response.Body == nil || response.Body == http.NoBody {
 		e.finish()
 	} else {
-		response.Body = &responseBody{ReadCloser: response.Body, exchange: e}
+		response.Body = semconv.WrapBody(response.Body, semconv.BodyCallbacks{
+			Read: func(_ int, err error) {
+				if err == nil {
+					return
+				}
+				if !errors.Is(err, io.EOF) {
+					markError(e.span, err, "read_error")
+				}
+				e.finish()
+			},
+			Close: func(err error) {
+				if err != nil {
+					markError(e.span, err, "close_error")
+				}
+				e.finish()
+			},
+			Write: func(_ int, err error) {
+				if err != nil {
+					markError(e.span, err, "write_error")
+					e.finish()
+				}
+			},
+		})
 		e.watchCancellation(ctx)
 	}
 	return response, nil
@@ -100,29 +120,4 @@ func (t *transport) CloseIdleConnections() {
 	if closer, ok := t.base.(interface{ CloseIdleConnections() }); ok {
 		closer.CloseIdleConnections()
 	}
-}
-
-type responseBody struct {
-	io.ReadCloser
-	exchange *exchange
-}
-
-func (b *responseBody) Read(data []byte) (int, error) {
-	n, err := b.ReadCloser.Read(data)
-	if err != nil {
-		if !errors.Is(err, io.EOF) {
-			markError(b.exchange.span, err, "read_error")
-		}
-		b.exchange.finish()
-	}
-	return n, err
-}
-
-func (b *responseBody) Close() error {
-	err := b.ReadCloser.Close()
-	if err != nil {
-		markError(b.exchange.span, err, "close_error")
-	}
-	b.exchange.finish()
-	return err
 }
