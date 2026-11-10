@@ -11,6 +11,8 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: c2290a93d14a764fd98aa82e88ec1de4a0627d52
       - uses: actions/setup-node@v7
         with:
           node-version-file: .nvmrc
@@ -43,5 +45,12 @@ jobs:
             const locations = [...new Set(value.match(/(?:tests\/|\/app\/)[A-Za-z0-9_./-]+:\d+:\d+/g) ?? [])];
             const codes = [...new Set(value.match(/\b(?:ERR_[A-Z_]+|ECONNREFUSED|ETIMEDOUT|ENOENT)\b/g) ?? [])];
             console.log(JSON.stringify({locations,codes}));
+            for (const line of value.split("\n")) {
+              try {
+                const row = JSON.parse(line);
+                if (["runtime_information_verified", "runtime_tools_verified", "upgrade_lifecycle_verified", "runtime_information_docker_verified", "runtime_information_cleanup"].includes(row.event)) console.log(JSON.stringify(row));
+                if (row.cleanup === "completed" && row.authenticationChecks) console.log(JSON.stringify({event:"authentication_completed", authenticationChecks:row.authenticationChecks, runtimeChecks:row.runtimeChecks, cleanup:row.cleanup}));
+              } catch {}
+            }
           '
           exit "$status"
