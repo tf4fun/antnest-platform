@@ -3,12 +3,12 @@ package telemetry
 import (
 	"context"
 	"errors"
-	"fmt"
 	"io"
 	"net"
 	"strings"
 
 	"github.com/jackc/pgx/v5/pgconn"
+	semconv "github.com/tf4fun/antnest-platform/libs/go/telemetry"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
@@ -84,23 +84,7 @@ func ErrorSummary(err error) (string, string) {
 }
 
 func causeTypes(err error) []string {
-	var result []string
-	var visit func(error)
-	visit = func(current error) {
-		if current == nil || len(result) >= 4 {
-			return
-		}
-		result = append(result, fmt.Sprintf("%T", current))
-		if joined, ok := current.(interface{ Unwrap() []error }); ok {
-			for _, cause := range joined.Unwrap() {
-				visit(cause)
-			}
-		} else {
-			visit(errors.Unwrap(current))
-		}
-	}
-	visit(err)
-	return result
+	return semconv.CauseTypes(err, 4)
 }
 
 func RecordFailure(span trace.Span, phase string, err error) {
@@ -113,24 +97,24 @@ func recordError(span trace.Span, phase string, err error, failure bool) {
 	}
 	code, message := ErrorSummary(err)
 	attrs := []attribute.KeyValue{
-		attribute.String("error.type", code), attribute.String("antnest.error.code", code),
-		attribute.String("antnest.error.stage", phase), attribute.String("antnest.error.type", code), attribute.String("antnest.error.message", message),
-		attribute.StringSlice("antnest.error.cause_types", causeTypes(err)),
+		attribute.String("error.type", code), attribute.String(semconv.AntnestErrorCode, code),
+		attribute.String(semconv.AntnestErrorStage, phase), attribute.String(semconv.AntnestErrorType, code), attribute.String(semconv.AntnestErrorMessage, message),
+		attribute.StringSlice(semconv.AntnestErrorCauseTypes, causeTypes(err)),
 	}
 	var postgres *pgconn.PgError
 	if errors.As(err, &postgres) && validSQLState(postgres.Code) {
 		attrs = append(attrs, attribute.String("db.response.status_code", postgres.Code))
 	}
 	if reason := passwordAdmissionReason(err); reason != "" {
-		attrs = append(attrs, attribute.String("antnest.password.admission_reason", reason))
+		attrs = append(attrs, attribute.String(semconv.AntnestPasswordAdmissionReason, reason))
 	}
-	span.SetAttributes(attrs...)
-	span.AddEvent("antnest.error", trace.WithAttributes(attrs...))
+	span.SetAttributes(semconv.AliasAttributes(attrs...)...)
+	span.AddEvent(semconv.AntnestError, trace.WithAttributes(semconv.AliasAttributes(attrs...)...))
 	outcome := "error"
 	if code == "cancelled" {
 		outcome = "cancelled"
 	}
-	span.SetAttributes(attribute.String("antnest.outcome", outcome))
+	span.SetAttributes(semconv.AliasAttributes(attribute.String(semconv.AntnestOutcome, outcome))...)
 	if failure {
 		span.SetStatus(codes.Error, code)
 	}

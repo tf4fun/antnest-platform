@@ -1,11 +1,10 @@
 package telemetry
 
 import (
-	"encoding/json"
 	"net/http"
 
+	semconv "github.com/tf4fun/antnest-platform/libs/go/telemetry"
 	"go.opentelemetry.io/otel/attribute"
-	"go.opentelemetry.io/otel/trace"
 )
 
 func observation(w http.ResponseWriter) *statusWriter {
@@ -25,17 +24,17 @@ func observation(w http.ResponseWriter) *statusWriter {
 func RegisterRPC(w http.ResponseWriter, method string) {
 	if observed := observation(w); observed != nil {
 		observed.rpc = true
-		observed.span.SetAttributes(attribute.String("rpc.system.name", "antnest.http-json"),
-			attribute.String("rpc.service", "identity"), attribute.String("rpc.method", method))
+		observed.span.SetAttributes(semconv.AliasAttributes(attribute.String("rpc.system.name", "antnest.http-json"),
+			attribute.String("rpc.service", "identity"), attribute.String("rpc.method", method))...)
 		if method == "local_login" {
-			observed.span.SetAttributes(attribute.String("antnest.identity.authentication_method", "local"))
+			observed.span.SetAttributes(semconv.AliasAttributes(attribute.String(semconv.AntnestIdentityAuthenticationMethod, "local"))...)
 		}
 	}
 }
 
 func ProtocolFacts(w http.ResponseWriter, attributes ...attribute.KeyValue) {
 	if observed := observation(w); observed != nil {
-		observed.span.SetAttributes(attributes...)
+		observed.span.SetAttributes(semconv.AliasAttributes(attributes...)...)
 	}
 }
 
@@ -44,15 +43,10 @@ func ResponseValue(w http.ResponseWriter, value any) { rpcValue(w, "response", v
 
 func rpcValue(w http.ResponseWriter, direction string, value any) {
 	observed := observation(w)
-	if observed == nil || !observed.rpc || !observed.captureRPC || !observed.span.IsRecording() {
+	if observed == nil || !observed.rpc || !observed.captureRPC {
 		return
 	}
-	encoded, err := json.Marshal(value)
-	if err != nil {
-		observed.span.AddEvent("antnest.capture.error", trace.WithAttributes(attribute.String("error.type", "json_encoding")))
-		return
-	}
-	observed.span.AddEvent("antnest."+direction, trace.WithAttributes(attribute.String("antnest.payload.json", string(encoded))))
+	semconv.CaptureRPC(observed.span, true, direction, value)
 }
 
 func ProtocolError(w http.ResponseWriter, err error) {

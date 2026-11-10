@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 
+	semconv "github.com/tf4fun/antnest-platform/libs/go/telemetry"
 	"github.com/tf4fun/antnest-platform/services/identity-service/internal/apierror"
 	"github.com/tf4fun/antnest-platform/services/identity-service/internal/domain"
 	"github.com/tf4fun/antnest-platform/services/identity-service/internal/telemetry"
@@ -113,7 +114,7 @@ func (h *HTTPHandler) withAuthorization(scope string, next authorizedHandler) ht
 			writeServiceError(response, err)
 			return
 		}
-		telemetry.ProtocolFacts(response, attribute.String("antnest.organization.id", authorization.OrganizationID), attribute.String("antnest.identity.token.id", authorization.TokenID), attribute.String("antnest.identity.resource.id", request.PathValue("id")))
+		telemetry.ProtocolFacts(response, attribute.String(semconv.AntnestOrganizationId, authorization.OrganizationID), attribute.String(semconv.AntnestIdentityTokenId, authorization.TokenID), attribute.String(semconv.AntnestIdentityResourceId, request.PathValue("id")))
 		next(response, request, authorization)
 	}
 }

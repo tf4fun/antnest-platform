@@ -142,11 +142,18 @@ func TestRPCContentSwitch(t *testing.T) {
 			span := recorder.Ended()[0]
 			for _, direction := range []string{"request", "response"} {
 				got := eventValue(span, "antnest."+direction, "antnest.payload.json")
-				if enabled && got != body {
-					t.Fatalf("%s contents were projected or limited", direction)
-				}
 				if !enabled && got != "" {
 					t.Fatal("disabled capture produced content")
+				}
+				if enabled {
+					var captured map[string]any
+					if err := json.Unmarshal([]byte(got), &captured); err != nil {
+						t.Fatalf("%s payload not JSON: %v", direction, err)
+					}
+					nested, _ := captured["nested"].(map[string]any)
+					if captured["id"] != "user-42" || nested["new_field"] != strings.Repeat("x", 20000) || nested["password"] != "[REDACTED]" {
+						t.Fatalf("%s contents were projected or limited", direction)
+					}
 				}
 			}
 			if strings.Contains(logs.String(), "CANARY") {

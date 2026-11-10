@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"strings"
 
+	semconv "github.com/tf4fun/antnest-platform/libs/go/telemetry"
 	"github.com/tf4fun/antnest-platform/services/identity-service/internal/telemetry"
 	"go.opentelemetry.io/otel/attribute"
 )
@@ -18,7 +19,7 @@ func (h *Handler) registerObservation(response http.ResponseWriter, request *htt
 		}
 	}
 	if route == "/protocol/oidc/callback" {
-		telemetry.ProtocolFacts(response, attribute.String("antnest.protocol.name", "oidc"),
-			attribute.String("antnest.operation.phase", "oidc_callback"))
+		telemetry.ProtocolFacts(response, attribute.String(semconv.AntnestProtocolName, "oidc"),
+			attribute.String(semconv.AntnestOperationPhase, "oidc_callback"))
 	}
 }
