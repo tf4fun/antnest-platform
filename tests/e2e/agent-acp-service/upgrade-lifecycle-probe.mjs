@@ -3,6 +3,7 @@ import { createRequire } from "node:module";
 import { Worker } from "node:worker_threads";
 import { context, propagation, trace } from "@opentelemetry/api";
 import { core, node, tracing } from "@opentelemetry/sdk-node";
+import { inspectDiagnostics } from "./runtime-tools-evidence.mjs";
 
 // The same probe runs against source locally and compiled production code in
 // the candidate image. Authentication is a controlled port; its real signed
@@ -124,7 +125,7 @@ async function exercise(version, mode) {
     server.observeConnection = () => {
       throw new Error("setup-canary");
     };
-  let worker, timer;
+  let worker, timer, diagnostics;
   const errors = [];
   try {
     await server.listen("127.0.0.1", 0);
@@ -155,8 +156,27 @@ async function exercise(version, mode) {
     clearTimeout(timer);
     await provider.forceFlush();
     const spans = exporter.getFinishedSpans();
-    if (mode === "disabled") assert.equal(spans.length, 0);
-    else {
+    // Check every exported record for private content before optional span
+    // assertions, even if its count/topology differs from the expectation.
+    const records = spans.map((span) => ({
+      version,
+      mode,
+      server: exportSpan(span),
+      client: result.span,
+      client_open_before_server_end: mode === "held",
+    }));
+    assert(
+      !JSON.stringify({ records, client: result.span }).includes("canary"),
+    );
+    for (const record of records)
+      console.log(
+        JSON.stringify({ event: "upgrade_lifecycle_source", ...record }),
+      );
+    diagnostics = inspectDiagnostics(() => {
+      if (mode === "disabled") {
+        assert.equal(spans.length, 0);
+        return;
+      }
       assert.equal(spans.length, 1);
       const span = spans[0];
       assert.equal(span.kind, 1);
@@ -191,18 +211,15 @@ async function exercise(version, mode) {
             10_000_000n,
         );
       }
-      const record = {
+    });
+    console.log(
+      JSON.stringify({
+        event: "upgrade_lifecycle_diagnostics",
         version,
         mode,
-        server: exportSpan(span),
-        client: result.span,
-        client_open_before_server_end: mode === "held",
-      };
-      assert(!JSON.stringify(record).includes("canary"));
-      console.log(
-        JSON.stringify({ event: "upgrade_lifecycle_source", ...record }),
-      );
-    }
+        ...diagnostics,
+      }),
+    );
     assert.equal(result.status, mode === "rejected" ? 401 : 101);
     assert.equal(accepted, mode !== "rejected");
     if (mode === "setup-failed") assert(reported.includes("acp_connect"));
@@ -229,15 +246,20 @@ async function exercise(version, mode) {
   }
   if (errors.length)
     throw new AggregateError(errors, "upgrade lifecycle probe failed");
+  return { version, mode, ...diagnostics };
 }
 
+const results = [];
 for (const version of [1, 2])
   for (const mode of ["held", "setup-failed", "rejected", "disabled"])
-    await exercise(version, mode);
+    results.push(await exercise(version, mode));
 console.log(
   JSON.stringify({
     event: "upgrade_lifecycle_verified",
     scenarios: 8,
-    held_peer_open_before_server_end: 2,
+    diagnostics: results,
+    held_peer_open_before_server_end: results.filter(
+      (row) => row.mode === "held" && row.diagnostics === "passed",
+    ).length,
   }),
 );

@@ -61,3 +61,16 @@ both ACP versions. These checks do not claim cross-service acceptance.
 
 The harness removes its containers, networks and credential directory in finally.
 Bounded evidence belongs under ignored `artifacts/verification/`.
+
+The same `auth-acp` suite then runs Runtime information, tool and WebSocket
+upgrade probes inside the provided production image. Span inspection reports
+`diagnostics: passed|warning` and retains findings in the private process log;
+warnings allow the remaining probes to run. Protocol results, private-content
+checks and actual connection/container cleanup remain blocking. Private-content
+checks run before optional span inspection, so a topology finding cannot mask
+a credential leak.
+
+The fast Repository gate compares the tool probe's expected attributes with
+both the published registry and the actual ACP attribute normalizer, including
+short compatibility aliases. This detects consumer drift during PR admission
+without running the full system E2E suite on every PR.

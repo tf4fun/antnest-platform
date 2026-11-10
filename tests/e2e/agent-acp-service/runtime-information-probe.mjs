@@ -3,7 +3,12 @@ import { createHash } from "node:crypto";
 import { createServer } from "node:http";
 import { hostname } from "node:os";
 import { startTelemetry } from "./dist/telemetry/telemetry.js";
-import { runtimeExecutionAttributes } from "./runtime-tools-evidence.mjs";
+import {
+  runtimeExecutionAttributes,
+  outcomeAttributes,
+  assertPublicEvidence,
+  inspectDiagnostics,
+} from "./runtime-tools-evidence.mjs";
 import { OfficialMcpDialer } from "./dist/adapters/mcp/official-client.js";
 import { McpToolCatalog } from "./dist/adapters/mcp/tool-catalog.js";
 
@@ -405,10 +410,16 @@ function verify(receipts, evidence = raw) {
       "antnest.mcp.caller_cancelled",
       ...(successfulRead(receipt.mode)
         ? []
-        : ["error.type", "antnest.outcome", "antnest.operation.phase"]),
+        : [
+            "error.type",
+            ...Object.keys(outcomeAttributes("error")),
+            "antnest.operation.phase",
+          ]),
     ]);
     for (const [key, value] of Object.entries(identity))
       assert.equal(attrs[key], value);
+    if (!successfulRead(receipt.mode))
+      assert.equal(attrs["antnest.result"], attrs["antnest.outcome"]);
     assert.equal(attrs["antnest.mcp.connection.close.outcome"], "closed");
     assert.equal(
       attrs["antnest.mcp.caller_cancelled"],
@@ -439,12 +450,13 @@ function verify(receipts, evidence = raw) {
     const clientAttrs = attributes(client.attributes);
     attributeKeys(client.attributes, [
       ...httpAttributes,
-      "antnest.outcome",
+      ...Object.keys(outcomeAttributes("cancelled")),
       ...(receipt.mode === "http-error"
         ? []
         : ["antnest.operation.phase", "antnest.cancellation.type"]),
     ]);
     assert.equal(clientAttrs["http.request.method"], "POST");
+    assert.equal(clientAttrs["antnest.result"], clientAttrs["antnest.outcome"]);
     assert.equal(clientAttrs["peer.service"], "antnest-runtime");
     const handshake = children.find((span) => span !== client);
     const handshakeAttrs = attributes(handshake.attributes);
@@ -613,9 +625,8 @@ function verify(receipts, evidence = raw) {
       });
     }
   }
-  assert(
-    !evidence.some((row) => row.body.includes("PRIVATE")),
-    "private content escaped into OTLP",
+  assertPublicEvidence(
+    evidence.map((row) => row.body.toString("utf8")).join(""),
   );
   return {
     traces: new Set(spans.map((span) => span.traceId)).size,
@@ -923,8 +934,14 @@ try {
   await telemetry.shutdown();
   telemetry = undefined;
   assert.deepEqual(failures, []);
-  const counts = verify(receipts);
-  verifyCounterexamples(receipts);
+  // Privacy remains blocking even if an earlier span/topology finding would
+  // otherwise short-circuit the inspector before its final privacy check.
+  assertPublicEvidence(raw.map((row) => row.body.toString("utf8")).join(""));
+  const counts = inspectDiagnostics(() => {
+    const counts = verify(receipts);
+    verifyCounterexamples(receipts);
+    return counts;
+  });
   verified = { event: "runtime_information_verified", modes, ...counts };
 } catch (error) {
   failure = error;
