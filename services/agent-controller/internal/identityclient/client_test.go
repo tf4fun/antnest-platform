@@ -244,6 +244,7 @@ func TestNewRejectsInvalidIdentityEndpoint(t *testing.T) {
 }
 
 func TestResolvePrincipalEmitsBoundedDependencyMetrics(t *testing.T) {
+	t.Setenv("ANTNEST_TELEMETRY_LEGACY_ATTRIBUTES", "true")
 	reader := sdkmetric.NewManualReader()
 	provider := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
 	previous := otel.GetMeterProvider()
@@ -320,8 +321,17 @@ func assertDependencyMetricAttributes(
 		"rpc.method":  "resolve_principal",
 	}
 	values := attributes.ToSlice()
-	if len(values) != 4 {
-		t.Fatalf("Identity dependency metric attributes=%v want four bounded fields", values)
+	wantCount := 5
+	if len(values) != wantCount {
+		t.Fatalf("Identity dependency metric attributes=%v want %d bounded fields", values, wantCount)
+	}
+	canonical, ok := attributes.Value("antnest.outcome")
+	if !ok {
+		t.Fatal("canonical outcome missing")
+	}
+	alias, present := attributes.Value("antnest.result")
+	if !present || (present && alias != canonical) {
+		t.Fatal("outcome alias window or value changed")
 	}
 	for _, value := range values {
 		key := string(value.Key)
@@ -330,7 +340,7 @@ func assertDependencyMetricAttributes(
 			if value.Value.AsString() != want[key] {
 				t.Fatalf("Identity dependency metric %s=%q want=%q", key, value.Value.AsString(), want[key])
 			}
-		case "antnest.result":
+		case "antnest.outcome", "antnest.result":
 			if result := value.Value.AsString(); result != "success" && result != "error" {
 				t.Fatalf("Identity dependency metric result=%q", result)
 			}

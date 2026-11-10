@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 
+	semconv "github.com/tf4fun/antnest-platform/libs/go/telemetry"
 	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/telemetry"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
@@ -26,7 +27,7 @@ func observeProtocolResult(response http.ResponseWriter, ctx context.Context, va
 			outcome = "error"
 		}
 		telemetry.RecordHTTPOutcome(response, outcome)
-		trace.SpanFromContext(ctx).SetAttributes(attribute.String("antnest.error.code", telemetry.SafeCode(result.Code)), attribute.String("antnest.outcome", outcome))
+		trace.SpanFromContext(ctx).SetAttributes(semconv.AliasAttributes(attribute.String(semconv.AntnestErrorCode, telemetry.SafeCode(result.Code)), attribute.String(semconv.AntnestOutcome, outcome))...)
 		return
 	case operationResponse:
 		operation = result
@@ -36,7 +37,7 @@ func observeProtocolResult(response http.ResponseWriter, ctx context.Context, va
 		return
 	}
 	span := trace.SpanFromContext(ctx)
-	span.SetAttributes(attribute.String("antnest.operation.id", operation.RequestID), attribute.String("antnest.operation.phase", string(operation.Phase)), attribute.String("antnest.outcome", string(operation.State)))
+	span.SetAttributes(semconv.AliasAttributes(attribute.String(semconv.AntnestOperationId, operation.RequestID), attribute.String(semconv.AntnestOperationPhase, string(operation.Phase)), attribute.String(semconv.AntnestOutcome, string(operation.State)))...)
 	if operation.State == "failed" {
 		telemetry.RecordHTTPOutcome(response, "error")
 		telemetry.RecordBoundaryError(ctx, errors.New("lifecycle result failed"), string(operation.Phase), operation.ErrorCode, "lifecycle operation failed", true)

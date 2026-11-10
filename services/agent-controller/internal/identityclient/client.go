@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	semconv "github.com/tf4fun/antnest-platform/libs/go/telemetry"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
@@ -29,10 +30,10 @@ var identityIDPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,199}$`)
 var (
 	meter    = otel.Meter("github.com/tf4fun/antnest-platform/agent-controller/identityclient")
 	requests = mustCounter(meter.Int64Counter(
-		"antnest.agent_controller.dependency.requests",
+		semconv.AntnestAgentControllerDependencyRequests,
 	))
 	duration = mustHistogram(meter.Float64Histogram(
-		"antnest.agent_controller.dependency.duration",
+		semconv.AntnestAgentControllerDependencyDuration,
 		metric.WithUnit("s"),
 	))
 )
@@ -96,17 +97,17 @@ func (client *Client) invoke(
 		attributes := []attribute.KeyValue{
 			attribute.String("rpc.service", "identity-service"),
 			attribute.String("rpc.method", method),
-			attribute.String("antnest.result", result),
+			attribute.String(semconv.AntnestOutcome, result),
 		}
-		span.SetAttributes(attributes...)
+		span.SetAttributes(semconv.AliasAttributes(attributes...)...)
 		if resultErr != nil {
-			span.SetAttributes(attribute.String("error.type", errorClass))
+			span.SetAttributes(semconv.AliasAttributes(attribute.String("error.type", errorClass))...)
 		}
 		span.Finish(resultErr)
 		// Metrics keep a bounded success bucket; successful spans carry no error.
 		attributes = append(attributes, attribute.String("error.type", errorClass))
-		requests.Add(ctx, 1, metric.WithAttributes(attributes...))
-		duration.Record(ctx, time.Since(started).Seconds(), metric.WithAttributes(attributes...))
+		requests.Add(ctx, 1, metric.WithAttributes(semconv.MetricAttributes(attributes...)...))
+		duration.Record(ctx, time.Since(started).Seconds(), metric.WithAttributes(semconv.MetricAttributes(attributes...)...))
 	}()
 
 	payload, err := json.Marshal(input)
@@ -126,7 +127,7 @@ func (client *Client) invoke(
 	if err != nil {
 		return dependencyFailure("identity_unavailable", true, err)
 	}
-	span.SetAttributes(attribute.Int("http.response.status_code", response.StatusCode))
+	span.SetAttributes(semconv.AliasAttributes(attribute.Int("http.response.status_code", response.StatusCode))...)
 	responseBody, err := io.ReadAll(io.LimitReader(response.Body, maximumResponseBytes+1))
 	closeErr := response.Body.Close()
 	if err != nil || closeErr != nil || len(responseBody) > maximumResponseBytes {

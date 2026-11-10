@@ -48,6 +48,7 @@ require (
 	github.com/opencontainers/go-digest v1.0.0 // indirect
 	github.com/robfig/cron v1.2.0 // indirect
 	github.com/stretchr/objx v0.5.3 // indirect
+	github.com/tf4fun/antnest-platform/libs/go/telemetry v0.0.0
 	go.opentelemetry.io/auto/sdk v1.2.1 // indirect
 	go.opentelemetry.io/otel/exporters/otlp/otlptrace v1.47.0 // indirect
 	go.opentelemetry.io/otel/log v1.47.0 // indirect
@@ -66,3 +67,5 @@ require (
 replace github.com/tf4fun/antnest-platform/modules/service-authentication => ../../modules/service-authentication
 
 replace github.com/tf4fun/antnest-platform/modules/secret-encryption => ../../modules/secret-encryption
+
+replace github.com/tf4fun/antnest-platform/libs/go/telemetry => ../../libs/go/telemetry

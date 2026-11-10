@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	semconv "github.com/tf4fun/antnest-platform/libs/go/telemetry"
 	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/ports"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
@@ -208,14 +209,14 @@ func (worker *ExecutionPublicationWorker) publishOrganization(ctx context.Contex
 	// A retained SpanContext alone is nonrecording, so driver SQL would be
 	// suppressed. Each bounded attempt owns the source/HTTP/acknowledgement work.
 	ctx, span := worker.tracer.Start(trace.ContextWithSpanContext(ctx, parent), "agent_controller.execution_publication",
-		trace.WithAttributes(attribute.String("antnest.organization.id", organization)))
+		trace.WithAttributes(semconv.AliasAttributes(attribute.String(semconv.AntnestOrganizationId, organization))...))
 	defer span.End()
 	acknowledgement, err := worker.publisher.Publish(ctx, organization)
 	if err != nil {
 		span.SetStatus(codes.Error, "execution_publication_failed")
-		span.SetAttributes(attribute.String("error.type", "execution_publication_failed"), attribute.String("antnest.outcome", "error"))
+		span.SetAttributes(semconv.AliasAttributes(attribute.String("error.type", "execution_publication_failed"), attribute.String(semconv.AntnestOutcome, "error"))...)
 		return err
 	}
-	span.SetAttributes(attribute.Int64("antnest.configuration.applied_revision", acknowledgement.AppliedRevision))
+	span.SetAttributes(semconv.AliasAttributes(attribute.Int64(semconv.AntnestConfigurationAppliedRevision, acknowledgement.AppliedRevision))...)
 	return nil
 }

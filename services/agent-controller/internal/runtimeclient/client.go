@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	semconv "github.com/tf4fun/antnest-platform/libs/go/telemetry"
 	"go.opentelemetry.io/otel/attribute"
 
 	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/domain"
@@ -157,7 +158,7 @@ func (client *Client) InspectRuntime(
 ) (result ports.RuntimeInspection, resultErr error) {
 	ctx, cancel := context.WithTimeout(ctx, client.timeout)
 	defer cancel()
-	ctx, span := telemetry.StartHTTPCall(ctx, "inspect", []attribute.KeyValue{attribute.String("antnest.agent.id", agentID)})
+	ctx, span := telemetry.StartHTTPCall(ctx, "inspect", []attribute.KeyValue{attribute.String(semconv.AntnestAgentId, agentID)})
 	defer func() { span.Finish(resultErr) }()
 
 	endpoint := *client.baseURL
@@ -170,7 +171,7 @@ func (client *Client) InspectRuntime(
 	if err != nil {
 		return ports.RuntimeInspection{}, dependencyFailure("control_plane_unavailable", true, err)
 	}
-	span.SetAttributes(attribute.Int("http.response.status_code", response.StatusCode))
+	span.SetAttributes(semconv.AliasAttributes(attribute.Int("http.response.status_code", response.StatusCode))...)
 	responseBody, err := io.ReadAll(io.LimitReader(response.Body, maximumResponseBytes+1))
 	closeErr := response.Body.Close()
 	if err != nil || closeErr != nil || len(responseBody) > maximumResponseBytes {
@@ -207,7 +208,7 @@ func (client *Client) callRuntimeOperation(
 	ctx, cancel := context.WithTimeout(ctx, client.timeout)
 	defer cancel()
 	ctx, span := telemetry.StartHTTPCall(ctx, action, []attribute.KeyValue{
-		attribute.String("antnest.agent.id", agentID), attribute.String("antnest.operation.request_id", requestID), attribute.String("antnest.request.id", requestID),
+		attribute.String(semconv.AntnestAgentId, agentID), attribute.String(semconv.AntnestRequestId, requestID),
 	})
 	defer func() {
 		observedErr := resultErr
@@ -233,7 +234,7 @@ func (client *Client) callRuntimeOperation(
 	if err != nil {
 		return ports.RuntimeOperation{}, dependencyFailure("control_plane_unavailable", true, err)
 	}
-	span.SetAttributes(attribute.Int("http.response.status_code", response.StatusCode))
+	span.SetAttributes(semconv.AliasAttributes(attribute.Int("http.response.status_code", response.StatusCode))...)
 	responseBody, err := io.ReadAll(io.LimitReader(response.Body, maximumResponseBytes+1))
 	closeErr := response.Body.Close()
 	if err != nil || closeErr != nil || len(responseBody) > maximumResponseBytes {

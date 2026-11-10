@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	semconv "github.com/tf4fun/antnest-platform/libs/go/telemetry"
 	"go.opentelemetry.io/otel/attribute"
 
 	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/ports"
@@ -121,7 +122,7 @@ func (client *Client) readAgentNetwork(
 ) (result ports.NetworkAttachment, resultErr error) {
 	ctx, cancel := context.WithTimeout(ctx, client.timeout)
 	defer cancel()
-	ctx, span := telemetry.StartHTTPCall(ctx, operation, []attribute.KeyValue{attribute.String("antnest.agent.id", agentID)})
+	ctx, span := telemetry.StartHTTPCall(ctx, operation, []attribute.KeyValue{attribute.String(semconv.AntnestAgentId, agentID)})
 	defer func() { span.Finish(resultErr) }()
 
 	endpoint := *client.baseURL
@@ -134,7 +135,7 @@ func (client *Client) readAgentNetwork(
 	if err != nil {
 		return ports.NetworkAttachment{}, dependencyFailure("control_plane_unavailable", true, err)
 	}
-	span.SetAttributes(attribute.Int("http.response.status_code", response.StatusCode))
+	span.SetAttributes(semconv.AliasAttributes(attribute.Int("http.response.status_code", response.StatusCode))...)
 	body, err := io.ReadAll(io.LimitReader(response.Body, maximumResponseBytes+1))
 	closeErr := response.Body.Close()
 	if err != nil || closeErr != nil || len(body) > maximumResponseBytes {
@@ -164,7 +165,7 @@ func (client *Client) readAgentNetworkAction(
 ) (result ports.NetworkAttachment, resultErr error) {
 	ctx, cancel := context.WithTimeout(ctx, client.timeout)
 	defer cancel()
-	ctx, span := telemetry.StartHTTPCall(ctx, operation, []attribute.KeyValue{attribute.String("antnest.agent.id", agentID)})
+	ctx, span := telemetry.StartHTTPCall(ctx, operation, []attribute.KeyValue{attribute.String(semconv.AntnestAgentId, agentID)})
 	defer func() { span.Finish(resultErr) }()
 
 	endpoint := *client.baseURL
@@ -182,7 +183,7 @@ func (client *Client) readAgentNetworkAction(
 	if err != nil {
 		return ports.NetworkAttachment{}, dependencyFailure("control_plane_unavailable", true, err)
 	}
-	span.SetAttributes(attribute.Int("http.response.status_code", response.StatusCode))
+	span.SetAttributes(semconv.AliasAttributes(attribute.Int("http.response.status_code", response.StatusCode))...)
 	responseBody, err := io.ReadAll(io.LimitReader(response.Body, maximumResponseBytes+1))
 	closeErr := response.Body.Close()
 	if err != nil || closeErr != nil || len(responseBody) > maximumResponseBytes {
@@ -208,7 +209,7 @@ func (client *Client) writeAgentNetwork(
 ) (result ports.NetworkAttachment, resultErr error) {
 	ctx, cancel := context.WithTimeout(ctx, client.timeout)
 	defer cancel()
-	ctx, span := telemetry.StartHTTPCall(ctx, operation, []attribute.KeyValue{attribute.String("antnest.agent.id", agentID)})
+	ctx, span := telemetry.StartHTTPCall(ctx, operation, []attribute.KeyValue{attribute.String(semconv.AntnestAgentId, agentID)})
 	defer func() { span.Finish(resultErr) }()
 
 	endpoint := *client.baseURL
@@ -222,7 +223,7 @@ func (client *Client) writeAgentNetwork(
 	if err != nil {
 		return ports.NetworkAttachment{}, dependencyFailure("control_plane_unavailable", true, err)
 	}
-	span.SetAttributes(attribute.Int("http.response.status_code", response.StatusCode))
+	span.SetAttributes(semconv.AliasAttributes(attribute.Int("http.response.status_code", response.StatusCode))...)
 	responseBody, err := io.ReadAll(io.LimitReader(response.Body, maximumResponseBytes+1))
 	closeErr := response.Body.Close()
 	if err != nil || closeErr != nil || len(responseBody) > maximumResponseBytes {

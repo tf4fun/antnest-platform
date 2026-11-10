@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	semconv "github.com/tf4fun/antnest-platform/libs/go/telemetry"
 	"go.opentelemetry.io/otel/attribute"
 
 	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/ports"
@@ -45,7 +46,7 @@ func (client *Client) ApplyExecutionSnapshot(ctx context.Context, snapshot ports
 	ctx, cancel := context.WithTimeout(ctx, client.timeout)
 	defer cancel()
 	ctx, call := telemetry.StartHTTPCall(ctx, "apply_execution_snapshot", []attribute.KeyValue{
-		attribute.String("antnest.organization.id", snapshot.OrganizationID), attribute.Int64("antnest.configuration.revision", snapshot.Revision),
+		attribute.String(semconv.AntnestOrganizationId, snapshot.OrganizationID), attribute.Int64(semconv.AntnestConfigurationRevision, snapshot.Revision),
 	})
 	defer func() { call.Finish(resultErr) }()
 	if err := client.exchange(ctx, "apply-execution-snapshot", snapshot, &result); err != nil {
@@ -54,7 +55,7 @@ func (client *Client) ApplyExecutionSnapshot(ctx context.Context, snapshot ports
 	if result.OrganizationID != snapshot.OrganizationID || !appliedRevision(result.AppliedRevision, snapshot.Revision) {
 		return ports.ExecutionAcknowledgement{}, failure("invalid_response", true, nil)
 	}
-	call.SetAttributes(attribute.Int64("antnest.configuration.applied_revision", result.AppliedRevision))
+	call.SetAttributes(semconv.AliasAttributes(attribute.Int64(semconv.AntnestConfigurationAppliedRevision, result.AppliedRevision))...)
 	return result, nil
 }
 
@@ -66,8 +67,8 @@ func (client *Client) SettleAgent(ctx context.Context, request ports.AgentSettle
 	ctx, cancel := context.WithTimeout(ctx, client.timeout)
 	defer cancel()
 	ctx, call := telemetry.StartHTTPCall(ctx, "settle_agent", []attribute.KeyValue{
-		attribute.String("antnest.organization.id", request.OrganizationID), attribute.String("antnest.agent.id", request.AgentID),
-		attribute.String("antnest.operation.id", request.OperationID), attribute.Int64("antnest.configuration.revision", request.MinimumRevision),
+		attribute.String(semconv.AntnestOrganizationId, request.OrganizationID), attribute.String(semconv.AntnestAgentId, request.AgentID),
+		attribute.String(semconv.AntnestOperationId, request.OperationID), attribute.Int64(semconv.AntnestConfigurationRevision, request.MinimumRevision),
 	})
 	defer func() { call.Finish(resultErr) }()
 	if err := client.exchange(ctx, "settle-agent", request, &result); err != nil {
@@ -76,7 +77,7 @@ func (client *Client) SettleAgent(ctx context.Context, request ports.AgentSettle
 	if !appliedRevision(result.AppliedRevision, request.MinimumRevision) || !settlementOutcome(result.Outcome) {
 		return ports.AgentSettlementResult{}, failure("invalid_response", true, nil)
 	}
-	call.SetAttributes(attribute.Int64("antnest.configuration.applied_revision", result.AppliedRevision), attribute.String("antnest.settlement.outcome", result.Outcome))
+	call.SetAttributes(semconv.AliasAttributes(attribute.Int64(semconv.AntnestConfigurationAppliedRevision, result.AppliedRevision), attribute.String(semconv.AntnestSettlementOutcome, result.Outcome))...)
 	return result, nil
 }
 

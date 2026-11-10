@@ -3,6 +3,7 @@ package telemetry
 import (
 	"context"
 
+	semconv "github.com/tf4fun/antnest-platform/libs/go/telemetry"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
@@ -12,14 +13,14 @@ import (
 
 var eventJournalAppends = mustCounter(
 	otel.Meter(instrumentationName+"/event").Int64Counter(
-		"antnest.agent_controller.event_journal.appends",
+		semconv.AntnestAgentControllerEventJournalAppends,
 		metric.WithDescription("Committed Agent event journal appends"),
 	),
 )
 
 var eventNotifierTransitions = mustCounter(
 	otel.Meter(instrumentationName+"/event").Int64Counter(
-		"antnest.agent_controller.event_notifier.transitions",
+		semconv.AntnestAgentControllerEventNotifierTransitions,
 		metric.WithDescription("Agent event notifier connection transitions"),
 	),
 )
@@ -33,7 +34,7 @@ var lifecycleQuarantined = mustCounter(
 
 func RecordAgentEventAppend(ctx context.Context, eventType string) {
 	eventJournalAppends.Add(
-		ctx, 1, metric.WithAttributes(attribute.String("antnest.event.type", eventType)),
+		ctx, 1, metric.WithAttributes(semconv.MetricAttributes(attribute.String(semconv.AntnestEventType, eventType))...),
 	)
 	if eventType == ports.EventAgentLifecycleQuarantined {
 		lifecycleQuarantined.Add(ctx, 1)
@@ -43,6 +44,6 @@ func RecordAgentEventAppend(ctx context.Context, eventType string) {
 func RecordAgentEventNotifierTransition(state string) {
 	eventNotifierTransitions.Add(
 		context.Background(), 1,
-		metric.WithAttributes(attribute.String("antnest.event_notifier.state", state)),
+		metric.WithAttributes(semconv.MetricAttributes(attribute.String(semconv.AntnestEventNotifierState, state))...),
 	)
 }

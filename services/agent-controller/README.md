@@ -5,6 +5,11 @@ Platform. It turns an immutable Agent specification into one published
 executable Agent by coordinating Runtime Controller and Runtime Egress. It is
 written in Go.
 
+HTTP trace plumbing (server span start, request cloning, body wrapping, the
+response status writer and RPC payload capture) uses the shared Go telemetry
+module in `libs/go/telemetry`; telemetry names come from its generated
+registry constants.
+
 Lifecycle commands are durable Temporal workflows. PostgreSQL stores business
 state, immutable revisions and audit history, not retry queues or worker
 leases. Resource creation completes separately from executable availability:

@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"time"
 
+	semconv "github.com/tf4fun/antnest-platform/libs/go/telemetry"
 	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/ports"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
@@ -129,7 +130,7 @@ func (worker *IdentityRevocationWorker) schedule(ctx context.Context, item ports
 		AgentID:   item.AgentID, OwnerRevocationSequence: item.Sequence,
 	})
 	if errors.Is(err, ErrAgentNotReady) || errors.Is(err, ErrLifecycleConflict) || errors.Is(err, ports.ErrConcurrentChange) || errors.Is(err, ErrAgentNotFound) {
-		span.SetAttributes(attribute.String("antnest.result", "pending"))
+		span.SetAttributes(semconv.AliasAttributes(attribute.String(semconv.AntnestOutcome, "pending"))...)
 		return nil
 	}
 	if err != nil {

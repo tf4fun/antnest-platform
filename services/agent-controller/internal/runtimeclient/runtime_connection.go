@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"strings"
 
+	semconv "github.com/tf4fun/antnest-platform/libs/go/telemetry"
 	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/ports"
 	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/responsejson"
 	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/telemetry"
@@ -31,7 +32,7 @@ func (client *Client) ResolveRuntimeConnection(ctx context.Context, agentID, rev
 	}
 	ctx, cancel := context.WithTimeout(ctx, client.timeout)
 	defer cancel()
-	ctx, span := telemetry.StartHTTPCall(ctx, "resolve_runtime_connection", []attribute.KeyValue{attribute.String("antnest.agent.id", agentID)})
+	ctx, span := telemetry.StartHTTPCall(ctx, "resolve_runtime_connection", []attribute.KeyValue{attribute.String(semconv.AntnestAgentId, agentID)})
 	defer func() { span.Finish(resultErr) }()
 	payload := struct {
 		RuntimeRevision     string `json:"runtime_revision"`
@@ -54,7 +55,7 @@ func (client *Client) ResolveRuntimeConnection(ctx context.Context, agentID, rev
 	if err != nil {
 		return result, connectionFailure("control_plane_unavailable", true, err)
 	}
-	span.SetAttributes(attribute.Int("http.response.status_code", response.StatusCode))
+	span.SetAttributes(semconv.AliasAttributes(attribute.Int("http.response.status_code", response.StatusCode))...)
 	raw, readErr := io.ReadAll(io.LimitReader(response.Body, maximumConnectionResponseBytes+1))
 	closeErr := response.Body.Close()
 	if readErr != nil || closeErr != nil || len(raw) > maximumConnectionResponseBytes {

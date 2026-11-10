@@ -7,6 +7,7 @@ import (
 	"errors"
 	"strconv"
 
+	semconv "github.com/tf4fun/antnest-platform/libs/go/telemetry"
 	"github.com/tf4fun/antnest-platform/services/agent-controller/internal/responsejson"
 	"go.opentelemetry.io/otel/attribute"
 
@@ -23,7 +24,7 @@ func (client *Client) GetRuntimeBarrier(ctx context.Context, query ports.Runtime
 	ctx, cancel := context.WithTimeout(ctx, client.timeout)
 	defer cancel()
 	ctx, call := telemetry.StartHTTPCall(ctx, "get_runtime_barrier", []attribute.KeyValue{
-		attribute.String("antnest.organization.id", query.OrganizationID), attribute.String("antnest.agent.id", query.AgentID),
+		attribute.String(semconv.AntnestOrganizationId, query.OrganizationID), attribute.String(semconv.AntnestAgentId, query.AgentID),
 	})
 	defer func() { call.Finish(resultErr) }()
 	var wire runtimeBarrierResultWire
