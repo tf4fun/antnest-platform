@@ -18,7 +18,9 @@ for (const value of [["200"], "2e2", " 200 "])
   });
 for (const [key, value] of [
   ["antnest.mcp.method", "tools/call"],
-  ["antnest.runtime.execution.id", "execution"],
+  ["antnest.mcp.tool_result.outcome", "not_received"],
+  ["antnest.mcp.connection.close.outcome", "closed"],
+  ["antnest.mcp.caller_cancelled", true],
 ])
   test(
     "held cancellation rejects incomplete new connection receipt: " + key,
@@ -33,6 +35,62 @@ for (const [key, value] of [
   );
 const inspect = (f) =>
   inspectRuntimeCancellationDiagnostics(f.trace, f.diagnosticsExpected);
+
+test("a connection event alone still requires the complete receipt", () => {
+  const f = runtimeCancellationFixture();
+  f.tool.logs.push({
+    timestamp: end(f.tool) - 1,
+    fields: fields({ event: "antnest.mcp.discovery.ready" }),
+  });
+  assert.throws(() =>
+    inspectRuntimeCancellationDiagnostics(f.trace, f.diagnosticsExpected),
+  );
+});
+
+for (const key of [
+  "antnest.runtime.execution.id",
+  "antnest.runtime.execution_id",
+  "antnest.runtime_execution_id",
+]) {
+  test("execution identifier alone is not a connection receipt: " + key, () => {
+    const f = runtimeCancellationFixture();
+    f.tool.tags = f.tool.tags.filter(
+      (field) =>
+        ![
+          "antnest.runtime.execution.id",
+          "antnest.runtime.execution_id",
+          "antnest.runtime_execution_id",
+        ].includes(field.key),
+    );
+    set(f.tool, key, "execution");
+    const before = structuredClone(f.trace);
+    const result = inspectRuntimeCancellationDiagnostics(
+      f.trace,
+      f.diagnosticsExpected,
+    );
+    assert.equal(result.connection_close, undefined);
+    assert.deepEqual(f.trace, before);
+  });
+  test(
+    "foreign execution remains rejected without connection receipts: " + key,
+    () => {
+      const f = runtimeCancellationFixture();
+      f.tool.tags = f.tool.tags.filter(
+        (field) =>
+          ![
+            "antnest.runtime.execution.id",
+            "antnest.runtime.execution_id",
+            "antnest.runtime_execution_id",
+          ].includes(field.key),
+      );
+      set(f.tool, key, "foreign-execution");
+      assert.throws(() =>
+        inspectRuntimeCancellationDiagnostics(f.trace, f.diagnosticsExpected),
+      );
+    },
+  );
+}
+
 function closedCancellationFixture() {
   const f = runtimeCancellationFixture();
   for (const [key, value] of Object.entries({

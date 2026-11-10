@@ -3,6 +3,7 @@ import { inspectRebuildPreparationBusiness as preparationBusiness } from "./reso
 import { hasError } from "../acp-plan/requests.mjs";
 import {
   tag,
+  canonicalAttributes,
   traceTopology,
   databaseChildrenTopology,
 } from "../observability/trace-tree.mjs";
@@ -81,14 +82,18 @@ function processIdentity(trace, span) {
 
 function diagnostic(span, expected, events = []) {
   const actual = Object.fromEntries(
-    Object.entries(fields(span.tags)).filter(([key]) =>
+    Object.entries(canonicalAttributes(fields(span.tags))).filter(([key]) =>
       claimedDiagnosticKey(key),
     ),
   );
-  assert.deepEqual(actual, expected, "unexpected Rebuild diagnostic tags");
   assert.deepEqual(
-    (span.logs ?? []).map((event) => fields(event.fields)),
-    events,
+    actual,
+    canonicalAttributes(expected),
+    "unexpected Rebuild diagnostic tags",
+  );
+  assert.deepEqual(
+    (span.logs ?? []).map((event) => canonicalAttributes(fields(event.fields))),
+    events.map(canonicalAttributes),
     "unexpected Rebuild diagnostic events",
   );
   let previous = span.startTime;
@@ -174,7 +179,6 @@ function cancelledCommand(part) {
     ]);
   }
   assert.equal(tag(controllerServer, "antnest.outcome"), "canceled");
-  assert.equal(tag(controllerServer, "antnest.result"), "error");
   diagnostic(
     controllerServer,
     {
@@ -183,7 +187,6 @@ function cancelledCommand(part) {
       "antnest.error.stage": "request",
       "antnest.error.type": "canceled",
       "antnest.outcome": "canceled",
-      "antnest.result": "error",
     },
     [
       errorEvent(
@@ -688,7 +691,7 @@ function workflowProof(part, business) {
     "antnest.agent.id": agentID,
     "antnest.operation.id": childID,
     "antnest.operation.kind": "update_runtime",
-    "antnest.result": "completed",
+    "antnest.outcome": "completed",
     "antnest.runtime.revision": p.runtime.runtime_revision,
     "antnest.runtime.target_revision": p.runtime.runtime_revision,
   }))
@@ -971,14 +974,12 @@ export function inspectRebuildPreparation(evidence, collection, secrets = []) {
         );
         assert.equal(tag(part.consoleServer, "antnest.outcome"), "rejected");
         assert.equal(tag(server, "antnest.outcome"), "rejected");
-        assert.equal(tag(server, "antnest.result"), "error");
         diagnostic(part.root, {});
         neutral.add(part.root);
         diagnostic(part.consoleServer, { "antnest.outcome": "rejected" });
         diagnostic(server, {
           "antnest.error.code": "operation_not_found",
           "antnest.outcome": "rejected",
-          "antnest.result": "error",
         });
         for (const s of [part.consoleClient, part.controllerClient]) {
           assert.equal(tag(s, "http.response.status_code"), 404);

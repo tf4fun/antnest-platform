@@ -4,9 +4,46 @@ import { inspectRebuildPreparation } from "./resolve-cache-rebuild-trace.mjs";
 import { rebuildTraceFixture } from "./resolve-cache-rebuild-trace-fixtures.mjs";
 import { setTag } from "../observability/gateway-resolution-fixtures.mjs";
 import { fields } from "../observability/trace-fixtures.mjs";
+import { canonicalAttributes } from "../observability/trace-tree.mjs";
 
 const inspect = (f) =>
   inspectRebuildPreparation(f.evidence, f, ["rebuild-private-canary"]);
+
+for (const representation of ["canonical-only", "canonical-and-legacy"])
+  test(
+    "Rebuild accepts " +
+      representation +
+      " diagnostic attributes without rewriting evidence",
+    () => {
+      const f = rebuildTraceFixture({ status: 503, early: true });
+      for (const trace of f.traces.values())
+        for (const span of trace.spans) {
+          const normalize = (rows) => {
+            const canonical = canonicalAttributes(
+              Object.fromEntries(rows.map(({ key, value }) => [key, value])),
+            );
+            return representation === "canonical-only"
+              ? fields(canonical)
+              : fields({
+                  ...Object.fromEntries(
+                    rows.map(({ key, value }) => [key, value]),
+                  ),
+                  ...canonical,
+                });
+          };
+          span.tags = normalize(span.tags);
+          for (const event of span.logs ?? [])
+            event.fields = normalize(event.fields);
+        }
+      const before = structuredClone({
+        evidence: f.evidence,
+        traces: f.traces,
+      });
+      assert.equal(inspect(f).status, "passed");
+      assert.deepEqual({ evidence: f.evidence, traces: f.traces }, before);
+    },
+  );
+
 const p = (f) => f.evidence.recovery_preparation;
 const remove = (f, span) => {
   f.command.trace.spans = f.command.trace.spans.filter((s) => s !== span);
