@@ -1,5 +1,7 @@
 # Antnest Platform 全局 TODO
 
+- **#69 Console 上传转发优化（2026-11-10，用户要求优化误报成因）**：独立 Console 前置批次基于 main d4e05333，保留 #617–#628 的服务所有权顺序。multipart artifact 使用标准 io.Copy 从 bytes.Reader 完整转发，沿用 mime/multipart 编码、metadata、boundary、文件名、8 MiB admission、受信 actor 与稳定请求 ID。扩展原真实 handler 测试校验包含 NUL／非 UTF-8／CRLF／HTML 元字符的二进制原样到达上游，重构前后均通过；不声称新增行为 RED。完整 PR 准入交远程；另在原共享基础＋此改动的源码上执行完整 Go CodeQL，独立诊断只保留本地 SARIF，不上传或修改安全告警、不排除规则。诊断证明目标消歧前不认定旧 #58 已解决，不合并／关闭 issue；独立 system E2E 不在本批执行。
+
 - **#69 显式集成第二轮回修（2026-11-10）**：原集成候选的 Repository 门禁定位到 alias 归一后的两类消费方逻辑：共享 execution ID 不能再充当新 SDK connection receipt 的 discriminator，现仅以连接自有字段／事件识别，任一实际 receipt 标志仍要求完整回执；三种 canonical／legacy ID 单独出现不伪造回执，foreign execution、部分字段、孤立事件与原始证据不变均有回归。Rebuild 诊断按发布 registry 折叠已知 alias 后精确比较，保留 canonical precedence、未知诊断字段／重复键／错误状态／业务与物理替换断言；退役 result 与 outcome 的矛盾双期望，新增 canonical-only／dual 只读回归。两个新增行为先 RED 后 GREEN，七个受影响快速 fixture 文件共 713 项通过，格式及 diff clean；未执行 Docker／实际 system 场景。ACP 真实 stream 精确事件另补三个已发布兼容字段并传播全部后续 PR，远程完整服务检查已通过；本地曾缺少结束的 GET span，保留原 oracle 且不将本地失败算通过。
 
   #617 精确 head 的 Repository／Integration 通过，但 CodeQL #58 仍开放、结果仍失败。只读 Go SARIF analysis 2131718414 证明 Console skills.go:226 的 multipart 内存 writer 被误分派至共享 ResponseWriter；完整依据见 PR #617 和独立只读诊断 run 42739111432。误报标记最初被 API 的 280 字符限制退回，自动审批审查随后以“用户尚未明确授权安全告警状态变更”拒绝重试，未 dismiss 任何告警；诊断分支已恢复 security-events:read 并移除 PATCH。完成其余精确候选准入后，再就这一条告警取得明确批准；不绕过该阻塞合并，不提前关闭 #69。
