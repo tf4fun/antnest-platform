@@ -7,6 +7,8 @@ import { OTLPMetricExporter } from "@opentelemetry/exporter-metrics-otlp-http";
 import { OTLPTraceExporter } from "@opentelemetry/exporter-trace-otlp-http";
 import { PeriodicExportingMetricReader } from "@opentelemetry/sdk-metrics";
 import { core, NodeSDK, resources, tracing } from "@opentelemetry/sdk-node";
+import { SEMCONV } from "./semconv.gen.ts";
+import { metricAttributes, normalizeAttributes } from "./telemetry-names.ts";
 import type { BridgeRuntimeMetrics } from "./workspace-runtime.ts";
 import type { BridgeScope } from "./bridge/registry.ts";
 import type { StreamTermination } from "./bridge/stream-journal.ts";
@@ -37,7 +39,7 @@ function recordPromptInput(boundary: HttpBoundary, state: PromptInputState, phas
       !Number.isSafeInteger(bytes) || bytes < 1 || bytes > 64 * 1024 * 1024 ||
       (state.next === 1 && bytes < state.bytes) || (state.next >= 2 && bytes !== state.bytes)) return;
     const monotonic_ns = process.hrtime.bigint().toString();
-    boundary.span.addEvent("antnest.ui.prompt_input", { phase, bytes, monotonic_ns });
+    boundary.span.addEvent(SEMCONV.ANTNEST_UI_PROMPT_INPUT, { phase, bytes, monotonic_ns });
     state.next++; state.bytes = bytes;
     if ((phase === "receive-started" || phase === "body-eof") && promptInputChannel.hasSubscribers) {
       const source = boundary.span.spanContext();
@@ -87,8 +89,8 @@ export function recordStreamDelegation(expiresAtUnixMs: number): void {
       !Number.isSafeInteger(remainingMs) || remainingMs <= 0) return;
     boundary.streamDelegationRecorded = true;
     boundary.span.setAttributes({
-      "antnest.ui.stream.delegation_expires_at_unix_ms": expiresAtUnixMs,
-      "antnest.ui.stream.delegation_remaining_ms": remainingMs,
+      [SEMCONV.ANTNEST_UI_STREAM_DELEGATION_EXPIRES_AT_UNIX_MS]: expiresAtUnixMs,
+      [SEMCONV.ANTNEST_UI_STREAM_DELEGATION_REMAINING_MS]: remainingMs,
     });
   } catch { /* Diagnostics never change authentication or stream delivery. */ }
 }
@@ -135,7 +137,7 @@ export function recordAgentViewFailure(stage: "owner" | "view", cause: unknown):
       causes.push("classification_failed");
       truncated = true;
     }
-    boundary.span.addEvent("antnest.ui.agent_view.failure", {
+    boundary.span.addEvent(SEMCONV.ANTNEST_UI_AGENT_VIEW_FAILURE, {
       stage, causes: causes.slice(0, 16), truncated,
     });
   } catch { /* Diagnostics must preserve the original response and failure. */ }
@@ -150,7 +152,7 @@ export function captureAcpCloseTrace() {
     const span = trace.getTracer("antnest-agent-ui-bridge").startSpan("agent_ui.acp.close", {
       kind: SpanKind.INTERNAL,
       links: source && isSpanContextValid(source) ? [{ context: source }] : [],
-      attributes: { "antnest.ui.acp.close.trigger": trigger },
+      attributes: { [SEMCONV.ANTNEST_UI_ACP_CLOSE_TRIGGER]: trigger },
     }, ROOT_CONTEXT);
     const closingContext = trace.setSpan(ROOT_CONTEXT, span);
     return {
@@ -167,21 +169,21 @@ export function captureAcpCloseTrace() {
         return context.with(closingContext, () => fetchImpl(input, { ...init, headers }));
       },
       finish(outcome: "closed" | "no_target" | "failed", receipt: AcpCloseReceipt) {
-        span.setAttribute("antnest.ui.acp.close.outcome", outcome);
+        span.setAttribute(SEMCONV.ANTNEST_UI_ACP_CLOSE_OUTCOME, outcome);
         if (outcome === "failed") span.setStatus({ code: SpanStatusCode.ERROR });
         span.setAttributes({
-          "antnest.ui.acp.close.target_observed": receipt.targetObserved,
-          "antnest.ui.acp.close.delete_attempts": receipt.deleteAttempts,
-          "antnest.ui.acp.close.delete_responses": receipt.deleteResponses,
-          "antnest.ui.acp.close.delete_completed": receipt.deleteCompleted,
-          "antnest.ui.acp.close.delete_status": receipt.deleteStatus,
-          "antnest.ui.acp.close.pending_requests": receipt.pendingRequests,
-          "antnest.ui.acp.close.stream_joined": receipt.streamJoined,
-          "antnest.ui.acp.close.failures": receipt.failures.count,
-          "antnest.ui.acp.close.diagnostics_truncated": receipt.failures.truncated,
+          [SEMCONV.ANTNEST_UI_ACP_CLOSE_TARGET_OBSERVED]: receipt.targetObserved,
+          [SEMCONV.ANTNEST_UI_ACP_CLOSE_DELETE_ATTEMPTS]: receipt.deleteAttempts,
+          [SEMCONV.ANTNEST_UI_ACP_CLOSE_DELETE_RESPONSES]: receipt.deleteResponses,
+          [SEMCONV.ANTNEST_UI_ACP_CLOSE_DELETE_COMPLETED]: receipt.deleteCompleted,
+          [SEMCONV.ANTNEST_UI_ACP_CLOSE_DELETE_STATUS]: receipt.deleteStatus,
+          [SEMCONV.ANTNEST_UI_ACP_CLOSE_PENDING_REQUESTS]: receipt.pendingRequests,
+          [SEMCONV.ANTNEST_UI_ACP_CLOSE_STREAM_JOINED]: receipt.streamJoined,
+          [SEMCONV.ANTNEST_UI_ACP_CLOSE_FAILURES]: receipt.failures.count,
+          [SEMCONV.ANTNEST_UI_ACP_CLOSE_DIAGNOSTICS_TRUNCATED]: receipt.failures.truncated,
         });
         for (const failure of receipt.failures.entries)
-          span.addEvent("antnest.ui.acp.close.failure", failure);
+          span.addEvent(SEMCONV.ANTNEST_UI_ACP_CLOSE_FAILURE, failure);
         span.end();
       },
     };
@@ -200,11 +202,11 @@ export function captureStreamTermination(scope: BridgeScope): (value: unknown) =
       cause.organizationId !== organizationId || cause.principalId !== principalId ||
       cause.agentId !== agentId) return;
     recorded = true;
-    boundary.span.addEvent("antnest.stream.termination", {
+    boundary.span.addEvent(SEMCONV.ANTNEST_STREAM_TERMINATION, normalizeAttributes({
       reason: "access_denied", source: "agent-execution-state",
-      "antnest.organization.id": organizationId,
-      "antnest.principal.id": principalId, "antnest.agent.id": agentId,
-    });
+      [SEMCONV.ANTNEST_ORGANIZATION_ID]: organizationId,
+      [SEMCONV.ANTNEST_PRINCIPAL_ID]: principalId, [SEMCONV.ANTNEST_AGENT_ID]: agentId,
+    }));
   };
 }
 
@@ -252,37 +254,37 @@ export async function startBridgeTelemetry(config: {
   }
   const tracer = trace.getTracer(config.serviceName);
   const meter = metrics.getMeter(config.serviceName);
-  const requests = meter.createCounter("antnest.ui.http.requests");
-  const duration = meter.createHistogram("antnest.ui.http.duration", { unit: "ms" });
-  const coldReplayDuration = meter.createHistogram("antnest.ui.bridge.cold_replay_duration", {
+  const requests = meter.createCounter(SEMCONV.ANTNEST_UI_HTTP_REQUESTS);
+  const duration = meter.createHistogram(SEMCONV.ANTNEST_UI_HTTP_DURATION, { unit: "ms" });
+  const coldReplayDuration = meter.createHistogram(SEMCONV.ANTNEST_UI_BRIDGE_COLD_REPLAY_DURATION, {
     unit: "ms",
   });
-  const localIntentReuse = meter.createCounter("antnest.ui.bridge.local_intent_reuse");
+  const localIntentReuse = meter.createCounter(SEMCONV.ANTNEST_UI_BRIDGE_LOCAL_INTENT_REUSE);
   let runtimeMetricsRegistered = false;
   let closing: Promise<void> | undefined;
   return {
     recordColdReplay(durationMs, outcome) {
-      coldReplayDuration.record(durationMs, { outcome });
+      coldReplayDuration.record(durationMs, metricAttributes({ outcome }));
     },
     recordLocalIntentReuse(outcome) {
-      localIntentReuse.add(1, { outcome });
+      localIntentReuse.add(1, metricAttributes({ outcome }));
     },
     registerRuntimeMetrics(snapshot) {
       if (runtimeMetricsRegistered) throw new Error("Bridge runtime metrics already registered");
       runtimeMetricsRegistered = true;
-      const owners = meter.createObservableGauge("antnest.ui.bridge.owners");
-      const observers = meter.createObservableGauge("antnest.ui.bridge.observer_leases");
-      const work = meter.createObservableGauge("antnest.ui.bridge.held_work");
-      const cached = meter.createObservableGauge("antnest.ui.bridge.cached_history_bytes", { unit: "By" });
-      const subscribers = meter.createObservableGauge("antnest.ui.bridge.stream_subscribers");
-      const queued = meter.createObservableGauge("antnest.ui.bridge.journal_queued_bytes", { unit: "By" });
-      const retained = meter.createObservableGauge("antnest.ui.bridge.journal_retained_bytes", { unit: "By" });
-      const activeReplays = meter.createObservableGauge("antnest.ui.bridge.active_replays");
-      const queuedReplays = meter.createObservableGauge("antnest.ui.bridge.queued_replays");
-      const uncertainOperations = meter.createObservableGauge("antnest.ui.bridge.uncertain_operations");
-      const oldestUncertainMs = meter.createObservableGauge("antnest.ui.bridge.oldest_uncertain_ms", { unit: "ms" });
-      const heap = meter.createObservableGauge("antnest.ui.process.heap_used_bytes", { unit: "By" });
-      const rss = meter.createObservableGauge("antnest.ui.process.rss_bytes", { unit: "By" });
+      const owners = meter.createObservableGauge(SEMCONV.ANTNEST_UI_BRIDGE_OWNERS);
+      const observers = meter.createObservableGauge(SEMCONV.ANTNEST_UI_BRIDGE_OBSERVER_LEASES);
+      const work = meter.createObservableGauge(SEMCONV.ANTNEST_UI_BRIDGE_HELD_WORK);
+      const cached = meter.createObservableGauge(SEMCONV.ANTNEST_UI_BRIDGE_CACHED_HISTORY_BYTES, { unit: "By" });
+      const subscribers = meter.createObservableGauge(SEMCONV.ANTNEST_UI_BRIDGE_STREAM_SUBSCRIBERS);
+      const queued = meter.createObservableGauge(SEMCONV.ANTNEST_UI_BRIDGE_JOURNAL_QUEUED_BYTES, { unit: "By" });
+      const retained = meter.createObservableGauge(SEMCONV.ANTNEST_UI_BRIDGE_JOURNAL_RETAINED_BYTES, { unit: "By" });
+      const activeReplays = meter.createObservableGauge(SEMCONV.ANTNEST_UI_BRIDGE_ACTIVE_REPLAYS);
+      const queuedReplays = meter.createObservableGauge(SEMCONV.ANTNEST_UI_BRIDGE_QUEUED_REPLAYS);
+      const uncertainOperations = meter.createObservableGauge(SEMCONV.ANTNEST_UI_BRIDGE_UNCERTAIN_OPERATIONS);
+      const oldestUncertainMs = meter.createObservableGauge(SEMCONV.ANTNEST_UI_BRIDGE_OLDEST_UNCERTAIN_MS, { unit: "ms" });
+      const heap = meter.createObservableGauge(SEMCONV.ANTNEST_UI_PROCESS_HEAP_USED_BYTES, { unit: "By" });
+      const rss = meter.createObservableGauge(SEMCONV.ANTNEST_UI_PROCESS_RSS_BYTES, { unit: "By" });
       meter.addBatchObservableCallback((result) => {
         const state = snapshot();
         const memory = process.memoryUsage();
@@ -316,7 +318,7 @@ export async function startBridgeTelemetry(config: {
       }, parent, async (span) => {
         const boundary: HttpBoundary = { active: true, span, inputDiagnostics: !config.disabled };
         if (!config.disabled && span.isRecording())
-          span.setAttribute("antnest.ui.http.started_monotonic_ns", process.hrtime.bigint().toString());
+          span.setAttribute(SEMCONV.ANTNEST_UI_HTTP_STARTED_MONOTONIC_NS, process.hrtime.bigint().toString());
         return context.with(context.active().setValue(HTTP_BOUNDARY, boundary), async () => {
           const startedAt = performance.now();
           let status = 503;
@@ -332,8 +334,8 @@ export async function startBridgeTelemetry(config: {
             boundary.active = false;
             const attributes = { "http.request.method": method, "http.route": route,
               "http.response.status_code": status };
-            requests.add(1, attributes);
-            duration.record(performance.now() - startedAt, attributes);
+            requests.add(1, metricAttributes(attributes));
+            duration.record(performance.now() - startedAt, metricAttributes(attributes));
             span.setAttribute("http.response.status_code", status);
             span.end();
           }

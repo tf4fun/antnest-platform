@@ -15,6 +15,10 @@ on:
       - contracts/agent-controller/**
       - contracts/agent-ui/**
       - contracts/edge-gateway/**
+      - contracts/observability/**
+      - scripts/generate-telemetry.mjs
+      - scripts/check-telemetry-names.mjs
+      - scripts/lib/telemetry-registry.mjs
       - contracts/identity/**
       - contracts/platform/**
       - contracts/common/**
@@ -35,6 +39,10 @@ on:
       - contracts/agent-controller/**
       - contracts/agent-ui/**
       - contracts/edge-gateway/**
+      - contracts/observability/**
+      - scripts/generate-telemetry.mjs
+      - scripts/check-telemetry-names.mjs
+      - scripts/lib/telemetry-registry.mjs
       - contracts/identity/**
       - contracts/platform/**
       - contracts/common/**

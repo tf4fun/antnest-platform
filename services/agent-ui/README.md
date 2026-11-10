@@ -13,6 +13,12 @@ execution or exposing internal service credentials to the browser. It is one
 TypeScript/Node 24 service: the Node process runs the ACP Bridge, the Workspace
 HTTP/SSE API and streaming React SSR.
 
+Telemetry names come from the observability registry via generated
+`web/server/src/semconv.gen.ts` constants; entity attributes pass through
+`normalizeAttributes` in `web/server/src/telemetry-names.ts` (legacy alias emission
+switches off with `ANTNEST_TELEMETRY_LEGACY_ATTRIBUTES=false`) and metric
+calls filter unbounded dimensions through `metricAttributes`.
+
 Browser account inventories consume Gateway's #68 canonical `items` and
 nullable-string `next_cursor` pages and send primary query `cursor`, with
 no legacy response adapter. Gateway's #68 producer batch is a prerequisite.
