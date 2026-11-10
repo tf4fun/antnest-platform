@@ -4,22 +4,16 @@ on:
     branches: [diagnose/issue-69-codeql]
 permissions:
   contents: read
-  security-events: write
+  security-events: read
 jobs:
   inspect:
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
-      - name: Triage the proven multipart writer false positive
+      - name: Read the exact CodeQL alert and source flow
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
         run: |
-          gh api "repos/$REPO/code-scanning/alerts?ref=refs/pull/617/head&state=open&per_page=100" > "$RUNNER_TEMP/alerts.json"
-          jq '[.[] | {number,rule:.rule.id,most_recent_instance}]' "$RUNNER_TEMP/alerts.json"
-          jq '[.[] | select(.rule.id == "go/reflected-xss" and .most_recent_instance.location.path == "libs/go/telemetry/http.go" and .most_recent_instance.commit_sha == "0a0c866003e27f492457b054f24fe22076e133dd")]' "$RUNNER_TEMP/alerts.json" > "$RUNNER_TEMP/target.json"
-          test "$(jq length "$RUNNER_TEMP/target.json")" = 1
-          alert_id=$(jq -r '.[0].number' "$RUNNER_TEMP/target.json")
-          gh api --method PATCH "repos/$REPO/code-scanning/alerts/$alert_id" --input - <<'JSON'
-          {"state":"dismissed","dismissed_reason":"false positive","dismissed_comment":"Reviewed exact-head analysis 2131718414 (PR 617, 0a0c8660). All four reported flows start at Console multipart upload skills.go:253/276 and cross part.Write(archive) at skills.go:226. That part is returned by mime/multipart.Writer.CreateFormFile on multipart.NewWriter(&bytes.Buffer), not an http.ResponseWriter. Its bytes become the outbound Skill Registry multipart request via skillCall, never a browser response. CodeQL over-approximates the io.Writer target as telemetry.ServerWriter.Write (also via body Read/Write adapters). The foundation adds no production consumer of this shared writer. Dismiss only this source/target false positive; retain all scanning rules and other alerts."}
-          JSON
+          gh api "repos/$REPO/code-scanning/alerts?ref=refs/pull/617/head&state=open&per_page=100" --jq '[.[] | {number,rule:.rule.id,most_recent_instance}]'
+          gh api -H 'Accept: application/sarif+json' "repos/$REPO/code-scanning/analyses/2131718414" | jq '.runs[].results[] | select(.ruleId == "go/reflected-xss") | {ruleId,message,locations,flows:[.codeFlows[].threadFlows[].locations[].location | {message,physicalLocation}]}'
