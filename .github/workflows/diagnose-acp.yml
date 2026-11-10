@@ -1,0 +1,43 @@
+name: Diagnose ACP authentication
+on:
+  push:
+    branches: [diagnose/main-auth-acp]
+permissions:
+  contents: read
+  packages: read
+jobs:
+  diagnose:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: services/agent-acp-service/package-lock.json
+      - run: npm --prefix services/agent-acp-service ci
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Provide frozen main image
+        run: |
+          docker pull ghcr.io/tf4fun/antnest-agent-acp-service@sha256:101f306f99195514dc55ce97593845b08fb81af547202261e30f51af489729d4
+          docker tag ghcr.io/tf4fun/antnest-agent-acp-service@sha256:101f306f99195514dc55ce97593845b08fb81af547202261e30f51af489729d4 antnest/agent-acp-service:local
+          docker pull postgres:17.11-bookworm
+          docker pull node:24-bookworm-slim
+      - name: Reproduce without publishing private output
+        run: |
+          set +e
+          make e2e-acp-authentication > "$RUNNER_TEMP/acp.private.txt" 2>&1
+          status=$?
+          node --input-type=module -e '
+            import {readFileSync} from "node:fs";
+            const value = readFileSync(process.env.RUNNER_TEMP + "/acp.private.txt", "utf8");
+            const locations = [...new Set(value.match(/tests\/[A-Za-z0-9_./-]+:\d+:\d+/g) ?? [])];
+            const codes = [...new Set(value.match(/\b(?:ERR_[A-Z_]+|ECONNREFUSED|ETIMEDOUT|ENOENT)\b/g) ?? [])];
+            console.log(JSON.stringify({locations,codes}));
+          '
+          exit "$status"
