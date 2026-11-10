@@ -467,7 +467,10 @@ describe("ACP v1 Streamable HTTP", () => {
                     "error.type": "DomainError",
                     source,
                     "antnest.agent.id": binding().agentId,
+                    "antnest.agent_id": binding().agentId,
+                    "agent.id": binding().agentId,
                     "antnest.organization.id": binding().organizationId,
+                    "antnest.organization_id": binding().organizationId,
                   },
                 },
               ]
