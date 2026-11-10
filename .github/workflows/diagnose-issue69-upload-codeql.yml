@@ -1,0 +1,47 @@
+name: Diagnose issue 69 multipart CodeQL flow
+on:
+  push:
+    branches: [diagnose/issue-69-upload-codeql]
+permissions:
+  contents: read
+jobs:
+  go:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: services/admin-console/go.mod
+          cache: false
+      - uses: github/codeql-action/init@v4
+        with:
+          languages: go
+          build-mode: autobuild
+          queries: security-extended
+      - uses: github/codeql-action/autobuild@v4
+      - uses: github/codeql-action/analyze@v4
+        with:
+          upload: never
+          upload-database: false
+          output: artifacts/verification/issue-69-upload-codeql
+      - name: Inspect complete unmodified SARIF
+        run: |
+          python3 - <<'PY'
+          import collections,json,pathlib
+          files=list(pathlib.Path('artifacts/verification/issue-69-upload-codeql').glob('*.sarif'))
+          assert files, 'No SARIF produced'
+          results=[r for p in files for run in json.loads(p.read_text())['runs'] for r in run.get('results',[])]
+          print(json.dumps({'rules':dict(collections.Counter(r['ruleId'] for r in results))},sort_keys=True))
+          findings=[r for r in results if r['ruleId']=='go/reflected-xss']
+          print(json.dumps({'reflected_xss':findings},sort_keys=True))
+          assert not findings, 'Reflected-XSS result still requires inspection'
+          PY
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: issue-69-upload-codeql-sarif
+          path: artifacts/verification/issue-69-upload-codeql/*.sarif
+          retention-days: 3
