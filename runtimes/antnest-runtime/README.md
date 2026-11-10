@@ -7,6 +7,13 @@ Resource through the official MCP `2026-07-28` Streamable HTTP transport. It
 exists so that Agent-selected commands and file operations run behind a fixed
 privilege and network boundary. It is written in Rust.
 
+Telemetry names come from the observability registry via generated
+`src/semconv.rs` constants; OTel span/event attributes pass through
+`src/telemetry_contract.rs` (`alias_attributes` dual-emits registered legacy
+aliases unless `ANTNEST_TELEMETRY_LEGACY_ATTRIBUTES=false`, `metric_attributes`
+strips unbounded dimensions at metric boundaries, and `capture_rpc_json`
+recursively redacts secret keys while leaving wire payloads unchanged).
+
 The long-lived root Supervisor (`antnest-runtime serve`, container PID 1) never
 executes Agent-selected work itself. Every tool call runs in a one-shot Executor
 subprocess that drops irreversibly to UID/GID 1000 with no capabilities, and all

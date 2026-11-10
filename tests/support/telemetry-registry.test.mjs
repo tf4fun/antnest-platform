@@ -478,6 +478,19 @@ test("the published registry validates and shared Go output is regenerated", () 
   assert.equal(completion.pii, "none");
   assert.equal(completion.deprecated_alias_of, undefined);
   assert.ok(completion.owner.includes("runtime-egress"));
+  for (const name of [
+    "antnest.operation.outcome",
+    "antnest.protocol.outcome",
+    "antnest.phase",
+  ]) {
+    const entry = registry.attributes.find((value) => value.name === name);
+    assert.ok(entry, name);
+    assert.equal(entry.kind, "span_attribute");
+    assert.equal(entry.cardinality, "low");
+    assert.equal(entry.pii, "none");
+    assert.equal(entry.deprecated_alias_of, undefined);
+    assert.ok(entry.owner.includes("antnest-runtime"));
+  }
   const generated = readFileSync(
     new URL("../../libs/go/telemetry/semconv_gen.go", import.meta.url),
     "utf8",

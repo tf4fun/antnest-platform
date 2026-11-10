@@ -69,7 +69,7 @@
   },
   "guarded_sources": {
     "runtimes/antnest-runtime/src/mcp.rs": {
-      "sha256": "bdf9f4fe3e8aa02d1518bff3b22b59b30f271c7965611251ec9250076d6643d1",
+      "sha256": "49722c6e9c455743598fe363a4a4b3ee65f0946afb04e8a537ecfef5461158e4",
       "routes": [
         "GET /status",
         "* /mcp",

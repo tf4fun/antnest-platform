@@ -20,8 +20,11 @@ fn rpc_capture_preserves_nested_new_fields_without_a_payload_cap() {
         .build();
     let subscriber = tracing_subscriber::registry()
         .with(tracing_opentelemetry::layer().with_tracer(provider.tracer("capture")));
-    let value =
-        json!({"new_field": {"token": "x".repeat(24 * 1024)}, "content": ["not projected"]});
+    let value = json!({
+        "new_field": {"public": "x".repeat(24 * 1024), "token": "PRIVATE-CANARY"},
+        "content": ["not projected"],
+    });
+    let original = value.clone();
     crate::test_tracing::stabilize_callsite_registry();
     tracing::subscriber::with_default(subscriber, || {
         let span = tracing::info_span!("rpc");
@@ -30,10 +33,15 @@ fn rpc_capture_preserves_nested_new_fields_without_a_payload_cap() {
     });
     let spans = exporter.get_finished_spans().unwrap();
     assert_eq!(spans[0].events.len(), 2);
+    let expected = json!({
+        "new_field": {"public": "x".repeat(24 * 1024), "token": "[REDACTED]"},
+        "content": ["not projected"],
+    });
     for event in spans[0].events.iter() {
         let raw = attribute(&event.attributes, "antnest.payload.json").as_str();
-        assert_eq!(serde_json::from_str::<Value>(&raw).unwrap(), value);
+        assert_eq!(serde_json::from_str::<Value>(&raw).unwrap(), expected);
     }
+    assert_eq!(value, original);
 }
 
 #[test]
@@ -48,6 +56,12 @@ fn disabled_capture_never_serializes_values() {
         &tracing::Span::none(),
         "antnest.request",
         false,
+        &Unserializable,
+    );
+    rpc_content(
+        &tracing::Span::none(),
+        "antnest.request",
+        true,
         &Unserializable,
     );
 }
@@ -82,4 +96,47 @@ fn protocol_200_is_error_is_not_success() {
         })));
     assert_eq!(protocol_error(Some("read"), &result), Some("read_failed"));
     assert_eq!(protocol_error(None, &result), Some("managed_tool_error"));
+}
+
+#[test]
+fn rpc_capture_redacts_nested_secrets_without_changing_original() {
+    let exporter = InMemorySpanExporter::default();
+    let provider = SdkTracerProvider::builder()
+        .with_simple_exporter(exporter.clone())
+        .build();
+    let subscriber = tracing_subscriber::registry()
+        .with(tracing_opentelemetry::layer().with_tracer(provider.tracer("capture")));
+    let value = json!({
+        "public": "x".repeat(24 * 1024),
+        "large": 9007199254740993u64,
+        "nested": {"password": "PRIVATE-CANARY", "access_token": "PRIVATE-CANARY"},
+        "rows": [{"client_secret": "PRIVATE-CANARY"}],
+    });
+    let original = value.clone();
+    crate::test_tracing::stabilize_callsite_registry();
+    tracing::subscriber::with_default(subscriber, || {
+        let span = tracing::info_span!("rpc");
+        rpc_content(&span, "antnest.request", true, &value);
+        rpc_content(&span, "antnest.response", true, &value);
+    });
+    assert_eq!(value, original);
+    let spans = exporter.get_finished_spans().unwrap();
+    assert_eq!(spans.len(), 1);
+    assert_eq!(spans[0].events.len(), 2);
+    let names: Vec<_> = spans[0]
+        .events
+        .iter()
+        .map(|event| event.name.to_string())
+        .collect();
+    assert_eq!(names, ["antnest.request", "antnest.response"]);
+    for event in spans[0].events.iter() {
+        let raw = attribute(&event.attributes, "antnest.payload.json").as_str();
+        assert!(!raw.contains("PRIVATE-CANARY"));
+        let captured: Value = serde_json::from_str(&raw).unwrap();
+        assert_eq!(captured["public"], json!("x".repeat(24 * 1024)));
+        assert_eq!(captured["large"], json!(9007199254740993u64));
+        assert_eq!(captured["nested"]["password"], json!("[REDACTED]"));
+        assert_eq!(captured["nested"]["access_token"], json!("[REDACTED]"));
+        assert_eq!(captured["rows"][0]["client_secret"], json!("[REDACTED]"));
+    }
 }

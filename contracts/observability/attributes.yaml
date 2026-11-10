@@ -2138,6 +2138,16 @@
       ]
     },
     {
+      "name": "antnest.operation.outcome",
+      "kind": "span_attribute",
+      "type": "string",
+      "cardinality": "low",
+      "pii": "none",
+      "owner": [
+        "antnest-runtime"
+      ]
+    },
+    {
       "name": "antnest.operation.phase",
       "kind": "span_attribute",
       "type": "string",
@@ -2258,6 +2268,16 @@
       ]
     },
     {
+      "name": "antnest.phase",
+      "kind": "span_attribute",
+      "type": "string",
+      "cardinality": "low",
+      "pii": "none",
+      "owner": [
+        "antnest-runtime"
+      ]
+    },
+    {
       "name": "antnest.policy.id",
       "kind": "span_attribute",
       "type": "string",
@@ -2297,6 +2317,16 @@
       "pii": "none",
       "owner": [
         "identity-service"
+      ]
+    },
+    {
+      "name": "antnest.protocol.outcome",
+      "kind": "span_attribute",
+      "type": "string",
+      "cardinality": "low",
+      "pii": "none",
+      "owner": [
+        "antnest-runtime"
       ]
     },
     {

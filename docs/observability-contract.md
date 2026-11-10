@@ -733,6 +733,7 @@ attempt to sanitize `Error()` output.
 | antnest.observation.source | span_attribute | string |  | low | none | runtime-controller |  |  |
 | antnest.operation.id | span_attribute | string |  | unbounded | identifier | agent-acp-service, agent-controller, runtime-controller |  |  |
 | antnest.operation.kind | span_attribute | string |  | low | none | runtime-controller |  |  |
+| antnest.operation.outcome | span_attribute | string |  | low | none | antnest-runtime |  |  |
 | antnest.operation.phase | span_attribute | string |  | low | none | agent-acp-service, agent-controller, identity-service, runtime-controller, runtime-egress |  |  |
 | antnest.operation.request_id | span_attribute | string |  | unbounded | identifier | agent-controller |  | antnest.request.id |
 | antnest.organization.id | span_attribute | string |  | unbounded | identifier | agent-acp-service, agent-controller, agent-ui, edge-gateway, identity-service |  |  |
@@ -741,12 +742,14 @@ attempt to sanitize `Error()` output.
 | antnest.password.admission_reason | span_attribute | string |  | low | none | identity-service |  |  |
 | antnest.payload.json | span_attribute | string |  | unbounded | content | agent-acp-service, agent-controller, antnest-runtime, identity-service, runtime-controller, runtime-egress |  |  |
 | antnest.peer.service | span_attribute | string |  | low | none | admin-console |  |  |
+| antnest.phase | span_attribute | string |  | low | none | antnest-runtime |  |  |
 | antnest.platform | span_attribute | string |  | low | none | runtime-controller |  |  |
 | antnest.platform.operation | span_attribute | string |  | low | none | runtime-controller |  |  |
 | antnest.policy.id | span_attribute | string |  | unbounded | identifier | agent-controller, runtime-egress |  |  |
 | antnest.policy.revision | span_attribute | string |  | low | none | runtime-egress |  |  |
 | antnest.principal.id | span_attribute | string |  | unbounded | identifier | agent-ui, edge-gateway |  |  |
 | antnest.protocol.name | span_attribute | string |  | low | none | identity-service |  |  |
+| antnest.protocol.outcome | span_attribute | string |  | low | none | antnest-runtime |  |  |
 | antnest.protocol.version | span_attribute | string |  | low | none | agent-acp-service, identity-service |  |  |
 | antnest.provider.connection_id | span_attribute | string |  | unbounded | identifier | agent-acp-service |  |  |
 | antnest.request | event | string |  | bounded | none | agent-acp-service, agent-controller, antnest-runtime, identity-service, runtime-controller, runtime-egress |  |  |

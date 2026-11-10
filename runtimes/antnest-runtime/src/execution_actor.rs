@@ -1,3 +1,4 @@
+use crate::semconv;
 use std::future::Future;
 use std::os::unix::process::ExitStatusExt as _;
 use std::path::PathBuf;
@@ -7,6 +8,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use crate::telemetry::TelemetrySpanExt as _;
 use nix::sys::signal::{Signal, kill};
 use nix::unistd::Pid;
 use thiserror::Error;
@@ -16,7 +18,6 @@ use tokio::sync::{Notify, mpsc};
 use tokio::task::{AbortHandle, JoinError, JoinHandle};
 use tokio_util::sync::CancellationToken;
 use tracing::Instrument as _;
-use tracing_opentelemetry::OpenTelemetrySpanExt as _;
 
 use crate::command::ToolCommand;
 use crate::execution::{
@@ -546,11 +547,11 @@ impl ExecutionActor {
         let span = tracing::info_span!(
             "runtime.executor",
             "service.name" = crate::telemetry::SERVICE_NAME,
-            "antnest.agent.id" = self.identity.agent_id(),
-            "antnest.runtime.generation" = %self.identity.generation(),
+            { semconv::ANTNEST_AGENT_ID } = self.identity.agent_id(),
+            { semconv::ANTNEST_RUNTIME_GENERATION } = %self.identity.generation(),
             "executor.tool.name" = tool.as_str(),
             "executor.program.path" = "/proc/self/exe",
-            "antnest.execution.timeout_ms" = u64::try_from(timeout.as_millis()).unwrap_or(u64::MAX),
+            { semconv::ANTNEST_EXECUTION_TIMEOUT_MS } = u64::try_from(timeout.as_millis()).unwrap_or(u64::MAX),
             "executor.child.pid" = tracing::field::Empty,
             "executor.exit.classification" = tracing::field::Empty,
             "executor.outcome" = tracing::field::Empty,
@@ -943,10 +944,12 @@ impl ExecutorCall {
                 },
             );
             if let Some(code) = status.code() {
-                tracing::Span::current().set_attribute("process.exit.code", i64::from(code));
+                tracing::Span::current()
+                    .set_contract_attribute("process.exit.code", i64::from(code));
             }
             if let Some(signal) = status.signal() {
-                tracing::Span::current().set_attribute("executor.exit.signal", i64::from(signal));
+                tracing::Span::current()
+                    .set_contract_attribute("executor.exit.signal", i64::from(signal));
             }
 
             let had_background = if self.contain_bash_descendants {
@@ -1153,8 +1156,8 @@ fn record_executor_result(
             span.in_scope(|| {
                 tracing::info!(
                     "service.name" = crate::telemetry::SERVICE_NAME,
-                    "antnest.agent.id" = identity.agent_id(),
-                    "antnest.runtime.generation" = %identity.generation(),
+                    { semconv::ANTNEST_AGENT_ID } = identity.agent_id(),
+                    { semconv::ANTNEST_RUNTIME_GENERATION } = %identity.generation(),
                     trace_id = %trace_id,
                     span_id = %span_id,
                     outcome = "success",
@@ -1173,8 +1176,8 @@ fn record_executor_result(
             span.in_scope(|| {
                 tracing::warn!(
                     "service.name" = crate::telemetry::SERVICE_NAME,
-                    "antnest.agent.id" = identity.agent_id(),
-                    "antnest.runtime.generation" = %identity.generation(),
+                    { semconv::ANTNEST_AGENT_ID } = identity.agent_id(),
+                    { semconv::ANTNEST_RUNTIME_GENERATION } = %identity.generation(),
                     trace_id = %trace_id,
                     span_id = %span_id,
                     outcome = "error",
