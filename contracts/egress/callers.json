@@ -1,14 +1,10 @@
 {
   "service": "runtime-egress",
   "status": "enforced",
-  "implementation_issues": [
-    32
-  ],
+  "implementation_issues": [32],
   "routes": {
     "GET /internal/agent-networks/{agent_id}": {
-      "callers": [
-        "agent-controller"
-      ],
+      "callers": ["agent-controller"],
       "authentication": "workload",
       "caller_context": {
         "agent-controller": "operation"
@@ -16,9 +12,7 @@
       "request_body": "none"
     },
     "GET /internal/agent-policy-assignments/{agent_id}": {
-      "callers": [
-        "agent-controller"
-      ],
+      "callers": ["agent-controller"],
       "authentication": "workload",
       "caller_context": {
         "agent-controller": "operation"
@@ -26,9 +20,7 @@
       "request_body": "none"
     },
     "GET /internal/policies/{policy_id}/revisions/{revision}": {
-      "callers": [
-        "agent-controller"
-      ],
+      "callers": ["agent-controller"],
       "authentication": "workload",
       "caller_context": {
         "agent-controller": "operation"
@@ -36,9 +28,7 @@
       "request_body": "none"
     },
     "GET /status": {
-      "callers": [
-        "local-healthcheck"
-      ],
+      "callers": ["local-healthcheck"],
       "authentication": "health",
       "caller_context": {
         "local-healthcheck": "none"
@@ -46,9 +36,7 @@
       "request_body": "none"
     },
     "POST /internal/agent-networks/{agent_id}/release": {
-      "callers": [
-        "agent-controller"
-      ],
+      "callers": ["agent-controller"],
       "authentication": "workload",
       "caller_context": {
         "agent-controller": "operation"
@@ -56,9 +44,7 @@
       "request_body": "json"
     },
     "PUT /internal/agent-network-attachments/{agent_id}": {
-      "callers": [
-        "agent-controller"
-      ],
+      "callers": ["agent-controller"],
       "authentication": "workload",
       "caller_context": {
         "agent-controller": "operation"
@@ -66,9 +52,7 @@
       "request_body": "json"
     },
     "PUT /internal/agent-networks/{agent_id}": {
-      "callers": [
-        "agent-controller"
-      ],
+      "callers": ["agent-controller"],
       "authentication": "workload",
       "caller_context": {
         "agent-controller": "operation"
@@ -76,9 +60,7 @@
       "request_body": "none"
     },
     "PUT /internal/agent-policy-assignments/{agent_id}": {
-      "callers": [
-        "agent-controller"
-      ],
+      "callers": ["agent-controller"],
       "authentication": "workload",
       "caller_context": {
         "agent-controller": "operation"
@@ -86,9 +68,7 @@
       "request_body": "json"
     },
     "PUT /internal/agent-tunnel-keys/{agent_id}": {
-      "callers": [
-        "runtime-controller"
-      ],
+      "callers": ["runtime-controller"],
       "authentication": "workload",
       "caller_context": {
         "runtime-controller": "operation"
@@ -96,9 +76,7 @@
       "request_body": "json"
     },
     "PUT /internal/policies/{policy_id}/revisions/{revision}": {
-      "callers": [
-        "agent-controller"
-      ],
+      "callers": ["agent-controller"],
       "authentication": "workload",
       "caller_context": {
         "agent-controller": "operation"
@@ -108,7 +86,7 @@
   },
   "guarded_sources": {
     "services/runtime-egress/src/control.rs": {
-      "sha256": "8538b0f8f42103c413da7f5d8e82e8cc5b8d3a4731a7184115a62950c6d18e32",
+      "sha256": "d23a9b9f205b41e07aa2fcc9079e992283326372b45442de8c8d228513126030",
       "routes": [
         "PUT /internal/agent-tunnel-keys/{agent_id}",
         "GET /status",
