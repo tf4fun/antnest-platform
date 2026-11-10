@@ -1,5 +1,12 @@
 const SCHEMA_VERSION = 1;
 const NAME_PATTERN = /^antnest\.[a-z0-9_]+(?:\.[a-z0-9_]+)*$/;
+const LEGACY_METRIC_PATTERN = /^antnest_[a-z0-9_]+$/;
+
+const nameIsValid = (entry) =>
+  NAME_PATTERN.test(entry.name) ||
+  (entry.kind === "metric" &&
+    entry.legacy_metric_name === true &&
+    LEGACY_METRIC_PATTERN.test(entry.name));
 const SYMBOL_PATTERN = /^[A-Z0-9]+(?:_[A-Z0-9]+)*$/;
 const KINDS = ["span_attribute", "metric", "event"];
 const TYPES = ["string", "int", "double", "boolean", "string[]"];
@@ -105,7 +112,7 @@ export function validateRegistry(registry) {
       continue;
     }
     const name = entryName(entry);
-    if (typeof entry.name !== "string" || !NAME_PATTERN.test(entry.name))
+    if (typeof entry.name !== "string" || !nameIsValid(entry))
       problems.push(`attribute name ${name} is not a dotted antnest.* name`);
     else if (byName.has(entry.name))
       problems.push(`duplicate attribute name ${entry.name}`);
@@ -231,7 +238,7 @@ export function validateRegistry(registry) {
     if (
       !isRecord(entry) ||
       typeof entry.name !== "string" ||
-      !NAME_PATTERN.test(entry.name)
+      !nameIsValid(entry)
     )
       continue;
     const symbol = entrySymbol(entry);

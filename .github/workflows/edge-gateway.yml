@@ -18,6 +18,8 @@ on:
       - contracts/identity/**
       - contracts/platform/**
       - contracts/common/**
+      - contracts/observability/**
+      - libs/go/telemetry/**
       - go.work
       - go.work.sum
       - .golangci.yml
@@ -40,6 +42,8 @@ on:
       - contracts/identity/**
       - contracts/platform/**
       - contracts/common/**
+      - contracts/observability/**
+      - libs/go/telemetry/**
       - go.work
       - go.work.sum
       - .golangci.yml

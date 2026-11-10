@@ -10,10 +10,10 @@ import (
 	"sync"
 	"time"
 
+	semconv "github.com/tf4fun/antnest-platform/libs/go/telemetry"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
-	"go.opentelemetry.io/otel/propagation"
 	"go.opentelemetry.io/otel/trace"
 )
 
@@ -45,20 +45,20 @@ func startClient(ctx context.Context, method string, target *url.URL) (context.C
 		span.SetAttributes(attribute.Int("server.port", port))
 	}
 	if deadline, ok := ctx.Deadline(); ok {
-		span.SetAttributes(attribute.Int64("antnest.request.timeout_ms", max(0, time.Until(deadline).Milliseconds())))
+		span.SetAttributes(semconv.AliasAttributes(attribute.Int64(semconv.AntnestRequestTimeoutMs, max(0, time.Until(deadline).Milliseconds())))...)
 	}
 	return ctx, span
 }
 
 func (t *httpTransport) RoundTrip(original *http.Request) (*http.Response, error) {
 	ctx, span := startObservedClient(original.Context(), original.Method, original.URL)
-	r := original.Clone(ctx)
-	r.Header.Del("Baggage")
+	r := semconv.CloneRequest(original, ctx, otel.GetTextMapPropagator())
 	request := &bodyObservation{}
 	if r.Body != nil {
-		r.Body = &capturedBody{ReadCloser: r.Body, capture: request}
+		r.Body = semconv.WrapBody(r.Body, semconv.BodyCallbacks{
+			Read: func(n int, err error) { request.add(n, err) },
+		})
 	}
-	otel.GetTextMapPropagator().Inject(ctx, propagation.HeaderCarrier(r.Header))
 	response, err := t.base.RoundTrip(r)
 	if response == nil && err == nil {
 		err = errors.New("HTTP transport returned no response")
@@ -82,62 +82,34 @@ func (t *httpTransport) RoundTrip(original *http.Request) (*http.Response, error
 		finish()
 		return response, nil
 	}
-	body := &capturedBody{ReadCloser: response.Body, capture: capture, finish: finish, span: span}
-	response.Body = body
-	if writer, ok := body.ReadCloser.(io.Writer); ok {
-		response.Body = &duplexBody{capturedBody: body, writer: writer}
+	var failure sync.Once
+	recordErr := func(stage string, err error) {
+		failure.Do(func() { recordFailure(span, stage, err) })
 	}
+	response.Body = semconv.WrapBody(response.Body, semconv.BodyCallbacks{
+		Read: func(n int, err error) {
+			capture.add(n, err)
+			if err == nil {
+				return
+			}
+			if err != io.EOF {
+				recordErr("read_response", err)
+			}
+			finish()
+		},
+		Close: func(err error) {
+			if err != nil {
+				recordErr("close_response", err)
+			}
+			finish()
+		},
+		Write: func(_ int, err error) {
+			if err != nil {
+				recordErr("write_upgrade", err)
+			}
+		},
+	})
 	return response, nil
 }
 
 func (c *bodyObservation) observedSize() int64 { c.mu.Lock(); defer c.mu.Unlock(); return c.observed }
-
-type capturedBody struct {
-	io.ReadCloser
-	capture *bodyObservation
-	finish  func()
-	span    trace.Span
-	failure sync.Once
-}
-
-func (b *capturedBody) recordError(stage string, err error) {
-	if err != nil && b.span != nil {
-		b.failure.Do(func() { recordFailure(b.span, stage, err) })
-	}
-}
-
-func (b *capturedBody) Read(p []byte) (int, error) {
-	n, err := b.ReadCloser.Read(p)
-	b.capture.add(p[:n], err)
-	if err != nil && b.finish != nil {
-		if err != io.EOF {
-			b.recordError("read_response", err)
-		}
-		b.finish()
-	}
-	return n, err
-}
-
-func (b *capturedBody) Close() error {
-	err := b.ReadCloser.Close()
-	if b.finish != nil {
-		if err != nil {
-			b.recordError("close_response", err)
-		}
-		b.finish()
-	}
-	return err
-}
-
-type duplexBody struct {
-	*capturedBody
-	writer io.Writer
-}
-
-func (b *duplexBody) Write(p []byte) (int, error) {
-	n, err := b.writer.Write(p)
-	if err != nil {
-		b.recordError("write_upgrade", err)
-	}
-	return n, err
-}

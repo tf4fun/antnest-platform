@@ -64,6 +64,16 @@ const validRegistry = () => ({
       pii: "content",
       owner: ["runtime-controller"],
     },
+    {
+      name: "antnest_edge_login_admission_total",
+      kind: "metric",
+      type: "int",
+      unit: "1",
+      cardinality: "bounded",
+      pii: "none",
+      owner: ["edge-gateway"],
+      legacy_metric_name: true,
+    },
   ],
 });
 
@@ -90,6 +100,9 @@ test("a registry covering every kind and metadata field validates cleanly", () =
 
 test("registry validation rejects duplicates, invalid enums and absent owners", () => {
   const mutations = [
+    (registry) => {
+      attribute(registry, "antnest.agent.id").name = "antnest_agent_id";
+    },
     (registry) =>
       registry.attributes.push({
         ...attribute(registry, "antnest.outcome"),
@@ -449,4 +462,19 @@ test("the published registry validates and shared Go output is regenerated", () 
     "utf8",
   );
   assert.equal(generated, renderGo(registry));
+});
+
+test("lint flags registered legacy metric literals but not other antnest_ names", () => {
+  const flagged = checkTelemetrySource(
+    'package x\nvar _ = "antnest_edge_login_admission_total"\n',
+    "svc/main.go",
+    validRegistry(),
+  );
+  assert.equal(flagged.length, 1);
+  const allowed = checkTelemetrySource(
+    'package x\nvar _ = "antnest_session"\n',
+    "svc/main.go",
+    validRegistry(),
+  );
+  assert.deepEqual(allowed, []);
 });

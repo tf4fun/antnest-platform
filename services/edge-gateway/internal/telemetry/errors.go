@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 
+	semconv "github.com/tf4fun/antnest-platform/libs/go/telemetry"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
@@ -22,11 +23,11 @@ func recordFailure(span trace.Span, stage string, err error) {
 	kind, message := classifyError(err)
 	span.SetAttributes(attribute.String("error.type", kind))
 	span.SetStatus(codes.Error, message)
-	span.AddEvent("antnest.error", trace.WithAttributes(
-		attribute.String("error.type", kind), attribute.String("antnest.error.stage", stage),
-		attribute.String("antnest.error.message", message),
-		attribute.StringSlice("antnest.error.cause_types", causeTypes(err)),
-	))
+	span.AddEvent(semconv.AntnestError, trace.WithAttributes(semconv.AliasAttributes(
+		attribute.String("error.type", kind), attribute.String(semconv.AntnestErrorStage, stage),
+		attribute.String(semconv.AntnestErrorMessage, message),
+		attribute.StringSlice(semconv.AntnestErrorCauseTypes, causeTypes(err)),
+	)...))
 }
 
 func classifyError(err error) (string, string) {
@@ -60,20 +61,7 @@ func classifyError(err error) (string, string) {
 }
 
 func causeTypes(err error) []string {
-	result := make([]string, 0, 4)
-	for err != nil && len(result) < 4 {
-		result = append(result, fmt.Sprintf("%T", err))
-		if joined, ok := err.(interface{ Unwrap() []error }); ok {
-			for _, child := range joined.Unwrap() {
-				if child != nil && len(result) < 4 {
-					result = append(result, fmt.Sprintf("%T", child))
-				}
-			}
-			break
-		}
-		err = errors.Unwrap(err)
-	}
-	return result
+	return semconv.CauseTypes(err, 4)
 }
 
 // Handler binds error-returning HTTP adapters without adding another span.

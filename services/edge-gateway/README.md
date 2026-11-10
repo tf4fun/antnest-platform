@@ -42,6 +42,11 @@ Internal token/mTLS verification and outbound transport use the
 Gateway forwarding policy for its verified presentation hints and SCIM bearer.
 Gateway still owns browser credential stripping and route authorization.
 
+HTTP trace plumbing (server span start, request cloning, body wrapping and
+the response status writer) uses the shared Go telemetry module in
+`libs/go/telemetry`; telemetry names come from its generated registry
+constants.
+
 ## Responsibilities
 
 - Public HTTP listener and route policy.

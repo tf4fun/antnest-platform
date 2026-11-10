@@ -5,6 +5,7 @@ import (
 	"errors"
 	"time"
 
+	semconv "github.com/tf4fun/antnest-platform/libs/go/telemetry"
 	"github.com/tf4fun/antnest-platform/services/edge-gateway/internal/telemetry"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
@@ -13,7 +14,6 @@ import (
 )
 
 const resolveInstrumentation = "github.com/tf4fun/antnest-platform/edge-gateway/identity"
-const resolveAttribute = "antnest.identity.resolve."
 
 type resolveDecision struct {
 	span              trace.Span
@@ -47,25 +47,25 @@ func resolveOutcome(principal Principal, err error) string {
 
 func (decision *resolveDecision) finish(principal Principal, err error) {
 	outcome := resolveOutcome(principal, err)
-	decision.span.SetAttributes(attribute.String(resolveAttribute+"source", decision.source),
-		attribute.String(resolveAttribute+"profile", decision.profile), attribute.String(resolveAttribute+"outcome", outcome))
+	decision.span.SetAttributes(semconv.AliasAttributes(attribute.String(semconv.AntnestIdentityResolveSource, decision.source),
+		attribute.String(semconv.AntnestIdentityResolveProfile, decision.profile), attribute.String(semconv.AntnestIdentityResolveOutcome, outcome))...)
 	if outcome != "admitted" {
 		decision.span.SetStatus(codes.Error, outcome)
 	}
 	if decision.source == "cache" {
-		decision.span.SetAttributes(attribute.Float64(resolveAttribute+"snapshot_age_ms", decision.snapshotAgeMS),
-			attribute.Float64(resolveAttribute+"proof_age_ms", decision.proofAgeMS), attribute.Float64(resolveAttribute+"valid_for_ms", decision.validForMS))
+		decision.span.SetAttributes(semconv.AliasAttributes(attribute.Float64(semconv.AntnestIdentityResolveSnapshotAgeMs, decision.snapshotAgeMS),
+			attribute.Float64(semconv.AntnestIdentityResolveProofAgeMs, decision.proofAgeMS), attribute.Float64(semconv.AntnestIdentityResolveValidForMs, decision.validForMS))...)
 	}
 	if decision.source == "shared" {
 		if decision.rpcSpan.IsValid() {
 			decision.span.AddLink(trace.Link{SpanContext: decision.rpcSpan})
 		}
 		if decision.sharedSourceState != "" {
-			decision.span.SetAttributes(attribute.String(resolveAttribute+"shared_source_state", decision.sharedSourceState))
+			decision.span.SetAttributes(semconv.AliasAttributes(attribute.String(semconv.AntnestIdentityResolveSharedSourceState, decision.sharedSourceState))...)
 		}
 	}
 	if decision.cancelKind != "" {
-		decision.span.SetAttributes(attribute.String(resolveAttribute+"cancel_kind", decision.cancelKind))
+		decision.span.SetAttributes(semconv.AliasAttributes(attribute.String(semconv.AntnestIdentityResolveCancelKind, decision.cancelKind))...)
 	}
 	decision.span.End()
 }
@@ -120,13 +120,13 @@ func (flight *resolveFlight) tracedWork(cache *resolveCache) (context.Context, f
 			options = append(options, trace.WithLinks(trace.Link{SpanContext: flight.triggerSpan}))
 		}
 		ctx, refresh = otel.Tracer(resolveInstrumentation).Start(ctx, "gateway.identity.resolve.refresh", options...)
-		refresh.SetAttributes(attribute.String(resolveAttribute+"profile", flight.key.profile))
+		refresh.SetAttributes(semconv.AliasAttributes(attribute.String(semconv.AntnestIdentityResolveProfile, flight.key.profile))...)
 	}
 	ctx = telemetry.WithHTTPClientSpanObserver(ctx, &cache.mu, func(span trace.SpanContext) { flight.rpcSpan = span })
 	return ctx, func(principal Principal, err error) {
 		if refresh != nil {
 			outcome := resolveOutcome(principal, err)
-			refresh.SetAttributes(attribute.String(resolveAttribute+"outcome", outcome))
+			refresh.SetAttributes(semconv.AliasAttributes(attribute.String(semconv.AntnestIdentityResolveOutcome, outcome))...)
 			if outcome != "admitted" {
 				refresh.SetStatus(codes.Error, outcome)
 			}

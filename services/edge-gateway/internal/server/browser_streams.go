@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	semconv "github.com/tf4fun/antnest-platform/libs/go/telemetry"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 
@@ -59,15 +60,15 @@ func (h *handler) guardBrowserStream(response http.ResponseWriter, request *http
 		if receipt, ok := guard.FeedTermination(); ok {
 			attributes := []attribute.KeyValue{
 				attribute.String("source", "identity-session-feed"), attribute.String("reason", "session_revoked"),
-				attribute.String("antnest.revocation.reason", receipt.Reason), attribute.Int64("antnest.revocation.sequence", receipt.Sequence),
-				attribute.String("antnest.organization.id", principal.OrganizationID), attribute.String("antnest.principal.id", principal.UserID),
-				attribute.String("antnest.membership.id", principal.MembershipID), attribute.String("antnest.agent.id", agent),
+				attribute.String(semconv.AntnestRevocationReason, receipt.Reason), attribute.Int64(semconv.AntnestRevocationSequence, receipt.Sequence),
+				attribute.String(semconv.AntnestOrganizationId, principal.OrganizationID), attribute.String(semconv.AntnestPrincipalId, principal.UserID),
+				attribute.String(semconv.AntnestMembershipId, principal.MembershipID), attribute.String(semconv.AntnestAgentId, agent),
 			}
 			if receipt.Source.IsValid() {
-				attributes = append(attributes, attribute.String("antnest.revocation.trace_id", receipt.Source.TraceID().String()),
-					attribute.String("antnest.revocation.span_id", receipt.Source.SpanID().String()))
+				attributes = append(attributes, attribute.String(semconv.AntnestRevocationTraceId, receipt.Source.TraceID().String()),
+					attribute.String(semconv.AntnestRevocationSpanId, receipt.Source.SpanID().String()))
 			}
-			trace.SpanFromContext(request.Context()).AddEvent("antnest.stream.termination", trace.WithTimestamp(receipt.At), trace.WithAttributes(attributes...))
+			trace.SpanFromContext(request.Context()).AddEvent(semconv.AntnestStreamTermination, trace.WithTimestamp(receipt.At), trace.WithAttributes(semconv.AliasAttributes(attributes...)...))
 		}
 		cancelLease()
 	}

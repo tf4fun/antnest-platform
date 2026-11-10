@@ -2,9 +2,38 @@
   "schema_version": 1,
   "namespace_literals": {
     "antnest.credentials.v1": "Identity credential HMAC domain separation; not a telemetry name.",
-    "antnest.ui.prompt_input.v1": "Node diagnostics_channel protocol identifier; not an OTel event or attribute."
+    "antnest.ui.prompt_input.v1": "Node diagnostics_channel protocol identifier; not an OTel event or attribute.",
+    "antnest.http-json": "rpc.system.name protocol value, not an attribute name.",
+    "antnest.edge-gateway.login-admission/password/v1": "Gateway account admission digest domain; not telemetry.",
+    "antnest.edge-gateway.login-admission/source/v1": "Gateway source admission digest domain; not telemetry.",
+    "antnest.edge-gateway.login-admission": "Gateway meter instrumentation scope, not a metric name.",
+    "antnest.identity.scim-user": "Identity SCIM pairing digest domain; not telemetry.",
+    "antnest.acp.http-boundary": "ACP process-local context key, not an emitted attribute.",
+    "antnest.runtime-tool-lifecycle": "ACP process-local context key, not an emitted attribute.",
+    "antnest.ui.active-http-boundary": "Agent UI process-local context key, not an emitted attribute.",
+    "antnest.dev/permission-request": "ACP capability namespace, not telemetry.",
+    "antnest.dev/permission-resolution": "ACP capability namespace, not telemetry.",
+    "antnest.dev/errors": "ACP error capability namespace, not telemetry.",
+    "antnest.dev/skill-commands": "ACP capability namespace, not telemetry.",
+    "antnest.dev/bridge": "ACP capability namespace, not telemetry.",
+    "antnest.dev/delivery": "ACP capability namespace, not telemetry.",
+    "antnest.dev/skill-learning": "ACP capability namespace, not telemetry.",
+    "antnest.dev/target-cancel": "ACP capability namespace, not telemetry.",
+    "antnest.dev/configuration": "ACP capability namespace, not telemetry.",
+    "antnest.dev/intent": "ACP capability namespace, not telemetry."
   },
   "attributes": [
+    {
+      "name": "antnest_edge_login_admission_total",
+      "kind": "metric",
+      "type": "int",
+      "unit": "{request}",
+      "cardinality": "bounded",
+      "pii": "none",
+      "owner": ["edge-gateway"],
+      "labels": [],
+      "legacy_metric_name": true
+    },
     {
       "name": "antnest.acp.bridge_intent_reuse",
       "kind": "metric",

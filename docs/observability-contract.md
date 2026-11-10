@@ -839,4 +839,5 @@ attempt to sanitize `Error()` output.
 | antnest.ui.stream.delegation_expires_at_unix_ms | span_attribute | int | ms | unbounded | none | agent-ui |  |  |
 | antnest.ui.stream.delegation_remaining_ms | span_attribute | int | ms | unbounded | none | agent-ui |  |  |
 | antnest.watch.termination | span_attribute | string |  | low | none | runtime-controller |  |  |
+| antnest_edge_login_admission_total | metric | int | {request} | bounded | none | edge-gateway |  |  |
 <!-- observability-registry:end -->
