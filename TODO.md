@@ -1,5 +1,7 @@
 # Antnest Platform 全局 TODO
 
+- **#69 PR CI 接手（2026-11-10，用户授权修复、合并并关闭）**：接续并覆盖历史停止／不轮询／不合并交接；按 #617 共享基础 → #618–#627 服务批次 → #628 显式集成推进。基础批次的 observability ownership 已声明十个消费者，workflow 路径尚未同步，现补齐十个服务 push／PR 的精确契约路径，保留 PR image guard。后续按服务修复 unused helper、脱敏与 alias oracle，以及源指纹同步；以最终精确 head 的远程 Repository／Integration 和选中服务组件作为准入。不运行或查询独立 system E2E。
+
 - **#69 ACP 本地反馈**：72 项遥测定向用例通过；类型／lint 修正后再验 33 项相关用例通过，TypeScript 与受改文件 ESLint 通过，registry 生成一致性和本服务命名 lint 通过。协议错误 identity、公共 24k 字段、capture 禁用不序列化和访问拒绝事件的精确 alias 白名单均保留断言。完整 unit／contract／PostgreSQL component 与 Integration 由远程 CI 准入，未等待，不计为已通过。
 
 - **#69 Agent ACP Service 共享遥测消费批次（2026-11-09，分支 fix/issue-69-agent-acp-service，基于 RC PR623 b4f22231）**：test-first 证据——`rpc-secrets.test.ts` 在基线原始 `JSON.stringify` 捕获下嵌套 canary 泄漏（RED 经确认），`names.test.ts` 对冻结 API `normalizeAttributes`/`metricAttributes` 模块缺失 RED（经确认），disabled 不序列化用例基线 GREEN。实现 `src/telemetry/names.ts`（泛型 T 别名归一+度量过滤，env `ANTNEST_TELEMETRY_LEGACY_ATTRIBUTES` 默认开，`./semconv.gen.js` 由协调方生成）；`diagnostics.rpcContent` 改 `JSON.stringify` replacer 递归脱敏（与 Go capture.go 同一 secret-key 集合，小写去 `_`/`-`）事件名常量三元；`ServiceTelemetry` `cleanAttributes`→`normalizeAttributes`、`count`/`duration`→`metricAttributes`、`diagnosticEvent` 归一、本地别名表删除；全部生产 `antnest.` 字面量→`[SEMCONV.ANTNEST_*]` 计算键；`antnest.dev/`、`antnest.acp.http-boundary` 等豁免命名空间原样。`semconv.gen.ts` 列入 `.prettierignore`；workflow 增补 `contracts/observability/**` 与 registry 脚本路径。npm/lock/manifest 由协调方处理；远程准入交 CI 不计通过，不合并／关闭 #69/#83，不运行 Docker E2E。

@@ -3,6 +3,7 @@ package telemetry
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -142,5 +143,32 @@ func TestHTTPHandlerCompletesTraceWhenHandlerUnwinds(t *testing.T) {
 				t.Fatal("logged panic payload")
 			}
 		})
+	}
+}
+
+type failingRequestBody struct{ err error }
+
+func (b failingRequestBody) Read([]byte) (int, error) { return 0, b.err }
+func (b failingRequestBody) Close() error             { return nil }
+
+func TestHTTPHandlerRetainsRequestReadFailure(t *testing.T) {
+	recorder := recordHTTPSpans(t)
+	marker := errors.New("private-read-error")
+	request := httptest.NewRequest(http.MethodPost, "/fixture", nil)
+	request.Body = failingRequestBody{err: marker}
+	response := httptest.NewRecorder()
+	handler := HTTPHandler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if _, err := io.ReadAll(r.Body); err != marker {
+			t.Fatalf("read error changed: %v", err)
+		}
+		w.WriteHeader(http.StatusBadRequest)
+	}), slog.New(slog.NewTextHandler(io.Discard, nil)))
+	handler.ServeHTTP(response, request)
+	spans := recorder.Ended()
+	if response.Code != http.StatusBadRequest || len(spans) != 1 {
+		t.Fatalf("status=%d spans=%d", response.Code, len(spans))
+	}
+	if spans[0].Status().Code != codes.Error {
+		t.Fatalf("request read failure lost: %v", spans[0].Status())
 	}
 }

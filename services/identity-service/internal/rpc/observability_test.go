@@ -62,8 +62,21 @@ func TestLoginDispatcherCapturesActualDTOValuesAndPreservesCredentialWire(t *tes
 	if !strings.Contains(requestJSON, `"request_id":"request-42"`) || !strings.Contains(responseJSON, `"user_id":"user-42"`) || !strings.Contains(responseJSON, `"organization_id":"org-42"`) || !strings.Contains(responseJSON, `"active":true`) {
 		t.Fatalf("actual values missing: %s %s", requestJSON, responseJSON)
 	}
-	if !strings.Contains(requestJSON, "PASSWORD-CANARY") || !strings.Contains(responseJSON, "ACCESS-CANARY") {
-		t.Fatal("enabled RPC capture must preserve complete parameters and results")
+	if strings.Contains(requestJSON, "PASSWORD-CANARY") || strings.Contains(responseJSON, "ACCESS-CANARY") {
+		t.Fatal("RPC diagnostics leaked login credentials")
+	}
+	var capturedRequest, capturedResponse map[string]any
+	if err := json.Unmarshal([]byte(requestJSON), &capturedRequest); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal([]byte(responseJSON), &capturedResponse); err != nil {
+		t.Fatal(err)
+	}
+	if capturedRequest["password"] != "[REDACTED]" || capturedResponse["access_token"] != "[REDACTED]" {
+		t.Fatal("RPC diagnostics must retain explicit redaction markers")
+	}
+	if capturedRequest["email"] != "EMAIL-CANARY@example.com" || capturedRequest["organization_slug"] != "engineering" {
+		t.Fatal("RPC diagnostics lost public login parameters")
 	}
 }
 
