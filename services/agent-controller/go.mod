@@ -7,9 +7,10 @@ toolchain go1.27.1
 require (
 	github.com/distribution/reference v0.6.0
 	github.com/exaring/otelpgx v0.13.0
-	github.com/jackc/pgx/v5 v5.11.0
+	github.com/jackc/pgx/v5 v5.12.0
 	github.com/santhosh-tekuri/jsonschema/v6 v6.0.3
 	github.com/stretchr/testify v1.12.1
+	github.com/tf4fun/antnest-platform/libs/go/telemetry v0.0.0
 	github.com/tf4fun/antnest-platform/modules/secret-encryption v0.0.0
 	github.com/tf4fun/antnest-platform/modules/service-authentication v0.0.0
 	go.opentelemetry.io/contrib/bridges/otelslog v0.21.0
@@ -42,13 +43,12 @@ require (
 	github.com/grpc-ecosystem/grpc-gateway/v2 v2.31.0 // indirect
 	github.com/jackc/pgpassfile v1.0.0 // indirect
 	github.com/jackc/pgservicefile v0.0.0-20240606120523-5a60cdf6a761 // indirect
-	github.com/jackc/puddle/v2 v2.2.2 // indirect
+	github.com/jackc/puddle/v2 v2.2.3 // indirect
 	github.com/nexus-rpc/nexus-proto-annotations v0.1.0 // indirect
 	github.com/nexus-rpc/sdk-go v0.7.0 // indirect
 	github.com/opencontainers/go-digest v1.0.0 // indirect
 	github.com/robfig/cron v1.2.0 // indirect
 	github.com/stretchr/objx v0.5.3 // indirect
-	github.com/tf4fun/antnest-platform/libs/go/telemetry v0.0.0
 	go.opentelemetry.io/auto/sdk v1.2.1 // indirect
 	go.opentelemetry.io/otel/exporters/otlp/otlptrace v1.47.0 // indirect
 	go.opentelemetry.io/otel/log v1.47.0 // indirect
