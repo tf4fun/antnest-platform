@@ -1,0 +1,3307 @@
+{
+  "schema_version": 1,
+  "namespace_literals": {
+    "antnest.credentials.v1": "Identity credential HMAC domain separation; not a telemetry name.",
+    "antnest.ui.prompt_input.v1": "Node diagnostics_channel protocol identifier; not an OTel event or attribute."
+  },
+  "attributes": [
+    {
+      "name": "antnest.acp.bridge_intent_reuse",
+      "kind": "metric",
+      "type": "int",
+      "unit": "1",
+      "cardinality": "bounded",
+      "pii": "none",
+      "owner": [
+        "agent-acp-service"
+      ],
+      "labels": []
+    },
+    {
+      "name": "antnest.acp.connections",
+      "kind": "metric",
+      "type": "int",
+      "unit": "1",
+      "cardinality": "bounded",
+      "pii": "none",
+      "owner": [
+        "agent-acp-service"
+      ],
+      "labels": []
+    },
+    {
+      "name": "antnest.acp.mcp.close_failures",
+      "kind": "metric",
+      "type": "int",
+      "unit": "1",
+      "cardinality": "bounded",
+      "pii": "none",
+      "owner": [
+        "agent-acp-service"
+      ],
+      "labels": []
+    },
+    {
+      "name": "antnest.acp.mcp.duration",
+      "kind": "metric",
+      "type": "double",
+      "unit": "ms",
+      "cardinality": "bounded",
+      "pii": "none",
+      "owner": [
+        "agent-acp-service"
+      ],
+      "labels": []
+    },
+    {
+      "name": "antnest.acp.mcp.requests",
+      "kind": "metric",
+      "type": "int",
+      "unit": "1",
+      "cardinality": "bounded",
+      "pii": "none",
+      "owner": [
+        "agent-acp-service"
+      ],
+      "labels": []
+    },
+    {
+      "name": "antnest.acp.model.duration",
+      "kind": "metric",
+      "type": "double",
+      "unit": "ms",
+      "cardinality": "bounded",
+      "pii": "none",
+      "owner": [
+        "agent-acp-service"
+      ],
+      "labels": []
+    },
+    {
+      "name": "antnest.acp.model.requests",
+      "kind": "metric",
+      "type": "int",
+      "unit": "1",
+      "cardinality": "bounded",
+      "pii": "none",
+      "owner": [
+        "agent-acp-service"
+      ],
+      "labels": []
+    },
+    {
+      "name": "antnest.acp.permission.decisions",
+      "kind": "metric",
+      "type": "int",
+      "unit": "1",
+      "cardinality": "bounded",
+      "pii": "none",
+      "owner": [
+        "agent-acp-service"
+      ],
+      "labels": []
+    },
+    {
+      "name": "antnest.acp.recovery_runs",
+      "kind": "metric",
+      "type": "int",
+      "unit": "1",
+      "cardinality": "bounded",
+      "pii": "none",
+      "owner": [
+        "agent-acp-service"
+      ],
+      "labels": []
+    },
+    {
+      "name": "antnest.acp.repository.duration",
+      "kind": "metric",
+      "type": "double",
+      "unit": "ms",
+      "cardinality": "bounded",
+      "pii": "none",
+      "owner": [
+        "agent-acp-service"
+      ],
+      "labels": []
+    },
+    {
+      "name": "antnest.acp.repository.requests",
+      "kind": "metric",
+      "type": "int",
+      "unit": "1",
+      "cardinality": "bounded",
+      "pii": "none",
+      "owner": [
+        "agent-acp-service"
+      ],
+      "labels": []
+    },
+    {
+      "name": "antnest.acp.run.duration",
+      "kind": "metric",
+      "type": "double",
+      "unit": "ms",
+      "cardinality": "bounded",
+      "pii": "none",
+      "owner": [
+        "agent-acp-service"
+      ],
+      "labels": []
+    },
+    {
+      "name": "antnest.acp.run_admissions",
+      "kind": "metric",
+      "type": "int",
+      "unit": "1",
+      "cardinality": "bounded",
+      "pii": "none",
+      "owner": [
+        "agent-acp-service"
+      ],
+      "labels": []
+    },
+    {
+      "name": "antnest.acp.runs",
+      "kind": "metric",
+      "type": "int",
+      "unit": "1",
+      "cardinality": "bounded",
+      "pii": "none",
+      "owner": [
+        "agent-acp-service"
+      ],
+      "labels": []
+    },
+    {
+      "name": "antnest.acp.session_method.duration",
+      "kind": "metric",
+      "type": "double",
+      "unit": "ms",
+      "cardinality": "bounded",
+      "pii": "none",
+      "owner": [
+        "agent-acp-service"
+      ],
+      "labels": []
+    },
+    {
+      "name": "antnest.acp.session_methods",
+      "kind": "metric",
+      "type": "int",
+      "unit": "1",
+      "cardinality": "bounded",
+      "pii": "none",
+      "owner": [
+        "agent-acp-service"
+      ],
+      "labels": []
+    },
+    {
+      "name": "antnest.acp.skill_learning.tasks",
+      "kind": "metric",
+      "type": "int",
+      "unit": "1",
+      "cardinality": "bounded",
+      "pii": "none",
+      "owner": [
+        "agent-acp-service"
+      ],
+      "labels": []
+    },
+    {
+      "name": "antnest.acp.skill_projections",
+      "kind": "metric",
+      "type": "int",
+      "unit": "1",
+      "cardinality": "bounded",
+      "pii": "none",
+      "owner": [
+        "agent-acp-service"
+      ],
+      "labels": []
+    },
+    {
+      "name": "antnest.acp.skill_temporary_cleanup",
+      "kind": "metric",
+      "type": "int",
+      "unit": "1",
+      "cardinality": "bounded",
+      "pii": "none",
+      "owner": [
+        "agent-acp-service"
+      ],
+      "labels": []
+    },
+    {
+      "name": "antnest.acp.unresolved_runs",
+      "kind": "metric",
+      "type": "int",
+      "unit": "1",
+      "cardinality": "bounded",
+      "pii": "none",
+      "owner": [
+        "agent-acp-service"
+      ],
+      "labels": []
+    },
+    {
+      "name": "antnest.acp.worker_lock_losses",
+      "kind": "metric",
+      "type": "int",
+      "unit": "1",
+      "cardinality": "bounded",
+      "pii": "none",
+      "owner": [
+        "agent-acp-service"
+      ],
+      "labels": []
+    },
+    {
+      "name": "antnest.actor.id",
+      "kind": "span_attribute",
+      "type": "string",
+      "cardinality": "unbounded",
+      "pii": "identifier",
+      "owner": [
+        "agent-controller"
+      ]
+    },
+    {
+      "name": "antnest.admission.id",
+      "kind": "span_attribute",
+      "type": "string",
+      "cardinality": "unbounded",
+      "pii": "identifier",
+      "owner": [
+        "agent-acp-service"
+      ]
+    },
+    {
+      "name": "antnest.agent.id",
+      "kind": "span_attribute",
+      "type": "string",
+      "cardinality": "unbounded",
+      "pii": "identifier",
+      "owner": [
+        "agent-acp-service",
+        "agent-controller",
+        "agent-ui",
+        "antnest-runtime",
+        "edge-gateway",
+        "runtime-controller",
+        "runtime-egress"
+      ]
+    },
+    {
+      "name": "antnest.agent.revision",
+      "kind": "span_attribute",
+      "type": "int",
+      "cardinality": "unbounded",
+      "pii": "none",
+      "owner": [
+        "agent-acp-service"
+      ]
+    },
+    {
+      "name": "antnest.agent_controller.dependency.duration",
+      "kind": "metric",
+      "type": "double",
+      "unit": "s",
+      "cardinality": "bounded",
+      "pii": "none",
+      "owner": [
+        "agent-controller"
+      ],
+      "labels": []
+    },
+    {
+      "name": "antnest.agent_controller.dependency.requests",
+      "kind": "metric",
+      "type": "int",
+      "unit": "1",
+      "cardinality": "bounded",
+      "pii": "none",
+      "owner": [
+        "agent-controller"
+      ],
+      "labels": []
+    },
+    {
+      "name": "antnest.agent_controller.event_journal.appends",
+      "kind": "metric",
+      "type": "int",
+      "unit": "1",
+      "cardinality": "bounded",
+      "pii": "none",
+      "owner": [
+        "agent-controller"
+      ],
+      "labels": []
+    },
+    {
+      "name": "antnest.agent_controller.event_notifier.transitions",
+      "kind": "metric",
+      "type": "int",
+      "unit": "1",
+      "cardinality": "bounded",
+      "pii": "none",
+      "owner": [
+        "agent-controller"
+      ],
+      "labels": []
+    },
+    {
+      "name": "antnest.agent_controller.event_watch.connections",
+      "kind": "metric",
+      "type": "int",
+      "unit": "1",
+      "cardinality": "bounded",
+      "pii": "none",
+      "owner": [
+        "agent-controller"
+      ],
+      "labels": []
+    },
+    {
+      "name": "antnest.agent_controller.event_watch.disconnects",
+      "kind": "metric",
+      "type": "int",
+      "unit": "1",
+      "cardinality": "bounded",
+      "pii": "none",
+      "owner": [
+        "agent-controller"
+      ],
+      "labels": []
+    },
+    {
+      "name": "antnest.agent_controller.http.duration",
+      "kind": "metric",
+      "type": "double",
+      "unit": "s",
+      "cardinality": "bounded",
+      "pii": "none",
+      "owner": [
+        "agent-controller"
+      ],
+      "labels": []
+    },
+    {
+      "name": "antnest.agent_controller.http.requests",
+      "kind": "metric",
+      "type": "int",
+      "unit": "1",
+      "cardinality": "bounded",
+      "pii": "none",
+      "owner": [
+        "agent-controller"
+      ],
+      "labels": []
+    },
+    {
+      "name": "antnest.agent_controller.lifecycle.operations",
+      "kind": "metric",
+      "type": "int",
+      "unit": "1",
+      "cardinality": "bounded",
+      "pii": "none",
+      "owner": [
+        "agent-controller"
+      ],
+      "labels": []
+    },
+    {
+      "name": "antnest.agent_id",
+      "kind": "span_attribute",
+      "type": "string",
+      "cardinality": "unbounded",
+      "pii": "identifier",
+      "owner": [
+        "agent-acp-service"
+      ],
+      "deprecated_alias_of": "antnest.agent.id"
+    },
+    {
+      "name": "antnest.authorization.mode",
+      "kind": "span_attribute",
+      "type": "string",
+      "cardinality": "low",
+      "pii": "none",
+      "owner": [
+        "agent-acp-service"
+      ]
+    },
+    {
+      "name": "antnest.cancellation.phase",
+      "kind": "span_attribute",
+      "type": "string",
+      "cardinality": "low",
+      "pii": "none",
+      "owner": [
+        "agent-acp-service"
+      ]
+    },
+    {
+      "name": "antnest.cancellation.type",
+      "kind": "span_attribute",
+      "type": "string",
+      "cardinality": "low",
+      "pii": "none",
+      "owner": [
+        "agent-acp-service"
+      ]
+    },
+    {
+      "name": "antnest.cancelled",
+      "kind": "event",
+      "type": "string",
+      "cardinality": "bounded",
+      "pii": "none",
+      "owner": [
+        "agent-acp-service",
+        "antnest-runtime"
+      ]
+    },
+    {
+      "name": "antnest.capture.error",
+      "kind": "event",
+      "type": "string",
+      "cardinality": "bounded",
+      "pii": "none",
+      "owner": [
+        "agent-acp-service",
+        "agent-controller",
+        "antnest-runtime",
+        "identity-service",
+        "runtime-controller",
+        "runtime-egress"
+      ]
+    },
+    {
+      "name": "antnest.complete",
+      "kind": "event",
+      "type": "string",
+      "cardinality": "bounded",
+      "pii": "none",
+      "owner": [
+        "runtime-egress"
+      ]
+    },
+    {
+      "name": "antnest.configuration.applied_revision",
+      "kind": "span_attribute",
+      "type": "int",
+      "cardinality": "unbounded",
+      "pii": "none",
+      "owner": [
+        "agent-controller"
+      ]
+    },
+    {
+      "name": "antnest.configuration.revision",
+      "kind": "span_attribute",
+      "type": "int",
+      "cardinality": "unbounded",
+      "pii": "none",
+      "owner": [
+        "agent-acp-service",
+        "agent-controller"
+      ]
+    },
+    {
+      "name": "antnest.context.message_count",
+      "kind": "span_attribute",
+      "type": "int",
+      "unit": "1",
+      "cardinality": "unbounded",
+      "pii": "none",
+      "owner": [
+        "agent-acp-service"
+      ]
+    },
+    {
+      "name": "antnest.context.tool_count",
+      "kind": "span_attribute",
+      "type": "int",
+      "unit": "1",
+      "cardinality": "unbounded",
+      "pii": "none",
+      "owner": [
+        "agent-acp-service"
+      ]
+    },
+    {
+      "name": "antnest.controller.scope",
+      "kind": "span_attribute",
+      "type": "string",
+      "cardinality": "unbounded",
+      "pii": "identifier",
+      "owner": [
+        "runtime-controller"
+      ]
+    },
+    {
+      "name": "antnest.deadline",
+      "kind": "span_attribute",
+      "type": "string",
+      "cardinality": "unbounded",
+      "pii": "none",
+      "owner": [
+        "agent-acp-service",
+        "runtime-controller"
+      ]
+    },
+    {
+      "name": "antnest.egress.agent.fenced_packets",
+      "kind": "metric",
+      "type": "int",
+      "unit": "1",
+      "cardinality": "bounded",
+      "pii": "none",
+      "owner": [
+        "runtime-egress"
+      ],
+      "labels": []
+    },
+    {
+      "name": "antnest.egress.agent.unknown",
+      "kind": "metric",
+      "type": "int",
+      "unit": "1",
+      "cardinality": "bounded",
+      "pii": "none",
+      "owner": [
+        "runtime-egress"
+      ],
+      "labels": []
+    },
+    {
+      "name": "antnest.egress.control.duration",
+      "kind": "metric",
+      "type": "double",
+      "unit": "ms",
+      "cardinality": "bounded",
+      "pii": "none",
+      "owner": [
+        "runtime-egress"
+      ],
+      "labels": []
+    },
+    {
+      "name": "antnest.egress.control.requests",
+      "kind": "metric",
+      "type": "int",
+      "unit": "1",
+      "cardinality": "bounded",
+      "pii": "none",
+      "owner": [
+        "runtime-egress"
+      ],
+      "labels": []
+    },
+    {
+      "name": "antnest.egress.dns.answers.filtered",
+      "kind": "metric",
+      "type": "int",
+      "unit": "1",
+      "cardinality": "bounded",
+      "pii": "none",
+      "owner": [
+        "runtime-egress"
+      ],
+      "labels": []
+    },
+    {
+      "name": "antnest.egress.dns.client_to_upstream.bytes",
+      "kind": "metric",
+      "type": "int",
+      "unit": "By",
+      "cardinality": "bounded",
+      "pii": "none",
+      "owner": [
+        "runtime-egress"
+      ],
+      "labels": []
+    },
+    {
+      "name": "antnest.egress.dns.connections.accepted",
+      "kind": "metric",
+      "type": "int",
+      "unit": "1",
+      "cardinality": "bounded",
+      "pii": "none",
+      "owner": [
+        "runtime-egress"
+      ],
+      "labels": []
+    },
+    {
+      "name": "antnest.egress.dns.connections.completed",
+      "kind": "metric",
+      "type": "int",
+      "unit": "1",
+      "cardinality": "bounded",
+      "pii": "none",
+      "owner": [
+        "runtime-egress"
+      ],
+      "labels": []
+    },
+    {
+      "name": "antnest.egress.dns.connections.rejected",
+      "kind": "metric",
+      "type": "int",
+      "unit": "1",
+      "cardinality": "bounded",
+      "pii": "none",
+      "owner": [
+        "runtime-egress"
+      ],
+      "labels": []
+    },
+    {
+      "name": "antnest.egress.dns.proxy.failures",
+      "kind": "metric",
+      "type": "int",
+      "unit": "1",
+      "cardinality": "bounded",
+      "pii": "none",
+      "owner": [
+        "runtime-egress"
+      ],
+      "labels": []
+    },
+    {
+      "name": "antnest.egress.dns.upstream_to_client.bytes",
+      "kind": "metric",
+      "type": "int",
+      "unit": "By",
+      "cardinality": "bounded",
+      "pii": "none",
+      "owner": [
+        "runtime-egress"
+      ],
+      "labels": []
+    },
+    {
+      "name": "antnest.egress.downlink.bytes",
+      "kind": "metric",
+      "type": "int",
+      "unit": "By",
+      "cardinality": "bounded",
+      "pii": "none",
+      "owner": [
+        "runtime-egress"
+      ],
+      "labels": []
+    },
+    {
+      "name": "antnest.egress.downlink.packets",
+      "kind": "metric",
+      "type": "int",
+      "unit": "1",
+      "cardinality": "bounded",
+      "pii": "none",
+      "owner": [
+        "runtime-egress"
+      ],
+      "labels": []
+    },
+    {
+      "name": "antnest.egress.flow.active",
+      "kind": "metric",
+      "type": "int",
+      "unit": "1",
+      "cardinality": "bounded",
+      "pii": "none",
+      "owner": [
+        "runtime-egress"
+      ],
+      "labels": []
+    },
+    {
+      "name": "antnest.egress.flow.capacity_rejections",
+      "kind": "metric",
+      "type": "int",
+      "unit": "1",
+      "cardinality": "bounded",
+      "pii": "none",
+      "owner": [
+        "runtime-egress"
+      ],
+      "labels": []
+    },
+    {
+      "name": "antnest.egress.flow.collisions",
+      "kind": "metric",
+      "type": "int",
+      "unit": "1",
+      "cardinality": "bounded",
+      "pii": "none",
+      "owner": [
+        "runtime-egress"
+      ],
+      "labels": []
+    },
+    {
+      "name": "antnest.egress.flow.expirations",
+      "kind": "metric",
+      "type": "int",
+      "unit": "1",
+      "cardinality": "bounded",
+      "pii": "none",
+      "owner": [
+        "runtime-egress"
+      ],
+      "labels": []
+    },
+    {
+      "name": "antnest.egress.flow.reverse_misses",
+      "kind": "metric",
+      "type": "int",
+      "unit": "1",
+      "cardinality": "bounded",
+      "pii": "none",
+      "owner": [
+        "runtime-egress"
+      ],
+      "labels": []
+    },
+    {
+      "name": "antnest.egress.health.control_plane.ready",
+      "kind": "metric",
+      "type": "int",
+      "unit": "1",
+      "cardinality": "bounded",
+      "pii": "none",
+      "owner": [
+        "runtime-egress"
+      ],
+      "labels": []
+    },
+    {
+      "name": "antnest.egress.health.data_plane.ready",
+      "kind": "metric",
+      "type": "int",
+      "unit": "1",
+      "cardinality": "bounded",
+      "pii": "none",
+      "owner": [
+        "runtime-egress"
+      ],
+      "labels": []
+    },
+    {
+      "name": "antnest.egress.health.fenced_agents",
+      "kind": "metric",
+      "type": "int",
+      "unit": "1",
+      "cardinality": "bounded",
+      "pii": "none",
+      "owner": [
+        "runtime-egress"
+      ],
+      "labels": []
+    },
+    {
+      "name": "antnest.egress.health.ready",
+      "kind": "metric",
+      "type": "int",
+      "unit": "1",
+      "cardinality": "bounded",
+      "pii": "none",
+      "owner": [
+        "runtime-egress"
+      ],
+      "labels": []
+    },
+    {
+      "name": "antnest.egress.health.transitions",
+      "kind": "metric",
+      "type": "int",
+      "unit": "1",
+      "cardinality": "bounded",
+      "pii": "none",
+      "owner": [
+        "runtime-egress"
+      ],
+      "labels": []
+    },
+    {
+      "name": "antnest.egress.packet.malformed",
+      "kind": "metric",
+      "type": "int",
+      "unit": "1",
+      "cardinality": "bounded",
+      "pii": "none",
+      "owner": [
+        "runtime-egress"
+      ],
+      "labels": []
+    },
+    {
+      "name": "antnest.egress.packet.unsupported",
+      "kind": "metric",
+      "type": "int",
+      "unit": "1",
+      "cardinality": "bounded",
+      "pii": "none",
+      "owner": [
+        "runtime-egress"
+      ],
+      "labels": []
+    },
+    {
+      "name": "antnest.egress.peer_mismatch.drops",
+      "kind": "metric",
+      "type": "int",
+      "unit": "1",
+      "cardinality": "bounded",
+      "pii": "none",
+      "owner": [
+        "runtime-egress"
+      ],
+      "labels": []
+    },
+    {
+      "name": "antnest.egress.peer_output.failures",
+      "kind": "metric",
+      "type": "int",
+      "unit": "1",
+      "cardinality": "bounded",
+      "pii": "none",
+      "owner": [
+        "runtime-egress"
+      ],
+      "labels": []
+    },
+    {
+      "name": "antnest.egress.policy.allows",
+      "kind": "metric",
+      "type": "int",
+      "unit": "1",
+      "cardinality": "bounded",
+      "pii": "none",
+      "owner": [
+        "runtime-egress"
+      ],
+      "labels": []
+    },
+    {
+      "name": "antnest.egress.policy.denials",
+      "kind": "metric",
+      "type": "int",
+      "unit": "1",
+      "cardinality": "bounded",
+      "pii": "none",
+      "owner": [
+        "runtime-egress"
+      ],
+      "labels": []
+    },
+    {
+      "name": "antnest.egress.quarantine.cleanup_failures",
+      "kind": "metric",
+      "type": "int",
+      "unit": "1",
+      "cardinality": "bounded",
+      "pii": "none",
+      "owner": [
+        "runtime-egress"
+      ],
+      "labels": []
+    },
+    {
+      "name": "antnest.egress.quarantine.removed",
+      "kind": "metric",
+      "type": "int",
+      "unit": "1",
+      "cardinality": "bounded",
+      "pii": "none",
+      "owner": [
+        "runtime-egress"
+      ],
+      "labels": []
+    },
+    {
+      "name": "antnest.egress.tunnel.authentication_drops",
+      "kind": "metric",
+      "type": "int",
+      "unit": "1",
+      "cardinality": "bounded",
+      "pii": "none",
+      "owner": [
+        "runtime-egress"
+      ],
+      "labels": []
+    },
+    {
+      "name": "antnest.egress.tunnel.replay_drops",
+      "kind": "metric",
+      "type": "int",
+      "unit": "1",
+      "cardinality": "bounded",
+      "pii": "none",
+      "owner": [
+        "runtime-egress"
+      ],
+      "labels": []
+    },
+    {
+      "name": "antnest.egress.tunnel.unknown_context_drops",
+      "kind": "metric",
+      "type": "int",
+      "unit": "1",
+      "cardinality": "bounded",
+      "pii": "none",
+      "owner": [
+        "runtime-egress"
+      ],
+      "labels": []
+    },
+    {
+      "name": "antnest.egress.udp.receive_errors.unattributed",
+      "kind": "metric",
+      "type": "int",
+      "unit": "1",
+      "cardinality": "bounded",
+      "pii": "none",
+      "owner": [
+        "runtime-egress"
+      ],
+      "labels": []
+    },
+    {
+      "name": "antnest.egress.uplink.bytes",
+      "kind": "metric",
+      "type": "int",
+      "unit": "By",
+      "cardinality": "bounded",
+      "pii": "none",
+      "owner": [
+        "runtime-egress"
+      ],
+      "labels": []
+    },
+    {
+      "name": "antnest.egress.uplink.packets",
+      "kind": "metric",
+      "type": "int",
+      "unit": "1",
+      "cardinality": "bounded",
+      "pii": "none",
+      "owner": [
+        "runtime-egress"
+      ],
+      "labels": []
+    },
+    {
+      "name": "antnest.error",
+      "kind": "event",
+      "type": "string",
+      "cardinality": "bounded",
+      "pii": "none",
+      "owner": [
+        "admin-console",
+        "agent-acp-service",
+        "agent-controller",
+        "antnest-runtime",
+        "edge-gateway",
+        "identity-service",
+        "runtime-controller",
+        "runtime-egress"
+      ]
+    },
+    {
+      "name": "antnest.error.cause_types",
+      "kind": "span_attribute",
+      "type": "string[]",
+      "cardinality": "unbounded",
+      "pii": "none",
+      "owner": [
+        "admin-console",
+        "agent-acp-service",
+        "agent-controller",
+        "antnest-runtime",
+        "edge-gateway",
+        "identity-service",
+        "runtime-controller",
+        "runtime-egress"
+      ]
+    },
+    {
+      "name": "antnest.error.causes",
+      "kind": "span_attribute",
+      "type": "string",
+      "cardinality": "unbounded",
+      "pii": "content",
+      "owner": [
+        "admin-console",
+        "agent-acp-service",
+        "agent-controller",
+        "antnest-runtime",
+        "runtime-controller",
+        "runtime-egress"
+      ]
+    },
+    {
+      "name": "antnest.error.class",
+      "kind": "span_attribute",
+      "type": "string",
+      "cardinality": "low",
+      "pii": "none",
+      "owner": [
+        "runtime-controller"
+      ],
+      "deprecated_alias_of": "antnest.error.classification"
+    },
+    {
+      "name": "antnest.error.classification",
+      "kind": "span_attribute",
+      "type": "string",
+      "cardinality": "low",
+      "pii": "none",
+      "owner": [
+        "agent-controller",
+        "runtime-controller"
+      ]
+    },
+    {
+      "name": "antnest.error.code",
+      "kind": "span_attribute",
+      "type": "string",
+      "cardinality": "low",
+      "pii": "none",
+      "owner": [
+        "admin-console",
+        "agent-acp-service",
+        "agent-controller",
+        "antnest-runtime",
+        "identity-service",
+        "runtime-controller",
+        "runtime-egress"
+      ]
+    },
+    {
+      "name": "antnest.error.message",
+      "kind": "span_attribute",
+      "type": "string",
+      "cardinality": "unbounded",
+      "pii": "content",
+      "owner": [
+        "admin-console",
+        "agent-acp-service",
+        "agent-controller",
+        "antnest-runtime",
+        "edge-gateway",
+        "identity-service",
+        "runtime-controller",
+        "runtime-egress"
+      ]
+    },
+    {
+      "name": "antnest.error.origin",
+      "kind": "span_attribute",
+      "type": "string",
+      "cardinality": "low",
+      "pii": "none",
+      "owner": [
+        "runtime-egress"
+      ]
+    },
+    {
+      "name": "antnest.error.origin_span_id",
+      "kind": "span_attribute",
+      "type": "string",
+      "cardinality": "unbounded",
+      "pii": "identifier",
+      "owner": [
+        "agent-acp-service"
+      ]
+    },
+    {
+      "name": "antnest.error.origin_trace_id",
+      "kind": "span_attribute",
+      "type": "string",
+      "cardinality": "unbounded",
+      "pii": "identifier",
+      "owner": [
+        "agent-acp-service"
+      ]
+    },
+    {
+      "name": "antnest.error.panic_type",
+      "kind": "span_attribute",
+      "type": "string",
+      "cardinality": "low",
+      "pii": "none",
+      "owner": [
+        "edge-gateway"
+      ]
+    },
+    {
+      "name": "antnest.error.protocol_code",
+      "kind": "span_attribute",
+      "type": "string",
+      "cardinality": "low",
+      "pii": "none",
+      "owner": [
+        "identity-service"
+      ]
+    },
+    {
+      "name": "antnest.error.stage",
+      "kind": "span_attribute",
+      "type": "string",
+      "cardinality": "low",
+      "pii": "none",
+      "owner": [
+        "admin-console",
+        "agent-acp-service",
+        "agent-controller",
+        "antnest-runtime",
+        "edge-gateway",
+        "identity-service",
+        "runtime-controller",
+        "runtime-egress"
+      ]
+    },
+    {
+      "name": "antnest.error.type",
+      "kind": "span_attribute",
+      "type": "string",
+      "cardinality": "low",
+      "pii": "none",
+      "owner": [
+        "admin-console",
+        "agent-acp-service",
+        "agent-controller",
+        "antnest-runtime",
+        "identity-service",
+        "runtime-controller",
+        "runtime-egress"
+      ]
+    },
+    {
+      "name": "antnest.event.type",
+      "kind": "span_attribute",
+      "type": "string",
+      "cardinality": "low",
+      "pii": "none",
+      "owner": [
+        "agent-controller"
+      ]
+    },
+    {
+      "name": "antnest.event_notifier.state",
+      "kind": "span_attribute",
+      "type": "string",
+      "cardinality": "low",
+      "pii": "none",
+      "owner": [
+        "agent-controller"
+      ]
+    },
+    {
+      "name": "antnest.event_watch.scope",
+      "kind": "span_attribute",
+      "type": "string",
+      "cardinality": "low",
+      "pii": "none",
+      "owner": [
+        "agent-controller"
+      ]
+    },
+    {
+      "name": "antnest.execution.revision",
+      "kind": "span_attribute",
+      "type": "int",
+      "cardinality": "unbounded",
+      "pii": "none",
+      "owner": [
+        "agent-acp-service"
+      ]
+    },
+    {
+      "name": "antnest.execution.timeout_ms",
+      "kind": "span_attribute",
+      "type": "int",
+      "unit": "ms",
+      "cardinality": "unbounded",
+      "pii": "none",
+      "owner": [
+        "antnest-runtime"
+      ]
+    },
+    {
+      "name": "antnest.fresh_database_install",
+      "kind": "span_attribute",
+      "type": "boolean",
+      "cardinality": "low",
+      "pii": "none",
+      "owner": [
+        "agent-acp-service"
+      ]
+    },
+    {
+      "name": "antnest.gateway.identity.resolve.cache.accounted_bytes",
+      "kind": "metric",
+      "type": "int",
+      "unit": "By",
+      "cardinality": "bounded",
+      "pii": "none",
+      "owner": [
+        "edge-gateway"
+      ],
+      "labels": []
+    },
+    {
+      "name": "antnest.gateway.identity.resolve.cache.entries",
+      "kind": "metric",
+      "type": "int",
+      "unit": "1",
+      "cardinality": "bounded",
+      "pii": "none",
+      "owner": [
+        "edge-gateway"
+      ],
+      "labels": []
+    },
+    {
+      "name": "antnest.gateway.identity.resolve.cache.proof.age",
+      "kind": "metric",
+      "type": "double",
+      "unit": "s",
+      "cardinality": "bounded",
+      "pii": "none",
+      "owner": [
+        "edge-gateway"
+      ],
+      "labels": []
+    },
+    {
+      "name": "antnest.gateway.identity.resolve.cache.proof.available",
+      "kind": "metric",
+      "type": "int",
+      "unit": "1",
+      "cardinality": "bounded",
+      "pii": "none",
+      "owner": [
+        "edge-gateway"
+      ],
+      "labels": []
+    },
+    {
+      "name": "antnest.gateway.identity.resolve.cache.proof.fresh",
+      "kind": "metric",
+      "type": "int",
+      "unit": "1",
+      "cardinality": "bounded",
+      "pii": "none",
+      "owner": [
+        "edge-gateway"
+      ],
+      "labels": []
+    },
+    {
+      "name": "antnest.gateway.identity.resolve.cache.waiters",
+      "kind": "metric",
+      "type": "int",
+      "unit": "1",
+      "cardinality": "bounded",
+      "pii": "none",
+      "owner": [
+        "edge-gateway"
+      ],
+      "labels": []
+    },
+    {
+      "name": "antnest.gateway.identity.resolve.cache.work",
+      "kind": "metric",
+      "type": "int",
+      "unit": "1",
+      "cardinality": "bounded",
+      "pii": "none",
+      "owner": [
+        "edge-gateway"
+      ],
+      "labels": []
+    },
+    {
+      "name": "antnest.gateway.identity.resolve.decisions",
+      "kind": "metric",
+      "type": "int",
+      "unit": "1",
+      "cardinality": "bounded",
+      "pii": "none",
+      "owner": [
+        "edge-gateway"
+      ],
+      "labels": []
+    },
+    {
+      "name": "antnest.gateway.identity.resolve.rpc.calls",
+      "kind": "metric",
+      "type": "int",
+      "unit": "1",
+      "cardinality": "bounded",
+      "pii": "none",
+      "owner": [
+        "edge-gateway"
+      ],
+      "labels": []
+    },
+    {
+      "name": "antnest.gateway.identity.resolve.rpc.duration",
+      "kind": "metric",
+      "type": "double",
+      "unit": "s",
+      "cardinality": "bounded",
+      "pii": "none",
+      "owner": [
+        "edge-gateway"
+      ],
+      "labels": []
+    },
+    {
+      "name": "antnest.http.request_cancelled",
+      "kind": "span_attribute",
+      "type": "boolean",
+      "cardinality": "low",
+      "pii": "none",
+      "owner": [
+        "edge-gateway"
+      ]
+    },
+    {
+      "name": "antnest.http.termination",
+      "kind": "span_attribute",
+      "type": "string",
+      "cardinality": "low",
+      "pii": "none",
+      "owner": [
+        "identity-service"
+      ]
+    },
+    {
+      "name": "antnest.http.transport_invoked",
+      "kind": "span_attribute",
+      "type": "boolean",
+      "cardinality": "low",
+      "pii": "none",
+      "owner": [
+        "identity-service"
+      ]
+    },
+    {
+      "name": "antnest.http.upgrade.connection.setup.completed",
+      "kind": "event",
+      "type": "string",
+      "cardinality": "bounded",
+      "pii": "none",
+      "owner": [
+        "agent-acp-service"
+      ]
+    },
+    {
+      "name": "antnest.http.upgrade.connection.setup.started",
+      "kind": "event",
+      "type": "string",
+      "cardinality": "bounded",
+      "pii": "none",
+      "owner": [
+        "agent-acp-service"
+      ]
+    },
+    {
+      "name": "antnest.http.upgrade.response.prepared",
+      "kind": "event",
+      "type": "string",
+      "cardinality": "bounded",
+      "pii": "none",
+      "owner": [
+        "agent-acp-service"
+      ]
+    },
+    {
+      "name": "antnest.identity.authentication_method",
+      "kind": "span_attribute",
+      "type": "string",
+      "cardinality": "low",
+      "pii": "none",
+      "owner": [
+        "identity-service"
+      ]
+    },
+    {
+      "name": "antnest.identity.http.duration",
+      "kind": "metric",
+      "type": "double",
+      "unit": "s",
+      "cardinality": "bounded",
+      "pii": "none",
+      "owner": [
+        "identity-service"
+      ],
+      "labels": []
+    },
+    {
+      "name": "antnest.identity.http.requests",
+      "kind": "metric",
+      "type": "int",
+      "unit": "1",
+      "cardinality": "bounded",
+      "pii": "none",
+      "owner": [
+        "identity-service"
+      ],
+      "labels": []
+    },
+    {
+      "name": "antnest.identity.provider.id",
+      "kind": "span_attribute",
+      "type": "string",
+      "cardinality": "unbounded",
+      "pii": "identifier",
+      "owner": [
+        "identity-service"
+      ]
+    },
+    {
+      "name": "antnest.identity.provider.revision",
+      "kind": "span_attribute",
+      "type": "string",
+      "cardinality": "low",
+      "pii": "none",
+      "owner": [
+        "identity-service"
+      ]
+    },
+    {
+      "name": "antnest.identity.resolve.cancel_kind",
+      "kind": "span_attribute",
+      "type": "string",
+      "cardinality": "low",
+      "pii": "none",
+      "owner": [
+        "edge-gateway"
+      ]
+    },
+    {
+      "name": "antnest.identity.resolve.outcome",
+      "kind": "span_attribute",
+      "type": "string",
+      "cardinality": "low",
+      "pii": "none",
+      "owner": [
+        "edge-gateway"
+      ]
+    },
+    {
+      "name": "antnest.identity.resolve.profile",
+      "kind": "span_attribute",
+      "type": "string",
+      "cardinality": "low",
+      "pii": "none",
+      "owner": [
+        "edge-gateway"
+      ]
+    },
+    {
+      "name": "antnest.identity.resolve.proof_age_ms",
+      "kind": "span_attribute",
+      "type": "double",
+      "unit": "ms",
+      "cardinality": "low",
+      "pii": "none",
+      "owner": [
+        "edge-gateway"
+      ]
+    },
+    {
+      "name": "antnest.identity.resolve.shared_source_state",
+      "kind": "span_attribute",
+      "type": "string",
+      "cardinality": "low",
+      "pii": "none",
+      "owner": [
+        "edge-gateway"
+      ]
+    },
+    {
+      "name": "antnest.identity.resolve.snapshot_age_ms",
+      "kind": "span_attribute",
+      "type": "double",
+      "unit": "ms",
+      "cardinality": "low",
+      "pii": "none",
+      "owner": [
+        "edge-gateway"
+      ]
+    },
+    {
+      "name": "antnest.identity.resolve.source",
+      "kind": "span_attribute",
+      "type": "string",
+      "cardinality": "low",
+      "pii": "none",
+      "owner": [
+        "edge-gateway"
+      ]
+    },
+    {
+      "name": "antnest.identity.resolve.valid_for_ms",
+      "kind": "span_attribute",
+      "type": "double",
+      "unit": "ms",
+      "cardinality": "low",
+      "pii": "none",
+      "owner": [
+        "edge-gateway"
+      ]
+    },
+    {
+      "name": "antnest.identity.resource.id",
+      "kind": "span_attribute",
+      "type": "string",
+      "cardinality": "unbounded",
+      "pii": "identifier",
+      "owner": [
+        "identity-service"
+      ]
+    },
+    {
+      "name": "antnest.identity.token.id",
+      "kind": "span_attribute",
+      "type": "string",
+      "cardinality": "unbounded",
+      "pii": "identifier",
+      "owner": [
+        "identity-service"
+      ]
+    },
+    {
+      "name": "antnest.learning.apply.outcome",
+      "kind": "span_attribute",
+      "type": "string",
+      "cardinality": "low",
+      "pii": "none",
+      "owner": [
+        "agent-acp-service"
+      ]
+    },
+    {
+      "name": "antnest.learning.call_index",
+      "kind": "span_attribute",
+      "type": "int",
+      "cardinality": "unbounded",
+      "pii": "none",
+      "owner": [
+        "agent-acp-service"
+      ]
+    },
+    {
+      "name": "antnest.learning.change.id",
+      "kind": "span_attribute",
+      "type": "string",
+      "cardinality": "unbounded",
+      "pii": "identifier",
+      "owner": [
+        "agent-acp-service"
+      ]
+    },
+    {
+      "name": "antnest.learning.debug",
+      "kind": "span_attribute",
+      "type": "boolean",
+      "cardinality": "low",
+      "pii": "none",
+      "owner": [
+        "agent-acp-service"
+      ]
+    },
+    {
+      "name": "antnest.learning.evidence.content_bytes",
+      "kind": "span_attribute",
+      "type": "int",
+      "unit": "By",
+      "cardinality": "unbounded",
+      "pii": "none",
+      "owner": [
+        "agent-acp-service"
+      ]
+    },
+    {
+      "name": "antnest.learning.evidence.execution_items",
+      "kind": "span_attribute",
+      "type": "int",
+      "cardinality": "unbounded",
+      "pii": "none",
+      "owner": [
+        "agent-acp-service"
+      ]
+    },
+    {
+      "name": "antnest.learning.evidence.items",
+      "kind": "span_attribute",
+      "type": "int",
+      "cardinality": "unbounded",
+      "pii": "none",
+      "owner": [
+        "agent-acp-service"
+      ]
+    },
+    {
+      "name": "antnest.learning.evidence.truncated",
+      "kind": "span_attribute",
+      "type": "boolean",
+      "cardinality": "low",
+      "pii": "none",
+      "owner": [
+        "agent-acp-service"
+      ]
+    },
+    {
+      "name": "antnest.learning.evidence.untrusted_items",
+      "kind": "span_attribute",
+      "type": "int",
+      "cardinality": "unbounded",
+      "pii": "none",
+      "owner": [
+        "agent-acp-service"
+      ]
+    },
+    {
+      "name": "antnest.learning.evidence.user_items",
+      "kind": "span_attribute",
+      "type": "int",
+      "cardinality": "unbounded",
+      "pii": "none",
+      "owner": [
+        "agent-acp-service"
+      ]
+    },
+    {
+      "name": "antnest.learning.generation",
+      "kind": "span_attribute",
+      "type": "int",
+      "cardinality": "unbounded",
+      "pii": "none",
+      "owner": [
+        "agent-acp-service"
+      ]
+    },
+    {
+      "name": "antnest.learning.outcome",
+      "kind": "span_attribute",
+      "type": "string",
+      "cardinality": "low",
+      "pii": "none",
+      "owner": [
+        "agent-acp-service"
+      ]
+    },
+    {
+      "name": "antnest.learning.pause_reason",
+      "kind": "span_attribute",
+      "type": "string",
+      "cardinality": "low",
+      "pii": "none",
+      "owner": [
+        "agent-acp-service"
+      ]
+    },
+    {
+      "name": "antnest.learning.review.decision",
+      "kind": "span_attribute",
+      "type": "string",
+      "cardinality": "low",
+      "pii": "none",
+      "owner": [
+        "agent-acp-service"
+      ]
+    },
+    {
+      "name": "antnest.learning.review_prompt_version",
+      "kind": "span_attribute",
+      "type": "string",
+      "cardinality": "unbounded",
+      "pii": "none",
+      "owner": [
+        "agent-acp-service"
+      ]
+    },
+    {
+      "name": "antnest.learning.source_run.id",
+      "kind": "span_attribute",
+      "type": "string",
+      "cardinality": "unbounded",
+      "pii": "identifier",
+      "owner": [
+        "agent-acp-service"
+      ]
+    },
+    {
+      "name": "antnest.learning.task.id",
+      "kind": "span_attribute",
+      "type": "string",
+      "cardinality": "unbounded",
+      "pii": "identifier",
+      "owner": [
+        "agent-acp-service"
+      ]
+    },
+    {
+      "name": "antnest.learning.validation.codes",
+      "kind": "span_attribute",
+      "type": "string[]",
+      "cardinality": "unbounded",
+      "pii": "none",
+      "owner": [
+        "agent-acp-service"
+      ]
+    },
+    {
+      "name": "antnest.learning.validation.paths",
+      "kind": "span_attribute",
+      "type": "string[]",
+      "cardinality": "unbounded",
+      "pii": "content",
+      "owner": [
+        "agent-acp-service"
+      ]
+    },
+    {
+      "name": "antnest.learning.validation.reason",
+      "kind": "span_attribute",
+      "type": "string",
+      "cardinality": "low",
+      "pii": "none",
+      "owner": [
+        "agent-acp-service"
+      ]
+    },
+    {
+      "name": "antnest.learning.validation.result",
+      "kind": "span_attribute",
+      "type": "string",
+      "cardinality": "low",
+      "pii": "none",
+      "owner": [
+        "agent-acp-service"
+      ]
+    },
+    {
+      "name": "antnest.lifecycle.error_class",
+      "kind": "span_attribute",
+      "type": "string",
+      "cardinality": "low",
+      "pii": "none",
+      "owner": [
+        "agent-controller"
+      ],
+      "deprecated_alias_of": "antnest.error.classification",
+      "symbol": "ANTNEST_LIFECYCLE_ERROR_CLASS_LEGACY"
+    },
+    {
+      "name": "antnest.lifecycle.kind",
+      "kind": "span_attribute",
+      "type": "string",
+      "cardinality": "low",
+      "pii": "none",
+      "owner": [
+        "agent-controller"
+      ]
+    },
+    {
+      "name": "antnest.lifecycle.phase",
+      "kind": "span_attribute",
+      "type": "string",
+      "cardinality": "low",
+      "pii": "none",
+      "owner": [
+        "agent-controller"
+      ]
+    },
+    {
+      "name": "antnest.lifecycle.state",
+      "kind": "span_attribute",
+      "type": "string",
+      "cardinality": "low",
+      "pii": "none",
+      "owner": [
+        "agent-controller"
+      ]
+    },
+    {
+      "name": "antnest.listener",
+      "kind": "span_attribute",
+      "type": "string",
+      "cardinality": "low",
+      "pii": "none",
+      "owner": [
+        "agent-acp-service"
+      ]
+    },
+    {
+      "name": "antnest.management.network",
+      "kind": "span_attribute",
+      "type": "string",
+      "cardinality": "unbounded",
+      "pii": "identifier",
+      "owner": [
+        "runtime-controller"
+      ]
+    },
+    {
+      "name": "antnest.mcp.caller_cancelled",
+      "kind": "span_attribute",
+      "type": "boolean",
+      "cardinality": "low",
+      "pii": "none",
+      "owner": [
+        "agent-acp-service"
+      ]
+    },
+    {
+      "name": "antnest.mcp.connection.close.completed",
+      "kind": "event",
+      "type": "string",
+      "cardinality": "bounded",
+      "pii": "none",
+      "owner": [
+        "agent-acp-service"
+      ]
+    },
+    {
+      "name": "antnest.mcp.connection.close.outcome",
+      "kind": "span_attribute",
+      "type": "string",
+      "cardinality": "low",
+      "pii": "none",
+      "owner": [
+        "agent-acp-service"
+      ]
+    },
+    {
+      "name": "antnest.mcp.connection.close.started",
+      "kind": "event",
+      "type": "string",
+      "cardinality": "bounded",
+      "pii": "none",
+      "owner": [
+        "agent-acp-service"
+      ]
+    },
+    {
+      "name": "antnest.mcp.discovery.ready",
+      "kind": "event",
+      "type": "string",
+      "cardinality": "bounded",
+      "pii": "none",
+      "owner": [
+        "agent-acp-service"
+      ]
+    },
+    {
+      "name": "antnest.mcp.method",
+      "kind": "span_attribute",
+      "type": "string",
+      "cardinality": "low",
+      "pii": "none",
+      "owner": [
+        "agent-acp-service"
+      ]
+    },
+    {
+      "name": "antnest.mcp.resource.read.started",
+      "kind": "event",
+      "type": "string",
+      "cardinality": "bounded",
+      "pii": "none",
+      "owner": [
+        "agent-acp-service"
+      ]
+    },
+    {
+      "name": "antnest.mcp.resource.validated",
+      "kind": "event",
+      "type": "string",
+      "cardinality": "bounded",
+      "pii": "none",
+      "owner": [
+        "agent-acp-service"
+      ]
+    },
+    {
+      "name": "antnest.mcp.resource_read.outcome",
+      "kind": "span_attribute",
+      "type": "string",
+      "cardinality": "low",
+      "pii": "none",
+      "owner": [
+        "agent-acp-service"
+      ]
+    },
+    {
+      "name": "antnest.mcp.tool.dispatch.started",
+      "kind": "event",
+      "type": "string",
+      "cardinality": "bounded",
+      "pii": "none",
+      "owner": [
+        "agent-acp-service"
+      ]
+    },
+    {
+      "name": "antnest.mcp.tool.result.parsed",
+      "kind": "event",
+      "type": "string",
+      "cardinality": "bounded",
+      "pii": "none",
+      "owner": [
+        "agent-acp-service"
+      ]
+    },
+    {
+      "name": "antnest.mcp.tool_result.outcome",
+      "kind": "span_attribute",
+      "type": "string",
+      "cardinality": "low",
+      "pii": "none",
+      "owner": [
+        "agent-acp-service"
+      ]
+    },
+    {
+      "name": "antnest.membership.id",
+      "kind": "span_attribute",
+      "type": "string",
+      "cardinality": "unbounded",
+      "pii": "identifier",
+      "owner": [
+        "edge-gateway"
+      ]
+    },
+    {
+      "name": "antnest.model.content_bytes",
+      "kind": "span_attribute",
+      "type": "int",
+      "unit": "By",
+      "cardinality": "unbounded",
+      "pii": "none",
+      "owner": [
+        "agent-acp-service"
+      ]
+    },
+    {
+      "name": "antnest.model.markdown_fence",
+      "kind": "span_attribute",
+      "type": "boolean",
+      "cardinality": "low",
+      "pii": "none",
+      "owner": [
+        "agent-acp-service"
+      ]
+    },
+    {
+      "name": "antnest.model.max_output_tokens",
+      "kind": "span_attribute",
+      "type": "int",
+      "cardinality": "unbounded",
+      "pii": "none",
+      "owner": [
+        "agent-acp-service"
+      ]
+    },
+    {
+      "name": "antnest.model.profile_id",
+      "kind": "span_attribute",
+      "type": "string",
+      "cardinality": "unbounded",
+      "pii": "identifier",
+      "owner": [
+        "agent-acp-service"
+      ]
+    },
+    {
+      "name": "antnest.model.result.kind",
+      "kind": "span_attribute",
+      "type": "string",
+      "cardinality": "low",
+      "pii": "none",
+      "owner": [
+        "agent-acp-service"
+      ]
+    },
+    {
+      "name": "antnest.model.stop_reason",
+      "kind": "span_attribute",
+      "type": "string",
+      "cardinality": "low",
+      "pii": "none",
+      "owner": [
+        "agent-acp-service"
+      ]
+    },
+    {
+      "name": "antnest.model.thought_bytes",
+      "kind": "span_attribute",
+      "type": "int",
+      "unit": "By",
+      "cardinality": "unbounded",
+      "pii": "none",
+      "owner": [
+        "agent-acp-service"
+      ]
+    },
+    {
+      "name": "antnest.observation.after_gap",
+      "kind": "span_attribute",
+      "type": "boolean",
+      "cardinality": "low",
+      "pii": "none",
+      "owner": [
+        "runtime-controller"
+      ]
+    },
+    {
+      "name": "antnest.observation.kind",
+      "kind": "span_attribute",
+      "type": "string",
+      "cardinality": "low",
+      "pii": "none",
+      "owner": [
+        "runtime-controller"
+      ]
+    },
+    {
+      "name": "antnest.observation.source",
+      "kind": "span_attribute",
+      "type": "string",
+      "cardinality": "low",
+      "pii": "none",
+      "owner": [
+        "runtime-controller"
+      ]
+    },
+    {
+      "name": "antnest.operation.id",
+      "kind": "span_attribute",
+      "type": "string",
+      "cardinality": "unbounded",
+      "pii": "identifier",
+      "owner": [
+        "agent-acp-service",
+        "agent-controller",
+        "runtime-controller"
+      ]
+    },
+    {
+      "name": "antnest.operation.kind",
+      "kind": "span_attribute",
+      "type": "string",
+      "cardinality": "low",
+      "pii": "none",
+      "owner": [
+        "runtime-controller"
+      ]
+    },
+    {
+      "name": "antnest.operation.phase",
+      "kind": "span_attribute",
+      "type": "string",
+      "cardinality": "low",
+      "pii": "none",
+      "owner": [
+        "agent-acp-service",
+        "agent-controller",
+        "identity-service",
+        "runtime-controller",
+        "runtime-egress"
+      ]
+    },
+    {
+      "name": "antnest.operation.request_id",
+      "kind": "span_attribute",
+      "type": "string",
+      "cardinality": "unbounded",
+      "pii": "identifier",
+      "owner": [
+        "agent-controller"
+      ],
+      "deprecated_alias_of": "antnest.request.id"
+    },
+    {
+      "name": "antnest.organization.id",
+      "kind": "span_attribute",
+      "type": "string",
+      "cardinality": "unbounded",
+      "pii": "identifier",
+      "owner": [
+        "agent-acp-service",
+        "agent-controller",
+        "agent-ui",
+        "edge-gateway",
+        "identity-service"
+      ]
+    },
+    {
+      "name": "antnest.organization_id",
+      "kind": "span_attribute",
+      "type": "string",
+      "cardinality": "unbounded",
+      "pii": "identifier",
+      "owner": [
+        "agent-acp-service"
+      ],
+      "deprecated_alias_of": "antnest.organization.id"
+    },
+    {
+      "name": "antnest.outcome",
+      "kind": "span_attribute",
+      "type": "string",
+      "cardinality": "low",
+      "pii": "none",
+      "owner": [
+        "admin-console",
+        "agent-acp-service",
+        "agent-controller",
+        "identity-service",
+        "runtime-controller",
+        "runtime-egress"
+      ]
+    },
+    {
+      "name": "antnest.password.admission_reason",
+      "kind": "span_attribute",
+      "type": "string",
+      "cardinality": "low",
+      "pii": "none",
+      "owner": [
+        "identity-service"
+      ]
+    },
+    {
+      "name": "antnest.payload.json",
+      "kind": "span_attribute",
+      "type": "string",
+      "cardinality": "unbounded",
+      "pii": "content",
+      "owner": [
+        "agent-acp-service",
+        "agent-controller",
+        "antnest-runtime",
+        "identity-service",
+        "runtime-controller",
+        "runtime-egress"
+      ]
+    },
+    {
+      "name": "antnest.peer.service",
+      "kind": "span_attribute",
+      "type": "string",
+      "cardinality": "low",
+      "pii": "none",
+      "owner": [
+        "admin-console"
+      ]
+    },
+    {
+      "name": "antnest.platform",
+      "kind": "span_attribute",
+      "type": "string",
+      "cardinality": "low",
+      "pii": "none",
+      "owner": [
+        "runtime-controller"
+      ]
+    },
+    {
+      "name": "antnest.platform.operation",
+      "kind": "span_attribute",
+      "type": "string",
+      "cardinality": "low",
+      "pii": "none",
+      "owner": [
+        "runtime-controller"
+      ]
+    },
+    {
+      "name": "antnest.policy.id",
+      "kind": "span_attribute",
+      "type": "string",
+      "cardinality": "unbounded",
+      "pii": "identifier",
+      "owner": [
+        "agent-controller",
+        "runtime-egress"
+      ]
+    },
+    {
+      "name": "antnest.policy.revision",
+      "kind": "span_attribute",
+      "type": "string",
+      "cardinality": "low",
+      "pii": "none",
+      "owner": [
+        "runtime-egress"
+      ]
+    },
+    {
+      "name": "antnest.principal.id",
+      "kind": "span_attribute",
+      "type": "string",
+      "cardinality": "unbounded",
+      "pii": "identifier",
+      "owner": [
+        "agent-ui",
+        "edge-gateway"
+      ]
+    },
+    {
+      "name": "antnest.protocol.name",
+      "kind": "span_attribute",
+      "type": "string",
+      "cardinality": "low",
+      "pii": "none",
+      "owner": [
+        "identity-service"
+      ]
+    },
+    {
+      "name": "antnest.protocol.version",
+      "kind": "span_attribute",
+      "type": "string",
+      "cardinality": "low",
+      "pii": "none",
+      "owner": [
+        "agent-acp-service",
+        "identity-service"
+      ]
+    },
+    {
+      "name": "antnest.provider.connection_id",
+      "kind": "span_attribute",
+      "type": "string",
+      "cardinality": "unbounded",
+      "pii": "identifier",
+      "owner": [
+        "agent-acp-service"
+      ]
+    },
+    {
+      "name": "antnest.request",
+      "kind": "event",
+      "type": "string",
+      "cardinality": "bounded",
+      "pii": "none",
+      "owner": [
+        "agent-acp-service",
+        "agent-controller",
+        "antnest-runtime",
+        "identity-service",
+        "runtime-controller",
+        "runtime-egress"
+      ]
+    },
+    {
+      "name": "antnest.request.dispatched",
+      "kind": "span_attribute",
+      "type": "boolean",
+      "cardinality": "low",
+      "pii": "none",
+      "owner": [
+        "admin-console"
+      ]
+    },
+    {
+      "name": "antnest.request.id",
+      "kind": "span_attribute",
+      "type": "string",
+      "cardinality": "unbounded",
+      "pii": "identifier",
+      "owner": [
+        "agent-acp-service",
+        "agent-controller"
+      ]
+    },
+    {
+      "name": "antnest.request.sent",
+      "kind": "span_attribute",
+      "type": "boolean",
+      "cardinality": "low",
+      "pii": "none",
+      "owner": [
+        "runtime-controller"
+      ]
+    },
+    {
+      "name": "antnest.request.timeout_ms",
+      "kind": "span_attribute",
+      "type": "int",
+      "unit": "ms",
+      "cardinality": "unbounded",
+      "pii": "none",
+      "owner": [
+        "admin-console",
+        "agent-controller",
+        "edge-gateway",
+        "identity-service",
+        "runtime-controller"
+      ]
+    },
+    {
+      "name": "antnest.request.transport_invoked",
+      "kind": "span_attribute",
+      "type": "boolean",
+      "cardinality": "low",
+      "pii": "none",
+      "owner": [
+        "agent-controller"
+      ]
+    },
+    {
+      "name": "antnest.response",
+      "kind": "event",
+      "type": "string",
+      "cardinality": "bounded",
+      "pii": "none",
+      "owner": [
+        "agent-acp-service",
+        "agent-controller",
+        "antnest-runtime",
+        "identity-service",
+        "runtime-controller",
+        "runtime-egress"
+      ]
+    },
+    {
+      "name": "antnest.response.termination",
+      "kind": "span_attribute",
+      "type": "string",
+      "cardinality": "low",
+      "pii": "none",
+      "owner": [
+        "runtime-egress"
+      ]
+    },
+    {
+      "name": "antnest.result",
+      "kind": "span_attribute",
+      "type": "string",
+      "cardinality": "low",
+      "pii": "none",
+      "owner": [
+        "agent-controller",
+        "identity-service",
+        "runtime-controller"
+      ],
+      "deprecated_alias_of": "antnest.outcome"
+    },
+    {
+      "name": "antnest.revocation.reason",
+      "kind": "span_attribute",
+      "type": "string",
+      "cardinality": "low",
+      "pii": "none",
+      "owner": [
+        "edge-gateway"
+      ]
+    },
+    {
+      "name": "antnest.revocation.sequence",
+      "kind": "span_attribute",
+      "type": "int",
+      "cardinality": "unbounded",
+      "pii": "none",
+      "owner": [
+        "edge-gateway"
+      ]
+    },
+    {
+      "name": "antnest.revocation.span_id",
+      "kind": "span_attribute",
+      "type": "string",
+      "cardinality": "unbounded",
+      "pii": "identifier",
+      "owner": [
+        "edge-gateway"
+      ]
+    },
+    {
+      "name": "antnest.revocation.trace_id",
+      "kind": "span_attribute",
+      "type": "string",
+      "cardinality": "unbounded",
+      "pii": "identifier",
+      "owner": [
+        "edge-gateway"
+      ]
+    },
+    {
+      "name": "antnest.run.id",
+      "kind": "span_attribute",
+      "type": "string",
+      "cardinality": "unbounded",
+      "pii": "identifier",
+      "owner": [
+        "agent-acp-service"
+      ]
+    },
+    {
+      "name": "antnest.run_id",
+      "kind": "span_attribute",
+      "type": "string",
+      "cardinality": "unbounded",
+      "pii": "identifier",
+      "owner": [
+        "agent-acp-service"
+      ],
+      "deprecated_alias_of": "antnest.run.id"
+    },
+    {
+      "name": "antnest.runtime.execution.id",
+      "kind": "span_attribute",
+      "type": "string",
+      "cardinality": "unbounded",
+      "pii": "identifier",
+      "owner": [
+        "agent-acp-service",
+        "runtime-controller"
+      ]
+    },
+    {
+      "name": "antnest.runtime.execution_id",
+      "kind": "span_attribute",
+      "type": "string",
+      "cardinality": "unbounded",
+      "pii": "identifier",
+      "owner": [
+        "agent-acp-service",
+        "runtime-controller"
+      ],
+      "deprecated_alias_of": "antnest.runtime.execution.id"
+    },
+    {
+      "name": "antnest.runtime.executor.calls",
+      "kind": "metric",
+      "type": "int",
+      "unit": "1",
+      "cardinality": "bounded",
+      "pii": "none",
+      "owner": [
+        "antnest-runtime"
+      ],
+      "labels": []
+    },
+    {
+      "name": "antnest.runtime.executor.duration",
+      "kind": "metric",
+      "type": "double",
+      "unit": "ms",
+      "cardinality": "bounded",
+      "pii": "none",
+      "owner": [
+        "antnest-runtime"
+      ],
+      "labels": []
+    },
+    {
+      "name": "antnest.runtime.generation",
+      "kind": "span_attribute",
+      "type": "int",
+      "cardinality": "unbounded",
+      "pii": "none",
+      "owner": [
+        "antnest-runtime",
+        "runtime-controller"
+      ]
+    },
+    {
+      "name": "antnest.runtime.health",
+      "kind": "span_attribute",
+      "type": "string",
+      "cardinality": "low",
+      "pii": "none",
+      "owner": [
+        "runtime-controller"
+      ]
+    },
+    {
+      "name": "antnest.runtime.http.duration",
+      "kind": "metric",
+      "type": "double",
+      "unit": "ms",
+      "cardinality": "bounded",
+      "pii": "none",
+      "owner": [
+        "antnest-runtime"
+      ],
+      "labels": []
+    },
+    {
+      "name": "antnest.runtime.http.requests",
+      "kind": "metric",
+      "type": "int",
+      "unit": "1",
+      "cardinality": "bounded",
+      "pii": "none",
+      "owner": [
+        "antnest-runtime"
+      ],
+      "labels": []
+    },
+    {
+      "name": "antnest.runtime.image.id",
+      "kind": "span_attribute",
+      "type": "string",
+      "cardinality": "unbounded",
+      "pii": "none",
+      "owner": [
+        "antnest-runtime",
+        "runtime-controller"
+      ]
+    },
+    {
+      "name": "antnest.runtime.image.reference",
+      "kind": "span_attribute",
+      "type": "string",
+      "cardinality": "unbounded",
+      "pii": "none",
+      "owner": [
+        "antnest-runtime",
+        "runtime-controller"
+      ]
+    },
+    {
+      "name": "antnest.runtime.mcp.duration",
+      "kind": "metric",
+      "type": "double",
+      "unit": "ms",
+      "cardinality": "bounded",
+      "pii": "none",
+      "owner": [
+        "antnest-runtime"
+      ],
+      "labels": []
+    },
+    {
+      "name": "antnest.runtime.mcp.operations",
+      "kind": "metric",
+      "type": "int",
+      "unit": "1",
+      "cardinality": "bounded",
+      "pii": "none",
+      "owner": [
+        "antnest-runtime"
+      ],
+      "labels": []
+    },
+    {
+      "name": "antnest.runtime.network.connection_refused",
+      "kind": "metric",
+      "type": "int",
+      "unit": "1",
+      "cardinality": "bounded",
+      "pii": "none",
+      "owner": [
+        "antnest-runtime"
+      ],
+      "labels": []
+    },
+    {
+      "name": "antnest.runtime.network.inbound.bytes",
+      "kind": "metric",
+      "type": "int",
+      "unit": "By",
+      "cardinality": "bounded",
+      "pii": "none",
+      "owner": [
+        "antnest-runtime"
+      ],
+      "labels": []
+    },
+    {
+      "name": "antnest.runtime.network.inbound.packets",
+      "kind": "metric",
+      "type": "int",
+      "unit": "1",
+      "cardinality": "bounded",
+      "pii": "none",
+      "owner": [
+        "antnest-runtime"
+      ],
+      "labels": []
+    },
+    {
+      "name": "antnest.runtime.network.local_rejections",
+      "kind": "metric",
+      "type": "int",
+      "unit": "1",
+      "cardinality": "bounded",
+      "pii": "none",
+      "owner": [
+        "antnest-runtime"
+      ],
+      "labels": []
+    },
+    {
+      "name": "antnest.runtime.network.malformed.packets",
+      "kind": "metric",
+      "type": "int",
+      "unit": "1",
+      "cardinality": "bounded",
+      "pii": "none",
+      "owner": [
+        "antnest-runtime"
+      ],
+      "labels": []
+    },
+    {
+      "name": "antnest.runtime.network.outbound.bytes",
+      "kind": "metric",
+      "type": "int",
+      "unit": "By",
+      "cardinality": "bounded",
+      "pii": "none",
+      "owner": [
+        "antnest-runtime"
+      ],
+      "labels": []
+    },
+    {
+      "name": "antnest.runtime.network.outbound.packets",
+      "kind": "metric",
+      "type": "int",
+      "unit": "1",
+      "cardinality": "bounded",
+      "pii": "none",
+      "owner": [
+        "antnest-runtime"
+      ],
+      "labels": []
+    },
+    {
+      "name": "antnest.runtime.network.unsupported.packets",
+      "kind": "metric",
+      "type": "int",
+      "unit": "1",
+      "cardinality": "bounded",
+      "pii": "none",
+      "owner": [
+        "antnest-runtime"
+      ],
+      "labels": []
+    },
+    {
+      "name": "antnest.runtime.platform_phase",
+      "kind": "span_attribute",
+      "type": "string",
+      "cardinality": "low",
+      "pii": "none",
+      "owner": [
+        "runtime-controller"
+      ]
+    },
+    {
+      "name": "antnest.runtime.platform_resource_id",
+      "kind": "span_attribute",
+      "type": "string",
+      "cardinality": "unbounded",
+      "pii": "identifier",
+      "owner": [
+        "runtime-controller"
+      ]
+    },
+    {
+      "name": "antnest.runtime.revision",
+      "kind": "span_attribute",
+      "type": "string",
+      "cardinality": "unbounded",
+      "pii": "none",
+      "owner": [
+        "agent-acp-service",
+        "runtime-controller"
+      ],
+      "alternate_types": [
+        "int"
+      ]
+    },
+    {
+      "name": "antnest.runtime.spec_digest",
+      "kind": "span_attribute",
+      "type": "string",
+      "cardinality": "unbounded",
+      "pii": "none",
+      "owner": [
+        "runtime-controller"
+      ]
+    },
+    {
+      "name": "antnest.runtime.target_revision",
+      "kind": "span_attribute",
+      "type": "string",
+      "cardinality": "unbounded",
+      "pii": "none",
+      "owner": [
+        "runtime-controller"
+      ]
+    },
+    {
+      "name": "antnest.runtime.tool.calls",
+      "kind": "metric",
+      "type": "int",
+      "unit": "1",
+      "cardinality": "bounded",
+      "pii": "none",
+      "owner": [
+        "antnest-runtime"
+      ],
+      "labels": []
+    },
+    {
+      "name": "antnest.runtime.tool.duration",
+      "kind": "metric",
+      "type": "double",
+      "unit": "ms",
+      "cardinality": "bounded",
+      "pii": "none",
+      "owner": [
+        "antnest-runtime"
+      ],
+      "labels": []
+    },
+    {
+      "name": "antnest.runtime_execution_id",
+      "kind": "span_attribute",
+      "type": "string",
+      "cardinality": "unbounded",
+      "pii": "identifier",
+      "owner": [
+        "agent-acp-service"
+      ],
+      "deprecated_alias_of": "antnest.runtime.execution.id",
+      "symbol": "ANTNEST_RUNTIME_EXECUTION_ID_UNDERSCORE_LEGACY"
+    },
+    {
+      "name": "antnest.session.id",
+      "kind": "span_attribute",
+      "type": "string",
+      "cardinality": "unbounded",
+      "pii": "identifier",
+      "owner": [
+        "agent-acp-service"
+      ]
+    },
+    {
+      "name": "antnest.settlement.outcome",
+      "kind": "span_attribute",
+      "type": "string",
+      "cardinality": "low",
+      "pii": "none",
+      "owner": [
+        "agent-acp-service",
+        "agent-controller"
+      ]
+    },
+    {
+      "name": "antnest.skill.active",
+      "kind": "span_attribute",
+      "type": "boolean",
+      "cardinality": "low",
+      "pii": "none",
+      "owner": [
+        "agent-acp-service"
+      ]
+    },
+    {
+      "name": "antnest.skill.artifact_digest",
+      "kind": "span_attribute",
+      "type": "string",
+      "cardinality": "unbounded",
+      "pii": "none",
+      "owner": [
+        "agent-acp-service"
+      ]
+    },
+    {
+      "name": "antnest.skill.content_digest",
+      "kind": "span_attribute",
+      "type": "string",
+      "cardinality": "unbounded",
+      "pii": "none",
+      "owner": [
+        "agent-acp-service"
+      ]
+    },
+    {
+      "name": "antnest.skill.name",
+      "kind": "span_attribute",
+      "type": "string",
+      "cardinality": "unbounded",
+      "pii": "none",
+      "owner": [
+        "agent-acp-service"
+      ]
+    },
+    {
+      "name": "antnest.skill.source_sequence",
+      "kind": "span_attribute",
+      "type": "int",
+      "cardinality": "unbounded",
+      "pii": "none",
+      "owner": [
+        "agent-acp-service"
+      ]
+    },
+    {
+      "name": "antnest.stream.termination",
+      "kind": "span_attribute",
+      "type": "string",
+      "cardinality": "low",
+      "pii": "none",
+      "owner": [
+        "agent-acp-service",
+        "agent-ui",
+        "edge-gateway"
+      ],
+      "additional_kinds": [
+        "event"
+      ]
+    },
+    {
+      "name": "antnest.target.service",
+      "kind": "span_attribute",
+      "type": "string",
+      "cardinality": "low",
+      "pii": "none",
+      "owner": [
+        "agent-controller",
+        "skill-registry"
+      ]
+    },
+    {
+      "name": "antnest.temporal.workflow.span_end",
+      "kind": "span_attribute",
+      "type": "string",
+      "cardinality": "low",
+      "pii": "none",
+      "owner": [
+        "agent-controller"
+      ]
+    },
+    {
+      "name": "antnest.timeout_ms",
+      "kind": "span_attribute",
+      "type": "int",
+      "unit": "ms",
+      "cardinality": "unbounded",
+      "pii": "none",
+      "owner": [
+        "runtime-controller"
+      ],
+      "deprecated_alias_of": "antnest.request.timeout_ms"
+    },
+    {
+      "name": "antnest.transaction.outcome",
+      "kind": "span_attribute",
+      "type": "string",
+      "cardinality": "low",
+      "pii": "none",
+      "owner": [
+        "agent-acp-service",
+        "agent-controller",
+        "identity-service",
+        "runtime-controller"
+      ]
+    },
+    {
+      "name": "antnest.ui.acp.close.delete_attempts",
+      "kind": "span_attribute",
+      "type": "int",
+      "cardinality": "unbounded",
+      "pii": "none",
+      "owner": [
+        "agent-ui"
+      ]
+    },
+    {
+      "name": "antnest.ui.acp.close.delete_completed",
+      "kind": "span_attribute",
+      "type": "boolean",
+      "cardinality": "low",
+      "pii": "none",
+      "owner": [
+        "agent-ui"
+      ]
+    },
+    {
+      "name": "antnest.ui.acp.close.delete_responses",
+      "kind": "span_attribute",
+      "type": "int",
+      "cardinality": "unbounded",
+      "pii": "none",
+      "owner": [
+        "agent-ui"
+      ]
+    },
+    {
+      "name": "antnest.ui.acp.close.delete_status",
+      "kind": "span_attribute",
+      "type": "int",
+      "cardinality": "unbounded",
+      "pii": "none",
+      "owner": [
+        "agent-ui"
+      ]
+    },
+    {
+      "name": "antnest.ui.acp.close.diagnostics_truncated",
+      "kind": "span_attribute",
+      "type": "boolean",
+      "cardinality": "low",
+      "pii": "none",
+      "owner": [
+        "agent-ui"
+      ]
+    },
+    {
+      "name": "antnest.ui.acp.close.failure",
+      "kind": "event",
+      "type": "string",
+      "cardinality": "bounded",
+      "pii": "none",
+      "owner": [
+        "agent-ui"
+      ]
+    },
+    {
+      "name": "antnest.ui.acp.close.failures",
+      "kind": "span_attribute",
+      "type": "int",
+      "cardinality": "unbounded",
+      "pii": "none",
+      "owner": [
+        "agent-ui"
+      ]
+    },
+    {
+      "name": "antnest.ui.acp.close.outcome",
+      "kind": "span_attribute",
+      "type": "string",
+      "cardinality": "low",
+      "pii": "none",
+      "owner": [
+        "agent-ui"
+      ]
+    },
+    {
+      "name": "antnest.ui.acp.close.pending_requests",
+      "kind": "span_attribute",
+      "type": "int",
+      "cardinality": "unbounded",
+      "pii": "none",
+      "owner": [
+        "agent-ui"
+      ]
+    },
+    {
+      "name": "antnest.ui.acp.close.stream_joined",
+      "kind": "span_attribute",
+      "type": "boolean",
+      "cardinality": "low",
+      "pii": "none",
+      "owner": [
+        "agent-ui"
+      ]
+    },
+    {
+      "name": "antnest.ui.acp.close.target_observed",
+      "kind": "span_attribute",
+      "type": "boolean",
+      "cardinality": "low",
+      "pii": "none",
+      "owner": [
+        "agent-ui"
+      ]
+    },
+    {
+      "name": "antnest.ui.acp.close.trigger",
+      "kind": "span_attribute",
+      "type": "string",
+      "cardinality": "low",
+      "pii": "none",
+      "owner": [
+        "agent-ui"
+      ]
+    },
+    {
+      "name": "antnest.ui.agent_view.failure",
+      "kind": "event",
+      "type": "string",
+      "cardinality": "bounded",
+      "pii": "none",
+      "owner": [
+        "agent-ui"
+      ]
+    },
+    {
+      "name": "antnest.ui.bridge.active_replays",
+      "kind": "metric",
+      "type": "int",
+      "unit": "1",
+      "cardinality": "bounded",
+      "pii": "none",
+      "owner": [
+        "agent-ui"
+      ],
+      "labels": []
+    },
+    {
+      "name": "antnest.ui.bridge.cached_history_bytes",
+      "kind": "metric",
+      "type": "int",
+      "unit": "By",
+      "cardinality": "bounded",
+      "pii": "none",
+      "owner": [
+        "agent-ui"
+      ],
+      "labels": []
+    },
+    {
+      "name": "antnest.ui.bridge.cold_replay_duration",
+      "kind": "metric",
+      "type": "double",
+      "unit": "ms",
+      "cardinality": "bounded",
+      "pii": "none",
+      "owner": [
+        "agent-ui"
+      ],
+      "labels": []
+    },
+    {
+      "name": "antnest.ui.bridge.held_work",
+      "kind": "metric",
+      "type": "int",
+      "unit": "1",
+      "cardinality": "bounded",
+      "pii": "none",
+      "owner": [
+        "agent-ui"
+      ],
+      "labels": []
+    },
+    {
+      "name": "antnest.ui.bridge.journal_queued_bytes",
+      "kind": "metric",
+      "type": "int",
+      "unit": "By",
+      "cardinality": "bounded",
+      "pii": "none",
+      "owner": [
+        "agent-ui"
+      ],
+      "labels": []
+    },
+    {
+      "name": "antnest.ui.bridge.journal_retained_bytes",
+      "kind": "metric",
+      "type": "int",
+      "unit": "By",
+      "cardinality": "bounded",
+      "pii": "none",
+      "owner": [
+        "agent-ui"
+      ],
+      "labels": []
+    },
+    {
+      "name": "antnest.ui.bridge.local_intent_reuse",
+      "kind": "metric",
+      "type": "int",
+      "unit": "1",
+      "cardinality": "bounded",
+      "pii": "none",
+      "owner": [
+        "agent-ui"
+      ],
+      "labels": []
+    },
+    {
+      "name": "antnest.ui.bridge.observer_leases",
+      "kind": "metric",
+      "type": "int",
+      "unit": "1",
+      "cardinality": "bounded",
+      "pii": "none",
+      "owner": [
+        "agent-ui"
+      ],
+      "labels": []
+    },
+    {
+      "name": "antnest.ui.bridge.oldest_uncertain_ms",
+      "kind": "metric",
+      "type": "int",
+      "unit": "ms",
+      "cardinality": "bounded",
+      "pii": "none",
+      "owner": [
+        "agent-ui"
+      ],
+      "labels": []
+    },
+    {
+      "name": "antnest.ui.bridge.owners",
+      "kind": "metric",
+      "type": "int",
+      "unit": "1",
+      "cardinality": "bounded",
+      "pii": "none",
+      "owner": [
+        "agent-ui"
+      ],
+      "labels": []
+    },
+    {
+      "name": "antnest.ui.bridge.queued_replays",
+      "kind": "metric",
+      "type": "int",
+      "unit": "1",
+      "cardinality": "bounded",
+      "pii": "none",
+      "owner": [
+        "agent-ui"
+      ],
+      "labels": []
+    },
+    {
+      "name": "antnest.ui.bridge.stream_subscribers",
+      "kind": "metric",
+      "type": "int",
+      "unit": "1",
+      "cardinality": "bounded",
+      "pii": "none",
+      "owner": [
+        "agent-ui"
+      ],
+      "labels": []
+    },
+    {
+      "name": "antnest.ui.bridge.uncertain_operations",
+      "kind": "metric",
+      "type": "int",
+      "unit": "1",
+      "cardinality": "bounded",
+      "pii": "none",
+      "owner": [
+        "agent-ui"
+      ],
+      "labels": []
+    },
+    {
+      "name": "antnest.ui.http.duration",
+      "kind": "metric",
+      "type": "double",
+      "unit": "ms",
+      "cardinality": "bounded",
+      "pii": "none",
+      "owner": [
+        "agent-ui"
+      ],
+      "labels": []
+    },
+    {
+      "name": "antnest.ui.http.requests",
+      "kind": "metric",
+      "type": "int",
+      "unit": "1",
+      "cardinality": "bounded",
+      "pii": "none",
+      "owner": [
+        "agent-ui"
+      ],
+      "labels": []
+    },
+    {
+      "name": "antnest.ui.http.started_monotonic_ns",
+      "kind": "span_attribute",
+      "type": "string",
+      "cardinality": "unbounded",
+      "pii": "none",
+      "owner": [
+        "agent-ui"
+      ]
+    },
+    {
+      "name": "antnest.ui.process.heap_used_bytes",
+      "kind": "metric",
+      "type": "int",
+      "unit": "By",
+      "cardinality": "bounded",
+      "pii": "none",
+      "owner": [
+        "agent-ui"
+      ],
+      "labels": []
+    },
+    {
+      "name": "antnest.ui.process.rss_bytes",
+      "kind": "metric",
+      "type": "int",
+      "unit": "By",
+      "cardinality": "bounded",
+      "pii": "none",
+      "owner": [
+        "agent-ui"
+      ],
+      "labels": []
+    },
+    {
+      "name": "antnest.ui.prompt_input",
+      "kind": "event",
+      "type": "string",
+      "cardinality": "bounded",
+      "pii": "none",
+      "owner": [
+        "agent-ui"
+      ]
+    },
+    {
+      "name": "antnest.ui.stream.delegation_expires_at_unix_ms",
+      "kind": "span_attribute",
+      "type": "int",
+      "unit": "ms",
+      "cardinality": "unbounded",
+      "pii": "none",
+      "owner": [
+        "agent-ui"
+      ]
+    },
+    {
+      "name": "antnest.ui.stream.delegation_remaining_ms",
+      "kind": "span_attribute",
+      "type": "int",
+      "unit": "ms",
+      "cardinality": "unbounded",
+      "pii": "none",
+      "owner": [
+        "agent-ui"
+      ]
+    },
+    {
+      "name": "antnest.watch.termination",
+      "kind": "span_attribute",
+      "type": "string",
+      "cardinality": "low",
+      "pii": "none",
+      "owner": [
+        "runtime-controller"
+      ]
+    }
+  ]
+}

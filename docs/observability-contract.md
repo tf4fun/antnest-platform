@@ -494,3 +494,349 @@ relationships, content boundaries and zero warnings. Missing spans, API errors
 or warnings must fail the test, which can be rerun later. Do not filter
 warnings, disable clock-skew adjustment or force business requests to export
 synchronously.
+
+## 6. Attribute And Metric Name Registry
+
+Every `antnest.*` span attribute, metric and event name is registered in
+[`contracts/observability/attributes.yaml`](../contracts/observability/attributes.yaml),
+the single source of truth for the dotted identifiers. Production source refers
+to names through the generated constants (`semconv_gen.go`, `semconv.gen.ts`,
+`semconv.rs`); raw `antnest.` string literals are rejected outside a small
+`namespace_literals` list of non-telemetry `antnest.*` identifiers that is kept
+in the same registry. The generated table below is refreshed from the registry
+by `scripts/generate-telemetry.mjs`; do not edit it by hand.
+
+Each entry records its name, kind, type, unit, cardinality, pii class, owning
+services and, for metrics, the allowed labels. Unbounded-cardinality and
+`pii: content` attributes are never metric labels, so Agent, request, Run and
+other identifiers stay out of metric dimensions. Scoped outcomes such as
+`antnest.settlement.outcome`, `antnest.transaction.outcome` and the per-protocol
+`*_outcome` attributes remain distinct names; the retired generic
+`antnest.result` spelling is only an alias of `antnest.outcome`.
+`antnest.error.classification` records the business error class and stays
+distinct from `antnest.error.type`, which records the exception type; the
+`antnest.error.class` and `antnest.lifecycle.error_class` spellings are aliases
+of the classification name. `antnest.runtime.revision` is the one historical
+type union: the Controller writes a string while ACP writes an integer, so the
+entry keeps `type: string` with `alternate_types: [int]` until the writers
+converge.
+
+Deprecated spellings remain in the registry as `deprecated_alias_of` entries
+rendered with a `Legacy`/`_LEGACY` constant suffix. The
+`ANTNEST_TELEMETRY_LEGACY_ATTRIBUTES` switch controls whether emitted
+attributes also carry the deprecated alias spellings; it defaults to true for
+one release so consumers reading the old names keep working, the next release
+changes the default to false, and physical removal of the aliases is a
+separately scheduled change. Migration of the diverged service telemetry
+packages onto the shared `libs/go/telemetry` constants is still pending and is
+not claimed complete here.
+
+No business result, authorization decision or check is gated on Trace
+collection or span availability; the auxiliary-diagnostics policy in the
+repository agent rules supersedes the stricter Trace wording elsewhere in
+this document.
+
+Captured RPC payloads keep the same JSON public content in every mode: even
+when a service enables content capture for debugging, the listed secret
+fields (credentials, tokens, keys and the other registry-documented names)
+are redacted recursively before emission. Safety of arbitrary message and
+cause strings remains service-owned; the shared module intentionally does not
+attempt to sanitize `Error()` output.
+
+<!-- observability-registry:start -->
+| name | kind | type | unit | cardinality | pii | owner | labels | deprecated_alias_of |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| antnest.acp.bridge_intent_reuse | metric | int | 1 | bounded | none | agent-acp-service |  |  |
+| antnest.acp.connections | metric | int | 1 | bounded | none | agent-acp-service |  |  |
+| antnest.acp.mcp.close_failures | metric | int | 1 | bounded | none | agent-acp-service |  |  |
+| antnest.acp.mcp.duration | metric | double | ms | bounded | none | agent-acp-service |  |  |
+| antnest.acp.mcp.requests | metric | int | 1 | bounded | none | agent-acp-service |  |  |
+| antnest.acp.model.duration | metric | double | ms | bounded | none | agent-acp-service |  |  |
+| antnest.acp.model.requests | metric | int | 1 | bounded | none | agent-acp-service |  |  |
+| antnest.acp.permission.decisions | metric | int | 1 | bounded | none | agent-acp-service |  |  |
+| antnest.acp.recovery_runs | metric | int | 1 | bounded | none | agent-acp-service |  |  |
+| antnest.acp.repository.duration | metric | double | ms | bounded | none | agent-acp-service |  |  |
+| antnest.acp.repository.requests | metric | int | 1 | bounded | none | agent-acp-service |  |  |
+| antnest.acp.run.duration | metric | double | ms | bounded | none | agent-acp-service |  |  |
+| antnest.acp.run_admissions | metric | int | 1 | bounded | none | agent-acp-service |  |  |
+| antnest.acp.runs | metric | int | 1 | bounded | none | agent-acp-service |  |  |
+| antnest.acp.session_method.duration | metric | double | ms | bounded | none | agent-acp-service |  |  |
+| antnest.acp.session_methods | metric | int | 1 | bounded | none | agent-acp-service |  |  |
+| antnest.acp.skill_learning.tasks | metric | int | 1 | bounded | none | agent-acp-service |  |  |
+| antnest.acp.skill_projections | metric | int | 1 | bounded | none | agent-acp-service |  |  |
+| antnest.acp.skill_temporary_cleanup | metric | int | 1 | bounded | none | agent-acp-service |  |  |
+| antnest.acp.unresolved_runs | metric | int | 1 | bounded | none | agent-acp-service |  |  |
+| antnest.acp.worker_lock_losses | metric | int | 1 | bounded | none | agent-acp-service |  |  |
+| antnest.actor.id | span_attribute | string |  | unbounded | identifier | agent-controller |  |  |
+| antnest.admission.id | span_attribute | string |  | unbounded | identifier | agent-acp-service |  |  |
+| antnest.agent.id | span_attribute | string |  | unbounded | identifier | agent-acp-service, agent-controller, agent-ui, antnest-runtime, edge-gateway, runtime-controller, runtime-egress |  |  |
+| antnest.agent.revision | span_attribute | int |  | unbounded | none | agent-acp-service |  |  |
+| antnest.agent_controller.dependency.duration | metric | double | s | bounded | none | agent-controller |  |  |
+| antnest.agent_controller.dependency.requests | metric | int | 1 | bounded | none | agent-controller |  |  |
+| antnest.agent_controller.event_journal.appends | metric | int | 1 | bounded | none | agent-controller |  |  |
+| antnest.agent_controller.event_notifier.transitions | metric | int | 1 | bounded | none | agent-controller |  |  |
+| antnest.agent_controller.event_watch.connections | metric | int | 1 | bounded | none | agent-controller |  |  |
+| antnest.agent_controller.event_watch.disconnects | metric | int | 1 | bounded | none | agent-controller |  |  |
+| antnest.agent_controller.http.duration | metric | double | s | bounded | none | agent-controller |  |  |
+| antnest.agent_controller.http.requests | metric | int | 1 | bounded | none | agent-controller |  |  |
+| antnest.agent_controller.lifecycle.operations | metric | int | 1 | bounded | none | agent-controller |  |  |
+| antnest.agent_id | span_attribute | string |  | unbounded | identifier | agent-acp-service |  | antnest.agent.id |
+| antnest.authorization.mode | span_attribute | string |  | low | none | agent-acp-service |  |  |
+| antnest.cancellation.phase | span_attribute | string |  | low | none | agent-acp-service |  |  |
+| antnest.cancellation.type | span_attribute | string |  | low | none | agent-acp-service |  |  |
+| antnest.cancelled | event | string |  | bounded | none | agent-acp-service, antnest-runtime |  |  |
+| antnest.capture.error | event | string |  | bounded | none | agent-acp-service, agent-controller, antnest-runtime, identity-service, runtime-controller, runtime-egress |  |  |
+| antnest.complete | event | string |  | bounded | none | runtime-egress |  |  |
+| antnest.configuration.applied_revision | span_attribute | int |  | unbounded | none | agent-controller |  |  |
+| antnest.configuration.revision | span_attribute | int |  | unbounded | none | agent-acp-service, agent-controller |  |  |
+| antnest.context.message_count | span_attribute | int | 1 | unbounded | none | agent-acp-service |  |  |
+| antnest.context.tool_count | span_attribute | int | 1 | unbounded | none | agent-acp-service |  |  |
+| antnest.controller.scope | span_attribute | string |  | unbounded | identifier | runtime-controller |  |  |
+| antnest.deadline | span_attribute | string |  | unbounded | none | agent-acp-service, runtime-controller |  |  |
+| antnest.egress.agent.fenced_packets | metric | int | 1 | bounded | none | runtime-egress |  |  |
+| antnest.egress.agent.unknown | metric | int | 1 | bounded | none | runtime-egress |  |  |
+| antnest.egress.control.duration | metric | double | ms | bounded | none | runtime-egress |  |  |
+| antnest.egress.control.requests | metric | int | 1 | bounded | none | runtime-egress |  |  |
+| antnest.egress.dns.answers.filtered | metric | int | 1 | bounded | none | runtime-egress |  |  |
+| antnest.egress.dns.client_to_upstream.bytes | metric | int | By | bounded | none | runtime-egress |  |  |
+| antnest.egress.dns.connections.accepted | metric | int | 1 | bounded | none | runtime-egress |  |  |
+| antnest.egress.dns.connections.completed | metric | int | 1 | bounded | none | runtime-egress |  |  |
+| antnest.egress.dns.connections.rejected | metric | int | 1 | bounded | none | runtime-egress |  |  |
+| antnest.egress.dns.proxy.failures | metric | int | 1 | bounded | none | runtime-egress |  |  |
+| antnest.egress.dns.upstream_to_client.bytes | metric | int | By | bounded | none | runtime-egress |  |  |
+| antnest.egress.downlink.bytes | metric | int | By | bounded | none | runtime-egress |  |  |
+| antnest.egress.downlink.packets | metric | int | 1 | bounded | none | runtime-egress |  |  |
+| antnest.egress.flow.active | metric | int | 1 | bounded | none | runtime-egress |  |  |
+| antnest.egress.flow.capacity_rejections | metric | int | 1 | bounded | none | runtime-egress |  |  |
+| antnest.egress.flow.collisions | metric | int | 1 | bounded | none | runtime-egress |  |  |
+| antnest.egress.flow.expirations | metric | int | 1 | bounded | none | runtime-egress |  |  |
+| antnest.egress.flow.reverse_misses | metric | int | 1 | bounded | none | runtime-egress |  |  |
+| antnest.egress.health.control_plane.ready | metric | int | 1 | bounded | none | runtime-egress |  |  |
+| antnest.egress.health.data_plane.ready | metric | int | 1 | bounded | none | runtime-egress |  |  |
+| antnest.egress.health.fenced_agents | metric | int | 1 | bounded | none | runtime-egress |  |  |
+| antnest.egress.health.ready | metric | int | 1 | bounded | none | runtime-egress |  |  |
+| antnest.egress.health.transitions | metric | int | 1 | bounded | none | runtime-egress |  |  |
+| antnest.egress.packet.malformed | metric | int | 1 | bounded | none | runtime-egress |  |  |
+| antnest.egress.packet.unsupported | metric | int | 1 | bounded | none | runtime-egress |  |  |
+| antnest.egress.peer_mismatch.drops | metric | int | 1 | bounded | none | runtime-egress |  |  |
+| antnest.egress.peer_output.failures | metric | int | 1 | bounded | none | runtime-egress |  |  |
+| antnest.egress.policy.allows | metric | int | 1 | bounded | none | runtime-egress |  |  |
+| antnest.egress.policy.denials | metric | int | 1 | bounded | none | runtime-egress |  |  |
+| antnest.egress.quarantine.cleanup_failures | metric | int | 1 | bounded | none | runtime-egress |  |  |
+| antnest.egress.quarantine.removed | metric | int | 1 | bounded | none | runtime-egress |  |  |
+| antnest.egress.tunnel.authentication_drops | metric | int | 1 | bounded | none | runtime-egress |  |  |
+| antnest.egress.tunnel.replay_drops | metric | int | 1 | bounded | none | runtime-egress |  |  |
+| antnest.egress.tunnel.unknown_context_drops | metric | int | 1 | bounded | none | runtime-egress |  |  |
+| antnest.egress.udp.receive_errors.unattributed | metric | int | 1 | bounded | none | runtime-egress |  |  |
+| antnest.egress.uplink.bytes | metric | int | By | bounded | none | runtime-egress |  |  |
+| antnest.egress.uplink.packets | metric | int | 1 | bounded | none | runtime-egress |  |  |
+| antnest.error | event | string |  | bounded | none | admin-console, agent-acp-service, agent-controller, antnest-runtime, edge-gateway, identity-service, runtime-controller, runtime-egress |  |  |
+| antnest.error.cause_types | span_attribute | string[] |  | unbounded | none | admin-console, agent-acp-service, agent-controller, antnest-runtime, edge-gateway, identity-service, runtime-controller, runtime-egress |  |  |
+| antnest.error.causes | span_attribute | string |  | unbounded | content | admin-console, agent-acp-service, agent-controller, antnest-runtime, runtime-controller, runtime-egress |  |  |
+| antnest.error.class | span_attribute | string |  | low | none | runtime-controller |  | antnest.error.classification |
+| antnest.error.classification | span_attribute | string |  | low | none | agent-controller, runtime-controller |  |  |
+| antnest.error.code | span_attribute | string |  | low | none | admin-console, agent-acp-service, agent-controller, antnest-runtime, identity-service, runtime-controller, runtime-egress |  |  |
+| antnest.error.message | span_attribute | string |  | unbounded | content | admin-console, agent-acp-service, agent-controller, antnest-runtime, edge-gateway, identity-service, runtime-controller, runtime-egress |  |  |
+| antnest.error.origin | span_attribute | string |  | low | none | runtime-egress |  |  |
+| antnest.error.origin_span_id | span_attribute | string |  | unbounded | identifier | agent-acp-service |  |  |
+| antnest.error.origin_trace_id | span_attribute | string |  | unbounded | identifier | agent-acp-service |  |  |
+| antnest.error.panic_type | span_attribute | string |  | low | none | edge-gateway |  |  |
+| antnest.error.protocol_code | span_attribute | string |  | low | none | identity-service |  |  |
+| antnest.error.stage | span_attribute | string |  | low | none | admin-console, agent-acp-service, agent-controller, antnest-runtime, edge-gateway, identity-service, runtime-controller, runtime-egress |  |  |
+| antnest.error.type | span_attribute | string |  | low | none | admin-console, agent-acp-service, agent-controller, antnest-runtime, identity-service, runtime-controller, runtime-egress |  |  |
+| antnest.event.type | span_attribute | string |  | low | none | agent-controller |  |  |
+| antnest.event_notifier.state | span_attribute | string |  | low | none | agent-controller |  |  |
+| antnest.event_watch.scope | span_attribute | string |  | low | none | agent-controller |  |  |
+| antnest.execution.revision | span_attribute | int |  | unbounded | none | agent-acp-service |  |  |
+| antnest.execution.timeout_ms | span_attribute | int | ms | unbounded | none | antnest-runtime |  |  |
+| antnest.fresh_database_install | span_attribute | boolean |  | low | none | agent-acp-service |  |  |
+| antnest.gateway.identity.resolve.cache.accounted_bytes | metric | int | By | bounded | none | edge-gateway |  |  |
+| antnest.gateway.identity.resolve.cache.entries | metric | int | 1 | bounded | none | edge-gateway |  |  |
+| antnest.gateway.identity.resolve.cache.proof.age | metric | double | s | bounded | none | edge-gateway |  |  |
+| antnest.gateway.identity.resolve.cache.proof.available | metric | int | 1 | bounded | none | edge-gateway |  |  |
+| antnest.gateway.identity.resolve.cache.proof.fresh | metric | int | 1 | bounded | none | edge-gateway |  |  |
+| antnest.gateway.identity.resolve.cache.waiters | metric | int | 1 | bounded | none | edge-gateway |  |  |
+| antnest.gateway.identity.resolve.cache.work | metric | int | 1 | bounded | none | edge-gateway |  |  |
+| antnest.gateway.identity.resolve.decisions | metric | int | 1 | bounded | none | edge-gateway |  |  |
+| antnest.gateway.identity.resolve.rpc.calls | metric | int | 1 | bounded | none | edge-gateway |  |  |
+| antnest.gateway.identity.resolve.rpc.duration | metric | double | s | bounded | none | edge-gateway |  |  |
+| antnest.http.request_cancelled | span_attribute | boolean |  | low | none | edge-gateway |  |  |
+| antnest.http.termination | span_attribute | string |  | low | none | identity-service |  |  |
+| antnest.http.transport_invoked | span_attribute | boolean |  | low | none | identity-service |  |  |
+| antnest.http.upgrade.connection.setup.completed | event | string |  | bounded | none | agent-acp-service |  |  |
+| antnest.http.upgrade.connection.setup.started | event | string |  | bounded | none | agent-acp-service |  |  |
+| antnest.http.upgrade.response.prepared | event | string |  | bounded | none | agent-acp-service |  |  |
+| antnest.identity.authentication_method | span_attribute | string |  | low | none | identity-service |  |  |
+| antnest.identity.http.duration | metric | double | s | bounded | none | identity-service |  |  |
+| antnest.identity.http.requests | metric | int | 1 | bounded | none | identity-service |  |  |
+| antnest.identity.provider.id | span_attribute | string |  | unbounded | identifier | identity-service |  |  |
+| antnest.identity.provider.revision | span_attribute | string |  | low | none | identity-service |  |  |
+| antnest.identity.resolve.cancel_kind | span_attribute | string |  | low | none | edge-gateway |  |  |
+| antnest.identity.resolve.outcome | span_attribute | string |  | low | none | edge-gateway |  |  |
+| antnest.identity.resolve.profile | span_attribute | string |  | low | none | edge-gateway |  |  |
+| antnest.identity.resolve.proof_age_ms | span_attribute | double | ms | low | none | edge-gateway |  |  |
+| antnest.identity.resolve.shared_source_state | span_attribute | string |  | low | none | edge-gateway |  |  |
+| antnest.identity.resolve.snapshot_age_ms | span_attribute | double | ms | low | none | edge-gateway |  |  |
+| antnest.identity.resolve.source | span_attribute | string |  | low | none | edge-gateway |  |  |
+| antnest.identity.resolve.valid_for_ms | span_attribute | double | ms | low | none | edge-gateway |  |  |
+| antnest.identity.resource.id | span_attribute | string |  | unbounded | identifier | identity-service |  |  |
+| antnest.identity.token.id | span_attribute | string |  | unbounded | identifier | identity-service |  |  |
+| antnest.learning.apply.outcome | span_attribute | string |  | low | none | agent-acp-service |  |  |
+| antnest.learning.call_index | span_attribute | int |  | unbounded | none | agent-acp-service |  |  |
+| antnest.learning.change.id | span_attribute | string |  | unbounded | identifier | agent-acp-service |  |  |
+| antnest.learning.debug | span_attribute | boolean |  | low | none | agent-acp-service |  |  |
+| antnest.learning.evidence.content_bytes | span_attribute | int | By | unbounded | none | agent-acp-service |  |  |
+| antnest.learning.evidence.execution_items | span_attribute | int |  | unbounded | none | agent-acp-service |  |  |
+| antnest.learning.evidence.items | span_attribute | int |  | unbounded | none | agent-acp-service |  |  |
+| antnest.learning.evidence.truncated | span_attribute | boolean |  | low | none | agent-acp-service |  |  |
+| antnest.learning.evidence.untrusted_items | span_attribute | int |  | unbounded | none | agent-acp-service |  |  |
+| antnest.learning.evidence.user_items | span_attribute | int |  | unbounded | none | agent-acp-service |  |  |
+| antnest.learning.generation | span_attribute | int |  | unbounded | none | agent-acp-service |  |  |
+| antnest.learning.outcome | span_attribute | string |  | low | none | agent-acp-service |  |  |
+| antnest.learning.pause_reason | span_attribute | string |  | low | none | agent-acp-service |  |  |
+| antnest.learning.review.decision | span_attribute | string |  | low | none | agent-acp-service |  |  |
+| antnest.learning.review_prompt_version | span_attribute | string |  | unbounded | none | agent-acp-service |  |  |
+| antnest.learning.source_run.id | span_attribute | string |  | unbounded | identifier | agent-acp-service |  |  |
+| antnest.learning.task.id | span_attribute | string |  | unbounded | identifier | agent-acp-service |  |  |
+| antnest.learning.validation.codes | span_attribute | string[] |  | unbounded | none | agent-acp-service |  |  |
+| antnest.learning.validation.paths | span_attribute | string[] |  | unbounded | content | agent-acp-service |  |  |
+| antnest.learning.validation.reason | span_attribute | string |  | low | none | agent-acp-service |  |  |
+| antnest.learning.validation.result | span_attribute | string |  | low | none | agent-acp-service |  |  |
+| antnest.lifecycle.error_class | span_attribute | string |  | low | none | agent-controller |  | antnest.error.classification |
+| antnest.lifecycle.kind | span_attribute | string |  | low | none | agent-controller |  |  |
+| antnest.lifecycle.phase | span_attribute | string |  | low | none | agent-controller |  |  |
+| antnest.lifecycle.state | span_attribute | string |  | low | none | agent-controller |  |  |
+| antnest.listener | span_attribute | string |  | low | none | agent-acp-service |  |  |
+| antnest.management.network | span_attribute | string |  | unbounded | identifier | runtime-controller |  |  |
+| antnest.mcp.caller_cancelled | span_attribute | boolean |  | low | none | agent-acp-service |  |  |
+| antnest.mcp.connection.close.completed | event | string |  | bounded | none | agent-acp-service |  |  |
+| antnest.mcp.connection.close.outcome | span_attribute | string |  | low | none | agent-acp-service |  |  |
+| antnest.mcp.connection.close.started | event | string |  | bounded | none | agent-acp-service |  |  |
+| antnest.mcp.discovery.ready | event | string |  | bounded | none | agent-acp-service |  |  |
+| antnest.mcp.method | span_attribute | string |  | low | none | agent-acp-service |  |  |
+| antnest.mcp.resource.read.started | event | string |  | bounded | none | agent-acp-service |  |  |
+| antnest.mcp.resource.validated | event | string |  | bounded | none | agent-acp-service |  |  |
+| antnest.mcp.resource_read.outcome | span_attribute | string |  | low | none | agent-acp-service |  |  |
+| antnest.mcp.tool.dispatch.started | event | string |  | bounded | none | agent-acp-service |  |  |
+| antnest.mcp.tool.result.parsed | event | string |  | bounded | none | agent-acp-service |  |  |
+| antnest.mcp.tool_result.outcome | span_attribute | string |  | low | none | agent-acp-service |  |  |
+| antnest.membership.id | span_attribute | string |  | unbounded | identifier | edge-gateway |  |  |
+| antnest.model.content_bytes | span_attribute | int | By | unbounded | none | agent-acp-service |  |  |
+| antnest.model.markdown_fence | span_attribute | boolean |  | low | none | agent-acp-service |  |  |
+| antnest.model.max_output_tokens | span_attribute | int |  | unbounded | none | agent-acp-service |  |  |
+| antnest.model.profile_id | span_attribute | string |  | unbounded | identifier | agent-acp-service |  |  |
+| antnest.model.result.kind | span_attribute | string |  | low | none | agent-acp-service |  |  |
+| antnest.model.stop_reason | span_attribute | string |  | low | none | agent-acp-service |  |  |
+| antnest.model.thought_bytes | span_attribute | int | By | unbounded | none | agent-acp-service |  |  |
+| antnest.observation.after_gap | span_attribute | boolean |  | low | none | runtime-controller |  |  |
+| antnest.observation.kind | span_attribute | string |  | low | none | runtime-controller |  |  |
+| antnest.observation.source | span_attribute | string |  | low | none | runtime-controller |  |  |
+| antnest.operation.id | span_attribute | string |  | unbounded | identifier | agent-acp-service, agent-controller, runtime-controller |  |  |
+| antnest.operation.kind | span_attribute | string |  | low | none | runtime-controller |  |  |
+| antnest.operation.phase | span_attribute | string |  | low | none | agent-acp-service, agent-controller, identity-service, runtime-controller, runtime-egress |  |  |
+| antnest.operation.request_id | span_attribute | string |  | unbounded | identifier | agent-controller |  | antnest.request.id |
+| antnest.organization.id | span_attribute | string |  | unbounded | identifier | agent-acp-service, agent-controller, agent-ui, edge-gateway, identity-service |  |  |
+| antnest.organization_id | span_attribute | string |  | unbounded | identifier | agent-acp-service |  | antnest.organization.id |
+| antnest.outcome | span_attribute | string |  | low | none | admin-console, agent-acp-service, agent-controller, identity-service, runtime-controller, runtime-egress |  |  |
+| antnest.password.admission_reason | span_attribute | string |  | low | none | identity-service |  |  |
+| antnest.payload.json | span_attribute | string |  | unbounded | content | agent-acp-service, agent-controller, antnest-runtime, identity-service, runtime-controller, runtime-egress |  |  |
+| antnest.peer.service | span_attribute | string |  | low | none | admin-console |  |  |
+| antnest.platform | span_attribute | string |  | low | none | runtime-controller |  |  |
+| antnest.platform.operation | span_attribute | string |  | low | none | runtime-controller |  |  |
+| antnest.policy.id | span_attribute | string |  | unbounded | identifier | agent-controller, runtime-egress |  |  |
+| antnest.policy.revision | span_attribute | string |  | low | none | runtime-egress |  |  |
+| antnest.principal.id | span_attribute | string |  | unbounded | identifier | agent-ui, edge-gateway |  |  |
+| antnest.protocol.name | span_attribute | string |  | low | none | identity-service |  |  |
+| antnest.protocol.version | span_attribute | string |  | low | none | agent-acp-service, identity-service |  |  |
+| antnest.provider.connection_id | span_attribute | string |  | unbounded | identifier | agent-acp-service |  |  |
+| antnest.request | event | string |  | bounded | none | agent-acp-service, agent-controller, antnest-runtime, identity-service, runtime-controller, runtime-egress |  |  |
+| antnest.request.dispatched | span_attribute | boolean |  | low | none | admin-console |  |  |
+| antnest.request.id | span_attribute | string |  | unbounded | identifier | agent-acp-service, agent-controller |  |  |
+| antnest.request.sent | span_attribute | boolean |  | low | none | runtime-controller |  |  |
+| antnest.request.timeout_ms | span_attribute | int | ms | unbounded | none | admin-console, agent-controller, edge-gateway, identity-service, runtime-controller |  |  |
+| antnest.request.transport_invoked | span_attribute | boolean |  | low | none | agent-controller |  |  |
+| antnest.response | event | string |  | bounded | none | agent-acp-service, agent-controller, antnest-runtime, identity-service, runtime-controller, runtime-egress |  |  |
+| antnest.response.termination | span_attribute | string |  | low | none | runtime-egress |  |  |
+| antnest.result | span_attribute | string |  | low | none | agent-controller, identity-service, runtime-controller |  | antnest.outcome |
+| antnest.revocation.reason | span_attribute | string |  | low | none | edge-gateway |  |  |
+| antnest.revocation.sequence | span_attribute | int |  | unbounded | none | edge-gateway |  |  |
+| antnest.revocation.span_id | span_attribute | string |  | unbounded | identifier | edge-gateway |  |  |
+| antnest.revocation.trace_id | span_attribute | string |  | unbounded | identifier | edge-gateway |  |  |
+| antnest.run.id | span_attribute | string |  | unbounded | identifier | agent-acp-service |  |  |
+| antnest.run_id | span_attribute | string |  | unbounded | identifier | agent-acp-service |  | antnest.run.id |
+| antnest.runtime.execution.id | span_attribute | string |  | unbounded | identifier | agent-acp-service, runtime-controller |  |  |
+| antnest.runtime.execution_id | span_attribute | string |  | unbounded | identifier | agent-acp-service, runtime-controller |  | antnest.runtime.execution.id |
+| antnest.runtime.executor.calls | metric | int | 1 | bounded | none | antnest-runtime |  |  |
+| antnest.runtime.executor.duration | metric | double | ms | bounded | none | antnest-runtime |  |  |
+| antnest.runtime.generation | span_attribute | int |  | unbounded | none | antnest-runtime, runtime-controller |  |  |
+| antnest.runtime.health | span_attribute | string |  | low | none | runtime-controller |  |  |
+| antnest.runtime.http.duration | metric | double | ms | bounded | none | antnest-runtime |  |  |
+| antnest.runtime.http.requests | metric | int | 1 | bounded | none | antnest-runtime |  |  |
+| antnest.runtime.image.id | span_attribute | string |  | unbounded | none | antnest-runtime, runtime-controller |  |  |
+| antnest.runtime.image.reference | span_attribute | string |  | unbounded | none | antnest-runtime, runtime-controller |  |  |
+| antnest.runtime.mcp.duration | metric | double | ms | bounded | none | antnest-runtime |  |  |
+| antnest.runtime.mcp.operations | metric | int | 1 | bounded | none | antnest-runtime |  |  |
+| antnest.runtime.network.connection_refused | metric | int | 1 | bounded | none | antnest-runtime |  |  |
+| antnest.runtime.network.inbound.bytes | metric | int | By | bounded | none | antnest-runtime |  |  |
+| antnest.runtime.network.inbound.packets | metric | int | 1 | bounded | none | antnest-runtime |  |  |
+| antnest.runtime.network.local_rejections | metric | int | 1 | bounded | none | antnest-runtime |  |  |
+| antnest.runtime.network.malformed.packets | metric | int | 1 | bounded | none | antnest-runtime |  |  |
+| antnest.runtime.network.outbound.bytes | metric | int | By | bounded | none | antnest-runtime |  |  |
+| antnest.runtime.network.outbound.packets | metric | int | 1 | bounded | none | antnest-runtime |  |  |
+| antnest.runtime.network.unsupported.packets | metric | int | 1 | bounded | none | antnest-runtime |  |  |
+| antnest.runtime.platform_phase | span_attribute | string |  | low | none | runtime-controller |  |  |
+| antnest.runtime.platform_resource_id | span_attribute | string |  | unbounded | identifier | runtime-controller |  |  |
+| antnest.runtime.revision | span_attribute | string, int |  | unbounded | none | agent-acp-service, runtime-controller |  |  |
+| antnest.runtime.spec_digest | span_attribute | string |  | unbounded | none | runtime-controller |  |  |
+| antnest.runtime.target_revision | span_attribute | string |  | unbounded | none | runtime-controller |  |  |
+| antnest.runtime.tool.calls | metric | int | 1 | bounded | none | antnest-runtime |  |  |
+| antnest.runtime.tool.duration | metric | double | ms | bounded | none | antnest-runtime |  |  |
+| antnest.runtime_execution_id | span_attribute | string |  | unbounded | identifier | agent-acp-service |  | antnest.runtime.execution.id |
+| antnest.session.id | span_attribute | string |  | unbounded | identifier | agent-acp-service |  |  |
+| antnest.settlement.outcome | span_attribute | string |  | low | none | agent-acp-service, agent-controller |  |  |
+| antnest.skill.active | span_attribute | boolean |  | low | none | agent-acp-service |  |  |
+| antnest.skill.artifact_digest | span_attribute | string |  | unbounded | none | agent-acp-service |  |  |
+| antnest.skill.content_digest | span_attribute | string |  | unbounded | none | agent-acp-service |  |  |
+| antnest.skill.name | span_attribute | string |  | unbounded | none | agent-acp-service |  |  |
+| antnest.skill.source_sequence | span_attribute | int |  | unbounded | none | agent-acp-service |  |  |
+| antnest.stream.termination | span_attribute, event | string |  | low | none | agent-acp-service, agent-ui, edge-gateway |  |  |
+| antnest.target.service | span_attribute | string |  | low | none | agent-controller, skill-registry |  |  |
+| antnest.temporal.workflow.span_end | span_attribute | string |  | low | none | agent-controller |  |  |
+| antnest.timeout_ms | span_attribute | int | ms | unbounded | none | runtime-controller |  | antnest.request.timeout_ms |
+| antnest.transaction.outcome | span_attribute | string |  | low | none | agent-acp-service, agent-controller, identity-service, runtime-controller |  |  |
+| antnest.ui.acp.close.delete_attempts | span_attribute | int |  | unbounded | none | agent-ui |  |  |
+| antnest.ui.acp.close.delete_completed | span_attribute | boolean |  | low | none | agent-ui |  |  |
+| antnest.ui.acp.close.delete_responses | span_attribute | int |  | unbounded | none | agent-ui |  |  |
+| antnest.ui.acp.close.delete_status | span_attribute | int |  | unbounded | none | agent-ui |  |  |
+| antnest.ui.acp.close.diagnostics_truncated | span_attribute | boolean |  | low | none | agent-ui |  |  |
+| antnest.ui.acp.close.failure | event | string |  | bounded | none | agent-ui |  |  |
+| antnest.ui.acp.close.failures | span_attribute | int |  | unbounded | none | agent-ui |  |  |
+| antnest.ui.acp.close.outcome | span_attribute | string |  | low | none | agent-ui |  |  |
+| antnest.ui.acp.close.pending_requests | span_attribute | int |  | unbounded | none | agent-ui |  |  |
+| antnest.ui.acp.close.stream_joined | span_attribute | boolean |  | low | none | agent-ui |  |  |
+| antnest.ui.acp.close.target_observed | span_attribute | boolean |  | low | none | agent-ui |  |  |
+| antnest.ui.acp.close.trigger | span_attribute | string |  | low | none | agent-ui |  |  |
+| antnest.ui.agent_view.failure | event | string |  | bounded | none | agent-ui |  |  |
+| antnest.ui.bridge.active_replays | metric | int | 1 | bounded | none | agent-ui |  |  |
+| antnest.ui.bridge.cached_history_bytes | metric | int | By | bounded | none | agent-ui |  |  |
+| antnest.ui.bridge.cold_replay_duration | metric | double | ms | bounded | none | agent-ui |  |  |
+| antnest.ui.bridge.held_work | metric | int | 1 | bounded | none | agent-ui |  |  |
+| antnest.ui.bridge.journal_queued_bytes | metric | int | By | bounded | none | agent-ui |  |  |
+| antnest.ui.bridge.journal_retained_bytes | metric | int | By | bounded | none | agent-ui |  |  |
+| antnest.ui.bridge.local_intent_reuse | metric | int | 1 | bounded | none | agent-ui |  |  |
+| antnest.ui.bridge.observer_leases | metric | int | 1 | bounded | none | agent-ui |  |  |
+| antnest.ui.bridge.oldest_uncertain_ms | metric | int | ms | bounded | none | agent-ui |  |  |
+| antnest.ui.bridge.owners | metric | int | 1 | bounded | none | agent-ui |  |  |
+| antnest.ui.bridge.queued_replays | metric | int | 1 | bounded | none | agent-ui |  |  |
+| antnest.ui.bridge.stream_subscribers | metric | int | 1 | bounded | none | agent-ui |  |  |
+| antnest.ui.bridge.uncertain_operations | metric | int | 1 | bounded | none | agent-ui |  |  |
+| antnest.ui.http.duration | metric | double | ms | bounded | none | agent-ui |  |  |
+| antnest.ui.http.requests | metric | int | 1 | bounded | none | agent-ui |  |  |
+| antnest.ui.http.started_monotonic_ns | span_attribute | string |  | unbounded | none | agent-ui |  |  |
+| antnest.ui.process.heap_used_bytes | metric | int | By | bounded | none | agent-ui |  |  |
+| antnest.ui.process.rss_bytes | metric | int | By | bounded | none | agent-ui |  |  |
+| antnest.ui.prompt_input | event | string |  | bounded | none | agent-ui |  |  |
+| antnest.ui.stream.delegation_expires_at_unix_ms | span_attribute | int | ms | unbounded | none | agent-ui |  |  |
+| antnest.ui.stream.delegation_remaining_ms | span_attribute | int | ms | unbounded | none | agent-ui |  |  |
+| antnest.watch.termination | span_attribute | string |  | low | none | runtime-controller |  |  |
+<!-- observability-registry:end -->

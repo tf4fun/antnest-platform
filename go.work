@@ -5,6 +5,7 @@ toolchain go1.27.1
 use (
 	./modules/secret-encryption
 	./modules/service-authentication
+	./libs/go/telemetry
 	./services/admin-console
 	./services/agent-controller
 	./services/edge-gateway
