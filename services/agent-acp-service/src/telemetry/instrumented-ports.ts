@@ -1,4 +1,6 @@
 import type { RunExecutionPort } from "../application/run-executor.js";
+import { SEMCONV } from "./semconv.gen.js";
+import { normalizeAttributes } from "./names.js";
 import type {
   AcpApplicationPort,
   ExecuteRunResult,
@@ -128,15 +130,15 @@ export class InstrumentedAcpApplication implements AcpApplicationPort {
       {
         "agent.id": input.binding.agentId,
         "session.id": input.sessionId,
-        "antnest.operation.phase": "admit",
+        [SEMCONV.ANTNEST_OPERATION_PHASE]: "admit",
       },
-      "antnest.acp.session_method.duration",
-      "antnest.acp.session_methods",
+      SEMCONV.ANTNEST_ACP_SESSION_METHOD_DURATION,
+      SEMCONV.ANTNEST_ACP_SESSION_METHODS,
       { method: "prompt" },
       async () => {
         try {
           const accepted = await this.delegate.acceptPrompt(input);
-          this.telemetry.count("antnest.acp.run_admissions", { result: "accepted" });
+          this.telemetry.count(SEMCONV.ANTNEST_ACP_RUN_ADMISSIONS, { result: "accepted" });
           return accepted;
         } catch (error) {
           if (input.bridgeIntent !== undefined && error instanceof DomainError) {
@@ -147,9 +149,9 @@ export class InstrumentedAcpApplication implements AcpApplicationPort {
                   ? "conflict"
                   : null;
             if (result !== null)
-              this.telemetry.count("antnest.acp.bridge_intent_reuse", { result });
+              this.telemetry.count(SEMCONV.ANTNEST_ACP_BRIDGE_INTENT_REUSE, { result });
           }
-          this.telemetry.count("antnest.acp.run_admissions", {
+          this.telemetry.count(SEMCONV.ANTNEST_ACP_RUN_ADMISSIONS, {
             result: "rejected",
             rejection_class: rejectionClass(error),
           });
@@ -172,10 +174,10 @@ export class InstrumentedAcpApplication implements AcpApplicationPort {
       {
         "agent.id": agentId,
         "session.id": sessionId,
-        ...(phase ? { "antnest.operation.phase": phase } : {}),
+        ...(phase ? { [SEMCONV.ANTNEST_OPERATION_PHASE]: phase } : {}),
       },
-      "antnest.acp.session_method.duration",
-      "antnest.acp.session_methods",
+      SEMCONV.ANTNEST_ACP_SESSION_METHOD_DURATION,
+      SEMCONV.ANTNEST_ACP_SESSION_METHODS,
       { method },
       operation,
     );
@@ -199,35 +201,39 @@ export class InstrumentedRunExecutor implements RunExecutionPort {
     };
     return this.telemetry
       .span("agent.run", attributes, async () => {
-        trace.getSpan(context.active())?.setAttributes({
-          ...snapshotAttributes(input.accepted.snapshot),
-          "antnest.request.id": input.accepted.requestId,
-          "antnest.run.id": input.accepted.runId,
-          "antnest.session.id": input.accepted.sessionId,
-          "antnest.operation.phase": "execute",
-        });
+        trace.getSpan(context.active())?.setAttributes(
+          normalizeAttributes({
+            ...snapshotAttributes(input.accepted.snapshot),
+            [SEMCONV.ANTNEST_REQUEST_ID]: input.accepted.requestId,
+            [SEMCONV.ANTNEST_RUN_ID]: input.accepted.runId,
+            [SEMCONV.ANTNEST_SESSION_ID]: input.accepted.sessionId,
+            [SEMCONV.ANTNEST_OPERATION_PHASE]: "execute",
+          }),
+        );
 
         let result: ExecuteRunResult;
         try {
           result = await this.delegate.execute(input);
         } catch (error) {
-          this.telemetry.count("antnest.acp.runs", { terminal_class: "executor_error" });
+          this.telemetry.count(SEMCONV.ANTNEST_ACP_RUNS, { terminal_class: "executor_error" });
           throw error;
         }
         terminalClass = result.terminalClass;
-        trace.getSpan(context.active())?.setAttributes({
-          "run.terminal_class": result.terminalClass,
-          "run.executor_state": result.executorState,
-          "run.tool_effect_state": result.toolEffectState,
-          "run.unknown_effect_source": result.unknownEffectSource,
-        });
+        trace.getSpan(context.active())?.setAttributes(
+          normalizeAttributes({
+            "run.terminal_class": result.terminalClass,
+            "run.executor_state": result.executorState,
+            "run.tool_effect_state": result.toolEffectState,
+            "run.unknown_effect_source": result.unknownEffectSource,
+          }),
+        );
         recordResult(result);
 
-        this.telemetry.count("antnest.acp.runs", { terminal_class: result.terminalClass });
+        this.telemetry.count(SEMCONV.ANTNEST_ACP_RUNS, { terminal_class: result.terminalClass });
         return result;
       })
       .finally(() => {
-        this.telemetry.duration("antnest.acp.run.duration", performance.now() - started, {
+        this.telemetry.duration(SEMCONV.ANTNEST_ACP_RUN_DURATION, performance.now() - started, {
           terminal_class: terminalClass,
         });
       });
@@ -257,8 +263,8 @@ export class InstrumentedModel implements AuthenticatedModelTransport {
         "model.name": request.snapshot.executionSpec.model.model,
         "model.purpose": request.purpose ?? "response",
       },
-      "antnest.acp.model.duration",
-      "antnest.acp.model.requests",
+      SEMCONV.ANTNEST_ACP_MODEL_DURATION,
+      SEMCONV.ANTNEST_ACP_MODEL_REQUESTS,
       { protocol: "openai_chat_completions" },
       async () => {
         modelRequest(request);
@@ -286,8 +292,8 @@ export class InstrumentedRuntimeInformation implements RuntimeInformationPort {
         "organization.id": snapshot.organizationId,
         "execution.revision": snapshot.executionRevision,
       },
-      "antnest.acp.mcp.duration",
-      "antnest.acp.mcp.requests",
+      SEMCONV.ANTNEST_ACP_MCP_DURATION,
+      SEMCONV.ANTNEST_ACP_MCP_REQUESTS,
       { operation: "info", source: "runtime" },
       () => this.delegate.read(snapshot, signal),
     );
@@ -312,8 +318,8 @@ export class InstrumentedToolCatalog implements ToolCatalogPort {
         "organization.id": snapshot.organizationId,
         "execution.revision": snapshot.executionRevision,
       },
-      "antnest.acp.mcp.duration",
-      "antnest.acp.mcp.requests",
+      SEMCONV.ANTNEST_ACP_MCP_DURATION,
+      SEMCONV.ANTNEST_ACP_MCP_REQUESTS,
       { operation: "list", source: "all" },
       () =>
         withRuntimeToolLifecycle("tools/list", snapshot.runtime.executionId, parent, signal, () =>
@@ -333,8 +339,8 @@ export class InstrumentedToolCatalog implements ToolCatalogPort {
         "tool.name": input.tool.modelName,
         "mcp.source_id": input.tool.sourceId,
       },
-      "antnest.acp.mcp.duration",
-      "antnest.acp.mcp.requests",
+      SEMCONV.ANTNEST_ACP_MCP_DURATION,
+      SEMCONV.ANTNEST_ACP_MCP_REQUESTS,
       { operation: "call", source: input.tool.source },
       () =>
         withRuntimeToolLifecycle(

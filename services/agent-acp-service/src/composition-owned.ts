@@ -1,3 +1,4 @@
+import { SEMCONV } from "./telemetry/semconv.gen.js";
 import { isDeepStrictEqual } from "node:util";
 import { setTimeout as delay } from "node:timers/promises";
 import { buildAgentComponents } from "./composition-agent.js";
@@ -898,7 +899,8 @@ export class OwnedAgentComponents {
         release: (pending, lifetime) => legacyTemporary.release(pending, lifetime),
       },
       gate: graph.learningGate,
-      report: (outcome) => telemetry.count("antnest.acp.skill_temporary_cleanup", { outcome }),
+      report: (outcome) =>
+        telemetry.count(SEMCONV.ANTNEST_ACP_SKILL_TEMPORARY_CLEANUP, { outcome }),
     });
     const legacyPipeline =
       learningEnabled && this.options.assignment === undefined

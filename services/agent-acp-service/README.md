@@ -4,6 +4,11 @@ Agent ACP Service is Antnest's replaceable Agent compute service. It exposes the
 stable ACP v1 protocol and the draft ACP v2 protocol on separate endpoints, owns
 durable conversation and Run execution state, calls the model and invokes MCP
 Tools on the Agent's Runtime. It is written in TypeScript on Node.js 24 and uses
+the shared observability registry: telemetry names come from generated
+constants in `src/telemetry/semconv.gen.ts`, attributes pass through
+`normalizeAttributes` (legacy alias emission switches off with
+`ANTNEST_TELEMETRY_LEGACY_ATTRIBUTES=false`), and metric calls strip
+unbounded dimensions via `metricAttributes`. It uses
 the official `@agentclientprotocol/sdk` and `@modelcontextprotocol/client`
 packages.
 

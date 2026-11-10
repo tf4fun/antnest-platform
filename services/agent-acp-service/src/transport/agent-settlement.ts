@@ -1,3 +1,5 @@
+import { SEMCONV } from "../telemetry/semconv.gen.js";
+import { normalizeAttributes } from "../telemetry/names.js";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { parseAgentSettlement, type AgentSettlementRequest } from "../domain/agent-settlement.js";
 import { DomainError } from "../domain/errors.js";
@@ -19,11 +21,13 @@ export async function settleAgent(
   forward?: (input: AgentSettlementRequest, signal: AbortSignal) => Promise<boolean>,
 ): Promise<void> {
   const span = activeHttpSpan();
-  span?.setAttributes({
-    "rpc.system.name": "json-over-http",
-    "rpc.service": "agent-acp",
-    "rpc.method": "settle_agent",
-  });
+  span?.setAttributes(
+    normalizeAttributes({
+      "rpc.system.name": "json-over-http",
+      "rpc.service": "agent-acp",
+      "rpc.method": "settle_agent",
+    }),
+  );
   const disconnected = new AbortController();
   const onClose = () => disconnected.abort();
   response.once("close", onClose);
@@ -34,13 +38,15 @@ export async function settleAgent(
       throw new Error("Settlement service is unavailable");
     if (await forward?.(input, disconnected.signal)) return;
     const result = await service.settle(input, disconnected.signal);
-    span?.setAttributes({
-      "antnest.organization.id": input.organization_id,
-      "antnest.agent.id": input.agent_id,
-      "antnest.operation.id": input.operation_id,
-      "antnest.configuration.revision": result.applied_revision,
-      "antnest.settlement.outcome": result.outcome,
-    });
+    span?.setAttributes(
+      normalizeAttributes({
+        [SEMCONV.ANTNEST_ORGANIZATION_ID]: input.organization_id,
+        [SEMCONV.ANTNEST_AGENT_ID]: input.agent_id,
+        [SEMCONV.ANTNEST_OPERATION_ID]: input.operation_id,
+        [SEMCONV.ANTNEST_CONFIGURATION_REVISION]: result.applied_revision,
+        [SEMCONV.ANTNEST_SETTLEMENT_OUTCOME]: result.outcome,
+      }),
+    );
     if (span !== undefined) rpcContent(span, "response", result);
     rpcJson(response, 200, result);
   } catch (error) {

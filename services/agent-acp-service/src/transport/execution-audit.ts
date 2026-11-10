@@ -1,3 +1,5 @@
+import { SEMCONV } from "../telemetry/semconv.gen.js";
+import { normalizeAttributes } from "../telemetry/names.js";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { ZodError } from "zod";
 import { DomainError } from "../domain/errors.js";
@@ -30,16 +32,20 @@ export async function serveExecutionAudit(
   const onClose = () => disconnected.abort();
   response.once("close", onClose);
   const span = activeHttpSpan();
-  span?.setAttributes({
-    "rpc.system.name": "json-over-http",
-    "rpc.service": "agent-acp",
-    "rpc.method": route.name,
-  });
+  span?.setAttributes(
+    normalizeAttributes({
+      "rpc.system.name": "json-over-http",
+      "rpc.service": "agent-acp",
+      "rpc.method": route.name,
+    }),
+  );
   try {
     const principal = trustedAuditPrincipal(request.headers);
     if (principal === null)
       throw new RpcRequestError(403, "access_denied", "Trusted management identity is required");
-    span?.setAttribute("antnest.organization.id", principal.organizationId);
+    span?.setAttributes(
+      normalizeAttributes({ [SEMCONV.ANTNEST_ORGANIZATION_ID]: principal.organizationId }),
+    );
     const input = await readRpcRequest(request, maxBytes);
     if (span !== undefined) rpcContent(span, "request", input);
     if (service === undefined || !(await ready())) throw new Error("Audit service is unavailable");

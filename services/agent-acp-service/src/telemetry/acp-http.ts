@@ -1,4 +1,6 @@
 import { isSpanContextValid, propagation, ROOT_CONTEXT, trace } from "@opentelemetry/api";
+import { SEMCONV } from "./semconv.gen.js";
+import { normalizeAttributes } from "./names.js";
 import { AcpServer } from "../transport/acp/sdk.js";
 import { activeHttpSpan } from "./http.js";
 import { boundaryConfig } from "./diagnostics.js";
@@ -21,13 +23,16 @@ export function recordAcpAccessDenial(
     error.code !== "access_denied"
   )
     return;
-  span.addEvent("antnest.stream.termination", {
-    reason: "access_denied",
-    "error.type": "DomainError",
-    source,
-    "antnest.agent.id": binding.agentId,
-    "antnest.organization.id": binding.organizationId,
-  });
+  span.addEvent(
+    SEMCONV.ANTNEST_STREAM_TERMINATION,
+    normalizeAttributes({
+      reason: "access_denied",
+      "error.type": "DomainError",
+      source,
+      [SEMCONV.ANTNEST_AGENT_ID]: binding.agentId,
+      [SEMCONV.ANTNEST_ORGANIZATION_ID]: binding.organizationId,
+    }),
+  );
 }
 
 // The SDK queues messages across HTTP requests. Carry the receiving span through

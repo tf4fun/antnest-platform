@@ -1,4 +1,6 @@
 import { SpanStatusCode, trace, type Span } from "@opentelemetry/api";
+import { SEMCONV } from "./semconv.gen.js";
+import { normalizeAttributes } from "./names.js";
 import { boundaryConfig, recordBoundaryError, safeId } from "./diagnostics.js";
 
 type OwnedRead<Result> = {
@@ -14,9 +16,9 @@ function recordFailure(span: Span | undefined, error: unknown, phase: string): v
     // Unknown errors may have throwing accessors. Diagnostics must not replace
     // the original read result or prevent its connection from being closed.
     span.setStatus({ code: SpanStatusCode.ERROR });
-    span.addEvent("antnest.error", {
-      "antnest.error.stage": phase,
-      "antnest.error.type": "uninspectable_error",
+    span.addEvent(SEMCONV.ANTNEST_ERROR, {
+      [SEMCONV.ANTNEST_ERROR_STAGE]: phase,
+      [SEMCONV.ANTNEST_ERROR_TYPE]: "uninspectable_error",
     });
   }
 }
@@ -36,28 +38,34 @@ export function observeRuntimeInformationRead<Result>(
       recordFailure(span, error, "mcp.runtime.info.connect");
       throw error;
     }
-    span?.addEvent("antnest.mcp.discovery.ready");
+    span?.addEvent(SEMCONV.ANTNEST_MCP_DISCOVERY_READY);
     try {
-      span?.addEvent("antnest.mcp.resource.read.started");
+      span?.addEvent(SEMCONV.ANTNEST_MCP_RESOURCE_READ_STARTED);
       const result = await owned.read();
-      span?.setAttribute("antnest.mcp.resource_read.outcome", "success");
-      span?.addEvent("antnest.mcp.resource.validated");
+      span?.setAttributes(
+        normalizeAttributes({ [SEMCONV.ANTNEST_MCP_RESOURCE_READ_OUTCOME]: "success" }),
+      );
+      span?.addEvent(SEMCONV.ANTNEST_MCP_RESOURCE_VALIDATED);
       return result;
     } catch (error) {
       recordFailure(span, error, "mcp.runtime.info.read");
       throw error;
     } finally {
-      span?.addEvent("antnest.mcp.connection.close.started", {
-        "antnest.mcp.caller_cancelled": signal.aborted,
+      span?.addEvent(SEMCONV.ANTNEST_MCP_CONNECTION_CLOSE_STARTED, {
+        [SEMCONV.ANTNEST_MCP_CALLER_CANCELLED]: signal.aborted,
       });
       try {
         await owned.close();
-        span?.setAttribute("antnest.mcp.connection.close.outcome", "closed");
-        span?.addEvent("antnest.mcp.connection.close.completed", { outcome: "closed" });
+        span?.setAttributes(
+          normalizeAttributes({ [SEMCONV.ANTNEST_MCP_CONNECTION_CLOSE_OUTCOME]: "closed" }),
+        );
+        span?.addEvent(SEMCONV.ANTNEST_MCP_CONNECTION_CLOSE_COMPLETED, { outcome: "closed" });
       } catch (error) {
-        span?.setAttribute("antnest.mcp.connection.close.outcome", "failed");
+        span?.setAttributes(
+          normalizeAttributes({ [SEMCONV.ANTNEST_MCP_CONNECTION_CLOSE_OUTCOME]: "failed" }),
+        );
         recordFailure(span, error, "mcp.runtime.info.close");
-        span?.addEvent("antnest.mcp.connection.close.completed", { outcome: "failed" });
+        span?.addEvent(SEMCONV.ANTNEST_MCP_CONNECTION_CLOSE_COMPLETED, { outcome: "failed" });
         reportCloseFailure(error);
       }
     }
@@ -67,19 +75,21 @@ export function observeRuntimeInformationRead<Result>(
   return trace.getTracer("agent-acp-service").startActiveSpan(
     "mcp.runtime.info.read",
     {
-      attributes: {
+      attributes: normalizeAttributes({
         ...(admittedExecution === undefined
           ? {}
-          : { "antnest.runtime.execution.id": admittedExecution }),
-        "antnest.mcp.resource_read.outcome": "failed",
-        "antnest.mcp.connection.close.outcome": "not_started",
-      },
+          : { [SEMCONV.ANTNEST_RUNTIME_EXECUTION_ID]: admittedExecution }),
+        [SEMCONV.ANTNEST_MCP_RESOURCE_READ_OUTCOME]: "failed",
+        [SEMCONV.ANTNEST_MCP_CONNECTION_CLOSE_OUTCOME]: "not_started",
+      }),
     },
     async (span) => {
       try {
         return await run(span);
       } finally {
-        span.setAttribute("antnest.mcp.caller_cancelled", signal.aborted);
+        span.setAttributes(
+          normalizeAttributes({ [SEMCONV.ANTNEST_MCP_CALLER_CANCELLED]: signal.aborted }),
+        );
         span.end();
       }
     },

@@ -1,3 +1,5 @@
+import { SEMCONV } from "../telemetry/semconv.gen.js";
+import { normalizeAttributes } from "../telemetry/names.js";
 import { once } from "node:events";
 import { finished } from "node:stream/promises";
 import type { IncomingMessage, ServerResponse } from "node:http";
@@ -33,11 +35,13 @@ export async function serveAgentExecutionState(
 ): Promise<void> {
   const streaming = request.url === AGENT_EXECUTION_WATCH_PATH;
   const span = activeHttpSpan();
-  span?.setAttributes({
-    "rpc.system.name": "json-over-http",
-    "rpc.service": "agent-acp",
-    "rpc.method": streaming ? "watch_agent_execution_state" : "get_agent_execution_state",
-  });
+  span?.setAttributes(
+    normalizeAttributes({
+      "rpc.system.name": "json-over-http",
+      "rpc.service": "agent-acp",
+      "rpc.method": streaming ? "watch_agent_execution_state" : "get_agent_execution_state",
+    }),
+  );
   const disconnected = new AbortController();
   const isDisconnected = () => disconnected.signal.aborted;
   const onClose = () => disconnected.abort();
@@ -58,10 +62,12 @@ export async function serveAgentExecutionState(
     if (!streaming && span !== undefined) rpcContent(span, "request", input.data);
     if (service === undefined || !(await ready())) throw new Error("State service is unavailable");
     if (forward !== undefined && (await forward(identity, disconnected.signal))) return;
-    span?.setAttributes({
-      "antnest.organization.id": identity.organizationId,
-      "antnest.agent.id": identity.agentId,
-    });
+    span?.setAttributes(
+      normalizeAttributes({
+        [SEMCONV.ANTNEST_ORGANIZATION_ID]: identity.organizationId,
+        [SEMCONV.ANTNEST_AGENT_ID]: identity.agentId,
+      }),
+    );
     const send: ExecutionStateSink = (state, signal) => {
       signal.throwIfAborted();
       if (streaming) return writeState(response, state, signal, deliveryTimeoutMs);
@@ -83,7 +89,9 @@ export async function serveAgentExecutionState(
     const failure = stateError(error);
     if (span !== undefined) {
       if (streaming && isShutdownReason(error))
-        span.setAttribute("antnest.stream.termination", "process-shutdown");
+        span.setAttributes(
+          normalizeAttributes({ [SEMCONV.ANTNEST_STREAM_TERMINATION]: "process-shutdown" }),
+        );
       recordBoundaryError(span, error, "agent.execution_state");
       if (failure.status >= 500) span.setStatus({ code: SpanStatusCode.ERROR });
       if (!streaming) rpcContent(span, "response", failure.body);

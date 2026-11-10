@@ -7,6 +7,10 @@ on:
     paths:
       - contracts/observability/**
       - services/agent-acp-service/**
+      - contracts/observability/**
+      - scripts/generate-telemetry.mjs
+      - scripts/check-telemetry-names.mjs
+      - scripts/lib/telemetry-registry.mjs
       - tests/integration/agent-acp-service/**
       - contracts/agent-acp/**
       - contracts/runtime-controller/**
@@ -25,6 +29,10 @@ on:
     paths:
       - contracts/observability/**
       - services/agent-acp-service/**
+      - contracts/observability/**
+      - scripts/generate-telemetry.mjs
+      - scripts/check-telemetry-names.mjs
+      - scripts/lib/telemetry-registry.mjs
       - tests/integration/agent-acp-service/**
       - contracts/agent-acp/**
       - contracts/agent-controller/**
