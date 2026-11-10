@@ -16,4 +16,4 @@ jobs:
           REPO: ${{ github.repository }}
         run: |
           gh api "repos/$REPO/code-scanning/alerts?ref=refs/pull/617/head&state=open&per_page=100" --jq '[.[] | {number,rule:.rule.id,most_recent_instance}]'
-          gh api -H 'Accept: application/sarif+json' "repos/$REPO/code-scanning/analyses/2131718414" | jq '.runs[].results[] | select(.ruleId == "go/reflected-xss") | {ruleId,message,locations,flows:[.codeFlows[].threadFlows[].locations[].location | {message,physicalLocation}]}'
+          gh api "repos/$REPO/code-scanning/alerts/58" --jq '{number,state,dismissed_reason,dismissed_at,most_recent_instance}'
