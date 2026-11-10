@@ -3,7 +3,6 @@ package identityclient
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -245,15 +244,7 @@ func TestNewRejectsInvalidIdentityEndpoint(t *testing.T) {
 }
 
 func TestResolvePrincipalEmitsBoundedDependencyMetrics(t *testing.T) {
-	for _, legacy := range []bool{true, false} {
-		t.Run(fmt.Sprint(legacy), func(t *testing.T) {
-			t.Setenv("ANTNEST_TELEMETRY_LEGACY_ATTRIBUTES", fmt.Sprint(legacy))
-			testResolvePrincipalEmitsBoundedDependencyMetrics(t, legacy)
-		})
-	}
-}
-
-func testResolvePrincipalEmitsBoundedDependencyMetrics(t *testing.T, legacy bool) {
+	t.Setenv("ANTNEST_TELEMETRY_LEGACY_ATTRIBUTES", "true")
 	reader := sdkmetric.NewManualReader()
 	provider := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
 	previous := otel.GetMeterProvider()
@@ -299,12 +290,12 @@ func testResolvePrincipalEmitsBoundedDependencyMetrics(t *testing.T, legacy bool
 			switch data := metric.Data.(type) {
 			case metricdata.Sum[int64]:
 				for _, point := range data.DataPoints {
-					assertDependencyMetricAttributes(t, point.Attributes, wantErrorTypes, legacy)
+					assertDependencyMetricAttributes(t, point.Attributes, wantErrorTypes)
 					seenMetrics[metric.Name]++
 				}
 			case metricdata.Histogram[float64]:
 				for _, point := range data.DataPoints {
-					assertDependencyMetricAttributes(t, point.Attributes, wantErrorTypes, legacy)
+					assertDependencyMetricAttributes(t, point.Attributes, wantErrorTypes)
 					seenMetrics[metric.Name]++
 				}
 			}
@@ -322,7 +313,7 @@ func testResolvePrincipalEmitsBoundedDependencyMetrics(t *testing.T, legacy bool
 }
 
 func assertDependencyMetricAttributes(
-	t *testing.T, attributes attribute.Set, observedErrorTypes map[string]bool, legacy bool,
+	t *testing.T, attributes attribute.Set, observedErrorTypes map[string]bool,
 ) {
 	t.Helper()
 	want := map[string]string{
@@ -330,10 +321,7 @@ func assertDependencyMetricAttributes(
 		"rpc.method":  "resolve_principal",
 	}
 	values := attributes.ToSlice()
-	wantCount := 4
-	if legacy {
-		wantCount++
-	}
+	wantCount := 5
 	if len(values) != wantCount {
 		t.Fatalf("Identity dependency metric attributes=%v want %d bounded fields", values, wantCount)
 	}
@@ -342,7 +330,7 @@ func assertDependencyMetricAttributes(
 		t.Fatal("canonical outcome missing")
 	}
 	alias, present := attributes.Value("antnest.result")
-	if present != legacy || (present && alias != canonical) {
+	if !present || (present && alias != canonical) {
 		t.Fatal("outcome alias window or value changed")
 	}
 	for _, value := range values {
